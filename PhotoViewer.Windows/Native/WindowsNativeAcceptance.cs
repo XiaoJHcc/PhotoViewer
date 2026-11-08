@@ -8,8 +8,10 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+#if PHOTOVIEWER_DINO
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
+#endif
 using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -51,6 +53,23 @@ internal sealed partial class WindowsMainWindow
         File.Delete(WindowsNativeApplication.IsolatedSettingsFilePath);
         File.Delete(WindowsNativePreferences.IsolatedFilePath);
         // 每轮从空库开始:上一轮的 DINO/CV 特征会让"相似聚类空态"与"即时计算"分支走不到
+        DeleteSmokeDatabase();
+        PhotoDatabase.Initialize(Path.Combine(SmokeOutputDirectory, "photos-smoke.db"));
+    }
+
+    /// <summary>
+    /// 只建立隔离目录并接上数据库，不删除上一版留下的设置、界面状态与数据库。
+    /// 双版本往返逐阶段读取上一版落盘的内容，默认的每轮重置会把被验收的东西删掉(EDITION-07)。
+    /// </summary>
+    internal static void EnsureSmokeStorage()
+    {
+        Directory.CreateDirectory(SmokeOutputDirectory);
+        PhotoDatabase.Initialize(Path.Combine(SmokeOutputDirectory, "photos-smoke.db"));
+    }
+
+    /// <summary>删除隔离数据库文件(含 WAL/SHM)。</summary>
+    private static void DeleteSmokeDatabase()
+    {
         var databasePath = Path.Combine(SmokeOutputDirectory, "photos-smoke.db");
         foreach (var suffix in new[] { string.Empty, "-wal", "-shm" })
         {
@@ -59,8 +78,6 @@ internal sealed partial class WindowsMainWindow
                 File.Delete(databasePath + suffix);
             }
         }
-
-        PhotoDatabase.Initialize(databasePath);
     }
 
     /// <summary>验证真实队列、内嵌模型、D3D 窗口和代理升级，保存报告并关闭验收窗口。</summary>
@@ -87,14 +104,26 @@ internal sealed partial class WindowsMainWindow
                 "小键盘评分热键未映射到 SetRating3");
             checks.Add("PASS input: NumberPad3 maps through the shared gesture table to SetRating3");
 
-            var modelHash = await Task.Run(CheckModel);
-            checks.Add("PASS embedded model: SHA256=" + modelHash + "; DirectML dual-output inference");
+            var (modelHash, editionFailure) = await Task.Run(CheckModel);
+            if (editionFailure != null)
+            {
+                // 打包缺口必须报出来,但不阻断后续功能回归:标准版其余验收照跑,退出码仍为 1。
+                checks.Add("FAIL standard edition assets: " + editionFailure);
+            }
+            else if (modelHash != null)
+            {
+                checks.Add("PASS embedded model: SHA256=" + modelHash + "; DirectML dual-output inference");
+            }
+            else
+            {
+                checks.Add("PASS standard edition: no embedded model, no ONNX Runtime / DirectML inference assembly, no DINO types in the product assemblies");
+            }
 
             // SHELL-02：空态标题只有应用名，窗口态保留系统边框、去掉系统标题栏。
             RequireSmoke(_main.CurrentFile == null, "空态检查前已存在当前照片");
-            RequireSmoke(Title == "PhotoViewer", $"空态窗口标题不符: {Title}");
+            RequireSmoke(Title == WindowsProductInfo.DisplayName, $"空态窗口标题不符: {Title}");
             CheckWindowChrome();
-            checks.Add("PASS SHELL-02: content extends to the window top edge with system border kept and system title bar removed; empty state title PhotoViewer");
+            checks.Add($"PASS SHELL-02: content extends to the window top edge with system border kept and system title bar removed; empty state title {WindowsProductInfo.DisplayName}");
 
             await RunDeploymentChecksAsync(checks);
 
@@ -162,6 +191,7 @@ internal sealed partial class WindowsMainWindow
             await RunExifOrientationChecksAsync(checks);
             await RunFilmstripTakeoverChecksAsync(checks);
             await RunAnalysisChecksAsync(checks);
+            await RunAnalysisTileClearChecksAsync(checks);
             await RunEnhancementChecksAsync(checks);
             await RunSimilarityPanelChecksAsync(checks);
             await RunRatingFailureChecksAsync(checks);
@@ -180,7 +210,7 @@ internal sealed partial class WindowsMainWindow
             _photo.FitToView();
             Close();
             checks.Add("PASS window close: swap chain detached and D3D resources released");
-            Environment.ExitCode = 0;
+            Environment.ExitCode = editionFailure == null ? 0 : 1;
         }
         catch (Exception exception)
         {
@@ -380,10 +410,10 @@ internal sealed partial class WindowsMainWindow
         await CheckContextMenuIconsAsync();
         CheckCommandTooltips();
         checks.Add("PASS SHELL-02 backdrop" + _backdropSummary + ": photo renderer draws the title bar acrylic inside the swap chain (blur -> luminosity blend -> color blend from the theme brush recipe), band pixel differs from / keeps the hue of / is darker than the plain photo, restored when hidden, XAML acrylic only outside the photo band, WinUI noise texture loaded, both sides of the photo/XAML seam fade to the same FallbackColor acrylic value, band region PNG exported");
-        checks.Add("PASS SHELL-02/MENU-06/TOOLBAR-04: hover and persistent title bars, zero caption while hover-hidden, full-width acrylic and 32-DIP row offset at 700 DIP, persistent visibility outside the hot zone and on deactivation, restored hover overlay at 1200 DIP, caption regions ending at the buttons and excluding filter controls only in hover mode, caption text mirrored from folder - file - PhotoViewer title (single-image dedupe), window icon served from icon.ico via WM_GETICON, semantic menu icons including toggles, shared command tooltip format");
+        checks.Add($"PASS SHELL-02/MENU-06/TOOLBAR-04: hover and persistent title bars, zero caption while hover-hidden, full-width acrylic and 32-DIP row offset at 700 DIP, persistent visibility outside the hot zone and on deactivation, restored hover overlay at 1200 DIP, caption regions ending at the buttons and excluding filter controls only in hover mode, caption text mirrored from folder - file - {AppTitle} title (single-image dedupe), window icon served from icon.ico via WM_GETICON, semantic menu icons including toggles, shared command tooltip format");
     }
 
-    /// <summary>动态标题:<c>文件夹名 - 文件名 - PhotoViewer</c>,无文件只有应用名,单图重复名去重。</summary>
+    /// <summary>动态标题:<c>文件夹名 - 文件名 - 产品名</c>,无文件只有应用名,单图重复名去重(产品名按发行版)。</summary>
     /// <returns>检查完成后的任务</returns>
     private async Task CheckDynamicWindowTitleAsync()
     {
@@ -399,13 +429,13 @@ internal sealed partial class WindowsMainWindow
         await OpenPathsAsync(new[] { folder });
         await WaitForSmokeAsync(() => _main.CurrentFile != null && _main.FolderVM.FolderName == folderName,
             "标题素材载入");
-        var expected = $"{folderName} - {_main.CurrentFile!.Name} - PhotoViewer";
+        var expected = $"{folderName} - {_main.CurrentFile!.Name} - {AppTitle}";
         RequireSmoke(Title == expected, $"窗口标题不符: {Title} != {expected}");
 
         var first = _main.CurrentFile.Name;
         Execute("Next");
         await WaitForSmokeAsync(() => _main.CurrentFile?.Name != first, "标题随换图更新");
-        expected = $"{folderName} - {_main.CurrentFile!.Name} - PhotoViewer";
+        expected = $"{folderName} - {_main.CurrentFile!.Name} - {AppTitle}";
         RequireSmoke(Title == expected, $"换图后窗口标题未更新: {Title} != {expected}");
 
         // 单图模式下共享 FolderViewModel 把目录名置成文件名:同名时标题只出现一次。
@@ -414,17 +444,17 @@ internal sealed partial class WindowsMainWindow
         try
         {
             _main.FolderVM.FolderName = current;
-            RequireSmoke(Title == $"{current} - PhotoViewer", $"单图模式标题未去重: {Title}");
+            RequireSmoke(Title == $"{current} - {AppTitle}", $"单图模式标题未去重: {Title}");
         }
         finally
         {
             _main.FolderVM.FolderName = originalFolderName;
         }
 
-        expected = $"{originalFolderName} - {current} - PhotoViewer";
+        expected = $"{originalFolderName} - {current} - {AppTitle}";
         RequireSmoke(Title == expected, $"恢复目录名后标题未回到常规格式: {Title} != {expected}");
 
-        // 文件夹恰好与应用同名(PhotoViewer):文件夹段必须保留,应用名仍作为最后一段。
+        // 文件夹恰好与应用同名:文件夹段必须保留,应用名仍作为最后一段。
         var sameNameFolder = Path.Combine(SmokeOutputDirectory, "fixtures", AppTitle);
         Directory.CreateDirectory(sameNameFolder);
         await Task.Run(() => CreateFixture(Path.Combine(sameNameFolder, "color-srgb.jpg")));
@@ -1447,11 +1477,15 @@ internal sealed partial class WindowsMainWindow
         }, stage, 10);
     }
 
-    /// <summary>相似聚类面板:开关→占位/提取→列表出分数柱条→点选切主图但保留锚点。</summary>
+    /// <summary>
+    /// 相似聚类面板验收。AI 版:开关→占位/提取→列表出分数柱条→点选切主图但保留锚点;
+    /// 标准版没有这个入口,改为核对筛选条实际四项、没有 toggle 空槽,且存储的展开态不被读取(EDITION-02/EDITION-06)。
+    /// </summary>
     /// <param name="checks">验收结果收集器</param>
     /// <returns>检查完成后的任务</returns>
     private async Task RunSimilarityPanelChecksAsync(List<string> checks)
     {
+#if PHOTOVIEWER_DINO
         _main.Settings.LayoutMode = LayoutMode.Col;
         await Task.Delay(200);
         _root.UpdateLayout();
@@ -1486,21 +1520,104 @@ internal sealed partial class WindowsMainWindow
         await Task.Delay(150);
         RequireSmoke(_similarity.Visibility == Visibility.Collapsed, "关闭相似聚类开关后面板仍在");
         checks.Add("PASS similarity panel: toggle → empty state → extract all → scored list → select switches main image without re-anchoring");
+#else
+        _main.Settings.LayoutMode = LayoutMode.Col;
+        await Task.Delay(200);
+        _root.UpdateLayout();
+        RequireSmoke(_filterBar.Children.Count == 4, $"标准版筛选条不是四项: {_filterBar.Children.Count}");
+        RequireSmoke(!WindowsFilterBar.ShowsSimilarityToggle, "标准版筛选条仍声明相似聚类开关");
+        RequireSmoke(!_main.FileVM.IsSimilarityPanelOpen, "标准版仍然读取了相似面板展开态");
+        _main.FileVM.FilterBar.IsSimilarityPanelOpen = true;
+        await Task.Delay(150);
+        _root.UpdateLayout();
+        RequireSmoke(!_main.FileVM.IsSimilarityPanelOpen && _filePane.Children.Count == 2,
+            "标准版写展开态后仍出现了相似面板或空槽");
+        _main.FileVM.FilterBar.IsSimilarityPanelOpen = false;
+        await Task.Delay(150);
+        _root.UpdateLayout();
+        RequireSmoke(!_filterBar.Children.OfType<ToggleButton>().Any(), "标准版筛选条仍有 toggle 控件");
+        checks.Add("PASS standard filter bar: 4 actual items (sort/order/rating/count), no similarity toggle slot, stored expanded state ignored and not written");
+#endif
 
         await RunAnalysisDbPathCheckAsync(checks);
     }
 
     /// <summary>
-    /// 分析栏"已提取"路径:特征已入库时展开分析栏必须直接贴 DB 派生诊断(不走即时计算)。
+    /// <summary>
+    /// 诊断瓦片视图状态:先在当前照片上跑出成功结果,再切到一张无库基线的新图并关掉两侧现算,
+    /// 瓦片必须清掉上一代的位图/矢量场并显示「未提取」——这是视图层断言,不以 presenter 状态代替。
+    /// 覆盖锐度、抖动拖影(AI 版另含 PCA/Cosine)与分析栏直方图。
+    /// </summary>
+    /// <param name="checks">验收结果收集器</param>
+    /// <returns>检查完成后的任务</returns>
+    private async Task RunAnalysisTileClearChecksAsync(List<string> checks)
+    {
+        var folder = Path.Combine(SmokeOutputDirectory, "fixtures", "tile-clear");
+        var firstPath = Path.Combine(folder, "clear-a.jpg");
+        var secondPath = Path.Combine(folder, "clear-b.jpg");
+        await Task.Run(() =>
+        {
+            Directory.CreateDirectory(folder);
+            CreateEditionFixture(firstPath, 7);
+            CreateEditionFixture(secondPath, 8);
+        });
+
+        bool previousVisible = _main.IsAnalysisViewVisible;
+        bool previousDino = _main.Settings.AnalysisImmediateCompute;
+        bool previousCv = _main.Settings.AnalysisImmediateCvCompute;
+        try
+        {
+            _main.IsAnalysisViewVisible = true;
+            await WaitForSmokeAsync(() => _analysis.Visibility == Visibility.Visible, "瓦片清空检查:分析栏可见", 20);
+
+            // 第一步:当前照片上真的算出一套诊断瓦片。
+            SetDinoImmediateForSmoke(true);
+            _main.Settings.AnalysisImmediateCvCompute = true;
+            AnalysisResultCache.InvalidateAll();
+            await OpenPathsAsync(new[] { firstPath });
+            await WaitForSmokeAsync(() => _main.CurrentFile?.Name == "clear-a.jpg" && _session.Image != null,
+                "瓦片清空检查:首图上屏", 30);
+            await WaitForSmokeAsync(() => _analysis.HasDiagnostics, "瓦片清空检查:首图诊断出图", 150);
+            RequireSmoke(_analysis.SharpnessTileHasBitmap && _analysis.ShakeTileHasField,
+                "瓦片清空检查:首图没有留下锐度位图/抖动矢量场");
+
+            // 第二步:换到无库基线的新图并关掉现算 —— 视图必须清掉首图内容并显示未提取。
+            SetDinoImmediateForSmoke(false);
+            _main.Settings.AnalysisImmediateCvCompute = false;
+            AnalysisResultCache.InvalidateAll();
+            await OpenPathsAsync(new[] { secondPath });
+            await WaitForSmokeAsync(() => _main.CurrentFile?.Name == "clear-b.jpg" && _session.Image != null,
+                "瓦片清空检查:次图上屏", 30);
+            await WaitForSmokeAsync(() => _analysis.SharpnessPlaceholder == "未提取", "瓦片清空检查:次图未提取状态", 90);
+            await Task.Delay(250);
+            RequireSmoke(_analysis.DiagnosticViewsCleared,
+                $"换图后诊断瓦片仍显示上一代内容: {_analysis.DiagnosticViewStaleContent}");
+            checks.Add($"PASS tile clear: successful diagnostics on {Path.GetFileName(firstPath)} then a no-baseline photo with both toggles off leave every diagnostic tile empty"
+                + $" (no bitmaps/field, 未提取 visible){(WindowsProductInfo.HasDino ? " incl. PCA/Cosine" : string.Empty)}");
+        }
+        finally
+        {
+            SetDinoImmediateForSmoke(previousDino);
+            _main.Settings.AnalysisImmediateCvCompute = previousCv;
+            _main.IsAnalysisViewVisible = previousVisible;
+            await Task.Delay(150);
+        }
+    }
+
+    /// <summary>
+    /// 分析栏"开关全关"路径。AI 版:特征已入库时展开分析栏必须直接贴 DB 派生诊断(不走即时计算);
     /// 这条路径只有真机库命中才走得到 —— 第三轮进程级崩溃(旧分析适配层建位图)就藏在这里,
     /// 之前的冒烟序列在空库上跑的是即时计算,覆盖不到。
+    /// 标准版:首次启动无数据库,两侧开关都关时诊断保持「未提取」且不起后台提取(EDITION-07)。
     /// </summary>
     /// <param name="checks">验收结果收集器</param>
     /// <returns>检查完成后的任务</returns>
     private async Task RunAnalysisDbPathCheckAsync(List<string> checks)
     {
-        bool immediate = _main.Settings.AnalysisImmediateCompute;
-        _main.Settings.AnalysisImmediateCompute = false;
+        bool immediateDino = _main.Settings.AnalysisImmediateCompute;
+        bool immediateCv = _main.Settings.AnalysisImmediateCvCompute;
+        SetDinoImmediateForSmoke(false);
+        _main.Settings.AnalysisImmediateCvCompute = false;
         try
         {
             if (!_main.IsAnalysisViewVisible)
@@ -1510,14 +1627,38 @@ internal sealed partial class WindowsMainWindow
 
             RequireSmoke(_main.IsAnalysisViewVisible, "展开分析栏失败");
             await WaitForSmokeAsync(() => _analysis.Visibility == Visibility.Visible, "分析栏(已提取路径)可见");
+#if PHOTOVIEWER_DINO
             await WaitForSmokeAsync(() => _analysis.HasDiagnostics, "分析栏 DB 派生诊断", 90);
             RequireSmoke(!_analysis.DiagnosticsPlaceholderVisible, "已提取照片仍显示未提取占位");
             RequireSmoke(_analysis.ShakeLabel.Length > 0, "抖动判定标签为空");
             checks.Add("PASS analysis panel DB path: extracted fixtures render diagnostics straight from photos.db (no immediate compute)");
+#else
+            // 标准版首次启动无数据库(EDITION-07):两侧开关都关时诊断保持「未提取」,且不起任何后台提取。
+            // 用一张从未打开过的素材走真实的首图路径,而不是复用上一段即时计算留下的瓦片状态。
+            AnalysisResultCache.InvalidateAll();
+            var emptyFolder = Path.Combine(SmokeOutputDirectory, "fixtures", "analysis-empty");
+            var emptyPath = Path.Combine(emptyFolder, "empty-library.jpg");
+            await Task.Run(() =>
+            {
+                Directory.CreateDirectory(emptyFolder);
+                CreateEditionFixture(emptyPath, 6);
+            });
+            await OpenPathsAsync(new[] { emptyPath });
+            await WaitForSmokeAsync(() => _main.CurrentFile?.Name == "empty-library.jpg" && _session.Image != null,
+                "标准版空库检查:空库素材上屏", 30);
+            await WaitForSmokeAsync(() => _analysis.SharpnessPlaceholder == "未提取", "标准版空库未提取状态", 60);
+            await Task.Delay(250);
+            RequireSmoke(_analysis.DiagnosticViewsCleared,
+                $"标准版空库诊断瓦片仍显示上一代内容: {_analysis.DiagnosticViewStaleContent}");
+            RequireSmoke(!_analysis.CvDiagnosticsReady && !_analysis.HasDiagnostics,
+                "标准版在开关关闭时仍产出了诊断结果");
+            checks.Add("PASS standard analysis empty-library path: with both immediate toggles off every diagnostic tile view is cleared to 未提取 and no background extraction starts; AI-authored database reuse is covered by the edition roundtrip");
+#endif
         }
         finally
         {
-            _main.Settings.AnalysisImmediateCompute = immediate;
+            SetDinoImmediateForSmoke(immediateDino);
+            _main.Settings.AnalysisImmediateCvCompute = immediateCv;
             if (_main.IsAnalysisViewVisible)
             {
                 _main.ToggleAnalysisView();
@@ -1525,12 +1666,27 @@ internal sealed partial class WindowsMainWindow
         }
     }
 
-    /// <summary>分析栏:可见即出细节预览/直方图,未提取素材在即时计算下跑出 4 张诊断瓦片,瓦片点击重算 cosine。</summary>
+    /// <summary>
+    /// 设置「即时计算 DINO」。标准版没有这个开关,也不写它的存储值——AI 版留下的值必须原样保留(EDITION-06)。
+    /// </summary>
+    /// <param name="value">目标值。</param>
+    private void SetDinoImmediateForSmoke(bool value)
+    {
+#if PHOTOVIEWER_DINO
+        _main.Settings.AnalysisImmediateCompute = value;
+#endif
+    }
+
+    /// <summary>
+    /// 分析栏:可见即出细节预览/直方图,未提取素材在即时计算下跑出诊断瓦片(AI 版四张、标准版两张);
+    /// AI 版瓦片点击重算 cosine,标准版点按只移准星。
+    /// </summary>
     /// <param name="checks">验收结果收集器</param>
     /// <returns>检查完成后的任务</returns>
     private async Task RunAnalysisChecksAsync(List<string> checks)
     {
-        _main.Settings.AnalysisImmediateCompute = true;
+        SetDinoImmediateForSmoke(true);
+        _main.Settings.AnalysisImmediateCvCompute = true;
         await Task.Delay(200);
         _main.ToggleAnalysisView();
         await WaitForSmokeAsync(() => _analysis.Visibility == Visibility.Visible, "分析栏可见");
@@ -1547,7 +1703,11 @@ internal sealed partial class WindowsMainWindow
 
         _analysis.TriggerTileClickForAcceptance(0.25, 0.25);
         await Task.Delay(120);
+#if PHOTOVIEWER_DINO
         RequireSmoke(_analysis.CosineLabel == "Cosine 8,8", $"cosine 参考点未按点击重算: {_analysis.CosineLabel}");
+#else
+        RequireSmoke(_analysis.CosineReferenceForAcceptance == null, "标准版仍存在 cosine 参考点");
+#endif
         RequireSmoke(_analysis.DiagnosticCrosshairVisible, "诊断瓦片未落准星");
         // ANALYSIS-08：直方图与细节预览不显示准星。
         RequireSmoke(!_analysis.HistogramCrosshairVisible, "直方图仍显示准星");
@@ -1563,7 +1723,9 @@ internal sealed partial class WindowsMainWindow
         await Task.Delay(200);
         _main.ToggleAnalysisView();
         await Task.Delay(150);
-        checks.Add("PASS analysis panel: preview+histogram+tiles, immediate compute, crosshair cosine recompute, both orientations");
+        checks.Add(WindowsProductInfo.HasDino
+            ? "PASS analysis panel: preview+histogram+4 diagnostic tiles, immediate compute, crosshair cosine recompute, both orientations"
+            : "PASS analysis panel: preview+histogram+2 CV tiles, immediate CV compute, crosshair without cosine reference, both orientations");
     }
 
     /// <summary>细节预览指针/键盘联动:悬停、触控、混合指针、唯一目标与各清除时机(ANALYSIS-04/ANALYSIS-11)。</summary>
@@ -1580,7 +1742,8 @@ internal sealed partial class WindowsMainWindow
             CreateSonyFocusFixture(otherPath, 120, 220);
         });
 
-        _main.Settings.AnalysisImmediateCompute = false;
+        SetDinoImmediateForSmoke(false);
+        _main.Settings.AnalysisImmediateCvCompute = false;
         await OpenPathsAsync(new[] { focusPath });
         try
         {
@@ -1818,7 +1981,8 @@ internal sealed partial class WindowsMainWindow
     private async Task RunEnhancementChecksAsync(List<string> checks)
     {
         // 增强态 + 分析栏即时计算:验证共享 AnalysisPresenter 对增强图重算诊断(旧实现曾因这条路径崩溃而退回原片诊断)。
-        _main.Settings.AnalysisImmediateCompute = true;
+        SetDinoImmediateForSmoke(true);
+        _main.Settings.AnalysisImmediateCvCompute = true;
         _main.ToggleAnalysisView();
         await WaitForSmokeAsync(() => _analysis.Visibility == Visibility.Visible, "增强检查:分析栏可见", 20);
         await WaitForSmokeAsync(() => _analysis.HasPreviewImage, "增强检查:分析栏预览", 20);
@@ -1836,7 +2000,8 @@ internal sealed partial class WindowsMainWindow
         RequireSmoke(!_enhanceMenuToggle.IsChecked, "退出增强后菜单仍勾选");
         RequireSmoke(_session.Image != null, "退出增强后展示图丢失");
         RequireSmoke(_photo.HasImage, "退出增强后主图消失");
-        _main.Settings.AnalysisImmediateCompute = false;
+        SetDinoImmediateForSmoke(false);
+        _main.Settings.AnalysisImmediateCvCompute = false;
         _main.ToggleAnalysisView();
         await Task.Delay(200);
         checks.Add("PASS enhancement + MENU-06: CLHE frame via PhotoLoadSession; enhanced-frame diagnostics recompute; menu reads 雾天增强 and follows the session; toggle off restores original");
@@ -2666,10 +2831,17 @@ internal sealed partial class WindowsMainWindow
         RequireSmoke(await Task.Run(() => UiDispatcher.InvokeAsync(UiDispatcher.CheckAccess)), "后台 InvokeAsync 未回到 UI 线程");
     }
 
-    /// <summary>经生产资源门面加载完整模型，并用显式 DirectML 会话验证双输出推理。</summary>
-    /// <returns>资源字节的 SHA256，供外部与源模型独立核对。</returns>
-    private static string CheckModel()
+    /// <summary>
+    /// AI 版经生产资源门面加载完整模型，并用显式 DirectML 会话验证双输出推理；
+    /// 标准版不加载模型，改为核对产物里确实没有 DINO 类型、托管/原生推理组件与模型资源(EDITION-07)。
+    /// </summary>
+    /// <returns>
+    /// AI 版返回资源字节的 SHA256 供外部独立核对(发行版资产缺项为 null);
+    /// 标准版返回 null 哈希,并在产物里仍有推理组件时给出缺项说明。
+    /// </returns>
+    private static (string? Hash, string? Failure) CheckModel()
     {
+#if PHOTOVIEWER_DINO
         var bytes = DinoModelResources.TryLoadModelBytes() ?? throw new InvalidOperationException("DINO 模型资源缺失：按 DEV.md「DINOv3 ONNX 模型」导出 dinov3_vits16.onnx 后重跑");
         using var options = new SessionOptions { EnableMemoryPattern = false, ExecutionMode = ExecutionMode.ORT_SEQUENTIAL, IntraOpNumThreads = 1 };
         options.AppendExecutionProvider_DML();
@@ -2681,8 +2853,54 @@ internal sealed partial class WindowsMainWindow
         RequireSmoke(cls.Length == DinoModelResources.FeatureDim && patches.Length == DinoModelResources.PatchTokenCount * DinoModelResources.FeatureDim,
             "DINO 输出维度错误");
         RequireSmoke(cls.All(float.IsFinite) && patches.All(float.IsFinite), "DINO 输出包含非有限值");
-        return Convert.ToHexString(SHA256.HashData(bytes));
+        return (Convert.ToHexString(SHA256.HashData(bytes)), null);
+#else
+        return (null, CheckStandardEditionHasNoDino());
+#endif
     }
+
+#if !PHOTOVIEWER_DINO
+    /// <summary>
+    /// 标准版产物核对：无 DINO 类型、无 ONNX Runtime/DirectML、无模型资源(按实际类型与文件判定)。
+    /// 类型与模型缺失是硬失败(启动即抛)；包内仍带推理原生组件返回缺项说明,由冒烟报 FAIL 并留待打包修复。
+    /// </summary>
+    /// <returns>产物缺项说明;标准版产物干净时为 null。</returns>
+    private static string? CheckStandardEditionHasNoDino()
+    {
+        var core = typeof(AnalysisPresenter).Assembly;
+        string[] dinoTypes =
+        [
+            "PhotoViewer.Core.AI.DinoDiagnosticPresenter",
+            "PhotoViewer.Core.AI.DinoFeatureCache",
+            "PhotoViewer.Core.AI.DinoFeatureExtractor",
+            "PhotoViewer.Core.AI.DinoModelResources",
+            "PhotoViewer.Core.AI.FolderFeatureIndexer",
+            "PhotoViewer.Core.AI.PatchHeatmap",
+            "PhotoViewer.Core.AI.SimilarityService",
+            "PhotoViewer.ViewModels.Main.File.SimilarityPanelViewModel",
+            "PhotoViewer.ViewModels.Tools.DinoDebugViewModel",
+        ];
+        var present = dinoTypes.Where(name => core.GetType(name) != null).ToList();
+        RequireSmoke(present.Count == 0, $"标准版仍含 DINO/相似聚类类型: {string.Join(",", present)}");
+        var shell = typeof(WindowsMainWindow).Assembly;
+        RequireSmoke(shell.GetType("PhotoViewer.Windows.Native.WindowsSimilarityPanel") == null,
+            "标准版仍含原生相似聚类面板类型");
+        var shipped = new[] { "onnxruntime.dll", "onnxruntime_providers_shared.dll", "DirectML.dll" }
+            .Where(name => File.Exists(Path.Combine(AppContext.BaseDirectory, name)))
+            .ToArray();
+        if (shipped.Length > 0)
+        {
+            return "标准版输出仍带推理原生组件: " + string.Join(",", shipped);
+        }
+
+        var model = Path.Combine(AppContext.BaseDirectory, "dinov3_vits16.onnx");
+        RequireSmoke(!File.Exists(model), "标准版输出仍带 DINO 模型文件");
+        RequireSmoke(core.GetManifestResourceNames().All(name => !name.EndsWith(".onnx", StringComparison.OrdinalIgnoreCase)),
+            "标准版程序集仍嵌入 ONNX 模型资源");
+        return null;
+    }
+#endif
+
 
     /// <summary>创建自有大幅 JPEG 棋盘图，覆盖代理解码及 Full 升级。</summary>
     /// <param name="path">验收专用照片路径。</param>

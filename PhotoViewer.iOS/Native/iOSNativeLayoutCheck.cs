@@ -178,7 +178,8 @@ internal static class iOSNativeLayoutCheck
         foreach (var scenario in cases)
         {
             double fileMain = MainScreenLayout.FileBarMainLength(scenario.Row,
-                MainScreenLayout.FilterBarMainLength(scenario.Row, (double)safe.Top + MainScreenLayout.FilterMargin), scenario.Row ? 0 : (double)safe.Left);
+                MainScreenLayout.FilterBarMainLength(scenario.Row, (double)safe.Top + MainScreenLayout.FilterMargin,
+                    iOSFilterBar.ShowsSimilarityToggle), scenario.Row ? 0 : (double)safe.Left);
             double controlMain = MainScreenLayout.ControlBarMainLength(scenario.Row ? 60 : 244);
             var panes = iOSMainScreenLayout.Compute(scenario.Row, scenario.Width, scenario.Height, safe, fileMain, controlMain, 0);
             if ((double)panes.Photo.Width < 1 || (double)panes.Photo.Height < 1)
@@ -285,9 +286,12 @@ internal static class iOSNativeLayoutCheck
     /// <param name="row">是否行布局。</param>
     /// <returns>筛选条主轴长度。</returns>
     private static double FilterMain(iOSNativeRootViewController root, bool row)
-        => row ? MainScreenLayout.FilterBarMainLength(true, 0) : (double)root.FilterBar.Frame.Height;
+        => row ? MainScreenLayout.FilterBarMainLength(true, 0, iOSFilterBar.ShowsSimilarityToggle) : (double)root.FilterBar.Frame.Height;
 
-    /// <summary>核对筛选条：三个 90×32 下拉、90×27 相似聚类 toggle（显示）、计数自然宽度、5 点间距与居中。</summary>
+    /// <summary>
+    /// 核对筛选条：三个 90×32 下拉与计数自然宽度、5 点间距与居中；
+    /// AI 版另有 90×27 相似聚类 toggle，标准版按四项居中且不存在该控件。
+    /// </summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="row">是否行布局。</param>
     /// <param name="scope">报告范围标签。</param>
@@ -301,9 +305,6 @@ internal static class iOSNativeLayoutCheck
             RequireFrame(control.Frame, new CGRect(control.Frame.X, control.Frame.Y, MainScreenLayout.FilterControlWidth, MainScreenLayout.FilterControlHeight),
                 $"{scope} 筛选控件未保持 90×32");
         }
-        RequireFrame(bar.SimilarityToggle.Frame, new CGRect(bar.SimilarityToggle.Frame.X, bar.SimilarityToggle.Frame.Y, MainScreenLayout.FilterControlWidth, MainScreenLayout.FilterToggleHeight),
-            $"{scope} 相似聚类 toggle 未保持 90×27");
-        if (bar.SimilarityToggle.Hidden) throw new InvalidOperationException($"{scope} I5 起相似聚类入口必须显示（面板已落地，SCOPE-01 解禁）");
         if (Math.Abs((double)bar.CountLabel.Frame.Width - bar.CountWidth) > Exact || bar.CountWidth <= 0)
             throw new InvalidOperationException($"{scope} 计数文本宽度不是自然宽度：{bar.CountLabel.Frame.Width}/{bar.CountWidth}");
         for (int index = 1; index < controls.Length; index++)
@@ -314,19 +315,25 @@ internal static class iOSNativeLayoutCheck
             if (Math.Abs(gap - MainScreenLayout.FilterGap) > Exact)
                 throw new InvalidOperationException($"{scope} 筛选控件间距不是 5 点：{controls[index].Frame}");
         }
+#if PHOTOVIEWER_DINO
+        if (bar.SimilarityToggle is not { } toggle)
+            throw new InvalidOperationException($"{scope} AI 版缺少相似聚类 toggle");
+        RequireFrame(toggle.Frame, new CGRect(toggle.Frame.X, toggle.Frame.Y, MainScreenLayout.FilterControlWidth, MainScreenLayout.FilterToggleHeight),
+            $"{scope} 相似聚类 toggle 未保持 90×27");
+        if (toggle.Hidden) throw new InvalidOperationException($"{scope} AI 版相似聚类入口必须显示");
         if (row)
         {
             if (Math.Abs((double)bar.CountLabel.Frame.X - (double)controls[2].Frame.Right - MainScreenLayout.FilterGap) > Exact)
                 throw new InvalidOperationException($"{scope} 计数未紧随星级筛选 5 点：{bar.CountLabel.Frame}");
-            if (Math.Abs((double)bar.SimilarityToggle.Frame.X - (double)bar.CountLabel.Frame.Right - MainScreenLayout.FilterGap) > Exact)
-                throw new InvalidOperationException($"{scope} 相似聚类 toggle 未紧随计数 5 点：{bar.SimilarityToggle.Frame}");
-            double groupCenter = ((double)controls[0].Frame.Left + (double)bar.SimilarityToggle.Frame.Right) / 2;
+            if (Math.Abs((double)toggle.Frame.X - (double)bar.CountLabel.Frame.Right - MainScreenLayout.FilterGap) > Exact)
+                throw new InvalidOperationException($"{scope} 相似聚类 toggle 未紧随计数 5 点：{toggle.Frame}");
+            double groupCenter = ((double)controls[0].Frame.Left + (double)toggle.Frame.Right) / 2;
             if (Math.Abs(groupCenter - (double)bar.Bounds.Width / 2) > Exact)
                 throw new InvalidOperationException($"{scope} 五项未在安全内容区整组居中");
-            foreach (var control in controls.Cast<UIView>().Concat([bar.CountLabel, bar.SimilarityToggle]))
+            foreach (var control in controls.Cast<UIView>().Concat([bar.CountLabel, toggle]))
                 if (Math.Abs((double)control.Frame.GetMidY() - (double)bar.Bounds.Height / 2) > Exact)
                     throw new InvalidOperationException($"{scope} 筛选项交叉轴未居中：{control.Frame}");
-            foreach (var control in controls.Append(bar.SimilarityToggle))
+            foreach (var control in controls.Append(toggle))
                 if (control.Configuration == null || control.Layer.BorderWidth != 0)
                     throw new InvalidOperationException($"{scope} 筛选按钮未使用单一原生configuration");
         }
@@ -334,8 +341,8 @@ internal static class iOSNativeLayoutCheck
         {
             if (Math.Abs((double)bar.CountLabel.Frame.Y - (double)controls[2].Frame.Bottom - MainScreenLayout.FilterGap) > Exact)
                 throw new InvalidOperationException($"{scope} 计数未紧随星级筛选 5 点：{bar.CountLabel.Frame}");
-            if (Math.Abs((double)bar.SimilarityToggle.Frame.Y - (double)bar.CountLabel.Frame.Bottom - MainScreenLayout.FilterGap) > Exact)
-                throw new InvalidOperationException($"{scope} 相似聚类 toggle 未紧随计数 5 点：{bar.SimilarityToggle.Frame}");
+            if (Math.Abs((double)toggle.Frame.Y - (double)bar.CountLabel.Frame.Bottom - MainScreenLayout.FilterGap) > Exact)
+                throw new InvalidOperationException($"{scope} 相似聚类 toggle 未紧随计数 5 点：{toggle.Frame}");
             if (Math.Abs((double)bar.Bounds.Width - MainScreenLayout.FileBarContentWidth) > .5)
                 throw new InvalidOperationException($"{scope} 左右布局文件栏内容宽不是 116 点：{bar.Bounds.Width}");
             foreach (var control in controls)
@@ -349,6 +356,44 @@ internal static class iOSNativeLayoutCheck
                 throw new InvalidOperationException($"{scope} 左右布局筛选条中心不在 58：{center}");
         }
         lines.Add($"PASS {scope} 筛选条：3×(90×32) + 计数 {bar.CountWidth:0.##} 自然宽 + toggle 90×27(显示)；间距 5、{(row ? "五项整组在安全内容区水平居中、交叉轴居中" : "116 栏内居中、纵向节距 37")}");
+#else
+        if (bar.SimilarityToggle != null)
+            throw new InvalidOperationException($"{scope} 标准版不应创建相似聚类 toggle");
+        if (row)
+        {
+            if (Math.Abs((double)bar.CountLabel.Frame.X - (double)controls[2].Frame.Right - MainScreenLayout.FilterGap) > Exact)
+                throw new InvalidOperationException($"{scope} 计数未紧随星级筛选 5 点：{bar.CountLabel.Frame}");
+            double groupCenter = ((double)controls[0].Frame.Left + (double)bar.CountLabel.Frame.Right) / 2;
+            if (Math.Abs(groupCenter - (double)bar.Bounds.Width / 2) > Exact)
+                throw new InvalidOperationException($"{scope} 四项未在安全内容区整组居中");
+            foreach (var control in controls.Cast<UIView>().Concat([bar.CountLabel]))
+                if (Math.Abs((double)control.Frame.GetMidY() - (double)bar.Bounds.Height / 2) > Exact)
+                    throw new InvalidOperationException($"{scope} 筛选项交叉轴未居中：{control.Frame}");
+            foreach (var control in controls)
+                if (control.Configuration == null || control.Layer.BorderWidth != 0)
+                    throw new InvalidOperationException($"{scope} 筛选按钮未使用单一原生configuration");
+            if (Math.Abs((double)bar.Frame.Height - (MainScreenLayout.FilterControlHeight + MainScreenLayout.FilterMargin * 2)) > .5)
+                throw new InvalidOperationException($"{scope} 行布局筛选条高度仍按含 toggle 的口径：{bar.Frame.Height}");
+        }
+        else
+        {
+            if (Math.Abs((double)bar.CountLabel.Frame.Y - (double)controls[2].Frame.Bottom - MainScreenLayout.FilterGap) > Exact)
+                throw new InvalidOperationException($"{scope} 计数未紧随星级筛选 5 点：{bar.CountLabel.Frame}");
+            if (Math.Abs((double)bar.Bounds.Width - MainScreenLayout.FileBarContentWidth) > .5)
+                throw new InvalidOperationException($"{scope} 左右布局文件栏内容宽不是 116 点：{bar.Bounds.Width}");
+            foreach (var control in controls)
+                if (Math.Abs((double)control.Frame.X - (MainScreenLayout.FileBarContentWidth - MainScreenLayout.FilterControlWidth) / 2) > Exact)
+                    throw new InvalidOperationException($"{scope} 左右布局筛选控件未在 116 栏内居中：{control.Frame}");
+            if (Math.Abs((double)controls[1].Frame.Y - (double)controls[0].Frame.Y - 37) > Exact ||
+                Math.Abs((double)controls[2].Frame.Y - (double)controls[1].Frame.Y - 37) > Exact)
+                throw new InvalidOperationException($"{scope} 左右布局筛选控件纵向节距不是 37：{controls[2].Frame}");
+            double expected = MainScreenLayout.FilterBarMainLength(false,
+                (double)root.View!.SafeAreaInsets.Top + MainScreenLayout.FilterMargin, false);
+            if (Math.Abs((double)bar.Frame.Height - expected) > .5)
+                throw new InvalidOperationException($"{scope} 列布局筛选条仍在计数后预留 toggle 高度：{bar.Frame.Height}/{expected}");
+        }
+        lines.Add($"PASS {scope} 筛选条：3×(90×32) + 计数 {bar.CountWidth:0.##} 自然宽（无相似聚类 toggle）；间距 5、{(row ? "四项整组在安全内容区水平居中、交叉轴居中" : "116 栏内居中、纵向节距 37、计数后不留开关高度")}");
+#endif
     }
 
     /// <summary>核对控制栏：分组数量/子项与共享设置一致、分组外边距与不重叠、子控件尺寸、评分方向随布局方向。</summary>

@@ -19,7 +19,7 @@ using PhotoViewer.ViewModels.Tools;
 namespace PhotoViewer.Android.Native;
 
 /// <summary>
-/// Android 原生工具页（A5）：半屏 BottomSheet，列表页只有 EXIF 详情 / DINO 诊断（照片数据统计为 Windows 专属）；
+/// Android 原生工具页（A5）：半屏 BottomSheet，列表页只有 EXIF 详情与按版本提供的诊断页（照片数据统计为 Windows 专属）；
 /// 子页在同一个 sheet 内切换，导航状态写共享 <see cref="ToolsViewModel"/>，关闭后对象保留可重开。
 /// </summary>
 public sealed class AndroidToolsPresenter
@@ -42,7 +42,7 @@ public sealed class AndroidToolsPresenter
     /// <summary>当前工具页是否打开。</summary>
     public static bool IsOpen => _current != null;
 
-    /// <summary>当前展示页标识（验收用）：root / exif / dino；未打开为 null。</summary>
+    /// <summary>当前展示页标识（验收用）：root / exif / diagnostic；未打开为 null。</summary>
     internal static string? CurrentPageForChecks => _current?.Page;
 
     /// <summary>当前工具浮层视图与对话框（验收读取初始 sheet 状态与位置）。</summary>
@@ -98,7 +98,7 @@ public sealed class AndroidToolsPresenter
             {
                 if (ReferenceEquals(_current, content)) _current = null;
                 if (ReferenceEquals(_currentDialog, dialog)) _currentDialog = null;
-                // TOOLS-01/TOOLS-06：关闭浮层即取消在途 DINO 任务，主窗口入口据此回到首页。
+                // TOOLS-01/TOOLS-06：关闭浮层即取消在途诊断任务，主窗口入口据此回到首页。
                 tools.IsPresented = false;
                 tools.Deactivate();
             };
@@ -140,11 +140,11 @@ internal sealed class AndroidToolsSheetView : FrameLayout
     private readonly TextView _back;
     private bool _disposed;
 
-    /// <summary>当前页面标识（root/exif/dino）。</summary>
+    /// <summary>当前页面标识（root/exif/diagnostic）。</summary>
     internal string Page => _tools.CurrentTool switch
     {
         ExifDetailViewModel => "exif",
-        DinoDebugViewModel => "dino",
+        _ when ReferenceEquals(_tools.CurrentTool, _tools.DiagnosticDebug) => "diagnostic",
         _ => "root",
     };
 
@@ -261,9 +261,9 @@ internal sealed class AndroidToolsSheetView : FrameLayout
                 _title.Text = "EXIF 详情";
                 BuildExifPage(exif);
                 break;
-            case DinoDebugViewModel dino:
-                _title.Text = "DINO 诊断";
-                BuildDinoPage(dino);
+            case var tool when ReferenceEquals(tool, _tools.DiagnosticDebug):
+                _title.Text = AndroidAppCapabilities.DiagnosticName;
+                BuildDiagnosticPage();
                 break;
             default:
                 _title.Text = "工具";
@@ -282,9 +282,15 @@ internal sealed class AndroidToolsSheetView : FrameLayout
                 _tools.OpenExifDetail();
                 BuildPage();
             }),
-            Category("DINO 诊断", "PCA-RGB / Cosine / 锐度 / 抖动拖影与刚体拟合", () =>
+            Category(AndroidAppCapabilities.DiagnosticName,
+#if PHOTOVIEWER_DINO
+                "PCA-RGB / Cosine / 锐度 / 抖动拖影与刚体拟合",
+#else
+                "锐度 / 抖动拖影与刚体拟合",
+#endif
+                () =>
             {
-                _tools.OpenDinoDebug();
+                _tools.OpenDiagnostic();
                 BuildPage();
             }),
         };
@@ -370,30 +376,34 @@ internal sealed class AndroidToolsSheetView : FrameLayout
         return row;
     }
 
-    /// <summary>DINO 诊断页：状态、5 张诊断瓦片（3+2）、刚体拟合文本。</summary>
-    private void BuildDinoPage(DinoDebugViewModel dino)
+    /// <summary>诊断页：AI 版五瓦片，标准版三瓦片，刚体拟合文本保持在网格下方。</summary>
+    private void BuildDiagnosticPage()
     {
+#if PHOTOVIEWER_DINO
         var presenter = _tools.DinoPresenter;
+#else
+        var presenter = _tools.CvPresenter;
+#endif
         var status = Text(presenter.Status, 12, AndroidUiTheme.TextSecondary);
         status.SetPadding(0, 0, 0, (int)AndroidUiTheme.Dp(_activity, 10));
         Add(status);
         if (presenter.IsBusy) Add(Text("计算中…", 12, AndroidUiTheme.TextSecondary));
-        var grid = new AndroidDinoGridView(_activity, presenter);
+        var grid = new AndroidDiagnosticGridView(_activity, presenter);
         var height = (int)((_content.Width > 0 ? _content.Width : Resources?.DisplayMetrics?.WidthPixels ?? 1080) * .62);
         Add(grid, height);
         var rigid = Text(presenter.RigidMotionText, 12, AndroidUiTheme.TextPrimary);
         rigid.SetPadding(0, (int)AndroidUiTheme.Dp(_activity, 12), 0, 0);
         rigid.SetTextIsSelectable(true);
         Add(rigid);
-        presenter.Changed -= OnDinoChanged;
-        presenter.Changed += OnDinoChanged;
-        presenter.CrosshairChanged -= OnDinoChanged;
-        presenter.CrosshairChanged += OnDinoChanged;
+        presenter.Changed -= OnDiagnosticChanged;
+        presenter.Changed += OnDiagnosticChanged;
+        presenter.CrosshairChanged -= OnDiagnosticChanged;
+        presenter.CrosshairChanged += OnDiagnosticChanged;
     }
 
-    private void OnDinoChanged()
+    private void OnDiagnosticChanged()
     {
-        if (_tools.CurrentTool is DinoDebugViewModel) Post(BuildPage);
+        if (ReferenceEquals(_tools.CurrentTool, _tools.DiagnosticDebug)) Post(BuildPage);
     }
 
     private void Add(View view, int? height = null)
@@ -483,10 +493,14 @@ internal sealed class AndroidToolsSheetView : FrameLayout
     }
 }
 
-/// <summary>DINO 诊断瓦片网格（3 列 + 2 行），自绘位图、角标、说明与准星，点按回传归一化坐标。</summary>
-internal sealed class AndroidDinoGridView : View
+/// <summary>诊断瓦片网格（3 列），自绘位图、角标、说明与准星，点按回传归一化坐标。</summary>
+internal sealed class AndroidDiagnosticGridView : View
 {
+#if PHOTOVIEWER_DINO
     private readonly DinoDiagnosticPresenter _presenter;
+#else
+    private readonly CvDiagnosticPresenter _presenter;
+#endif
     private readonly Paint _fill;
     private readonly Paint _border;
     private readonly Paint _label;
@@ -494,7 +508,11 @@ internal sealed class AndroidDinoGridView : View
     private readonly Paint _crosshair;
     private readonly Dictionary<AnalysisTile, RectF> _frames = [];
 
-    public AndroidDinoGridView(Context context, DinoDiagnosticPresenter presenter) : base(context)
+#if PHOTOVIEWER_DINO
+    public AndroidDiagnosticGridView(Context context, DinoDiagnosticPresenter presenter) : base(context)
+#else
+    public AndroidDiagnosticGridView(Context context, CvDiagnosticPresenter presenter) : base(context)
+#endif
     {
         _presenter = presenter;
         _fill = AndroidUiTheme.Paint(Color.ParseColor("#1E1E1E")!);
@@ -506,7 +524,7 @@ internal sealed class AndroidDinoGridView : View
         Clickable = true;
     }
 
-    /// <summary>按 3 列排布 5 张瓦片并绘制。</summary>
+    /// <summary>按 3 列排布当前版本的诊断瓦片。</summary>
     protected override void OnDraw(Canvas canvas)
     {
         base.OnDraw(canvas);
@@ -561,10 +579,10 @@ internal sealed class AndroidDinoGridView : View
     {
         var source = tile.Source;
         if (source == null) return null;
-        return AndroidBitmapConverter.FromDecodedImage($"dino-{source.GetHashCode()}-{source.Width}x{source.Height}", source);
+        return AndroidBitmapConverter.FromDecodedImage($"diagnostic-{source.GetHashCode()}-{source.Width}x{source.Height}", source);
     }
 
-    /// <summary>点按瓦片：落准星并重算 cosine。</summary>
+    /// <summary>点按瓦片：落准星并交给当前诊断 presenter 处理。</summary>
     /// <param name="e">事件。</param>
     /// <returns>消费。</returns>
     public override bool OnTouchEvent(MotionEvent? e)

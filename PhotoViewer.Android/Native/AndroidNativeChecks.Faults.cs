@@ -32,8 +32,9 @@ namespace PhotoViewer.Android.Native;
 /// <summary>
 /// <c>--es pv-check faults</c>（验收专用）：用 App 自有素材与测试替身核对此前只能手验/代码核对的失败与边界项——
 /// IMAGE-08 八方向、SCOPE-04 RAW 全分辨率、TOOLBAR-03 外部存储评分写回、RATING-04 冲突指示、
-/// IMAGE-03 Full 失败、STATE-02/OPEN-03 打开失败、STATE-03 评分写回失败、SETTINGS-14 损坏设置、SIM-10 列表态错误标签、
-/// ANALYSIS-10 DINO 失败、SCOPE-02 内存告警关闭增强、OPEN-06 外部打开。
+/// IMAGE-03 Full 失败、STATE-02/OPEN-03 打开失败、STATE-03 评分写回失败、SETTINGS-14 损坏设置、
+/// ANALYSIS-10 诊断失败、SCOPE-03 现算边界、STATE-04 数据库不可用、SCOPE-02 内存告警关闭增强、OPEN-06 外部打开。
+/// AI 版另核对 SIM-10 相似列表错误与 DINO/CV 独立失败；标准版把同类步骤收在 CV 能力内（无 DINO 任务）。
 /// 素材只写 App 内部目录与 <c>GetExternalFilesDir</c>；产品代码行为不作任何改动。
 /// </summary>
 internal static partial class AndroidNativeChecks
@@ -53,8 +54,12 @@ internal static partial class AndroidNativeChecks
         await RunStepAsync("STATE-02/OPEN-03", CheckOpenFailureAsync);
         await RunStepAsync("STATE-03", CheckRatingFailureAsync);
         await RunStepAsync("SETTINGS-14", CheckCorruptSettingsAsync);
+#if PHOTOVIEWER_DINO
         await RunStepAsync("SIM-10", CheckSimilarityListErrorAsync);
         await RunStepAsync("ANALYSIS-10", CheckAnalysisFailureAsync);
+#else
+        await RunStepAsync("EDITION-04", CheckAnalysisFailureAsync);
+#endif
         await RunStepAsync("SCOPE-03", CheckScopeBoundaryAsync);
         await RunStepAsync("STATE-04", CheckDatabaseUnavailableAsync);
         await RunStepAsync("SCOPE-02", CheckMemoryTrimAsync);
@@ -669,6 +674,7 @@ internal static partial class AndroidNativeChecks
         }
     }
 
+#if PHOTOVIEWER_DINO
     /// <summary>SIM-10：列表态（有相似项）也要把提取错误显示在停靠动作区。</summary>
     private static async Task CheckSimilarityListErrorAsync()
     {
@@ -702,8 +708,12 @@ internal static partial class AndroidNativeChecks
             await Task.Delay(300);
         }
     }
+#endif
 
-    /// <summary>ANALYSIS-10：DINO 失败后清掉诊断图并显示独立失败文案，不停在“计算中…”。</summary>
+#if PHOTOVIEWER_DINO
+    /// <summary>
+    /// ANALYSIS-10（AI 版）：DINO 失败只清 DINO 诊断图并显示独立失败文案，独立的 CV 现算仍然成功。
+    /// </summary>
     private static async Task CheckAnalysisFailureAsync()
     {
         var activity = _activity!;
@@ -715,38 +725,117 @@ internal static partial class AndroidNativeChecks
         File.Copy(source, path, true);
         byte[]? originalModel = DinoModelResources.TryLoadModelBytes();
         bool previousImmediate = main.Settings.AnalysisImmediateCompute;
+        bool previousCv = main.Settings.AnalysisImmediateCvCompute;
         bool previousVisible = main.IsAnalysisViewVisible;
         try
         {
             DinoFeatureExtractor.ConfigureModelOverride([1, 2, 3]);
             // 覆盖只在会话首次创建前生效：先卸载已有会话，保证下一次推理用注入的坏模型建会话。
             DinoFeatureExtractor.UnloadSession();
+            // EDITION-03：DINO 与 CV 是两个独立开关，注入 DINO 失败时不得把 CV 一起判失败。
             main.Settings.AnalysisImmediateCompute = true;
+            main.Settings.AnalysisImmediateCvCompute = true;
             main.IsAnalysisViewVisible = true;
             await main.FolderVM.OpenImageAsync(new AndroidFileRef(path));
             await WaitAsync(() => main.CurrentFile?.Name == "analysis-fail.jpg" && session.Image != null, "分析失败素材上屏", 25000);
 
-            var tiles = root.AnalysisPresenterForChecks.Tiles;
-            var diagnostics = tiles.Where(tile => tile.Kind == AnalysisTileKind.Diagnostic).ToList();
-            await WaitAsync(() => diagnostics.Count > 0 && diagnostics.All(tile => tile.Placeholder == "分析失败"),
-                "分析失败占位", 35000);
-            bool noSource = diagnostics.All(tile => tile.Source == null);
-            Check("ANALYSIS-10 DINO 失败清图并显示文案", noSource,
-                $"diagnostics={diagnostics.Count} placeholders={string.Join("/", diagnostics.Select(tile => tile.Placeholder))} "
-                + $"withSource={diagnostics.Count(tile => tile.Source != null)}");
+            var presenter = root.AnalysisPresenterForChecks;
+            var dinoTiles = presenter.Tiles.Where(tile => tile.ShortLabel is "DINO PCA"
+                || tile.ShortLabel.StartsWith("Cosine", StringComparison.Ordinal)).ToList();
+            await WaitAsync(() => dinoTiles.Count == 2 && dinoTiles.All(tile => tile.Placeholder == "分析失败"),
+                "DINO 分析失败占位", 35000);
+            Check("ANALYSIS-10 DINO 失败清图并显示文案", dinoTiles.All(tile => tile.Source == null),
+                $"dinoTiles={dinoTiles.Count} placeholders={string.Join("/", dinoTiles.Select(tile => tile.Placeholder))} "
+                + $"withSource={dinoTiles.Count(tile => tile.Source != null)}");
+
+            await WaitAsync(() => presenter.SharpnessTile.Source != null && presenter.ShakeTile.ShakeField != null,
+                "DINO 失败时独立 CV 现算", 90000);
+            Check("ANALYSIS-10 DINO 失败不连带 CV",
+                presenter.SharpnessTile.Placeholder != "分析失败" && presenter.ShakeTile.Placeholder != "分析失败",
+                $"sharpness={presenter.SharpnessTile.Placeholder ?? "图"} shake={presenter.ShakeTile.Placeholder ?? "矢量"}");
         }
         finally
         {
             main.IsAnalysisViewVisible = previousVisible;
             main.Settings.AnalysisImmediateCompute = previousImmediate;
+            main.Settings.AnalysisImmediateCvCompute = previousCv;
             if (originalModel != null) DinoFeatureExtractor.ConfigureModelOverride(originalModel);
             // 丢掉用坏模型建起来的会话，后续推理按恢复后的模型重建。
             DinoFeatureExtractor.UnloadSession();
         }
     }
-
+#else
     /// <summary>
-    /// SCOPE-03：只有用户显式批量提取才写特征库。即时计算与「雾天增强」的产物只进进程缓存——
+    /// EDITION-04（标准版）：CV 诊断页三瓦片对当前照片显式现算，只进进程缓存、不写特征库；
+    /// 全程没有 DINO 瓦片或模型错误状态。
+    /// </summary>
+    private static async Task CheckAnalysisFailureAsync()
+    {
+        var activity = _activity!;
+        var main = _main!;
+        var session = _session!;
+        var root = _root!;
+        string source = EnsureFaultGoodJpeg(activity);
+        string path = IOPath.Combine(IOPath.GetDirectoryName(source)!, "cv-diagnostic.jpg");
+        File.Copy(source, path, true);
+        bool previousVisible = main.IsAnalysisViewVisible;
+        try
+        {
+            await main.FolderVM.OpenImageAsync(new AndroidFileRef(path));
+            await WaitAsync(() => main.CurrentFile?.Name == "cv-diagnostic.jpg" && session.Image != null, "CV 诊断素材上屏", 25000);
+            var file = main.CurrentFile ?? throw new InvalidOperationException("缺少当前照片");
+            var groups = await FingerprintGrouping.GroupByFingerprintAsync(new[] { file });
+            string fingerprint = groups.FirstOrDefault()?.Fingerprint ?? string.Empty;
+            var (photosBefore, featuresBefore, patchesBefore) = await CountFingerprintRowsAsync(fingerprint);
+
+            main.OpenToolsWindow();
+            await Task.Delay(600);
+            main.Tools.OpenDiagnostic();
+            await Task.Delay(300);
+            var presenter = main.Tools.CvPresenter;
+            Check("CV 诊断入口打开", ReferenceEquals(main.Tools.CurrentTool, main.Tools.DiagnosticDebug)
+                && AndroidToolsPresenter.CurrentPageForChecks == "diagnostic",
+                $"tool={main.Tools.CurrentTool?.GetType().Name ?? "null"} page={AndroidToolsPresenter.CurrentPageForChecks}");
+            Check("CV 诊断固定三瓦片", presenter.Tiles.Count == 3,
+                $"{presenter.Tiles.Count} labels=[{string.Join("/", presenter.Tiles.Select(tile => tile.ShortLabel))}]");
+            await WaitAsync(() => presenter.ThumbnailTile.Source != null && presenter.SharpnessTile.Source != null
+                && presenter.ShakeTile.ShakeField != null, "CV 诊断三瓦片出图", 90000);
+            Check("CV 诊断三瓦片可现算",
+                presenter.Status == file.Name && !presenter.IsBusy && presenter.RigidMotionText != "未加载",
+                $"status={presenter.Status} busy={presenter.IsBusy} rigid={presenter.RigidMotionText}");
+            Check("CV 诊断无 DINO/模型错误状态",
+                !presenter.Status.Contains("DINO", StringComparison.Ordinal)
+                && !presenter.Status.Contains("模型", StringComparison.Ordinal)
+                && !presenter.Status.StartsWith("失败", StringComparison.Ordinal),
+                $"status={presenter.Status}");
+
+            var diagnostics = root.AnalysisPresenterForChecks.Tiles
+                .Where(tile => tile.Kind == AnalysisTileKind.Diagnostic).ToList();
+            Check("标准版分析栏无 DINO 瓦片",
+                diagnostics.Count == 2 && !diagnostics.Any(tile => tile.ShortLabel.Contains("DINO", StringComparison.Ordinal)
+                    || tile.ShortLabel.StartsWith("Cosine", StringComparison.Ordinal)),
+                $"{diagnostics.Count} labels=[{string.Join("/", diagnostics.Select(tile => tile.ShortLabel))}]");
+            var (photosAfter, featuresAfter, patchesAfter) = await CountFingerprintRowsAsync(fingerprint);
+            Check("CV 诊断现算不写特征库",
+                photosAfter == photosBefore && featuresAfter == featuresBefore && patchesAfter == patchesBefore
+                && !HasXmpSidecar(path),
+                $"before={photosBefore}/{featuresBefore}/{patchesBefore} "
+                + $"after={photosAfter}/{featuresAfter}/{patchesAfter} xmp={HasXmpSidecar(path)}");
+        }
+        finally
+        {
+            main.Tools.ShowList();
+            await Task.Delay(200);
+            AndroidToolsPresenter.HandleBack();
+            main.IsAnalysisViewVisible = previousVisible;
+            await Task.Delay(300);
+        }
+    }
+#endif
+
+#if PHOTOVIEWER_DINO
+    /// <summary>
+    /// SCOPE-03（AI 版）：只有用户显式批量提取才写特征库。即时计算与「雾天增强」的产物只进进程缓存——
     /// 不入库、不写 XMP sidecar、不改照片字节；显式提取后三路齐备；清库同时清进程缓存，
     /// 诊断瓦片回到「未提取」而不再现算。
     /// </summary>
@@ -757,11 +846,14 @@ internal static partial class AndroidNativeChecks
         var session = _session!;
         var root = _root!;
         bool previousImmediate = main.Settings.AnalysisImmediateCompute;
+        bool previousCv = main.Settings.AnalysisImmediateCvCompute;
         bool previousVisible = main.IsAnalysisViewVisible;
         var (folder, first, second) = EnsureScopeFixture(activity);
         try
         {
+            // EDITION-03：两侧是独立开关；本步核对两类现算产物的入库边界，因此显式都开启。
             main.Settings.AnalysisImmediateCompute = true;
+            main.Settings.AnalysisImmediateCvCompute = true;
             main.IsAnalysisViewVisible = true;
             await OpenFolderAndWaitAsync(folder);
             Console.WriteLine("[NativeCheck] SCOPE-03 素材上屏");
@@ -787,7 +879,8 @@ internal static partial class AndroidNativeChecks
             {
                 Check("SCOPE-03 即时计算诊断瓦片出图", false,
                     $"{exception.Message} placeholders=[{DescribeDiagnostics(diagnostics)}] "
-                    + $"immediate={main.Settings.AnalysisImmediateCompute} visible={main.IsAnalysisViewVisible}");
+                    + $"immediate={main.Settings.AnalysisImmediateCompute} cv={main.Settings.AnalysisImmediateCvCompute} "
+                    + $"visible={main.IsAnalysisViewVisible}");
                 return;
             }
             Console.WriteLine($"[NativeCheck] SCOPE-03 诊断瓦片出图 [{DescribeDiagnostics(diagnostics)}]");
@@ -842,6 +935,7 @@ internal static partial class AndroidNativeChecks
 
             // 产品清库入口：删库 + 清 DinoFeatureCache / ShakeFlagService / AnalysisResultCache，不重启应用。
             main.Settings.AnalysisImmediateCompute = false;
+            main.Settings.AnalysisImmediateCvCompute = false;
             Console.WriteLine("[NativeCheck] SCOPE-03 清库开始");
             await AwaitOrTimeoutAsync(main.Settings.ClearFeatureDatabaseConfirmedAsync(), "清库", 120000);
             Console.WriteLine($"[NativeCheck] SCOPE-03 清库结束 status={main.Settings.ClearDbStatus}");
@@ -871,6 +965,7 @@ internal static partial class AndroidNativeChecks
         finally
         {
             main.Settings.AnalysisImmediateCompute = previousImmediate;
+            main.Settings.AnalysisImmediateCvCompute = previousCv;
             if (session.IsEnhanced)
             {
                 session.ToggleEnhanced();
@@ -880,6 +975,111 @@ internal static partial class AndroidNativeChecks
             await Task.Delay(300);
         }
     }
+#else
+    /// <summary>
+    /// SCOPE-03（标准版）：只允许只读既有库与当前照片的显式现算。CV 分析栏与 CV 诊断页的产物只进进程缓存，
+    /// 不写 photos/photo_features/photo_patches、不写 XMP、不改照片字节，也不扩成后台批量索引；全程无 DINO 任务。
+    /// 指纹分组走共享 <see cref="FingerprintGrouping"/>，不引用 AI 批量索引器。
+    /// </summary>
+    private static async Task CheckScopeBoundaryAsync()
+    {
+        var activity = _activity!;
+        var main = _main!;
+        var session = _session!;
+        var root = _root!;
+        bool previousCv = main.Settings.AnalysisImmediateCvCompute;
+        bool previousVisible = main.IsAnalysisViewVisible;
+        var (folder, first, second) = EnsureScopeFixture(activity);
+        try
+        {
+            main.Settings.AnalysisImmediateCvCompute = true;
+            main.IsAnalysisViewVisible = true;
+            await OpenFolderAndWaitAsync(folder);
+            Console.WriteLine("[NativeCheck] SCOPE-03 标准版素材上屏");
+
+            var groups = await FingerprintGrouping.GroupByFingerprintAsync(main.FolderVM.AllFiles);
+            var current = main.CurrentFile ?? throw new InvalidOperationException("缺少当前照片");
+            var group = groups.FirstOrDefault(candidate => candidate.Files.Contains(current))
+                ?? throw new InvalidOperationException("当前照片没有指纹组");
+            string fingerprint = group.Fingerprint;
+            if (string.IsNullOrEmpty(fingerprint)) throw new InvalidOperationException("指纹为空");
+
+            var diagnostics = root.AnalysisPresenterForChecks.Tiles
+                .Where(tile => tile.Kind == AnalysisTileKind.Diagnostic).ToList();
+            Check("SCOPE-03 标准版只有 CV 诊断瓦片",
+                diagnostics.Count == 2
+                && !diagnostics.Any(tile => tile.ShortLabel.Contains("DINO", StringComparison.Ordinal)
+                    || tile.ShortLabel.StartsWith("Cosine", StringComparison.Ordinal)),
+                $"{diagnostics.Count} labels=[{string.Join("/", diagnostics.Select(tile => tile.ShortLabel))}]");
+            await WaitAsync(() => diagnostics.Count == 2 && diagnostics.All(tile => tile.Placeholder == null)
+                && diagnostics.All(tile => tile.Source != null || tile.ShakeField != null),
+                "标准版 CV 诊断瓦片出图", 90000);
+            Check("SCOPE-03 标准版 CV 现算出图",
+                diagnostics.All(tile => tile.Source != null || tile.ShakeField != null),
+                $"tiles=[{DescribeDiagnostics(diagnostics)}] cv={main.Settings.AnalysisImmediateCvCompute}");
+
+            byte[] firstBefore = File.ReadAllBytes(first);
+            byte[] secondBefore = File.ReadAllBytes(second);
+            var (photos, features, patches) = await CountFingerprintRowsAsync(fingerprint);
+            bool xmp = HasXmpSidecar(first) || HasXmpSidecar(second);
+            Check("SCOPE-03 标准版 CV 现算不写库",
+                photos == 0 && features == 0 && patches == 0 && !xmp,
+                $"photos={photos} features={features} patches={patches} xmp={xmp} fp={fingerprint}");
+
+            // 显式打开 CV 诊断页：三瓦片对当前照片现算，仍然只进进程缓存。
+            Console.WriteLine("[NativeCheck] SCOPE-03 标准版 CV 诊断页开始");
+            main.OpenToolsWindow();
+            await Task.Delay(600);
+            main.Tools.OpenDiagnostic();
+            await Task.Delay(300);
+            var presenter = main.Tools.CvPresenter;
+            Check("SCOPE-03 CV 诊断页三瓦片", presenter.Tiles.Count == 3, $"{presenter.Tiles.Count}");
+            await WaitAsync(() => presenter.ThumbnailTile.Source != null && presenter.SharpnessTile.Source != null
+                && presenter.ShakeTile.ShakeField != null, "CV 诊断页三瓦片出图", 90000);
+            var (photosTool, featuresTool, patchesTool) = await CountFingerprintRowsAsync(fingerprint);
+            bool bytesSame = File.ReadAllBytes(first).SequenceEqual(firstBefore)
+                && File.ReadAllBytes(second).SequenceEqual(secondBefore);
+            Check("SCOPE-03 CV 诊断页不写库不改照片",
+                photosTool == 0 && featuresTool == 0 && patchesTool == 0 && bytesSame
+                && !HasXmpSidecar(first) && !HasXmpSidecar(second),
+                $"photos={photosTool} features={featuresTool} patches={patchesTool} bytesSame={bytesSame} "
+                + $"status={presenter.Status}");
+            main.Tools.ShowList();
+            await Task.Delay(200);
+            AndroidToolsPresenter.HandleBack();
+            await Task.Delay(300);
+
+            // 标准版不得把现算扩成后台批量索引：收敛后持续观察仍无库行。
+            int writes = 0;
+            for (int sample = 0; sample < 10; sample++)
+            {
+                await Task.Delay(100);
+                var (laterPhotos, laterFeatures, laterPatches) = await CountFingerprintRowsAsync(fingerprint);
+                if (laterPhotos != 0 || laterFeatures != 0 || laterPatches != 0) writes++;
+            }
+            Check("SCOPE-03 标准版无后台批量写库", writes == 0,
+                $"writes={writes} tiles=[{DescribeDiagnostics(diagnostics)}]");
+            // 缩略图“抖”徽标只读既有 CV 数据；现算产物未入库，不得凭空出现徽标。
+            bool anyShake = main.FolderVM.AllFiles.Any(file => file.IsShake == true);
+            Check("SCOPE-03 现算不生成抖动徽标", !anyShake,
+                $"shake={anyShake} flags=[{string.Join("/", main.FolderVM.AllFiles.Select(file => file.IsShake?.ToString() ?? "null"))}]");
+        }
+        finally
+        {
+            main.Tools.ShowList();
+            await Task.Delay(100);
+            AndroidToolsPresenter.HandleBack();
+            main.Settings.AnalysisImmediateCvCompute = previousCv;
+            if (session.IsEnhanced)
+            {
+                session.ToggleEnhanced();
+                await WaitAsync(() => !session.IsEnhanced, "关闭增强", 10000);
+            }
+            main.IsAnalysisViewVisible = previousVisible;
+            await Task.Delay(300);
+        }
+    }
+#endif
 
     /// <summary>
     /// STATE-04：特征库不可用时界面进入明确的「未提取」状态——不长期停在「计算中」、不崩溃、
@@ -895,7 +1095,10 @@ internal static partial class AndroidNativeChecks
         string source = EnsureFaultGoodJpeg(activity);
         string path = IOPath.Combine(IOPath.GetDirectoryName(source)!, "db-down.jpg");
         File.Copy(source, path, true);
+#if PHOTOVIEWER_DINO
         bool previousImmediate = main.Settings.AnalysisImmediateCompute;
+#endif
+        bool previousCv = main.Settings.AnalysisImmediateCvCompute;
         bool previousVisible = main.IsAnalysisViewVisible;
         string databasePath = PhotoDatabase.DatabasePath;
         string blocker = IOPath.Combine(EnsureFaultsFolder(activity), "db-blocker");
@@ -915,8 +1118,11 @@ internal static partial class AndroidNativeChecks
             }
             Check("STATE-04 数据库不可用注入", openError != null, openError ?? "OpenConnection 未失败");
 
-            // 即时计算关闭：库里读不到就停在「未提取」，而不是抢算或伪造结果。
+            // EDITION-03：两个即时计算开关独立。库里读不到时 CV 侧必须停在「未提取」，不能抢算或伪造结果。
+#if PHOTOVIEWER_DINO
             main.Settings.AnalysisImmediateCompute = false;
+#endif
+            main.Settings.AnalysisImmediateCvCompute = false;
             main.IsAnalysisViewVisible = true;
             await main.FolderVM.OpenImageAsync(new AndroidFileRef(path));
             await WaitAsync(() => main.CurrentFile?.Name == "db-down.jpg" && session.Image != null, "数据库不可用素材上屏", 25000);
@@ -945,6 +1151,7 @@ internal static partial class AndroidNativeChecks
                 $"image={session.Image?.Width}x{session.Image?.Height} shake={file?.IsShake?.ToString() ?? "null"} "
                 + $"conflict={file?.HasRatingConflict}");
 
+#if PHOTOVIEWER_DINO
             // 相似面板同一失败路径：如实给未提取计数与空列表，不显示伪造分数。
             main.FileVM.FilterBar.IsSimilarityPanelOpen = true;
             await WaitAsync(() => main.FileVM.SimilarityPanel.UnindexedCount >= 1, "相似面板未提取计数", 15000);
@@ -953,6 +1160,14 @@ internal static partial class AndroidNativeChecks
                 panel.IndexError == null && panel.SimilarItems.Count == 0,
                 $"unindexed={panel.UnindexedCount} items={panel.SimilarItems.Count} error={panel.IndexError ?? "none"} "
                 + $"pane={root.SimilarityPane.Visibility}");
+#else
+            // EDITION-02/EDITION-05：标准版没有相似面板与 DINO 任务，数据库不可用只影响 CV 只读结果。
+            Check("STATE-04 标准版无 DINO 任务",
+                !AndroidAppCapabilities.HasDino && diagnostics.Count == 2
+                && !diagnostics.Any(tile => tile.ShortLabel.Contains("DINO", StringComparison.Ordinal)
+                    || tile.ShortLabel.StartsWith("Cosine", StringComparison.Ordinal)),
+                $"{diagnostics.Count} labels=[{string.Join("/", diagnostics.Select(tile => tile.ShortLabel))}]");
+#endif
         }
         finally
         {
@@ -973,8 +1188,11 @@ internal static partial class AndroidNativeChecks
                 restoreDetail = exception.GetType().Name + "：" + exception.Message;
             }
             Check("STATE-04 收尾恢复可用库", restored, restoreDetail);
+#if PHOTOVIEWER_DINO
             main.FileVM.FilterBar.IsSimilarityPanelOpen = false;
             main.Settings.AnalysisImmediateCompute = previousImmediate;
+#endif
+            main.Settings.AnalysisImmediateCvCompute = previousCv;
             main.IsAnalysisViewVisible = previousVisible;
             await Task.Delay(300);
         }

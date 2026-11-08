@@ -15,8 +15,12 @@ namespace PhotoViewer.Core.AI;
 /// </summary>
 public static class AnalysisComputer
 {
-    /// <summary>DINO patch 网格边长(32),与 <see cref="PatchHeatmap.Grid"/> 一致。</summary>
+    /// <summary>DINO patch 网格边长(32)。</summary>
+#if PHOTOVIEWER_DINO
     public const int PatchGridPixels = PatchHeatmap.Grid;
+#else
+    public const int PatchGridPixels = 32;
+#endif
 
     /// <summary>
     /// 把读库结果转成可缓存的派生数据。包含 4 张诊断位图 + ShakeField + 判定文字 + patch tokens。
@@ -32,12 +36,11 @@ public static class AnalysisComputer
         DecodedImage? sharpnessBmp = null;
         ShakeField? shakeField = null;
         string shakeLabel = "抖动拖影";
-        double aspect = 1.0;
         int cvW = data.CvImageWidth;
         int cvH = data.CvImageHeight;
+        double aspect = cvW > 0 && cvH > 0 ? (double)cvW / cvH : 1.0;
         if (data.Cv != null && cvW > 0 && cvH > 0)
         {
-            aspect = (double)cvW / cvH;
             float diagonal = MathF.Sqrt((float)cvW * cvW + (float)cvH * cvH);
             var sharpness = CvHeatmap.BuildSharpness(data.Cv);
             sharpnessBmp = HeatmapBitmapBuilder.BuildViridis(sharpness, CvGridResult.GridSize, CvGridResult.GridSize);
@@ -47,9 +50,9 @@ public static class AnalysisComputer
             shakeLabel = ShakeClassifier.FormatLabel(verdict);
         }
 
-        // DINO 派生层(PCA-RGB + 默认中心 cosine 参考点 16,16)
         DecodedImage? pcaBmp = null;
         DecodedImage? cosineBmp = null;
+#if PHOTOVIEWER_DINO
         if (data.Patches != null)
         {
             var pcaRgb = PatchHeatmap.ComputePcaRgb(data.Patches);
@@ -60,6 +63,7 @@ public static class AnalysisComputer
             var cos = PatchHeatmap.ComputeRefCosine(data.Patches, rx, ry);
             cosineBmp = HeatmapBitmapBuilder.BuildViridis(cos, PatchGridPixels, PatchGridPixels);
         }
+#endif
 
         return new AnalysisResultCache.Entry
         {

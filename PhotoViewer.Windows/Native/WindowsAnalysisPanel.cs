@@ -20,7 +20,8 @@ using Windows.System;
 namespace PhotoViewer.Windows.Native;
 
 /// <summary>
-/// 原生分析栏:细节预览(中心 / 对焦点)+ 直方图 + DINO PCA + Cosine + 锐度 + 抖动矢量场。
+/// 原生分析栏:细节预览(中心 / 对焦点)+ 直方图 + 锐度 + 抖动矢量场;AI 版另有 DINO PCA 与 Cosine。
+/// 瓦片集合由共享 presenter 决定(标准版 4/5 张、AI 版 6/7 张),本类按实际集合排序,不建空框(EDITION-02)。
 ///
 /// 数据编排全部交给平台中立的 <see cref="AnalysisPresenter"/>(与旧壳、macOS/iPad 原生分析栏同一份):
 /// 只读库快路径、增强联动实时重算、未提取回退、租约、直方图与 cosine 参考点都在 presenter;
@@ -39,8 +40,10 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
     private readonly AnalysisPreviewTile _focusTile;
     private readonly AnalysisPreviewTile _centerTile;
     private readonly WindowsDiagnosticTile _histogramTile;
+#if PHOTOVIEWER_DINO
     private readonly WindowsDiagnosticTile _pcaTile;
     private readonly WindowsDiagnosticTile _cosineTile;
+#endif
     private readonly WindowsDiagnosticTile _sharpnessTile;
     private readonly WindowsDiagnosticTile _shakeTile;
     private readonly WindowsShakeFieldView _shakeOverlay;
@@ -48,8 +51,10 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
     private AnalysisPreviewTile? _capturedPreview;
 
     private DecodedImage? _lastHistogramSource;
+#if PHOTOVIEWER_DINO
     private DecodedImage? _lastPcaSource;
     private DecodedImage? _lastCosineSource;
+#endif
     private DecodedImage? _lastSharpnessSource;
     private double _lastDiagnosticAspect = double.NaN;
 
@@ -78,8 +83,10 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
         centerTile.PinClearRequested = () => _previewTracker.ClearPinned();
         _centerTile = centerTile;
         _histogramTile = new WindowsDiagnosticTile();
+#if PHOTOVIEWER_DINO
         _pcaTile = new WindowsDiagnosticTile { TileClicked = OnTileClicked, BackgroundClicked = ClearCrosshair };
         _cosineTile = new WindowsDiagnosticTile { TileClicked = OnTileClicked, BackgroundClicked = ClearCrosshair };
+#endif
         _sharpnessTile = new WindowsDiagnosticTile { TileClicked = OnTileClicked, BackgroundClicked = ClearCrosshair };
         _shakeTile = new WindowsDiagnosticTile { TileClicked = OnTileClicked, BackgroundClicked = ClearCrosshair };
         _shakeOverlay = new WindowsShakeFieldView();
@@ -131,7 +138,10 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
     public bool AnalysisVisible => _main.IsAnalysisViewVisible;
 
     /// <inheritdoc/>
-    public bool ImmediateCompute => _main.Settings.AnalysisImmediateCompute;
+    public bool ImmediateCompute => WindowsProductInfo.HasDino && _main.Settings.AnalysisImmediateCompute;
+
+    /// <inheritdoc/>
+    public bool ImmediateCvCompute => _main.Settings.AnalysisImmediateCvCompute;
 
     /// <inheritdoc/>
     public ImageFile? CurrentFile => _main.CurrentFile;
@@ -157,17 +167,90 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
     /// <summary>验收专用:直方图是否绘制了准星(应为 false,ANALYSIS-08)。</summary>
     internal bool HistogramCrosshairVisible => _histogramTile.CrosshairVisible;
 
-    /// <summary>验收专用:诊断瓦片是否绘制了准星。</summary>
-    internal bool DiagnosticCrosshairVisible => _pcaTile.CrosshairVisible;
+    /// <summary>验收专用:诊断瓦片是否绘制了准星(标准版取锐度瓦片,EDITION-03)。</summary>
+    internal bool DiagnosticCrosshairVisible => DiagnosticTileForAcceptance.CrosshairVisible;
 
-    /// <summary>验收专用:四张诊断瓦片是否都已有内容(即时计算完成)。</summary>
-    internal bool HasDiagnostics => _pcaTile.HasBitmap && _cosineTile.HasBitmap && _sharpnessTile.HasBitmap && _shakeOverlay.HasField;
+    /// <summary>验收专用:全部诊断瓦片是否都已出图(AI 版四张,标准版两张)。</summary>
+    internal bool HasDiagnostics => DiagnosticTileForAcceptance.HasBitmap && _shakeOverlay.HasField
+        && HasDinoDiagnostics;
+
+    /// <summary>验收专用:CV 两张诊断瓦片是否都已出图(锐度 + 抖动拖影)。</summary>
+    internal bool CvDiagnosticsReady => _sharpnessTile.HasContent && _shakeTile.HasContent;
+
+    /// <summary>验收专用:CV 诊断瓦片是否仍处于未提取占位。</summary>
+    internal bool CvDiagnosticsPlaceholder => _sharpnessTile.PlaceholderVisible;
+
+    /// <summary>验收专用:分析栏当前实际瓦片数(含对焦点/中心/直方图/诊断)。</summary>
+    internal int TileCount => _presenter.Tiles.Count;
+
+    /// <summary>验收专用:当前瓦片标签,按显示顺序。</summary>
+    internal string[] TileLabels => _presenter.Tiles.Select(tile => tile.ShortLabel).ToArray();
+
+    /// <summary>验收专用:诊断瓦片数量(AI 版 4、标准版 2)。</summary>
+    internal int DiagnosticTileCount => _presenter.Tiles.Count(tile => tile.Kind == AnalysisTileKind.Diagnostic);
 
     /// <summary>验收专用:诊断瓦片是否仍处于占位状态。</summary>
-    internal bool DiagnosticsPlaceholderVisible => _pcaTile.PlaceholderVisible || _sharpnessTile.PlaceholderVisible;
+    internal bool DiagnosticsPlaceholderVisible => DiagnosticTileForAcceptance.PlaceholderVisible;
 
+    /// <summary>验收专用:presenter 侧锐度瓦片的占位文字(判断"未提取"状态用)。</summary>
+    internal string? SharpnessPlaceholder => _presenter.SharpnessTile.Placeholder;
+
+    /// <summary>验收专用:锐度瓦片视图是否还挂着位图。</summary>
+    internal bool SharpnessTileHasBitmap => _sharpnessTile.HasBitmap;
+
+    /// <summary>验收专用:抖动拖影瓦片视图是否还挂着矢量场。</summary>
+    internal bool ShakeTileHasField => _shakeOverlay.HasField;
+
+    /// <summary>验收专用:诊断瓦片视图是否都已清空旧内容并显示占位;余留项见 <see cref="DiagnosticViewStaleContent"/>。</summary>
+    internal bool DiagnosticViewsCleared => DiagnosticViewStaleContent.Length == 0;
+
+    /// <summary>
+    /// 验收专用:诊断瓦片在视图层残留的内容(旧位图/旧矢量场/占位未显示)。
+    /// 直接读原生控件状态,不以 presenter 状态代替渲染结果。
+    /// </summary>
+    internal string DiagnosticViewStaleContent
+    {
+        get
+        {
+            var stale = new List<string>();
+            if (_sharpnessTile.HasBitmap) stale.Add("sharpness-bitmap");
+            if (_shakeOverlay.HasField || _shakeTile.HasBitmap) stale.Add("shake-field");
+            if (!_sharpnessTile.PlaceholderVisible) stale.Add("sharpness-placeholder-hidden");
+            if (!_shakeTile.PlaceholderVisible) stale.Add("shake-placeholder-hidden");
+#if PHOTOVIEWER_DINO
+            if (_pcaTile.HasBitmap) stale.Add("pca-bitmap");
+            if (_cosineTile.HasBitmap) stale.Add("cosine-bitmap");
+            if (!_pcaTile.PlaceholderVisible) stale.Add("pca-placeholder-hidden");
+            if (!_cosineTile.PlaceholderVisible) stale.Add("cosine-placeholder-hidden");
+#endif
+            return string.Join("+", stale);
+        }
+    }
+
+#if PHOTOVIEWER_DINO
     /// <summary>验收专用:current cosine 角标文本。</summary>
     internal string CosineLabel => _cosineTile.LabelText;
+
+    /// <summary>验收专用:当前 cosine 参考点(32×32 网格坐标)。</summary>
+    internal (int X, int Y)? CosineReferenceForAcceptance => (_presenter.RefGridX, _presenter.RefGridY);
+
+    /// <summary>验收专用:DINO 两张诊断瓦片是否都已出图(PCA-RGB + Cosine)。</summary>
+    internal bool DinoDiagnosticsReady => _pcaTile.HasContent && _cosineTile.HasContent;
+
+    /// <summary>验收专用:DINO 诊断瓦片是否仍处于未提取占位。</summary>
+    internal bool DinoDiagnosticsPlaceholder => _pcaTile.PlaceholderVisible;
+
+    private bool HasDinoDiagnostics => _pcaTile.HasBitmap && _cosineTile.HasBitmap;
+
+    private WindowsDiagnosticTile DiagnosticTileForAcceptance => _pcaTile;
+#else
+    /// <summary>验收专用:标准版没有 cosine 参考点(EDITION-03)。</summary>
+    internal (int X, int Y)? CosineReferenceForAcceptance => null;
+
+    private bool HasDinoDiagnostics => true;
+
+    private WindowsDiagnosticTile DiagnosticTileForAcceptance => _sharpnessTile;
+#endif
 
     /// <summary>验收专用:抖动瓦片角标(判定文字)。</summary>
     internal string ShakeLabel => _shakeTile.LabelText;
@@ -217,7 +300,7 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
     internal Point PreviewTileCenterForAcceptance(bool focusTile)
         => CenterOf(focusTile ? _focusTile : _centerTile);
 
-    internal Point DiagnosticTileCenterForAcceptance() => CenterOf(_pcaTile);
+    internal Point DiagnosticTileCenterForAcceptance() => CenterOf(DiagnosticTileForAcceptance);
 
     // WinUI 的指针事件参数无法在进程内构造,验收从面板级状态机入口驱动。
     internal void SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase phase, uint pointerId, Point position)
@@ -296,8 +379,10 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
         ResetPreviewTracking();
         _focusTile.Dispose();
         _centerTile.Dispose();
+#if PHOTOVIEWER_DINO
         _pcaTile.Dispose();
         _cosineTile.Dispose();
+#endif
         _sharpnessTile.Dispose();
         _shakeTile.Dispose();
         _histogramTile.Dispose();
@@ -313,12 +398,30 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
                 SetOrientation(_main.IsRowLayout);
                 return;
             case nameof(MainViewModel.CurrentFile):
+                // 换图即新代际:清掉上一张的位图缓存引用,否则同纵横比的换图会让同步误判"引用未变"。
+                ResetDiagnosticSourceCache();
+                ResetPreviewTracking();
+                UpdatePreviewTiles();
+                HostChanged?.Invoke();
+                return;
             case nameof(MainViewModel.IsAnalysisViewVisible):
                 ResetPreviewTracking();
                 UpdatePreviewTiles();
                 HostChanged?.Invoke();
                 return;
         }
+    }
+
+    /// <summary>清掉诊断/直方图的"最近一次已上传源"引用与纵横比记忆,供换图代际使用。</summary>
+    private void ResetDiagnosticSourceCache()
+    {
+        _lastHistogramSource = null;
+        _lastSharpnessSource = null;
+        _lastDiagnosticAspect = double.NaN;
+#if PHOTOVIEWER_DINO
+        _lastPcaSource = null;
+        _lastCosineSource = null;
+#endif
     }
 
     /// <summary>设置展示影响:分析栏开关切回 DB 只读路径或实时重算(共享分流为 <see cref="SettingsChangeImpact.Analysis"/>)。</summary>
@@ -376,26 +479,43 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
         var aspect = _presenter.AspectRatio;
         _histogramTile.SetAspect(1);
         _histogramTile.SetLabel(_presenter.HistogramTile.ShortLabel);
-        if (!ReferenceEquals(_presenter.HistogramTile.Source, _lastHistogramSource))
+        if (_presenter.HistogramTile.Source == null)
+        {
+            // 直方图同样按"源为空即清图"处理,避免换图/失败后仍显示上一张的直方图。
+            _lastHistogramSource = null;
+            _histogramTile.ClearContent(_presenter.HistogramTile.Placeholder);
+        }
+        else if (!ReferenceEquals(_presenter.HistogramTile.Source, _lastHistogramSource))
         {
             _lastHistogramSource = _presenter.HistogramTile.Source;
-            _histogramTile.SetBitmap(_presenter.HistogramTile.Source == null
-                ? null
-                : WindowsImageAdapter.ToSource(_presenter.HistogramTile.Source), _presenter.HistogramTile.Placeholder);
+            _histogramTile.SetBitmap(WindowsImageAdapter.ToSource(_presenter.HistogramTile.Source),
+                _presenter.HistogramTile.Placeholder);
         }
         else
         {
             _histogramTile.SetPlaceholder(_presenter.HistogramTile.Placeholder);
         }
 
+        SyncDiagnostic(_sharpnessTile, _presenter.SharpnessTile, ref _lastSharpnessSource, aspect);
+#if PHOTOVIEWER_DINO
         SyncDiagnostic(_pcaTile, _presenter.PcaTile, ref _lastPcaSource, aspect);
         SyncDiagnostic(_cosineTile, _presenter.CosineTile, ref _lastCosineSource, aspect);
-        SyncDiagnostic(_sharpnessTile, _presenter.SharpnessTile, ref _lastSharpnessSource, aspect);
+#endif
 
         _shakeTile.SetAspect(aspect);
         _shakeTile.SetLabel(_presenter.ShakeTile.ShortLabel);
-        _shakeTile.SetPlaceholder(_presenter.ShakeTile.Placeholder);
-        _shakeOverlay.ShakeField = _presenter.ShakeTile.ShakeField;
+        var shakeField = _presenter.ShakeTile.ShakeField;
+        if (shakeField == null)
+        {
+            // 未提取/计算中/失败/换图:矢量场、压暗背景与旧主图一起清掉,只留占位文字。
+            _shakeTile.ClearContent(_presenter.ShakeTile.Placeholder);
+        }
+        else
+        {
+            _shakeTile.SetPlaceholder(_presenter.ShakeTile.Placeholder);
+        }
+
+        _shakeOverlay.ShakeField = shakeField;
 
         SyncCrosshair();
         // presenter 的 ApplyEntry 会同步改 aspect/位图引用;细节中心/对焦点瓦片增删时才重裁,
@@ -412,8 +532,10 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
         if (ReferenceEquals(tile, _presenter.CenterTile)) return _centerTile;
         if (ReferenceEquals(tile, _presenter.FocusTile)) return _focusTile;
         if (ReferenceEquals(tile, _presenter.HistogramTile)) return _histogramTile;
+#if PHOTOVIEWER_DINO
         if (ReferenceEquals(tile, _presenter.PcaTile)) return _pcaTile;
         if (ReferenceEquals(tile, _presenter.CosineTile)) return _cosineTile;
+#endif
         if (ReferenceEquals(tile, _presenter.SharpnessTile)) return _sharpnessTile;
         if (ReferenceEquals(tile, _presenter.ShakeTile)) return _shakeTile;
         return null;
@@ -435,39 +557,56 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
         return view.SetCenter(tile.CenterU, tile.CenterV, frame);
     }
 
-    /// <summary>同步一张诊断瓦片:aspect/标签变化时重建,位图引用未变时只更新占位文字。</summary>
+    /// <summary>
+    /// 同步一张诊断瓦片。源为空(未提取/计算中/失败/换图)时无条件清掉旧图与缓存引用:
+    /// 只靠位图引用比较会漏掉"缓存被代际重置、源与缓存都为 null"的情形 —— 旧位图会一直挂在瓦片上、
+    /// 占位文字也因 <c>_image.Source</c> 非空而不显示。有源时才按引用比较,避免重复编码上传。
+    /// </summary>
     private void SyncDiagnostic(WindowsDiagnosticTile view, AnalysisTile tile, ref DecodedImage? lastSource, double aspect)
     {
         if (aspect != _lastDiagnosticAspect)
         {
             _lastDiagnosticAspect = aspect;
+#if PHOTOVIEWER_DINO
             _lastPcaSource = null;
             _lastCosineSource = null;
+#endif
             _lastSharpnessSource = null;
         }
 
         view.SetAspect(aspect);
         view.SetLabel(tile.ShortLabel);
+        if (tile.Source == null)
+        {
+            lastSource = null;
+            view.ClearContent(tile.Placeholder);
+            return;
+        }
+
         if (!ReferenceEquals(tile.Source, lastSource))
         {
             lastSource = tile.Source;
-            view.SetBitmap(
-                tile.Source == null ? null : WindowsDiagnosticBitmap.ToUpscaled(tile.Source, aspect),
-                tile.Placeholder);
+            view.SetBitmap(WindowsDiagnosticBitmap.ToUpscaled(tile.Source, aspect), tile.Placeholder);
+            return;
         }
-        else
-        {
-            view.SetPlaceholder(tile.Placeholder);
-        }
+
+        view.SetPlaceholder(tile.Placeholder);
     }
 
-    /// <summary>把 presenter 的准星同步到四张诊断瓦片；直方图与细节预览不显示准星(ANALYSIS-08)。</summary>
+    /// <summary>
+    /// 把 presenter 的准星同步到诊断瓦片;直方图与细节预览不显示准星(ANALYSIS-08)。
+    /// 标准版只有锐度与抖动拖影两张瓦片共享准星,没有 cosine 参考点(EDITION-03)。
+    /// </summary>
     private void SyncCrosshair()
     {
         double? u = _presenter.CrosshairU;
         double? v = _presenter.CrosshairV;
         _histogramTile.SetCrosshair(null, null);
+#if PHOTOVIEWER_DINO
         foreach (var tile in new[] { _pcaTile, _cosineTile, _sharpnessTile, _shakeTile })
+#else
+        foreach (var tile in new[] { _sharpnessTile, _shakeTile })
+#endif
         {
             tile.SetCrosshair(u, v);
         }
@@ -532,7 +671,7 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
         }
     }
 
-    /// <summary>诊断瓦片点击:落准星 + 以点击点为 cosine 参考点重算。</summary>
+    /// <summary>诊断瓦片点击:落准星;AI 版同时以点击点为 cosine 参考点重算,标准版只移准星(EDITION-03)。</summary>
     private void OnTileClicked(double u, double v) => _presenter.OnTileClicked(u, v);
 
     /// <summary>空白处点击:清空准星。</summary>

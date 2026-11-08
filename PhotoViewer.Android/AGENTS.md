@@ -2,6 +2,8 @@
 
 Debug 与 Release 均只启动原生壳，无旧壳入口。壳内容：原生主图（`SurfaceView` + EGL14/GLES，8 位 P3/sRGB）、主屏布局（文件栏/胶片栏/控制栏/导航图/insets）、SAF 存储、硬件键盘/滚轮/长按菜单/返回、半屏设置（五分类 + 关闭回写）。实现与验收状态见 [Design/status.md](../Design/status.md)，计划、验收矩阵与色域结论见 [Plans/native-rebuild-phase-android.md](../Plans/native-rebuild-phase-android.md)。
 
+**发行版本**：构建、运行与发布必须显式传 `PhotoViewerEnableDino=false|true`；缺失或非法值直接报错。标准版 `PhotoViewer` 不编译相似面板、DINO 诊断及 ONNX 托管/原生依赖，保留 CV 分析、三瓦片「CV 诊断」与独立「即时计算 CV」；AI 版 `PhotoViewer AI`（显示名空格，APK 包名 `PhotoViewer-AI`）内置固定模型和 DINOv3 License，并提供独立「即时计算 DINO / CV」。下文 DINO、相似聚类及五瓦片诊断均指 AI 版。两版使用同一 ApplicationId `cc.xiaojh.PhotoViewer`，替换安装保留设置与数据库，不提供同机共存或产品内切换。头工程及共享工程的 `bin/<standard|ai>/`、`obj/<standard|ai>/` 隔离；只构建 arm64-v8a，清单从源模板生成中间目录副本并写入版本显示名，不改写仓库模板。发行能力与数据边界见 [EDITION](../Design/spec/editions.md)，开发和发布入口见 [DEV.md](../DEV.md)。
+
 ## 启动与主屏
 
 | 文件 | 职责 |
@@ -52,17 +54,19 @@ Debug 与 Release 均只启动原生壳，无旧壳入口。壳内容：原生�
 - `Theme.PhotoViewer.Native` 继承 `Theme.Material3.Dark.NoActionBar`，颜色全部走 `values/colors.xml` 自有常量（`native_background` 等），**不调用 DynamicColors**、不引用 OEM 主题派生属性。bootstrap 与原生 Activity 共用该主题。
 - `AndroidManifest.xml` 已移除 `MANAGE_EXTERNAL_STORAGE` / `WRITE_EXTERNAL_STORAGE`；`READ_EXTERNAL_STORAGE` 仅 `maxSdkVersion=32`（保留：API ≤32 上 `file://` 外部打开与 `--pv-open` 本地路径靠它读取）。33+ 走 SAF。不依赖 `Xamarin.AndroidX.Core.SplashScreen`（未使用）。
 - 控制栏图标字体 `uicons-regular-rounded.ttf` 与实心字形 `uicons-solid-straight.ttf` 作为 `AndroidAsset` 打进 `assets/Fonts/`，与 Web/桌面共用同一字形。
-- DINO 模型作为 `AndroidAsset` 打进 APK（约 +83MB），原生资源提供器按 `avares://PhotoViewer/Assets/Models/...` 路径部分读取。
+- AI 版的 DINO 模型与 `DINOv3-LICENSE.md` 作为 `AndroidAsset` 打进 APK（模型约 +83MB），原生资源提供器按 `avares://PhotoViewer/Assets/Models/...` 路径部分读取；标准版不包含这些资产。
 
 ## 构建
 
-默认 SDK 10.0.402 **没有** android workload；10.0.201 下已装（36.1.53）。不要改仓库 `global.json`（Apple 头需要 10.0.402 的 27 工作负载）。在任意临时目录放 `{"sdk":{"version":"10.0.201","rollForward":"disable"}}`，从该目录构建：
+默认 SDK 10.0.402 **没有** android workload；10.0.201 下已装（36.1.53）。不要改仓库 `global.json`（Apple 头需要 10.0.402 的 27 工作负载）。在任意临时目录放 `{"sdk":{"version":"10.0.201","rollForward":"disable"}}`，从该目录构建（标准版示例如下，AI 版改传 `true`）：
 
 ```bash
-cd /tmp/pv-sdk201 && dotnet build /path/to/PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug
+cd /tmp/pv-sdk201 && dotnet build /path/to/PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug -p:PhotoViewerEnableDino=false
 ```
 
 长期建议 `sudo dotnet workload install android` 到 10.0.402。模拟器：`~/Library/Android/sdk/emulator/emulator -avd pv-api35`（Apple Silicon 必须 arm64-v8a 镜像）。
+
+发布统一用 `publish-android-apk.sh --edition standard|ai|both`（Windows 为同名 `.ps1 -Edition …`），脚本自动选择具备 android workload 的 SDK，只构建 arm64-v8a，并调用 `Tools/check-android-package.py` 扫描实际 APK 的身份、显示名、版本、ABI、模型/License 与托管/原生推理组件；`--local` 产物写 `artifacts/scratch/android-local-publish/`，正式产物写 `release/packages/`，报告写 `artifacts/acceptance/android-editions/`。扫描器用 `python3 Tools/check-android-package.py --self-test` 做正反判定自检。
 
 原生库（两个脚本各自交叉编译，产物入库，`NativeLibs/arm64-v8a/`）：
 
@@ -84,11 +88,11 @@ adb shell run-as cc.xiaojh.PhotoViewer cp -r /data/local/tmp/pv-fixtures files/p
 adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity \
   --es pv-open @files/pv-fixtures --es pv-check main
 
-# 报告：files/PhotoViewer/android-checks-<mode>.txt
-adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-main.txt
+# 报告：files/PhotoViewer/android-checks-<mode>-<standard|ai>.txt
+adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-main-standard.txt
 ```
 
-入口统一是 `--es pv-check <mode>`：报告写 App 内部 `files/PhotoViewer/android-checks-<mode>.txt`，首行是 `PASS n / FAIL m`，其后逐条 `PASS/FAIL 名称 — 实际值`。每次运行前 `am force-stop`，避免旧进程/旧报告冒充。检查期间根视图置 `KeepScreenOn` 防休眠（表面重建与回读要屏幕保持点亮），结束无论成败都复位；设备需已解锁且屏幕可见。
+入口统一是 `--es pv-check <mode>`：报告写 App 内部 `files/PhotoViewer/android-checks-<mode>-<standard|ai>.txt`，首行是 `PASS n / FAIL m`，其后逐条 `PASS/FAIL 名称 — 实际值`。每次运行前 `am force-stop`，避免旧进程/旧报告冒充。检查期间根视图置 `KeepScreenOn` 防休眠（表面重建与回读要屏幕保持点亮），结束无论成败都复位；设备需已解锁且屏幕可见。
 
 **基线模式**（覆盖范围）：
 
@@ -99,10 +103,12 @@ adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-m
 
 **独立模式**（精确模式名匹配，不并入 `all`；自带素材、每步独立 try/catch，失败记 FAIL 后继续，例外与超时都写进报告）：
 
-- `faults`：无法在日常浏览中自然触发的失败与边界项——IMAGE-08 八方向（运行时生成 320×200 + EXIF 0x0112 = 1..8 的 8 张 JPEG，断言解码方向、视口方向与 5–8 的逻辑宽高互换）、SCOPE-04 RAW 全分辨率（`files/pv-check-raw/*.ARW`，源 ≥6000×4000，放大到物理 100% 后展示尺寸 = 源尺寸）、TOOLBAR-03 外部存储评分写回（`GetExternalFilesDir` 下 800×600 JPEG，XMP 字节回读 = 4）、RATING-04 冲突与来源浮窗（内嵌 2 + 同名 sidecar 4 的 JPEG：卡片/控制栏三角、卡片三角打开浮窗且不写值不切图、锚点/宽度/方向与两来源条目内容；点浮窗内任一值后两来源磁盘真值收敛且浮窗关闭；控制栏 0 号打开当前照片组并向上展开；只读冲突素材下写入失败保留浮窗且评分不变）、IMAGE-03 Full 失败（反射换 `BitmapLoader._presentationDecoder` 为「仅全分辨率失败」替身，断言保留代理 + 提示条含「全分辨率」）、STATE-02/OPEN-03（`ParentFailingFileRef` + `FailingFolderRef`：文案含目录名、回退单图、列表只剩 1 项）、STATE-03（只读副本 444/555，星级不变 + 提示条含文件名）、SETTINGS-14（隔离档 `checks` 写入损坏 JSON，断言 `.corrupt-` 备份键存在、共享 `SettingsViewModel.PersistenceStatus` 诊断状态含「损坏」）、SIM-10（反射给 `SimilarItems`/`UnindexedCount`/`IndexError` 赋值，断言列表态停靠区错误标签）、ANALYSIS-10（覆盖 DINO 模型字节并卸载会话，断言 4 张诊断瓦片全部「分析失败」且无残留图）、SCOPE-02（`session.Trim(Warning)` 关闭增强 + 一次性提示）、OPEN-06（`ACTION_VIEW` 外部打开落到同一 `StorageId`）、SCOPE-03（现算/增强产物不入库不写 XMP，显式提取三路入库，清库清空库表且诊断瓦片回「未提取」、抖动徽标消失）、STATE-04（数据库不可用注入：诊断瓦片如实「未提取」、不停留计算中、无伪造徽标且不崩溃，收尾恢复可用库）。主流程另断言 MENU-06（雾天增强文案、逐项前置图标按 `icon.menu.*` 语义与顺序绘制、勾选随状态、无照片置灰且工具仍可用）；`input` 模式按 TOOLBAR-04 逐条核对控制栏虚拟节点的读屏名称是 `名称（主 / 次）`。素材只写 App 内部目录与 `GetExternalFilesDir`；RAW 夹具先 `adb push` 再 `run-as cp` 到 `files/pv-check-raw/`。
+- `edition`：对当前实际构建核对 DINO/相似类型是否存在、筛选条末项、分析栏瓦片、诊断入口与实际出图、设置页版本差异及 DINO/CV 独立开关接线；标准版不残留 AI 类型或入口，AI 版反向确认能力完整。
+- `roundtrip`：另传 `--es pv-roundtrip prepare|standard|ai`，依次执行 AI → 标准 → AI 覆盖安装往返。三阶段共用隔离设置档 `edition-roundtrip` 与 App 内部隔离库 `files/PhotoViewer/edition-roundtrip/photos.db`，真实生成 CLS/patch/CV，逐项核对设置哨兵、相似面板展开态、特征 SHA-256、model_id、CV spec/尺寸；标准版忽略展开态但不清值，通用设置修改可写，最终 AI 版全部恢复。报告为 `android-checks-roundtrip-<standard|ai>.txt`，按阶段追加，不用旧 PASS 冒充本轮。
+- `faults`：无法在日常浏览中自然触发的失败与边界项——IMAGE-08 八方向（运行时生成 320×200 + EXIF 0x0112 = 1..8 的 8 张 JPEG，断言解码方向、视口方向与 5–8 的逻辑宽高互换）、SCOPE-04 RAW 全分辨率（`files/pv-check-raw/*.ARW`，源 ≥6000×4000，放大到物理 100% 后展示尺寸 = 源尺寸）、TOOLBAR-03 外部存储评分写回（`GetExternalFilesDir` 下 800×600 JPEG，XMP 字节回读 = 4）、RATING-04 冲突与来源浮窗（内嵌 2 + 同名 sidecar 4 的 JPEG：卡片/控制栏三角、卡片三角打开浮窗且不写值不切图、锚点/宽度/方向与两来源条目内容；点浮窗内任一值后两来源磁盘真值收敛且浮窗关闭；控制栏 0 号打开当前照片组并向上展开；只读冲突素材下写入失败保留浮窗且评分不变）、IMAGE-03 Full 失败（反射换 `BitmapLoader._presentationDecoder` 为「仅全分辨率失败」替身，断言保留代理 + 提示条含「全分辨率」）、STATE-02/OPEN-03（`ParentFailingFileRef` + `FailingFolderRef`：文案含目录名、回退单图、列表只剩 1 项）、STATE-03（只读副本 444/555，星级不变 + 提示条含文件名）、SETTINGS-14（隔离档 `checks` 写入损坏 JSON，断言 `.corrupt-` 备份键存在、共享 `SettingsViewModel.PersistenceStatus` 诊断状态含「损坏」）、SIM-10（反射给 `SimilarItems`/`UnindexedCount`/`IndexError` 赋值，断言列表态停靠区错误标签）、ANALYSIS-10（AI 版注入坏 DINO 模型，只断言 DINO 两瓦片失败、CV 独立成功；标准版验证三瓦片 CV 诊断可现算且不写库）、SCOPE-02（`session.Trim(Warning)` 关闭增强 + 一次性提示）、OPEN-06（`ACTION_VIEW` 外部打开落到同一 `StorageId`）、SCOPE-03（现算/增强产物不入库不写 XMP，显式提取三路入库，清库清空库表且诊断瓦片回「未提取」、抖动徽标消失）、STATE-04（数据库不可用注入：诊断瓦片如实「未提取」、不停留计算中、无伪造徽标且不崩溃，收尾恢复可用库）。主流程另断言 MENU-06（雾天增强文案、逐项前置图标按 `icon.menu.*` 语义与顺序绘制、勾选随状态、无照片置灰且工具仍可用）；`input` 模式按 TOOLBAR-04 逐条核对控制栏虚拟节点的读屏名称是 `名称（主 / 次）`。素材只写 App 内部目录与 `GetExternalFilesDir`；RAW 夹具先 `adb push` 再 `run-as cp` 到 `files/pv-check-raw/`。
 - `layout`：记录当前 `fontScale`/density/窗口尺寸/方向/布局模式，然后在竖屏、横屏（`RequestedOrientation` 切向，Activity 不重建）、回竖屏三态各核对一遍：分区非负且在屏内、相邻分区边界相接（列布局控制栏背景从分隔线之后起排）、筛选条在文件栏内容区、控制栏三分组 + 虚拟节点矩形（整条文档超出可视主轴时按 TOOLBAR-08 只要求交叉轴在界内，主轴允许滚动）、首卡 96×144（行）/116×144（列）。字体档与密度不自己改：外部用 `adb shell settings put system font_scale` / `wm density` 改档后重启再跑。
 - `input`：经主图 `OnTouchEvent` 派发真实 `MotionEvent`，覆盖放大态拖动（分析栏显/隐均不触发分析重路由）、历史批次越界回原点、多指取消长按、Cancel 后静止长按恢复、长按不平移/翻页/点按、真实双击 Fit↔100%；INPUT-04 合成滚动事件（触控板源 0.4 → 只平移且不派发滚轮命令；鼠标源 1.0 → 恰好一次命令；非整格增量不累积）分流、INPUT-03 带修饰键的滚轮先走用户绑定（Ctrl + 触控板精确事件 → 执行缩放且不平移）、INPUT-05 经 `Activity.DispatchKeyEvent` 构造带 `RepeatCount` 的真实 `KeyEvent`：首下 `Down+0` 翻页、`Down+1` 重复继续翻页、`Numpad3` 的 `Down+2` 只消费不评分、`Action.Multiple` 不冒充长按；键位别名（`Enter`/`NumpadEnter`→`Return`、`Del`→`Back`、`ForwardDel`→`Delete`、小键盘 `+ − . * /`）与系统返回键不产生绑定、主行 `Num3` 的评分绑定；TOOLBAR-11 控制栏虚拟节点（名称非空、评分按行 0→5 / 列 5→0、命令名与 `Commands` 对齐、矩形非零）与硬件键盘命令（`F` 切适应、`DpadRight` 翻页，同走 Activity 入口）。
-- `storage`：真实 `content://` 检查，经仅 Debug 注册的 `DebugTestDocumentsProvider` 覆盖文档身份、嵌套目录、缺失 size/mtime、外部改动后属性刷新、写入后新鲜 revision（属性与下一个会话都给新尺寸）、可定位/管道读取、随机读写、JPEG 内嵌 XMP、ARW 无 tag 700 拒绝内嵌写入且不建 sidecar、ARW tag 700 写内嵌且不创建 sidecar、已有 sidecar 随整组统一写入、sidecar 删除后不再作为来源、只读预检零写入（能力 `Unsupported` 且在打开写入会话前拒绝）、不可定位打开即 `NotSeekable`、原子替换拒绝，以及 Provider 拒绝访问故障注入；`DebugTestMediaProvider` 提供数字 documentId 的通用 content URI，经真实 `ACTION_VIEW` 断言打开用 `_display_name` 而不是 Uri 末段；文件选择器回调（`BeginFileRequestForChecks` 注册等待项后直接投递 Activity 结果，不启动 DocumentsUI）覆盖后台显示名准备、新请求取代旧请求时旧结果不串写、取消/销毁后迟到回调不复活。`ACTION_VIEW` 只验证同 UID 打开与真实读取、不伪造持久授权；不覆盖跨 UID 临时授权、系统授权撤销、DocumentsUI、USB/MTP/云 Provider。报告为 `android-checks-storage.txt`。
+- `storage`：真实 `content://` 检查，经仅 Debug 注册的 `DebugTestDocumentsProvider` 覆盖文档身份、嵌套目录、缺失 size/mtime、外部改动后属性刷新、写入后新鲜 revision（属性与下一个会话都给新尺寸）、可定位/管道读取、随机读写、JPEG 内嵌 XMP、ARW 无 tag 700 拒绝内嵌写入且不建 sidecar、ARW tag 700 写内嵌且不创建 sidecar、已有 sidecar 随整组统一写入、sidecar 删除后不再作为来源、只读预检零写入（能力 `Unsupported` 且在打开写入会话前拒绝）、不可定位打开即 `NotSeekable`、原子替换拒绝，以及 Provider 拒绝访问故障注入；`DebugTestMediaProvider` 提供数字 documentId 的通用 content URI，经真实 `ACTION_VIEW` 断言打开用 `_display_name` 而不是 Uri 末段；文件选择器回调（`BeginFileRequestForChecks` 注册等待项后直接投递 Activity 结果，不启动 DocumentsUI）覆盖后台显示名准备、新请求取代旧请求时旧结果不串写、取消/销毁后迟到回调不复活。`ACTION_VIEW` 只验证同 UID 打开与真实读取、不伪造持久授权；不覆盖跨 UID 临时授权、系统授权撤销、DocumentsUI、USB/MTP/云 Provider。报告为 `android-checks-storage-<standard|ai>.txt`。
 - `filter`：筛选条三个自绘下拉的存活与锚点语义，全部走真实 UI 入口（点按派发给控件自身命中链、选项点弹出窗里真实行视图）。每个下拉打开后跨三个 2s 周期（> 4.5s）核对仍是同一个 `PopupWindow` 实例，重复 `RequestLayout`、重复相同 `Arrange` 都不收起；无关设置变更（如缩放指示器）不收起；行选择写回共享筛选 VM 且下拉关闭；栏位隐藏、旋转分别收起失效锚点；竖屏行布局上按 `root` 的真实调用序列跑「视口宽 → 文档宽」两次 `Arrange`（中间态不收起），窄屏（外部 `wm density 525` → 329dp）再用真实拖动断言筛选条可滚、滚动偏移跨三次重建保留且下拉仍开、再次滚动收起。非窄屏档只记录几何并跳过滚动步（报告写「非窄屏跳过」），窄屏档必须实跑。
 - `color`：主图色彩管理回归，**需广色域真机**（模拟器协商回退 sRGB，不算 P3 验收）。HEIF 最终回落另有回归：强制共享 libheif 回落（跳过快速路径）在设备目标色域 / Display P3 / sRGB 三个出口上逐平坦色块对照主图解码入口，`AndroidHeifDecoder` 兼容入口（现为共享 libheif wrapper，不走 `BitmapFactory`）必须出 `Bgra32Srgb` 的 sRGB8 且色块与共享出口一致，把夹具 `nclx` 改成 PQ/HLG 后真实解码入口必须返回 null 并记 HDR 原因，`irot` 非 0 时回落产物必须是显示朝向（方向 1）、源几何同步互换且色卡四角按逆时针 90° 轮转（改字节的临时夹具写在 App 内部 `files/pv-color-fixtures-generated`，产品路径不使用）。断言全部读真实渲染结果（重建过的 EGL 窗口表面 + 默认帧缓冲回读）或真实解码产物：可用的 P3 passthrough（`0x3490`）优先路径字节直通、强制标准 P3（`0x3363`）时按 sRGB 编码帧缓冲的着色器不得重复编码（128 灰回读 188 为错、128 为对）、强制 sRGB（`0x3089`）表面的显式转换、sRGB 源在 P3 表面必须转换、P3↔sRGB 重复重建与预乘数据保持、`Bitmap` 原始 P3 存储直读、导航图 sRGB 出口与方向，以及真实夹具对照共享 `SkiaImageCodec` 参考解码。上传计时回归另核转换与同色域直传、跨色域源回切不重转；6000×4000 P3 全幅图在强制 sRGB 表面与 P3 重建表面上分别记录同步提交/转换/GL 分段，并在计时外做 GPU 像素对照，不将提交墙钟冒充端到端呈现时间。`AndroidNativeChecks.ColorTransform` 另将这张全幅图的分带转换与单次串行 `SKPixmap.ReadPixels` 按所有有效像素逐行逐字节比较，预热后分别取 3 次转换中位值，参考与产物租约均在检查内归还。夹具取 `Fixtures/jpeg/color-{srgb,p3,adobe,untagged-adobe}.jpg`、`Fixtures/heif/color-{srgb,p3}.heic`（有 `color-gray.heic` 则另核中性保持）与 `Fixtures/jpeg-large/color-p3-large.jpg`；`adb push` 到 `/data/local/tmp` 后 `run-as cc.xiaojh.PhotoViewer cp` 进应用内部 `files/pv-color-fixtures/`。以 `--ez pv-srgb true` 或 `--ez pv-p3 false` 强制 sRGB 作对照，默认按设备与窗口广色域能力走 P3。
 - `zoom`：26MP 合成图（含方向 6）及真实 HIF 的 2496 代理→6192 Full 升级，计时同步纹理提交、动画间断与真实加载会话 UI 心跳；回读 GPU 的首尾、原分块边界两侧与行中像素，逐通道对照源字节，另验额外行距与纹理缓存；顶点缓冲检查覆盖八方向实际绘制、非对称四象限 GPU 回读、缩放平移更新及同一 renderer 两轮 EGL 重建后缓冲身份与分配次数保持。真实 HIF 副本放 `files/pv-check-zoom/` 或 `GetExternalFilesDir(null)/pv-check-zoom/`，缺失如实 FAIL。`zoom` / `input` / `perf` / `background` 使用隔离设置档，并将逐条报告写入 `PhotoViewerChecks` Logcat 标签，正式签名非 debuggable 包也可读取；`input` 另覆盖积压 Down、Down 后真实阻塞主线程再送积压 Move/Up、候选过期后恢复正常长按，以及动画中途触摸接管。像素回读、日志与合成素材仅检查模式执行，不进入普通浏览路径。
@@ -111,7 +117,7 @@ adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-m
 
 ### 启动与 UI 长尾排障
 
-- Debug 保持 `EmbedAssembliesIntoApk=true`，并显式使用 `AndroidUseAssemblyStore=true`，保留 Debug 符号。不要改回每程序集独立 DSO：Android 运行时 36.1.53 的该加载路径会在映射完成前把共享 `data_size` 从 ELF 长度改为载荷长度，并发懒加载可能按缩短长度再次映射并越界读取 ELF 节表；竞争失败分支随后会把污染长度传给 `munmap`，已实测一次调用解除约 1.74GiB 范围并覆盖大量无关原生库的可执行映射。assembly store 不走这条映射路径。
+- Debug 保持 `EmbedAssembliesIntoApk=true` 并保留 Debug 符号。AI 版 Debug 显式使用 `AndroidUseAssemblyStore=true`：运行时 36.1.53 的逐程序集 DSO 加载路径会在映射完成前把共享 `data_size` 从 ELF 长度改为载荷长度，并发懒加载可能按缩短长度再次映射并越界读取 ELF 节表；竞争失败分支随后会把污染长度传给 `munmap`，已实测一次调用解除约 1.74GiB 范围并覆盖大量无关原生库的可执行映射。assembly store 不走这条映射路径。标准版在缺少 DINO 程序集的 assembly store 布局下会于 ReactiveUI/后台类型初始化阶段持续等待，因此 Debug 与 Release 均显式 `AndroidUseAssemblyStore=false` 走逐程序集 DSO；该差异须通过两版冷启动与原生回归守护，不得互相照搬。
 - `AndroidApp` 将进程域与 Android 未处理异常写到 `PhotoViewerCrash`，只记录、不标记已处理。原生 SIGSEGV / SIGABRT / `EXIT_SELF 255` 分别保留当次 Logcat 和 `dumpsys activity exit-info <应用ID>`，不能因时间接近就合并根因；没有托管钩子日志也不单独证明故障属于原生。
 - Android 启动时将 `YuvImageConverter.MaxDegreeOfParallelism` 配为 `max(1, CPU 核数 - 1)`，并将 `ConversionTaskScheduler` 注入同等并发上限的进程级 `ConcurrentExclusiveSchedulerPair.ConcurrentScheduler`。多幅 YUV 转换共用执行槽，单图可用完整转换预算，不按图像上限静态均分；图像上限另不超过 `max(1, CPU 核数 - 1)`。这是 CPU 并发策略，不改变像素算法、Full 请求时机或精度；未配置的平台保持原行为。
 - `zoom` 的真实 HIF 放大段开启 `AndroidFrameStats` 固定容量内存采样，平时关闭。报告区分 DrawFrame 等锁/MakeCurrent/GL 命令/Swap、根视图布局/会话/视口、调度回调与 Looper 分发，按最大心跳间隙的时间区间匹配样本，另记该间隙的 GC 增量与 UI 线程 CPU 时间；各类存在嵌套，不跨类相加。消息日志仅检查期间安装，结束清除；它自身有 JNI/字符串开销。上传墙钟不包含 Draw/Swap，不能单凭上传快就排除渲染阻塞。`zoom` 另按所有有效像素逐行对照有界并行与串行 Full，核对色彩、几何与方向不变。

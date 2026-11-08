@@ -5,6 +5,8 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <LangVersion>latest</LangVersion>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <PhotoViewerEnableDino Condition="'$(PhotoViewerEnableDino)' == ''">true</PhotoViewerEnableDino>
+        <DefineConstants Condition="'$(PhotoViewerEnableDino)' == 'true'">$(DefineConstants);PHOTOVIEWER_DINO</DefineConstants>
     </PropertyGroup>
 
     <ItemGroup>
@@ -13,8 +15,23 @@
         <PackageReference Include="MetadataExtractor" />
         <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
         <PackageReference Include="Microsoft.Data.Sqlite" />
+        <PackageReference Include="XmpCore" />
+    </ItemGroup>
+
+    <ItemGroup Condition="'$(PhotoViewerEnableDino)' == 'true'">
         <PackageReference Include="Microsoft.ML.OnnxRuntime.Managed" />
         <PackageReference Include="MathNet.Numerics" />
-        <PackageReference Include="XmpCore" />
+    </ItemGroup>
+
+    <ItemGroup Condition="'$(PhotoViewerEnableDino)' != 'true'">
+        <Compile Remove="Core/AI/DinoDiagnosticPresenter.cs" />
+        <Compile Remove="Core/AI/DinoFeatureCache.cs" />
+        <Compile Remove="Core/AI/DinoFeatureExtractor.cs" />
+        <Compile Remove="Core/AI/DinoModelResources.cs" />
+        <Compile Remove="Core/AI/FolderFeatureIndexer.cs" />
+        <Compile Remove="Core/AI/PatchHeatmap.cs" />
+        <Compile Remove="Core/AI/SimilarityService.cs" />
+        <Compile Remove="ViewModels/Main/File/SimilarityPanelViewModel.cs" />
+        <Compile Remove="ViewModels/Tools/DinoDebugViewModel.cs" />
     </ItemGroup>
 </Project>

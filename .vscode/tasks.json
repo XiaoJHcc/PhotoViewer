@@ -9,30 +9,58 @@
       "problemMatcher": []
     },
     {
-      "label": "Debug Windows",
+      "label": "Debug Windows (Standard)",
       "type": "shell",
-      "command": "dotnet run --project PhotoViewer.Windows -c Debug",
+      "command": "dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEnableDino=false",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "Run Windows",
+      "label": "Debug Windows (AI)",
       "type": "shell",
-      "command": "dotnet run --project PhotoViewer.Windows --no-build -c Debug",
+      "command": "dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEnableDino=true",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "Check Windows Native",
+      "label": "Run Windows (Standard)",
       "type": "shell",
-      "command": "dotnet run --project PhotoViewer.Windows -c Debug -- --pv-native-smoke",
+      "command": "dotnet run --project PhotoViewer.Windows --no-build -c Debug -p:PhotoViewerEnableDino=false",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "Check Windows Color",
+      "label": "Run Windows (AI)",
       "type": "shell",
-      "command": "dotnet run --project PhotoViewer.Windows -c Debug -- --pv-native-color",
+      "command": "dotnet run --project PhotoViewer.Windows --no-build -c Debug -p:PhotoViewerEnableDino=true",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Check Windows Native (Standard)",
+      "type": "shell",
+      "command": "dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEnableDino=false -- --pv-native-smoke",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Check Windows Native (AI)",
+      "type": "shell",
+      "command": "dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEnableDino=true -- --pv-native-smoke",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Check Windows Color (Standard)",
+      "type": "shell",
+      "command": "dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEnableDino=false -- --pv-native-color",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Check Windows Color (AI)",
+      "type": "shell",
+      "command": "dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEnableDino=true -- --pv-native-color",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
@@ -40,7 +68,9 @@
       "label": "Serve Web",
       "type": "shell",
       "command": "python3 -m http.server 8080",
-      "options": { "cwd": "${workspaceFolder}/PhotoViewer.Web" },
+      "options": {
+        "cwd": "${workspaceFolder}/PhotoViewer.Web"
+      },
       "isBackground": true,
       "group": "test",
       "problemMatcher": []
@@ -55,14 +85,14 @@
     {
       "label": "Build Mac (Debug)",
       "type": "shell",
-      "command": "dotnet build PhotoViewer.Mac/PhotoViewer.Mac.csproj -c Debug -r osx-arm64",
+      "command": "dotnet build PhotoViewer.Mac/PhotoViewer.Mac.csproj -c Debug -r osx-arm64 -p:PhotoViewerEnableDino=false",
       "group": "build",
       "problemMatcher": "$msCompile"
     },
     {
       "label": "Debug Mac",
       "type": "shell",
-      "command": "open -n PhotoViewer.Mac/bin/Debug/net10.0-macos/osx-arm64/PhotoViewer.app",
+      "command": "open -n PhotoViewer.Mac/bin/standard/Debug/net10.0-macos/osx-arm64/PhotoViewer.app",
       "dependsOn": "Build Mac (Debug)",
       "group": "test",
       "problemMatcher": "$msCompile"
@@ -70,139 +100,378 @@
     {
       "label": "Run Mac",
       "type": "shell",
-      "command": "open -n PhotoViewer.Mac/bin/Debug/net10.0-macos/osx-arm64/PhotoViewer.app",
+      "command": "open -n PhotoViewer.Mac/bin/standard/Debug/net10.0-macos/osx-arm64/PhotoViewer.app",
       "group": "test",
       "problemMatcher": []
     },
     {
-      "label": "Debug Android",
+      "label": "Build Mac AI (Debug)",
       "type": "shell",
-      "windows": {
-        "command": "adb logcat -c && dotnet build PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug -t:Run -p:AndroidSdkDirectory=%LOCALAPPDATA%\\Android\\Sdk && adb logcat -s PhotoViewer:V AndroidRuntime:E mono:W monodroid:W",
-        "options": {
-          "shell": {
-            "executable": "cmd.exe",
-            "args": ["/d", "/c"]
-          }
-        }
-      },
-      "osx": {
-        "command": "ADB=$HOME/Library/Android/sdk/platform-tools/adb; \"$ADB\" kill-server && \"$ADB\" start-server && \"$ADB\" logcat -c && dotnet build PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug && \"$ADB\" install -r PhotoViewer.Android/bin/Debug/net10.0-android/cc.xiaojh.PhotoViewer-Signed.apk && \"$ADB\" shell monkey -p cc.xiaojh.PhotoViewer -c android.intent.category.LAUNCHER 1 && \"$ADB\" logcat -s PhotoViewer:V AndroidRuntime:E mono:W monodroid:W"
-      },
+      "command": "dotnet build PhotoViewer.Mac/PhotoViewer.Mac.csproj -c Debug -r osx-arm64 -p:PhotoViewerEnableDino=true",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Debug Mac AI",
+      "type": "shell",
+      "command": "open -n \"PhotoViewer.Mac/bin/ai/Debug/net10.0-macos/osx-arm64/PhotoViewer AI.app\"",
+      "dependsOn": "Build Mac AI (Debug)",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "Install Android",
+      "label": "Run Mac AI",
       "type": "shell",
-      "windows": {
-        "command": "adb install -r PhotoViewer.Android\\bin\\Debug\\net10.0-android\\cc.xiaojh.PhotoViewer-Signed.apk && adb shell monkey -p cc.xiaojh.PhotoViewer -c android.intent.category.LAUNCHER 1",
-        "options": {
-          "shell": {
-            "executable": "cmd.exe",
-            "args": ["/d", "/c"]
-          }
-        }
-      },
-      "osx": {
-        "command": "ADB=$HOME/Library/Android/sdk/platform-tools/adb; \"$ADB\" kill-server && \"$ADB\" start-server && \"$ADB\" install -r PhotoViewer.Android/bin/Debug/net10.0-android/cc.xiaojh.PhotoViewer-Signed.apk && \"$ADB\" shell monkey -p cc.xiaojh.PhotoViewer -c android.intent.category.LAUNCHER 1"
-      },
-      "group": "test",
-      "problemMatcher": "$msCompile"
-    },
-    {
-      "label": "Debug iOS Simulator",
-      "type": "shell",
-      "command": "dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Debug -r iossimulator-arm64 && xcrun simctl install booted PhotoViewer.iOS/bin/Debug/net10.0-ios/iossimulator-arm64/PhotoViewer.iOS.app/ && xcrun simctl launch booted cc.xiaojh.PhotoViewer",
-      "group": "test",
-      "problemMatcher": "$msCompile"
-    },
-    {
-      "label": "Install iOS Simulator",
-      "type": "shell",
-      "command": "xcrun simctl install booted PhotoViewer.iOS/bin/Debug/net10.0-ios/iossimulator-arm64/PhotoViewer.iOS.app/",
+      "command": "open -n \"PhotoViewer.Mac/bin/ai/Debug/net10.0-macos/osx-arm64/PhotoViewer AI.app\"",
       "group": "test",
       "problemMatcher": []
+    },
+    {
+      "label": "Debug Android (Standard)",
+      "type": "shell",
+      "windows": {
+        "command": "adb logcat -c && dotnet build PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug -t:Run -p:PhotoViewerEnableDino=false -p:AndroidSdkDirectory=%LOCALAPPDATA%\\Android\\Sdk && adb logcat -s PhotoViewer:V AndroidRuntime:E mono:W monodroid:W",
+        "options": {
+          "shell": {
+            "executable": "cmd.exe",
+            "args": [
+              "/d",
+              "/c"
+            ]
+          }
+        }
+      },
+      "osx": {
+        "command": "ADB=$HOME/Library/Android/sdk/platform-tools/adb; \"$ADB\" kill-server && \"$ADB\" start-server && \"$ADB\" logcat -c && dotnet build PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug -p:PhotoViewerEnableDino=false && \"$ADB\" install -r PhotoViewer.Android/bin/standard/Debug/net10.0-android/cc.xiaojh.PhotoViewer-Signed.apk && \"$ADB\" shell monkey -p cc.xiaojh.PhotoViewer -c android.intent.category.LAUNCHER 1 && \"$ADB\" logcat -s PhotoViewer:V AndroidRuntime:E mono:W monodroid:W"
+      },
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Debug Android (AI)",
+      "type": "shell",
+      "windows": {
+        "command": "adb logcat -c && dotnet build PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug -t:Run -p:PhotoViewerEnableDino=true -p:AndroidSdkDirectory=%LOCALAPPDATA%\\Android\\Sdk && adb logcat -s PhotoViewer:V AndroidRuntime:E mono:W monodroid:W",
+        "options": {
+          "shell": {
+            "executable": "cmd.exe",
+            "args": [
+              "/d",
+              "/c"
+            ]
+          }
+        }
+      },
+      "osx": {
+        "command": "ADB=$HOME/Library/Android/sdk/platform-tools/adb; \"$ADB\" kill-server && \"$ADB\" start-server && \"$ADB\" logcat -c && dotnet build PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug -p:PhotoViewerEnableDino=true && \"$ADB\" install -r PhotoViewer.Android/bin/ai/Debug/net10.0-android/cc.xiaojh.PhotoViewer-Signed.apk && \"$ADB\" shell monkey -p cc.xiaojh.PhotoViewer -c android.intent.category.LAUNCHER 1 && \"$ADB\" logcat -s PhotoViewer:V AndroidRuntime:E mono:W monodroid:W"
+      },
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Install Android (Standard)",
+      "type": "shell",
+      "windows": {
+        "command": "adb install -r PhotoViewer.Android\\bin\\standard\\Debug\\net10.0-android\\cc.xiaojh.PhotoViewer-Signed.apk && adb shell monkey -p cc.xiaojh.PhotoViewer -c android.intent.category.LAUNCHER 1",
+        "options": {
+          "shell": {
+            "executable": "cmd.exe",
+            "args": [
+              "/d",
+              "/c"
+            ]
+          }
+        }
+      },
+      "osx": {
+        "command": "ADB=$HOME/Library/Android/sdk/platform-tools/adb; \"$ADB\" kill-server && \"$ADB\" start-server && \"$ADB\" install -r PhotoViewer.Android/bin/standard/Debug/net10.0-android/cc.xiaojh.PhotoViewer-Signed.apk && \"$ADB\" shell monkey -p cc.xiaojh.PhotoViewer -c android.intent.category.LAUNCHER 1"
+      },
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Install Android (AI)",
+      "type": "shell",
+      "windows": {
+        "command": "adb install -r PhotoViewer.Android\\bin\\ai\\Debug\\net10.0-android\\cc.xiaojh.PhotoViewer-Signed.apk && adb shell monkey -p cc.xiaojh.PhotoViewer -c android.intent.category.LAUNCHER 1",
+        "options": {
+          "shell": {
+            "executable": "cmd.exe",
+            "args": [
+              "/d",
+              "/c"
+            ]
+          }
+        }
+      },
+      "osx": {
+        "command": "ADB=$HOME/Library/Android/sdk/platform-tools/adb; \"$ADB\" kill-server && \"$ADB\" start-server && \"$ADB\" install -r PhotoViewer.Android/bin/ai/Debug/net10.0-android/cc.xiaojh.PhotoViewer-Signed.apk && \"$ADB\" shell monkey -p cc.xiaojh.PhotoViewer -c android.intent.category.LAUNCHER 1"
+      },
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Debug iOS Simulator (Standard)",
+      "type": "shell",
+      "command": "dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Debug -r iossimulator-arm64 -p:PhotoViewerEnableDino=false && xcrun simctl install booted PhotoViewer.iOS/bin/standard/Debug/net10.0-ios/iossimulator-arm64/PhotoViewer.iOS.app/ && xcrun simctl launch booted cc.xiaojh.PhotoViewer",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Install iOS Simulator (Standard)",
+      "type": "shell",
+      "command": "xcrun simctl install booted PhotoViewer.iOS/bin/standard/Debug/net10.0-ios/iossimulator-arm64/PhotoViewer.iOS.app/",
+      "group": "test",
+      "problemMatcher": ""
+    },
+    {
+      "label": "Debug iOS (Standard)",
+      "type": "shell",
+      "command": "dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Release -r ios-arm64 -p:PhotoViewerEnableDino=false && xcrun devicectl device install app --device \"${input:iosDevice}\" PhotoViewer.iOS/bin/standard/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Install iOS (Standard)",
+      "type": "shell",
+      "command": "xcrun devicectl device install app --device \"${input:iosDevice}\" PhotoViewer.iOS/bin/standard/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
+      "group": "test",
+      "problemMatcher": ""
+    },
+    {
+      "label": "Install iOS Stable (Standard, Release)",
+      "type": "shell",
+      "command": "test -d release/ios-stable/standard/PhotoViewer.iOS.app && xcrun devicectl device install app --device \"${input:iosDevice}\" release/ios-stable/standard/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
+      "group": "test",
+      "problemMatcher": ""
+    },
+    {
+      "label": "Debug iOS Simulator (AI)",
+      "type": "shell",
+      "command": "dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Debug -r iossimulator-arm64 -p:PhotoViewerEnableDino=true && xcrun simctl install booted PhotoViewer.iOS/bin/ai/Debug/net10.0-ios/iossimulator-arm64/PhotoViewer.iOS.app/ && xcrun simctl launch booted cc.xiaojh.PhotoViewer",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Install iOS Simulator (AI)",
+      "type": "shell",
+      "command": "xcrun simctl install booted PhotoViewer.iOS/bin/ai/Debug/net10.0-ios/iossimulator-arm64/PhotoViewer.iOS.app/",
+      "group": "test",
+      "problemMatcher": ""
+    },
+    {
+      "label": "Debug iOS (AI)",
+      "type": "shell",
+      "command": "dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Release -r ios-arm64 -p:PhotoViewerEnableDino=true && xcrun devicectl device install app --device \"${input:iosDevice}\" PhotoViewer.iOS/bin/ai/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Install iOS (AI)",
+      "type": "shell",
+      "command": "xcrun devicectl device install app --device \"${input:iosDevice}\" PhotoViewer.iOS/bin/ai/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
+      "group": "test",
+      "problemMatcher": ""
+    },
+    {
+      "label": "Install iOS Stable (AI, Release)",
+      "type": "shell",
+      "command": "test -d release/ios-stable/ai/PhotoViewer.iOS.app && xcrun devicectl device install app --device \"${input:iosDevice}\" release/ios-stable/ai/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
+      "group": "test",
+      "problemMatcher": ""
     },
     {
       "label": "Refresh iOS Profile",
       "type": "shell",
       "command": "xcodebuild -project Tools/RefreshIosProfile/RefreshIosProfile.xcodeproj -scheme RefreshIosProfile -configuration Debug -destination 'generic/platform=iOS' -allowProvisioningUpdates build",
       "group": "test",
-      "problemMatcher": []
+      "problemMatcher": ""
     },
     {
-      "label": "Debug iOS",
+      "label": "Publish Windows EXE (Release, Standard + AI)",
       "type": "shell",
-      "command": "dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Release -r ios-arm64 && xcrun devicectl device install app --device \"${input:iosDevice}\" PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
-      "group": "test",
-      "problemMatcher": "$msCompile"
-    },
-    {
-      "label": "Install iOS",
-      "type": "shell",
-      "command": "xcrun devicectl device install app --device \"${input:iosDevice}\" PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
-      "group": "test",
-      "problemMatcher": []
-    },
-    {
-      "label": "Install iOS Stable (Release)",
-      "type": "shell",
-      "command": "test -d release/ios-stable/PhotoViewer.iOS.app && xcrun devicectl device install app --device \"${input:iosDevice}\" release/ios-stable/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
-      "group": "test",
-      "problemMatcher": []
-    },
-    {
-      "label": "Publish Windows EXE (Release)",
-      "type": "shell",
-      "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Windows/publish-win-x64-singlefile.ps1",
+      "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Windows/publish-win-x64-singlefile.ps1 -Edition both",
       "group": "build",
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "Publish Android APK (Release)",
+      "label": "Publish Windows EXE (Release, Standard)",
+      "type": "shell",
+      "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Windows/publish-win-x64-singlefile.ps1 -Edition standard",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Publish Windows EXE (Release, AI)",
+      "type": "shell",
+      "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Windows/publish-win-x64-singlefile.ps1 -Edition ai",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Publish Windows EXE (Local Check)",
+      "type": "shell",
+      "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Windows/publish-win-x64-singlefile.ps1 -Edition both -Local",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Scan Windows Package (Self-Test)",
+      "type": "shell",
+      "command": "python Tools/check-windows-package.py --self-test",
+      "group": "build",
+      "problemMatcher": ""
+    },
+    {
+      "label": "Publish Android APK (Release, Standard + AI)",
       "type": "shell",
       "windows": {
-        "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Android/publish-android-apk.ps1 -AndroidSdkDirectory ${env:LOCALAPPDATA}\\Android\\Sdk"
+        "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Android/publish-android-apk.ps1 -Edition both -AndroidSdkDirectory ${env:LOCALAPPDATA}\\Android\\Sdk"
       },
       "osx": {
-        "command": "bash PhotoViewer.Android/publish-android-apk.sh"
+        "command": "bash PhotoViewer.Android/publish-android-apk.sh --edition both"
       },
       "group": "build",
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "Publish Mac DMG (Release)",
+      "label": "Publish Android APK (Release, Standard)",
+      "type": "shell",
+      "windows": {
+        "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Android/publish-android-apk.ps1 -Edition standard -AndroidSdkDirectory ${env:LOCALAPPDATA}\\Android\\Sdk"
+      },
+      "osx": {
+        "command": "bash PhotoViewer.Android/publish-android-apk.sh --edition standard"
+      },
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Publish Android APK (Release, AI)",
+      "type": "shell",
+      "windows": {
+        "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Android/publish-android-apk.ps1 -Edition ai -AndroidSdkDirectory ${env:LOCALAPPDATA}\\Android\\Sdk"
+      },
+      "osx": {
+        "command": "bash PhotoViewer.Android/publish-android-apk.sh --edition ai"
+      },
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Publish Android APK (Local Check)",
+      "type": "shell",
+      "windows": {
+        "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Android/publish-android-apk.ps1 -Edition both -Local -AndroidSdkDirectory ${env:LOCALAPPDATA}\\Android\\Sdk"
+      },
+      "osx": {
+        "command": "bash PhotoViewer.Android/publish-android-apk.sh --edition both --local"
+      },
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Publish Mac DMG (Release, Standard + AI)",
       "type": "shell",
       "command": "bash PhotoViewer.Mac/publish.sh",
       "group": "build",
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "Publish iOS IPA (Release)",
+      "label": "Publish Mac DMG (Local Adhoc Check)",
       "type": "shell",
-      "command": "APP_VERSION=$(sed -n 's:.*<AppVersion>\\(.*\\)</AppVersion>.*:\\1:p' Directory.Build.props | head -n 1) && dotnet publish PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Release -r ios-arm64 && mkdir -p release/ios-stable release/packages && rm -rf release/ios-stable/PhotoViewer.iOS.app release/ios-stable/PhotoViewer.iOS.ipa && cp -R PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app release/ios-stable/PhotoViewer.iOS.app && cp PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/publish/PhotoViewer.iOS.ipa \"release/packages/PhotoViewer-${APP_VERSION}-ios-arm64.ipa\" && python3 Tools/check-release.py --write",
+      "command": "bash PhotoViewer.Mac/publish.sh --local",
       "group": "build",
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "Upload iOS TestFlight",
+      "label": "Publish iOS IPA (Release, Standard + AI)",
       "type": "shell",
-      "command": "bash PhotoViewer.iOS/publish-testflight.sh",
+      "command": "bash PhotoViewer.iOS/publish.sh",
       "group": "build",
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "Validate iOS TestFlight Archive",
+      "label": "Publish iOS IPA (Local Check)",
       "type": "shell",
-      "command": "bash PhotoViewer.iOS/validate-testflight-archive.sh",
+      "command": "bash PhotoViewer.iOS/publish.sh --local",
       "group": "build",
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "Check iOS TestFlight Device",
+      "label": "Validate iOS Package (Standard)",
       "type": "shell",
-      "command": "bash PhotoViewer.iOS/check-testflight-device.sh \"${input:iosDevice}\"",
+      "command": "python3 Tools/check-ios-package.py PhotoViewer.iOS/bin/standard/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app --edition standard --output artifacts/acceptance/ios-editions/standard-package.json",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Validate iOS Package (AI)",
+      "type": "shell",
+      "command": "python3 Tools/check-ios-package.py PhotoViewer.iOS/bin/ai/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app --edition ai --output artifacts/acceptance/ios-editions/ai-package.json",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Scan iOS Package (Self-Test)",
+      "type": "shell",
+      "command": "python3 Tools/check-ios-package.py --self-test",
+      "group": "build",
+      "problemMatcher": ""
+    },
+    {
+      "label": "Upload iOS TestFlight (Standard)",
+      "type": "shell",
+      "command": "bash PhotoViewer.iOS/publish-testflight.sh --edition standard",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Upload iOS TestFlight (AI)",
+      "type": "shell",
+      "command": "bash PhotoViewer.iOS/publish-testflight.sh --edition ai",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Archive iOS TestFlight (Local Only, Standard)",
+      "type": "shell",
+      "command": "bash PhotoViewer.iOS/publish-testflight.sh --edition standard --archive-only",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Archive iOS TestFlight (Local Only, AI)",
+      "type": "shell",
+      "command": "bash PhotoViewer.iOS/publish-testflight.sh --edition ai --archive-only",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Validate iOS TestFlight Archive (Standard)",
+      "type": "shell",
+      "command": "bash PhotoViewer.iOS/validate-testflight-archive.sh --edition standard",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Validate iOS TestFlight Archive (AI)",
+      "type": "shell",
+      "command": "bash PhotoViewer.iOS/validate-testflight-archive.sh --edition ai",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Check iOS TestFlight Device (Standard)",
+      "type": "shell",
+      "command": "bash PhotoViewer.iOS/check-testflight-device.sh --edition standard \"${input:iosDevice}\"",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Check iOS TestFlight Device (AI)",
+      "type": "shell",
+      "command": "bash PhotoViewer.iOS/check-testflight-device.sh --edition ai \"${input:iosDevice}\"",
       "group": "build",
       "problemMatcher": "$msCompile"
     }
@@ -212,7 +481,10 @@
       "id": "iosDevice",
       "type": "pickString",
       "description": "选择要安装的 iOS 设备",
-      "options": ["XJH-17", "XJH-mini7"],
+      "options": [
+        "XJH-17",
+        "XJH-mini7"
+      ],
       "default": "XJH-mini7"
     }
   ]

@@ -6,13 +6,8 @@ using PhotoViewer.Core.Image;
 
 namespace PhotoViewer.Mac.Native;
 
-/// <summary>
-/// 原生 DINO 诊断页：与旧壳 <c>DinoDebugView</c> 同构 —— 标题与状态文本、DINO patch 三列瓦片
-/// （原图缩略图 / PCA-RGB / Cosine 相似度）、CV 网格瓦片（锐度 / 抖动拖影矢量）与网格下方的刚体拟合整宽文本块。
-/// 全部数据来自共享 <see cref="DinoDiagnosticPresenter"/>（读库快路径与推理都在那里完成），
-/// 本视图只做位图适配与点击回传，绝不自行驱动推理。
-/// </summary>
-internal sealed class MacDinoDiagnosticView : NSView
+/// <summary>原生诊断页：AI 版为五瓦片 DINO 诊断，标准版为三瓦片 CV 诊断。</summary>
+internal sealed class MacDiagnosticView : NSView
 {
     /// <summary>页面左右外边距（旧壳 StackPanel Margin 16）。</summary>
     private const double PageMarginX = 16;
@@ -78,19 +73,25 @@ internal sealed class MacDinoDiagnosticView : NSView
     /// <summary>刚体拟合文本 12 点等宽字体。</summary>
     private static readonly NSFont RigidTextFont = NSFont.UserFixedPitchFontOfSize(12) ?? throw new InvalidOperationException("系统字体不可用");
 
+#if PHOTOVIEWER_DINO
     private readonly DinoDiagnosticPresenter _presenter;
+#else
+    private readonly CvDiagnosticPresenter _presenter;
+#endif
     private readonly NSScrollView _scroll;
     private readonly DocumentView _document;
-    private readonly NSTextField _title = SingleLineLabel("DINO 诊断", TitleFont, TitleColor);
+    private readonly NSTextField _title = SingleLineLabel(MacProductInfo.DiagnosticName, TitleFont, TitleColor);
     private readonly NSTextField _status = SingleLineLabel("", StatusFont, StatusColor);
+#if PHOTOVIEWER_DINO
     private readonly NSTextField _patchHeader = SingleLineLabel("DINO patch (32×32，点击任意图设定参考点)", SectionFont, SectionColor);
+    private readonly MacDiagnosticTile _pcaTile = Tile();
+    private readonly MacDiagnosticTile _cosineTile = Tile();
+#endif
     private readonly NSTextField _cvHeader = SingleLineLabel("CV 网格诊断（32×32 中心采样，像素单位）", SectionFont, SectionColor);
     private readonly NSTextField _rigidTitle = SingleLineLabel("抖动分析（刚体拟合）", PanelTitleFont, PanelTitleColor);
     private readonly NSTextField _rigidMetrics = SingleLineLabel("|T| / |ω| / residual", PanelMetricsFont, PanelMetricsColor);
     private readonly NSTextField _rigidText = WrappedLabel("", RigidTextFont, RigidTextColor);
     private readonly MacDiagnosticTile _thumbnailTile = Tile();
-    private readonly MacDiagnosticTile _pcaTile = Tile();
-    private readonly MacDiagnosticTile _cosineTile = Tile();
     private readonly MacDiagnosticTile _sharpnessTile = Tile();
     private readonly MacDiagnosticTile _shakeTile = Tile();
     private readonly MacShakeFieldView _shakeOverlay = new();
@@ -99,12 +100,13 @@ internal sealed class MacDinoDiagnosticView : NSView
     private string? _rigidSource;
     private bool _disposed;
 
-    /// <summary>刚体拟合文本标签，供验收核对它位于网格下方且为整宽块。</summary>
     internal NSTextField RigidText => _rigidText;
 
-    /// <summary>建立滚动容器、五个诊断瓦片与刚体拟合文本面板，并订阅 presenter 变化。</summary>
-    /// <param name="presenter">共享 DINO 诊断 presenter（由工具壳持有）。</param>
-    public MacDinoDiagnosticView(DinoDiagnosticPresenter presenter)
+#if PHOTOVIEWER_DINO
+    public MacDiagnosticView(DinoDiagnosticPresenter presenter)
+#else
+    public MacDiagnosticView(CvDiagnosticPresenter presenter)
+#endif
     {
         _presenter = presenter;
         _document = new DocumentView(presenter.ClearCrosshair);
@@ -120,14 +122,33 @@ internal sealed class MacDinoDiagnosticView : NSView
             AutomaticallyAdjustsContentInsets = false,
         };
         AddSubview(_scroll);
-        foreach (var view in new NSView[] { _title, _status, _patchHeader, _cvHeader, _rigidTitle, _rigidMetrics, _rigidText,
-            _thumbnailTile, _pcaTile, _cosineTile, _sharpnessTile, _shakeTile })
-            _document.AddSubview(view);
+        var views = new List<NSView> { _title, _status };
+#if PHOTOVIEWER_DINO
+        views.Add(_patchHeader);
+#endif
+        views.Add(_cvHeader);
+        views.Add(_rigidTitle);
+        views.Add(_rigidMetrics);
+        views.Add(_rigidText);
+        views.Add(_thumbnailTile);
+#if PHOTOVIEWER_DINO
+        views.Add(_pcaTile);
+        views.Add(_cosineTile);
+#endif
+        views.Add(_sharpnessTile);
+        views.Add(_shakeTile);
+        foreach (var view in views) _document.AddSubview(view);
         _shakeTile.Overlay = _shakeOverlay;
-        foreach (var tile in new[] { _thumbnailTile, _pcaTile, _cosineTile, _sharpnessTile, _shakeTile })
+        var tiles = new List<MacDiagnosticTile> { _thumbnailTile };
+#if PHOTOVIEWER_DINO
+        tiles.Add(_pcaTile);
+        tiles.Add(_cosineTile);
+#endif
+        tiles.Add(_sharpnessTile);
+        tiles.Add(_shakeTile);
+        foreach (var tile in tiles)
         {
             tile.TileClicked = presenter.OnTileClicked;
-            // TOOLS-05/ANALYSIS-08：瓦片内空白等同页面空白，清准星但保留 cosine 参考点。
             tile.BlankClicked = presenter.ClearCrosshair;
         }
         presenter.Changed += Sync;
@@ -142,8 +163,10 @@ internal sealed class MacDinoDiagnosticView : NSView
         _status.StringValue = _presenter.Status;
         SyncRigidText(_presenter.RigidMotionText);
         SyncTile(_thumbnailTile, _presenter.ThumbnailTile);
+#if PHOTOVIEWER_DINO
         SyncTile(_pcaTile, _presenter.PcaTile);
         SyncTile(_cosineTile, _presenter.CosineTile);
+#endif
         SyncTile(_sharpnessTile, _presenter.SharpnessTile);
         SyncTile(_shakeTile, _presenter.ShakeTile);
         _shakeOverlay.ShakeField = _presenter.ShakeTile.ShakeField;
@@ -231,17 +254,21 @@ internal sealed class MacDinoDiagnosticView : NSView
         y += LineHeight(TitleFont) + TitleBottomMargin;
         _status.Frame = new CGRect(PageMarginX, y, contentWidth, LineHeight(StatusFont));
         y += LineHeight(StatusFont) + StatusBottomMargin;
+#if PHOTOVIEWER_DINO
         _patchHeader.Frame = new CGRect(PageMarginX, y, contentWidth, LineHeight(SectionFont));
         y += LineHeight(SectionFont) + SectionHeaderBottomMargin;
-
         double rowTop = y;
         y = rowTop + PlaceTiles(rowTop, cell, tileWidth, _thumbnailTile, _pcaTile, _cosineTile) + GridGap;
         _cvHeader.Frame = new CGRect(PageMarginX, y, contentWidth, LineHeight(SectionFont));
         y += LineHeight(SectionFont) + SectionHeaderBottomMargin;
-
         rowTop = y;
         double tileRowHeight = PlaceTiles(rowTop, cell, tileWidth, _sharpnessTile, _shakeTile, null);
-        // TOOLS-05：刚体拟合文本是网格下方的整宽块，不再占第三列瓦片格。
+#else
+        _cvHeader.Frame = new CGRect(PageMarginX, y, contentWidth, LineHeight(SectionFont));
+        y += LineHeight(SectionFont) + SectionHeaderBottomMargin;
+        double rowTop = y;
+        double tileRowHeight = PlaceTiles(rowTop, cell, tileWidth, _thumbnailTile, _sharpnessTile, _shakeTile);
+#endif
         y = rowTop + tileRowHeight + GridGap;
         y = PlaceRigidPanel(y, contentWidth);
         _document.Frame = new CGRect(0, 0, width, Math.Max(1, y + PageMarginBottom));

@@ -1,27 +1,32 @@
 #!/usr/bin/env node
 /**
  * 导出 Web 参考壳的主屏几何 JSON，供 Tools/compare-layout-geometry.py 与各平台报告比对。
- * 用法：node PhotoViewer.Web/tools/export-geometry.mjs [--profile mac] [--count-width 52] --out <file>
+ * 用法：node PhotoViewer.Web/tools/export-geometry.mjs [--profile mac] [--edition standard|ai] [--count-width 52] --out <file>
+ *   --edition      导出标准版（无相似聚类开关、分析栏 4/5 瓦片）或 AI 版（缺省 ai）
  *   --count-width  固定计数文本宽（与 macOS 报告实测值对齐；缺省按字体近似测量）
- * 输出：{ source, profile, layouts: { "Col-1200x850": { 节点: [x,y,w,h] }, ... } }，数值保留两位小数。
+ * 输出：{ source, profile, edition, layouts: { "Col-1200x850": { 节点: [x,y,w,h] }, ... } }，数值保留两位小数。
  */
 import { writeFileSync } from "node:fs";
 import { computeLayout, approximateTextWidth } from "../src/core/layout/index.js";
 import { createTokens } from "../src/core/tokens.js";
+import { normalizeEdition } from "../src/core/edition.js";
 
 const args = process.argv.slice(2);
 let profile = "web";
+let edition = "ai";
 let out = null;
 let countWidth = null;
 for (let index = 0; index < args.length; index++) {
     if (args[index] === "--profile") profile = args[++index];
+    else if (args[index] === "--edition") edition = normalizeEdition(args[++index]);
     else if (args[index] === "--out") out = args[++index];
     else if (args[index] === "--count-width") countWidth = Number(args[++index]);
 }
 if (!out) {
-    console.error("用法：node PhotoViewer.Web/tools/export-geometry.mjs [--profile mac] [--count-width 52] --out <file>");
+    console.error("用法：node PhotoViewer.Web/tools/export-geometry.mjs [--profile mac] [--edition standard|ai] [--count-width 52] --out <file>");
     process.exit(2);
 }
+const standard = edition === "standard";
 
 const t = createTokens(profile);
 const defaultMeasure = (text, fontSizePt) => approximateTextWidth(text, fontSizePt);
@@ -33,6 +38,7 @@ const base = {
     showFilmbar: true,
     showControlbar: true,
     showAnalysis: false,
+    showSimilarity: !standard,
     similarityExpanded: false,
     similarityItemCount: 0,
     similarityDockTexts: [],
@@ -41,7 +47,7 @@ const base = {
     exifCount: 4,
     showRating: true,
     commandCount: 6,
-    analysisTileCount: 6,
+    analysisTileCount: standard ? 5 : 6,
     hasPhoto: true,
 };
 
@@ -59,8 +65,8 @@ for (const [width, height] of [[1200, 850], [700, 850], [850, 700]]) {
     layouts[`Auto-${width}x${height}`] = { photoPane: roundFrame(result.nodes["root.photoPane"]) };
 }
 
-writeFileSync(out, `${JSON.stringify({ source: "web", profile, layouts }, null, 2)}\n`);
-console.log(`已写出 ${out}（profile ${profile}，${Object.keys(layouts).length} 个布局）`);
+writeFileSync(out, `${JSON.stringify({ source: "web", profile, edition, layouts }, null, 2)}\n`);
+console.log(`已写出 ${out}（profile ${profile}，edition ${edition}，${Object.keys(layouts).length} 个布局）`);
 
 function roundNodes(nodes) {
     const rounded = {};

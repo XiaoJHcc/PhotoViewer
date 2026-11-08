@@ -81,6 +81,7 @@ public static class SettingsDefaults
             SimilarityThreshold = 0.85,
             SimilarityMaxResults = 8,
             AnalysisImmediateCompute = false,
+            AnalysisImmediateCvCompute = false,
             BitmapCacheMaxCount = cacheCount,
             BitmapCacheMaxMemory = cacheMemoryMB,
             PreloadForwardCount = ScalePreload(DefaultPreloadForwardCount),

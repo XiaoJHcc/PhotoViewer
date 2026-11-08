@@ -3,10 +3,13 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using PhotoViewer.Core.AI;
+using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Tools;
@@ -15,7 +18,8 @@ using Windows.Foundation;
 namespace PhotoViewer.Windows.Native;
 
 /// <summary>
-/// 工具窗口定向验收:真实窗口、三分类切换、EXIF 表格、DINO 瓦片、照片统计导出与单例/重开。
+/// 工具窗口定向验收:真实窗口、三分类切换、EXIF 表格、诊断瓦片(AI 版 DINO 五张、标准版 CV 三张)、
+/// 照片统计导出与单例/重开。
 /// 由 <c>--pv-native-tools</c> 触发,只读自建隔离设置/数据库与自有素材。
 /// </summary>
 internal static class WindowsToolsAcceptance
@@ -58,15 +62,15 @@ internal static class WindowsToolsAcceptance
             Require(window.Window.AppWindow.IsShownInSwitchers, "工具窗口应进入任务栏/Alt-Tab");
             Require(window.Window.AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter { IsMaximizable: true },
                 "工具窗口应允许最大化");
-            // TOOLS-02：分类顺序 EXIF → DINO → 照片数据统计。
+            // TOOLS-02 / EDITION-04：分类顺序 EXIF → 诊断 → 照片数据统计,诊断页名按发行版。
             var categories = window.Navigation.MenuItems.OfType<NavigationViewItem>()
                 .Select(item => item.Content?.ToString()).ToArray();
-            Require(categories.SequenceEqual(new[] { "EXIF 详情", "DINO 诊断", "照片数据统计" }),
-                "工具窗口分类顺序不是 EXIF → DINO → 照片数据统计");
+            Require(categories.SequenceEqual(new[] { "EXIF 详情", WindowsProductInfo.DiagnosticName, "照片数据统计" }),
+                $"工具窗口分类顺序不是 EXIF → {WindowsProductInfo.DiagnosticName} → 照片数据统计");
             Require(Math.Abs(windowWidth - WindowsLayout.ToolsWindowWidth) < 4,
                 $"工具窗口宽度不是 960 DIP: {windowWidth:0.0}");
             Require(window.SelectedPage == ToolsPage.Exif, "默认页不是 EXIF 详情");
-            checks.Add($"PASS window: dark, Mica, NavigationView + TitleBar, 3 categories (EXIF/DINO/Stats), taskbar + maximizable, window={windowWidth:0} DIP");
+            checks.Add($"PASS window: dark, Mica, NavigationView + TitleBar, 3 categories (EXIF/{WindowsProductInfo.DiagnosticName}/Stats), taskbar + maximizable, window={windowWidth:0} DIP");
 
             Require(window.ExifPage.FileNameText == Path.GetFileNameWithoutExtension(fixture),
                 "EXIF 页文件名不含后缀");
@@ -77,17 +81,19 @@ internal static class WindowsToolsAcceptance
             checks.Add($"PASS EXIF detail: {window.ExifPage.GroupCount} groups / {window.ExifPage.TagCount} tags, single format label");
 
             window.Navigation.SelectedItem = window.Navigation.MenuItems.OfType<NavigationViewItem>()
-                .First(item => item.Tag is ToolsPage page && page == ToolsPage.Dino);
-            await WaitAsync(() => window.SelectedPage == ToolsPage.Dino && main.Tools.CurrentTool is DinoDebugViewModel, "切到 DINO 诊断");
-            await WaitAsync(() => main.Tools.DinoPresenter.Status == Path.GetFileName(fixture), "DINO 诊断计算", 120);
-            await WaitAsync(() => window.DinoPage.HasAllTiles, "DINO 五张瓦片出图", 30);
-            Require(window.DinoPage.TileCount == 5, "DINO 瓦片数不是 5");
-            Require(window.DinoPage.HasThumbnail, "DINO 缩略图瓦片没有位图");
+                .First(item => item.Tag is ToolsPage page && page == ToolsPage.Diagnostic);
+            await WaitAsync(() => window.SelectedPage == ToolsPage.Diagnostic && IsDiagnosticPageActive(main),
+                $"切到 {WindowsProductInfo.DiagnosticName}");
+            await WaitAsync(() => DiagnosticStatus(main) == Path.GetFileName(fixture), "诊断计算", 120);
+            await WaitAsync(() => window.DiagnosticPage.HasAllTiles, "诊断瓦片出图", 30);
+#if PHOTOVIEWER_DINO
+            Require(window.DiagnosticPage.TileCount == 5, "DINO 瓦片数不是 5");
+            Require(window.DiagnosticPage.HasThumbnail, "DINO 缩略图瓦片没有位图");
 
             // 作者 2026-10-17 反馈:两排瓦片大小不同、无说明文字的缩略图被垂直居中。
             // 五张瓦片按 3+2 同宽网格排列,两排正方形上沿必须齐平。
             window.Root.UpdateLayout();
-            var dinoTiles = window.DinoPage.Tiles;
+            var dinoTiles = window.DiagnosticPage.Tiles;
             double minSide = dinoTiles.Min(tile => tile.Side);
             double maxSide = dinoTiles.Max(tile => tile.Side);
             Require(minSide > 0 && maxSide - minSide <= 1,
@@ -95,7 +101,7 @@ internal static class WindowsToolsAcceptance
             double[] TopOfRow(int start, int count) => dinoTiles
                 .Skip(start)
                 .Take(count)
-                .Select(tile => tile.TransformToVisual(window.DinoPage).TransformPoint(new Point(0, 0)).Y)
+                .Select(tile => tile.TransformToVisual(window.DiagnosticPage).TransformPoint(new Point(0, 0)).Y)
                 .ToArray();
             var firstRowTops = TopOfRow(0, 3);
             var secondRowTops = TopOfRow(3, 2);
@@ -105,7 +111,31 @@ internal static class WindowsToolsAcceptance
             main.Tools.DinoPresenter.OnTileClicked(0.25, 0.25);
             await WaitAsync(() => main.Tools.DinoPresenter.RefGridX == 8 && main.Tools.DinoPresenter.RefGridY == 8,
                 "DINO 瓦片点击重算 cosine 参考点");
-            checks.Add($"PASS DINO diagnostics: 5 tiles ({maxSide:0}px wide, 3+2 top-aligned), status = {window.DinoPage.StatusText}, click sets reference patch 8,8");
+            checks.Add($"PASS DINO diagnostics: 5 tiles ({maxSide:0}px wide, 3+2 top-aligned), status = {window.DiagnosticPage.StatusText}, click sets reference patch 8,8");
+#else
+            Require(window.DiagnosticPage.TileCount == 3, "CV 瓦片数不是 3");
+            Require(window.DiagnosticPage.HasThumbnail, "CV 缩略图瓦片没有位图");
+            window.Root.UpdateLayout();
+            var cvTiles = window.DiagnosticPage.Tiles;
+            double minSide = cvTiles.Min(tile => tile.Side);
+            double maxSide = cvTiles.Max(tile => tile.Side);
+            Require(minSide > 0 && maxSide - minSide <= 1,
+                $"CV 瓦片宽度不一致: {minSide:0.#}..{maxSide:0.#}");
+            var tops = cvTiles
+                .Select(tile => tile.TransformToVisual(window.DiagnosticPage).TransformPoint(new Point(0, 0)).Y)
+                .ToArray();
+            Require(tops.Max() - tops.Min() <= 1, "CV 三张瓦片未同排顶部对齐");
+
+            var cv = main.Tools.CvPresenter;
+            cv.OnTileClicked(0.25, 0.25);
+            await WaitAsync(() => Math.Abs((cv.CrosshairU ?? -1) - 0.25) < 0.01
+                && Math.Abs((cv.CrosshairV ?? -1) - 0.25) < 0.01, "CV 诊断准星");
+            // EDITION-04：诊断页现算只进进程缓存,不写特征数据库。
+            var fingerprint = await AnalysisDataReader.ComputeFingerprintAsync(main.CurrentFile!, CancellationToken.None);
+            Require(fingerprint == null || await PhotoDatabase.ReadCvGridAsync(fingerprint) == null,
+                "CV 诊断页现算写入了 photos.cv_grid");
+            checks.Add($"PASS CV diagnostics: 3 tiles in one row ({maxSide:0}px wide, top-aligned), status = {window.DiagnosticPage.StatusText}, shared crosshair, current-photo compute stays in memory (no cv_grid write)");
+#endif
 
             window.Navigation.SelectedItem = window.Navigation.MenuItems.OfType<NavigationViewItem>()
                 .First(item => item.Tag is ToolsPage page && page == ToolsPage.Stats);
@@ -148,15 +178,16 @@ internal static class WindowsToolsAcceptance
 
             // TOOLBAR-06：控制栏 EXIF 整组入口明确切到 EXIF（含已展示其他分类）；菜单入口保留当前页。
             reopened.Navigation.SelectedItem = reopened.Navigation.MenuItems.OfType<NavigationViewItem>()
-                .First(item => item.Tag is ToolsPage page && page == ToolsPage.Dino);
-            await WaitAsync(() => reopened.SelectedPage == ToolsPage.Dino && main.Tools.CurrentTool is DinoDebugViewModel, "入口测试切到 DINO");
+                .First(item => item.Tag is ToolsPage page && page == ToolsPage.Diagnostic);
+            await WaitAsync(() => reopened.SelectedPage == ToolsPage.Diagnostic && IsDiagnosticPageActive(main),
+                $"入口测试切到 {WindowsProductInfo.DiagnosticName}");
             mainWindow.ControlBar.TapExifGroup();
             await WaitAsync(() => reopened.SelectedPage == ToolsPage.Exif && main.Tools.CurrentTool is ExifDetailViewModel,
                 "控制栏 EXIF 入口切到 EXIF");
             main.OpenToolsWindow();
             await Task.Delay(120);
             Require(reopened.SelectedPage == ToolsPage.Exif, "主图菜单入口不应切换工具页");
-            checks.Add("PASS TOOLBAR-06: control bar EXIF entry selects EXIF even from DINO; photo menu keeps the current page");
+            checks.Add($"PASS TOOLBAR-06: control bar EXIF entry selects EXIF even from {WindowsProductInfo.DiagnosticName}; photo menu keeps the current page");
 
             presenter.CloseIfOpen();
             await WaitAsync(() => !presenter.IsOpen, "工具窗口关闭（EXIF 入口测试）");
@@ -164,7 +195,7 @@ internal static class WindowsToolsAcceptance
             var entryWindow = presenter.Window ?? throw new InvalidOperationException("控制栏 EXIF 入口未重开工具窗口");
             await WaitAsync(() => entryWindow.SelectedPage == ToolsPage.Exif && main.Tools.CurrentTool is ExifDetailViewModel,
                 "关闭后控制栏 EXIF 入口直达 EXIF");
-            Require(main.Tools.DinoPresenter.Status == "未加载", "控制栏 EXIF 入口先启动了 DINO 推理");
+            Require(DiagnosticStatus(main) == "未加载", "控制栏 EXIF 入口先启动了诊断现算");
             checks.Add("PASS TOOLBAR-06: closed window reopens directly at EXIF from the control bar entry");
 
             // 加载中不算缺 EXIF。
@@ -186,7 +217,7 @@ internal static class WindowsToolsAcceptance
             mainWindow.ControlBar.TapExifGroup();
             var fallback = presenter.Window ?? throw new InvalidOperationException("无照片时控制栏 EXIF 入口未打开工具窗口");
             await WaitAsync(() => fallback.SelectedPage == ToolsPage.Stats, "无照片回退照片数据统计");
-            fallback.SelectPage(ToolsPage.Dino, openShared: true);
+            fallback.SelectPage(ToolsPage.Diagnostic, openShared: true);
             mainWindow.ControlBar.TapExifGroup();
             await WaitAsync(() => fallback.SelectedPage == ToolsPage.Stats, "已展示且无照片时回退照片数据统计");
             main.CurrentFile = loaded;
@@ -227,6 +258,24 @@ internal static class WindowsToolsAcceptance
         main.OpenToolsWindow();
         var window = presenter.Window ?? throw new InvalidOperationException("工具窗口未创建");
         await WaitAsync(() => window.Root.XamlRoot != null && window.Root.ActualWidth > 0, "工具窗口布局");
+    }
+
+    /// <summary>共享当前工具是否为诊断页(两版是不同 presenter 的 VM,按实例判定)。</summary>
+    /// <param name="main">主视图模型</param>
+    /// <returns>当前工具为诊断页时 true。</returns>
+    private static bool IsDiagnosticPageActive(MainViewModel main)
+        => ReferenceEquals(main.Tools.CurrentTool, main.Tools.DiagnosticDebug);
+
+    /// <summary>当前发行版诊断 presenter 的状态文本。</summary>
+    /// <param name="main">主视图模型</param>
+    /// <returns>状态文本。</returns>
+    private static string DiagnosticStatus(MainViewModel main)
+    {
+#if PHOTOVIEWER_DINO
+        return main.Tools.DinoPresenter.Status;
+#else
+        return main.Tools.CvPresenter.Status;
+#endif
     }
 
     /// <summary>轮询等待条件成立。</summary>

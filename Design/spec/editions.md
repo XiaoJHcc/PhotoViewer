@@ -1,12 +1,12 @@
 # 发行版本（EDITION）
 
-**意图**：用同一份选片核心提供两个边界清楚的离线产品：`PhotoViewer` 标准版不包含 DINO，`PhotoViewer-AI` 内置完整 DINO。标准版保留所有不依赖 DINO 的浏览、评分与 CV 诊断能力，而不是在 AI 版界面上留下空入口、错误占位或“缺少模型”状态。
+**意图**：用同一份选片核心提供两个边界清楚的离线产品：`PhotoViewer` 标准版不包含 DINO，`PhotoViewer AI` 内置完整 DINO。标准版保留所有不依赖 DINO 的浏览、评分与 CV 诊断能力，而不是在 AI 版界面上留下空入口、错误占位或“缺少模型”状态。
 
 版本能力是构建期事实，不是运行时设置。各模块中未特别说明的 DINO、相似聚类与组合诊断规则描述 AI 版；标准版的差异以本文件为准。包体、原生依赖和发布矩阵见 [分发包体积优化计划](../../Plans/distribution-package-size-optimization-plan.md)。
 
 ## EDITION-01 版本能力与功能保留 · 必须
 
-| 能力 | 标准版 `PhotoViewer` | AI 版 `PhotoViewer-AI` |
+| 能力 | 标准版 `PhotoViewer` | AI 版 `PhotoViewer AI` |
 |---|---|---|
 | 浏览、解码、色彩、缩放、雾天增强 | 保留 | 保留 |
 | 胶片栏、筛选、排序、评分写回、EXIF、照片数据统计 | 保留，既有平台边界不变 | 保留 |
@@ -21,6 +21,7 @@
 - 标准版保留 CV 提取、CV 派生计算、指纹分组和只读数据库能力。实现共享这些能力时不得反向引入 ONNX 或 DINO 索引器。
 - AI 版既有功能不因双版本而删减。除本文件规定的 DINO/CV 即时计算开关拆分外，其交互与数据契约保持现状。
 - 两个版本都不增加版本促销、升级提示、联网下载或功能说明控件；标准版界面不解释“缺少 AI”。
+- 产品显示名标准版为 `PhotoViewer`、AI 版为 `PhotoViewer AI`（空格），用于窗口标题与菜单、macOS `.app` 目录名与 DMG 卷名、`CFBundleName` / `CFBundleDisplayName`、Android `android:label`、Windows 版本资源 `ProductName`。横线只属于打包命名：`release/packages/<PhotoViewer|PhotoViewer-AI>-<版本>-<平台后缀>`、Windows 程序集/EXE 名与 TestFlight `.xcarchive` 名。界面与包身份不得再用 `PhotoViewer-AI` 作显示名。
 
 ## EDITION-02 入口与主屏构成 · 必须
 

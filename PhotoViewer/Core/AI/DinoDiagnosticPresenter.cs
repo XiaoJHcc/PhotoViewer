@@ -1,9 +1,8 @@
 using System;
-using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using PhotoViewer.Core.Database;
+using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
 
@@ -190,10 +189,7 @@ public sealed class DinoDiagnosticPresenter : IDisposable
         bool handedOff = false;
         try
         {
-            // 先用指纹试读 patch token / cv_grid 缓存。
-            var (cachedPatches, cachedCv) = await TryReadCachedAsync(file, ct).ConfigureAwait(false);
-
-            // DINO 缩略图始终需要解码用于显示;CV 大图命中缓存时仍要解码以取得图像尺寸(算 diagonal)。
+            var cached = await AnalysisDataReader.TryReadAsync(file, ct).ConfigureAwait(false);
             var dinoTaskDecode = ThumbnailService.GetThumbnailAsync(file.File, DinoShortSide);
             var cvTaskDecode = BitmapLoader.GetBitmapAsync(file.File);
             await Task.WhenAll(dinoTaskDecode, cvTaskDecode).ConfigureAwait(false);
@@ -212,14 +208,12 @@ public sealed class DinoDiagnosticPresenter : IDisposable
             int bh = dinoBitmap.Height;
             double ratio = bh > 0 ? (double)bw / bh : 1.0;
 
-            // CV 源图像:大图优先,失败降级到 DINO 缩略图;所有 diagonal 都从这里推。
-            var cvSource = cvBitmap ?? dinoBitmap;
-            int cvW = cvSource.Width;
-            int cvH = cvSource.Height;
+            using var cvSource = ColorEngine.ToAnalysisSrgb8(cvBitmap ?? dinoBitmap);
+            int cvW = cached.Cv != null && cached.CvImageWidth > 0 ? cached.CvImageWidth : cvSource.Width;
+            int cvH = cached.Cv != null && cached.CvImageHeight > 0 ? cached.CvImageHeight : cvSource.Height;
+            var cv = cached.Cv ?? await CvGridExtractor.ExtractAsync(cvSource, ct).ConfigureAwait(false);
 
-            var cv = cachedCv ?? await CvGridExtractor.ExtractAsync(cvSource, ct).ConfigureAwait(false);
-
-            float[]? patches = cachedPatches;
+            float[]? patches = cached.Patches;
             if (patches == null)
             {
                 var (_, extracted) = await DinoFeatureExtractor.ExtractDualAsync(dinoBitmap, includePatches: true, ct).ConfigureAwait(false);
@@ -364,57 +358,6 @@ public sealed class DinoDiagnosticPresenter : IDisposable
         if (ct.IsCancellationRequested) return;
         action();
     });
-
-    /// <summary>
-    /// 读库快路径:用 EXIF 算指纹 → 同时尝试读 DINO patch token 与 CV grid 缓存。
-    /// 任一项失败返回该项 null,调用方走对应的现算路径;诊断页不回写库。
-    /// </summary>
-    private static async Task<(float[]? Patches, CvGridResult? Cv)> TryReadCachedAsync(ImageFile file, CancellationToken ct)
-    {
-        try
-        {
-            ct.ThrowIfCancellationRequested();
-            var exif = await file.LoadExifDataAsync().ConfigureAwait(false);
-            if (!file.ModifiedDate.HasValue)
-                await file.LoadBasicPropertiesAsync().ConfigureAwait(false);
-            var input = PhotoFingerprint.BuildInput(file.Name, exif, file.ModifiedDate?.UtcDateTime);
-            if (!input.CaptureTime.HasValue) return (null, null);
-
-            var fingerprint = PhotoFingerprint.Compute(input);
-            ct.ThrowIfCancellationRequested();
-
-            var patchTask = PhotoDatabase.ReadPatchesAsync(fingerprint, DinoModelResources.ModelId);
-            var cvTask = PhotoDatabase.ReadCvGridAsync(fingerprint);
-            await Task.WhenAll(patchTask, cvTask).ConfigureAwait(false);
-
-            float[]? patches = null;
-            if (patchTask.Result is byte[] patchBlob)
-            {
-                int total = DinoModelResources.PatchTokenCount * DinoModelResources.FeatureDim;
-                if (patchBlob.Length == total * sizeof(float))
-                {
-                    patches = new float[total];
-                    for (int i = 0; i < total; i++)
-                        patches[i] = BinaryPrimitives.ReadSingleLittleEndian(patchBlob.AsSpan(i * sizeof(float), sizeof(float)));
-                }
-            }
-
-            CvGridResult? cv = null;
-            if (cvTask.Result is { Blob: var cvBlob, Spec: var cvSpec } && cvSpec == CvGridResult.CurrentVersion)
-                cv = CvGridResult.Decode(cvBlob, cvSpec);
-
-            return (patches, cv);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[DinoDiagnostic] cache read failed for {file.Name}: {ex.Message}");
-            return (null, null);
-        }
-    }
 
     /// <summary>
     /// 把 v5 加权刚体拟合结果格式化为多行文本(研发判断用)。判定逻辑走 <see cref="ShakeClassifier"/>,

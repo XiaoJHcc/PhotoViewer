@@ -73,13 +73,19 @@ public class FilterBarViewModel : ReactiveObject
     /// <summary>相似聚类面板是否展开；初值从 Settings 读取，变更时写回 Settings 并触发 <see cref="SimilarityPanelToggled"/>。</summary>
     public bool IsSimilarityPanelOpen
     {
+#if PHOTOVIEWER_DINO
         get => _main.Settings.SimilarityPanelExpanded;
+#else
+        get => false;
+#endif
         set
         {
+#if PHOTOVIEWER_DINO
             if (_main.Settings.SimilarityPanelExpanded == value) return;
             _main.Settings.SimilarityPanelExpanded = value;
             this.RaisePropertyChanged();
             SimilarityPanelToggled?.Invoke(value);
+#endif
         }
     }
 
@@ -101,8 +107,10 @@ public class FilterBarViewModel : ReactiveObject
     /// <summary>仅排序变化时触发（可单独优化为不重算筛选）</summary>
     public event Action? SortChanged;
 
+#if PHOTOVIEWER_DINO
     /// <summary>相似聚类面板展开/关闭时触发，参数为新的展开状态。</summary>
     public event Action<bool>? SimilarityPanelToggled;
+#endif
 
     /// <summary>
     /// 构造筛选条视图模型。

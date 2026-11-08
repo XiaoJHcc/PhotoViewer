@@ -124,15 +124,17 @@ internal static partial class AndroidNativeChecks
 
         var content = panes.FileContent;
         var filter = root.FilterBar;
+        // EDITION-02：标准版末项是计数，AI 版末项是相似聚类开关。
+        var filterTail = AndroidFilterBar.ShowsSimilarityToggle ? filter.SimilarityFrame : filter.CountFrame;
         bool filterInside = layoutRow
-            ? filter.SortFrame.X >= -.6 && filter.SimilarityFrame.MaxX <= content.Width + .6
-            : filter.SortFrame.Y >= -.6 && filter.SimilarityFrame.MaxY <= content.Height + .6;
+            ? filter.SortFrame.X >= -.6 && filterTail.MaxX <= content.Width + .6
+            : filter.SortFrame.Y >= -.6 && filterTail.MaxY <= content.Height + .6;
         // 窄屏：控件宽度不压缩，由筛选条滚动宿主承载，要求自然宽度确实超出且可滚。
         bool filterScrolls = layoutRow && !filterInside
             && filter.RequiredWidthDp > content.Width + .6 && root.FilterScrollableForChecks;
         filterInside |= filterScrolls;
         Check($"{phase} 筛选条在文件栏内容区", filterInside,
-            $"sort={filter.SortFrame} toggle={filter.SimilarityFrame} content={content} "
+            $"sort={filter.SortFrame} tail={filterTail} toggle={AndroidFilterBar.ShowsSimilarityToggle} content={content} "
             + $"required={filter.RequiredWidthDp:0.#} scroll={filterScrolls} horizontal={filter.Horizontal}");
 
         var nodes = root.ControlBar.NodesForChecks();

@@ -1,6 +1,6 @@
 # 分发包体积优化计划
 
-> 状态：分发方向已裁定，待实施（2026-11-07）
+> 状态：macOS P0/P1 本地实施与验收完成；iOS 双版本分拆、本地 IPA 优化和模拟器验收完成，真机/分发渠道验收未覆盖；Android P1 本地实施与模拟器验收完成，真机/正式归档未覆盖；Windows P0/P1 双版本及 WindowsDesktop 清理本地验收完成，正式归档/干净系统/作者手验未覆盖
 > 关联：[发行版本设计规范](../Design/spec/editions.md) · [DINOv3 选片 Plan-1](dinov3-photo-ranking-plan-1.md) · [DINOv3 ONNX 构建说明](../DEV.md#dinov3-onnx-模型)
 > 范围：四平台模型与推理运行时分发、包体清理、发布矩阵。模型结构、预处理、特征 schema 与聚类算法不在本计划内变更。标准版入口、CV 保留范围、独立即时计算门控与版本切换兼容以发行版本设计规范为准。早期计划中关于模型打包、许可复核和在线下载的表述，以本计划的现行决策为准。
 
@@ -28,14 +28,16 @@
 | 项 | 当前值 |
 |---|---|
 | 文件 | `dinov3_vits16.onnx` |
-| 原始大小 | 86,594,677 bytes（82.58 MiB） |
-| SHA-256 | `bcba38490ec2eded4a240751bebac198903daba7263871e8fee3aa39b03352e8` |
+| Mac / iOS / Android 新版扫描器锁定导出 | 86,594,677 bytes；SHA-256 `bcba38490ec2eded4a240751bebac198903daba7263871e8fee3aa39b03352e8` |
+| Windows 既有发布导出（本轮保持） | 86,582,598 bytes；SHA-256 `b1579b92faa070106c613a6a502abe41d507588cab236727396bb2a2505cfc01` |
 | `ModelId` | `dinov3_vits16_f32_518_v2` |
 | 输入 | 518×518、RGB、opset 17 |
 | 输出 | `cls_embedding` + `patch_tokens` |
 | 特殊处理 | DirectML 所需 Reshape 后处理；权重内嵌于单一 ONNX |
 
-官方原始权重和社区 ONNX 不能直接替代当前文件。模型外置时也必须分发同一导出契约、通过一致性与四端推理验收的产物。
+Windows 本机文件与 Windows 0.8.0/0.8.8/0.8.9/0.9.0、Android 0.8.0/0.8.8 历史包及训练审计中的文件均为 `b1579…`；已含 DirectML Reshape 修复（74 个 Reshape，零个含 -1）。它与其他三端新版扫描器使用的 `bcba…` 是两份不同字节的导出，不能只凭相同 `ModelId` 声称逐字节相同或数值等价。本轮 Windows 只锁定并保留其既有发布导出，严格检查单一大小/哈希，不替换本地模型，也不修改其他三端的校验值；跨端统一导出前仍需取得两份文件并做输出数值对照。
+
+官方原始权重和社区 ONNX 不能直接替代当前文件。模型外置或重新统一导出时，也必须分发通过一致性与四端推理验收的固定产物。
 
 ### 1.3 当前包体与移除 DINO 的测算
 
@@ -69,7 +71,7 @@ iOS 估算尚未计入 Symbols 随 ONNX 移除而同步缩小的收益，不作�
 | Android 双 ABI | x86_64 占下载包 40.28 MiB；arm64 占 38.03 MiB | 仅保留并发布 arm64-v8a，构建排除 x86_64；不提供 x86_64 安卓包 |
 | Windows/Android 模型未压缩 | 无损压缩约省 6.03 MiB | 仅 DINO 内置版候选；保持解压后的模型字节和哈希不变 |
 | iOS Symbols | IPA 内 10.67 MiB | TestFlight 保留符号化材料；本地直装包可不携带，不通过 strip 规避现有 AOT 启动约束 |
-| Windows WPF/WinForms | 清单合计压缩后约 30.72 MiB | 深度裁剪候选，须先证明 DirectN/WicNet/WinUI 反射依赖不受影响 |
+| Windows WPF/WinForms | 原先粗分 30.72 MiB；按 0.9.0 实际 bundle 与 WindowsDesktop RuntimeList 对账为 36.10 MiB（284 项，含卫星资源） | 来源为 ReactiveUI → System.Reactive 6.1.0 的 Windows 资产声明传递 `Microsoft.WindowsDesktop.App`，并非 DirectN/WicNet。可用 SDK `DisableTransitiveFrameworkReferences` 阻止引入，但 Rx Windows 资产仍引用 Forms/WindowsBase，须用发布 EXE 全套运行回归证明未触发隐式加载 |
 | Windows `aom.dll` + `libx265.dll` | 压缩后约 4.62 MiB | 仅在自定义 libheif 保持当前格式支持并通过解码验收后移除 |
 | Windows App SDK AI/Widgets | 压缩后约 2.27 MiB | 深度裁剪候选，不与首轮双版本混在一起验证 |
 
@@ -99,6 +101,8 @@ iOS 估算尚未计入 Symbols 随 ONNX 移除而同步缩小的收益，不作�
 
 签名状态由发布验收和校验文件证明，不写进文件名。Android 固定使用 `-android-arm64`，不生成 `-android-x86_64` 产物。
 
+> **命名修订（2026-11）**：上表是打包命名，继续使用横线 `PhotoViewer-AI`。用户可见的产品显示名改为 `PhotoViewer AI`（空格）：窗口标题与菜单、macOS `.app` 目录名与 DMG 卷名、`CFBundleName` / `CFBundleDisplayName`、Android `android:label`、Windows 版本资源 `ProductName`。分发包文件名、Windows 程序集/EXE 名与 TestFlight `.xcarchive` 名不变；本计划下方早期验收记录里的“显示名分别为 `PhotoViewer` / `PhotoViewer-AI`”同样以本修订为准。
+
 - 桌面和 Android 可直接提供两个下载项；同包名/同 Bundle ID 的版本按替换安装处理，不要求同机共存。
 - **iOS 发布渠道需要单独裁定**：TestFlight 可用不同 build number 分批验证两个变体；App Store 同一 Bundle ID 不能当成两个并列 App 提供选择。若必须长期并列上架，需要独立 Bundle ID、App 入口和签名资料，这属于另一项发布决策，不在首轮默认承诺内。
 - 更新渠道按变体隔离，禁止标准版自动更新成带 82.58 MiB 模型的 DINO 版，反之亦然。
@@ -118,6 +122,59 @@ iOS 估算尚未计入 Symbols 随 ONNX 移除而同步缩小的收益，不作�
 - Android 两个变体均只构建和发布 arm64-v8a，APK 中不得残留 `lib/x86_64/`。
 - 完成产物扫描、基础功能、DINO 功能、升级切换和体积回归验收。
 - 桌面/Android 建立并列下载项；iOS 先明确 TestFlight 双变体流程，再决定 App Store 发行形态。
+
+### P1-Mac：本地实施与验收结果
+
+- `PhotoViewerEnableDino` 同时控制共享实现、Mac 原生依赖、模型/License、UI 和打包内容。Mac 标准版 Tasks 显式传 `PhotoViewerEnableDino=false`，AI 版显式传 `true`，裸构建缺少或传入非法值时报错；iOS / Android / Windows 的推广与验收见各自专节。
+- 标准版移除 DINO 提取/缓存/索引、相似聚类、patch 派生及 ONNX/MathNet 引用，保留 CV 分析、抖动徽标和三瓦片 CV 诊断。DINO/CV 即时计算已拆成独立设置；旧文档缺 CV 字段时继承原组合值。
+- `publish.sh --edition standard|ai|both` 发布独立 `.app` 与 DMG；`--local` 只运行 adhoc 构建、扫描及只读装载验证，不写正式归档。`bin/obj` 按变体隔离，源 `Info.plist` 构建前后无改动。扫描保存身份/版本/构建号、文件大小及 SHA-256，并拒绝标准版推理资产、AI 必需托管/原生组件或模型/许可证缺失；正反自检 9 项通过。`check-release.py` 校验双产品平台矩阵，兼容未迁移平台历史包名并拒绝未支持架构。
+- 首轮拆分测得标准版 `.app` 49.81 MiB、DMG 22.01 MiB；AI `.app` 167.95 MiB、DMG 109.16 MiB。正确性修复后的最终本地 Release/adhoc 实测分别为 **49.91 / 22.13 MiB** 与 **168.12 / 110.12 MiB**；这些是本地验证包，不是正式签名发布体积。包扫描与装载证据位于 `artifacts/acceptance/mac-editions/*-local-*.json`。
+- 双版本 layout / analysis / tools / settings / input / toolbar / filmstrip / faults / texture-cache 及 AI similarity 共 19 套原生回归通过。新增真实 P3/F16 与 EXIF 6 输入的 CV 数值对拍、无库 DINO-only 实际推理比例、库基线保留；Core 覆盖部分失败重试、成功侧复用和切图代际。AI → 标准 → AI 跨进程设置/视图状态恢复，CLS、patch、CV blob SHA-256、模型标识、CV spec/尺寸保持一致。证据位于 `artifacts/acceptance/mac-editions-fixes/`。
+- `CoreContractCheck`：AI **1181 PASS**、标准版 **1165 PASS**，均 0 FAIL、1 个既有 Windows 平台用例 SKIP；`SettingsDefaultsCheck`、68 项色彩契约与 Windows 类型检查通过。Web **344** 个单测通过，内置浏览器两版非 demo `check=all` 均 **56/56**；`?demo&check=all` 仍有既有 MENU-03 窗口/页面坐标混用断言问题，不在本任务改动范围。实际 Developer ID 签名、公证、stapler/Gatekeeper 和正式归档未执行，仍由正式发布任务验收。
+
+### P1-iOS：实施与本地验收
+
+- iOS 构建显式传 `PhotoViewerEnableDino=false|true`，头工程与共享工程按 `standard/ai` 隔离恢复资产、中间文件和输出；缺参/非法值的真实 restore 均被拒绝。构建从模板生成中间目录 `Info.plist`，源模板哈希保持不变；Bundle ID 与可执行文件名不变，显示名分别为 `PhotoViewer` / `PhotoViewer-AI`。
+- 标准版移除模型、ORT 托管/静态原生链接与 DINO/相似入口，保留四项筛选条、CV 分析与三瓦片 CV 诊断；AI 版保留五项筛选条、相似聚类和五瓦片诊断，两侧即时计算设置独立。
+- 新增 `publish.sh --edition standard|ai|both [--local]` 和实际产物扫描。扫描核对身份、版本/构建号、arm64、文件体积/SHA-256、模型契约与许可证，以及主程序已定义 ORT 符号；18 项正反自检通过。本地直装 IPA 不携带顶层 `Symbols/`，dSYM/Symbols 单独保留，不 strip、不改 AOT。TestFlight 必须显式指定单变体，提供 `--archive-only`，staging 校验通过后才替换旧归档。
+- iOS 26.3 隔离 iPad 模拟器的标准版 photo/layout/input/analysis/tools/faults/gesture/texture-cache 八套、AI 版对应八套及 similarity/真实 DINO 共十八套已通过；另有两版严格能力检查，含 AI 四开关组合真实出图、CV 独立参考对拍与现算不写库。DINO 故障注入已改为只断言 DINO 失败，CV 一侧独立成功，不沿用组合门控的旧断言。
+- 共享核心契约：标准版 1165 PASS、AI 版 1181 PASS，均 0 FAIL、1 个既有平台用例 SKIP。双版 Debug 和开发签名 Release/IPA 构建及扫描通过。最终标准版 `.app` **122.55 MiB**、IPA **33.37 MiB**；AI 版 `.app` **253.04 MiB**、IPA **122.09 MiB**，标准版下载包较 AI 版小 **72.67%**。包内 ORT 符号分别为 0 / 10，IPA 主执行文件与构建产物哈希相同，两版 IPA 均无顶层 Symbols，dSYM 保留；这些是本地开发签名验证包，不是 TestFlight 下载体积。证据在 `artifacts/acceptance/ios-editions/`，本地 IPA 在 `artifacts/scratch/ios-local-publish/`，未写入正式发布归档。
+- 真实 AI → 标准 → AI 覆盖安装三阶段通过：使用隔离键的 `AppleSettingsStore` / `AppleViewStateStore` 与同一验收数据库，标准版保留 DINO/CV 设置及展开态但不恢复面板，修改通用设置后 AI 版恢复；CLS、patch、CV 的 SHA-256、model_id、CV spec/尺寸逐项一致。初次失败来自模拟器 cfprefsd 延迟落盘与旧报告误判，验收现等待实际偏好文件持久化并核对当前阶段 START/PASS；未修改生产存储行为。证据在 `artifacts/acceptance/ios-editions/roundtrip-live/` 与 `roundtrip/`。
+- **未覆盖边界**：iPad 真机已安装标准版，但锁屏阻止启动，未获得真机运行结论。未上传 TestFlight；分发签名归档、渠道选择和作者手验不由本地开发签名包替代。App Store 并列上架身份仍未裁定。
+
+### P1-Android：实施与本地验收
+
+- Android 构建显式传 `PhotoViewerEnableDino=false|true`，头工程与共享工程按 `standard/ai` 隔离恢复资产、中间文件和输出；缺参/非法值均拒绝。两版保持同一 ApplicationId，显示名分别为 `PhotoViewer` / `PhotoViewer-AI`，清单由源模板生成中间目录副本。仅构建 `android-arm64`，APK 不含 x86_64/armeabi-v7a。
+- 标准版移除模型、ONNX/MathNet 托管与原生依赖、DINO/相似入口，保留四项筛选条、CV 分析和三瓦片 CV 诊断；AI 版保留完整能力、固定模型和 DINOv3 License，两版 DINO/CV 即时计算独立。标准版 Debug/Release 均显式 `AndroidUseAssemblyStore=false`，AI 版 Debug 保持 `true`：缺少 DINO 程序集的 assembly store 布局会在 ReactiveUI/后台类型初始化阶段持续等待，改走逐程序集 DSO 后双版冷启动与回归通过。
+- `publish-android-apk.sh --edition standard|ai|both [--local]`（Windows 为 `.ps1 -Edition …`）自动选择具备 android workload 的 SDK，逐版发布并调用 `Tools/check-android-package.py` 扫描实际 APK 的身份、显示名、版本、ABI、模型/License 与托管/原生推理组件，保存逐文件大小和 SHA-256；扫描器 23 项正反自检通过。本地包在 `artifacts/scratch/android-local-publish/`，机器可读证据在 `artifacts/acceptance/android-editions/`，未写正式归档。
+- arm64 模拟器的标准版 edition/main/analysis/settings/tools/faults 六套、AI 版对应六套及 similarity 共十三套通过，计数分别为 13/22/52/105/40/41 与 12/22/52/106/40/37/23，均 0 FAIL。共享核心契约：标准版 **1187 PASS**、AI 版 **1203 PASS**，均 0 FAIL、1 个既有平台用例 SKIP。双版 Debug/Release 构建、包扫描和 Release 冷启动通过。
+- 最终本地 Release 标准版 **35.40 MiB**、AI 版 **129.08 MiB**，标准版下载包较 AI 版小 **72.57%**；这些是本地签名验证包，不是应用商店下载体积。
+- 真实 AI → 标准 → AI 覆盖安装三阶段通过（prepare 18、standard 28、ai 16，共 62 项）：使用隔离设置档 `edition-roundtrip` 与同一验收数据库，标准版保留 DINO/CV 设置及展开态但不恢复面板，修改通用设置后 AI 版恢复；CLS、patch、CV 的 SHA-256、model_id、CV spec/尺寸逐项一致。首轮设置值失败为提交后 VM 回填时序，验收现等待内存与持久化值一致，未修改生产存储行为。证据在 `artifacts/acceptance/android-editions/roundtrip-*.txt`。真机、正式归档及作者手验未覆盖。
+
+### P1：推广前的正确性与发布门
+
+- 分析栏始终先取当前照片的只读基线，增强只替换已授权的一侧；不得从上一轮瓦片反推基线。未增强时只补缺失侧；即时缓存只存成功侧，刷新可以重试失败侧且继续复用成功侧。
+- CV 诊断与 DINO 诊断的 CV 现算输入统一为显示方向的 BGRA8 sRGB；读库使用记录内的 CV 尺寸。DINO-only 的瓦片比例独立于 CV 开关。
+- 回归必须覆盖 F16/广色域/旋转输入数值对照、已有部分特征、增强状态打开分析栏、连续切图、部分失败后刷新、隐藏取消，以及 CLS/patch/CV 内容与版本标识的跨进程往返；不以空库四开关组合或行数检查替代。
+- 每个变体的恢复资产、中间产物和输出目录隔离；manifest 从源模板生成到中间目录，不由构建改写仓库文件。普通开发构建与发布使用同一变体标识与路径约定。
+- 发布版本唯一来源为 `Directory.Build.props`，显式版本参数不得仅更改文件名。扫描器同时验证包身份、版本/构建号、架构、禁止项与必需依赖，并在 DMG 只读挂载后再次扫描实际应用。
+- 本地 adhoc 验收与正式 Developer ID/公证分开记录；前者不能进入正式归档或替代 Gatekeeper 发布结论。
+- 各端必须把独立 CV 控件、宿主 `ImmediateCvCompute`、属性变更重路由和编译能力一起接通，禁止只增加 UI 控件而运行时仍读旧组合开关。接口默认回落不作为某端已完成独立门控的证据，必须由该端实际四组合与标准版专项证明。
+- Web 参考壳通过 `?edition=standard|ai` 表达两版，默认 AI；标准版必须实际不创建相似任务与 DINO 瓦片，参考壳版本选择不得变成产品内升级或版本切换入口。
+- iOS App Store 是否长期并列两个 App 仍是单独发布决策，不能用 TestFlight 两个构建号代替裁定；在裁定前不更改 Bundle ID 或签名资料。
+
+### P1-Windows：实施与本地验收
+
+- `PhotoViewerEnableDino=false|true` 同时控制共享实现、Windows 原生注册与入口、模型/License 和推理依赖，普通构建、restore、运行与发布必须显式传值，缺参/非法值均已真实拒绝。头工程与共享工程按 `standard/ai` 隔离 `bin/obj`，不再删除整个共享 `obj` 防止串版。两版共用用户设置、视图状态、数据库与单实例身份，产品名分别为 `PhotoViewer` / `PhotoViewer-AI`。
+- 标准版移除 DINO/相似任务与推理资产，保留四项筛选、CV 分析、三瓦片 CV 诊断、只读抖动徽标及全部非 DINO 入口；AI 版保留完整功能，接通独立 DINO/CV 现算设置。切图/未提取时无条件清理原生诊断瓦片旧位图、背景与矢量场，新增两版真实控件断言，不以 presenter 状态替代可见占位验收。
+- 标准版除移除项目 ORT 引用外，还通过 `Microsoft.WindowsAppSDK.ML ExcludeAssets=all` 排除 SDK 托管包装。SDK 原生排除路径用 `MSBuild.NormalizeDirectory` 与 Windows 路径身份对齐，避免隔离目录的正反斜杠差异使规则失效。发布版本通过 XML 单节点读取，避免多个 PropertyGroup 的空值拼进文件名。
+- `PortableSingleFile.targets` 在 bundle 生成前剔除冗余 `NativeLibs/`、`NativeSrc/`、脚本及开发文档，根目录保留唯一 pvhevc 与许可证。`DisableTransitiveFrameworkReferences=true` 从源头阻止 System.Reactive 带入 WindowsDesktop，不删除发布后的 DLL；保留 WinUI/MrtCore、D3D/WIC、HEIF/RAW 全部支持，不开启 trim/R2R。WinAppSDK AI/Widgets、自定义 libheif 与模型压缩仍为后续独立候选。
+- 新增实际 .NET bundle v6 / PE / CLI 元数据扫描，严格核对身份/版本/构建号、x64、模型/许可证、推理依赖、压缩数据与逐文件 SHA-256；拒绝开发文件、重复 pvhevc 和 WPF/WinForms 回流。**42 项正反自检**与双版真实包扫描通过。分发 CRT 显式从解包目录加载并核对实际模块来源，真实使用模块仍须自然加载且来自解包目录；缺件与系统副本替代均不能通过。
+- `publish-win-x64-singlefile.ps1 -Edition standard|ai|both [-Local]` 对原名/中文空格路径改名副本逐项在独立空缓存中运行 smoke/settings/tools/edition。每版各八套：标准版 **168 PASS**（46/18/9/11 ×2），AI 版 **172 PASS**（47/17/9/13 ×2），均 0 FAIL；AI 实际离线推理通过。`both` 追加实际双 EXE 跨进程往返（prepare 3、standard 9、ai 8）：阈值、数量、独立开关、面板展开态与 36 行 CLS/patch/CV 的 SHA-256 保留；标准版不恢复面板、不清值、不写特征库。所有请求变体及三阶段门禁通过后才归档。
+- 最终本地 Release 单 EXE：标准版 **90,298,573 bytes（86.12 MiB）**，AI 版 **194,552,286 bytes（185.54 MiB）**。相对原 0.9.0 含 AI 单包 233,080,526 bytes（222.28 MiB），分别减少 **61.26% / 16.53%**；AI 版功能与既有模型字节不变。标准版在移除 WindowsDesktop 前为约 122.2 MiB，框架清理单独减少约 36.1 MiB。SHA-256、逐文件分类、原名/改名验收与往返证据位于 `artifacts/acceptance/windows-editions/19de85dc1c2540cd8d171aedce29b448/`，产物在 `artifacts/scratch/windows-local-publish/<edition>/`。
+- 最终双 EXE 另串行通过六套扩展回归：两版各色彩 **22 PASS / 1 BOUNDARY**（JPEG/HEIF/RAW、F16/GPU、WIC 源复用与输出转换）、单实例二次激活 **3 PASS**、JPEG 夹具连续翻页 **36 次 / 0 超时**。证据在 `artifacts/acceptance/windows-editions/extended/summary.json`；BOUNDARY 是真屏色域/校准、HDR/ACM 切换、Win10 与跨屏条件，并非通过。实际桌面点击核对标准版 CV 诊断三瓦片同排且无 DINO 空槽，隔离检查窗口已关闭。
+- 共享 Core 契约：标准版 **1166 PASS**、AI 版 **1182 PASS**，均 0 FAIL、1 个既有 SKIP；SettingsDefaultsCheck 与双版本 WindowsTypeCheck 通过。正式 `release/packages/` 未覆盖，版本/构建号未改；干净系统、Win10、真屏 ACM/HDR 切换与作者手验不由当前宿主验收替代。跨平台模型导出差异及统一前数值对照边界见 §1.2。
+- 验收操作边界：早期入口接线前曾误启旧 `bin/Debug` 产物，未发现 `settings.json` 或照片数据库变化，但用户诊断日志与界面状态文件有更新；未自行重置或回滚用户文件。后续全部使用分版产物与显式隔离入口。
 
 ### P2：独立无损优化
 

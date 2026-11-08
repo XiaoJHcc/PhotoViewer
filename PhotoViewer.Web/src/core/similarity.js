@@ -82,6 +82,42 @@ function isCurrentCard(card, displayedId) {
     return cardPhotos(card).some((photo) => photo.id === displayedId);
 }
 
+// EDITION-02/06：标准版没有相似聚类面板，用无任务、无计时的空实现占位，
+// 保证已存阈值/数量/展开态原样保留而不触发任何读库或提取。
+export class DisabledSimilarityPanel {
+    constructor() {
+        this.enabled = false;
+        this.visible = false;
+    }
+
+    setExpanded() {}
+    setFilebarVisible() {}
+    setAnchor() {}
+    setDisplayed() {}
+    setPool() {}
+    setFolderCards() {}
+    setParams() {}
+    rated() {}
+
+    extractAll() {
+        return Promise.resolve(false);
+    }
+
+    snapshot() {
+        return {
+            visible: false,
+            state: "empty",
+            emptyText: null,
+            items: [],
+            unextracted: 0,
+            action: { label: "提取全部", visible: false },
+            progress: null,
+            error: null,
+            calculating: false,
+        };
+    }
+}
+
 export class SimilarityPanel {
     constructor({ t, clock, store, onChange = null }) {
         this.t = t;

@@ -9,38 +9,53 @@ using PhotoViewer.Core.Image;
 namespace PhotoViewer.Windows.Native;
 
 /// <summary>
-/// 工具窗口的 DINO 诊断页:原图缩略图 / PCA-RGB / Cosine 三张 DINO patch 瓦片,
-/// 锐度 / 抖动拖影矢量两张 CV 瓦片与刚体拟合文本面板。
-/// 数据全部来自共享 <see cref="DinoDiagnosticPresenter"/>(读库与推理都在那里完成),
-/// 本页只做位图适配、瓦片布局与点击回传,绝不自行驱动推理。
+/// 工具窗口的诊断页。AI 版是原图缩略图 / PCA-RGB / Cosine 三张 DINO patch 瓦片加锐度 / 抖动拖影矢量两张 CV 瓦片,
+/// 标准版是原图缩略图 / 锐度 / 抖动拖影三张 CV 瓦片(同排三列),两版都带刚体拟合整宽文本(EDITION-04)。
+/// 数据全部来自共享 presenter(AI 版 <see cref="DinoDiagnosticPresenter"/>,标准版 <see cref="CvDiagnosticPresenter"/>;
+/// 读库与现算都在那里完成),本页只做位图适配、瓦片布局与点击回传,绝不自行驱动推理。
 /// </summary>
 internal sealed class WindowsDinoToolPage : Grid
 {
+#if PHOTOVIEWER_DINO
     /// <summary>DINO 诊断瓦片数量。</summary>
     private const int TileCountValue = 5;
+#else
+    /// <summary>CV 诊断瓦片数量(原图缩略图 / 锐度 / 抖动拖影)。</summary>
+    private const int TileCountValue = 3;
+#endif
 
-    private readonly DinoDiagnosticPresenter _presenter;
     private readonly TextBlock _status;
     private readonly TextBlock _rigidText;
     private readonly WindowsDiagnosticTile _thumbnailTile;
-    private readonly WindowsDiagnosticTile _pcaTile;
-    private readonly WindowsDiagnosticTile _cosineTile;
     private readonly WindowsDiagnosticTile _sharpnessTile;
     private readonly WindowsDiagnosticTile _shakeTile;
     private readonly WindowsShakeFieldView _shakeOverlay = new();
-
-    private DecodedImage? _thumbnailSource;
+#if PHOTOVIEWER_DINO
+    private readonly DinoDiagnosticPresenter _presenter;
+    private readonly WindowsDiagnosticTile _pcaTile;
+    private readonly WindowsDiagnosticTile _cosineTile;
     private DecodedImage? _pcaSource;
     private DecodedImage? _cosineSource;
+#else
+    private readonly CvDiagnosticPresenter _presenter;
+#endif
+
+    private DecodedImage? _thumbnailSource;
     private DecodedImage? _sharpnessSource;
     private DecodedImage? _shakeSource;
     private double _lastAspect = double.NaN;
     private string _rigidTextValue = string.Empty;
     private bool _disposed;
 
+#if PHOTOVIEWER_DINO
     /// <summary>创建 DINO 诊断页并订阅共享 presenter。</summary>
     /// <param name="presenter">共享 DINO 诊断 presenter</param>
     public WindowsDinoToolPage(DinoDiagnosticPresenter presenter)
+#else
+    /// <summary>创建 CV 诊断页并订阅共享 presenter。</summary>
+    /// <param name="presenter">共享 CV 诊断 presenter</param>
+    public WindowsDinoToolPage(CvDiagnosticPresenter presenter)
+#endif
     {
         _presenter = presenter;
 
@@ -53,21 +68,9 @@ internal sealed class WindowsDinoToolPage : Grid
         };
 
         _thumbnailTile = CreateTile("原图缩略图");
-        _pcaTile = CreateTile("DINO PCA");
-        _cosineTile = CreateTile("Cosine 16,16");
         _sharpnessTile = CreateTile("锐度");
         _shakeTile = CreateTile("抖动拖影");
         _shakeTile.SetOverlay(_shakeOverlay);
-
-        var patchRow = new Grid
-        {
-            ColumnSpacing = WindowsLayout.ToolsTileSpacing,
-            RowSpacing = WindowsLayout.ToolsTileSpacing,
-        };
-        AddColumns(patchRow, 3);
-        AddTile(patchRow, _thumbnailTile, 0, 0);
-        AddTile(patchRow, _pcaTile, 1, 0);
-        AddTile(patchRow, _cosineTile, 2, 0);
 
         _rigidText = new TextBlock
         {
@@ -87,6 +90,23 @@ internal sealed class WindowsDinoToolPage : Grid
             VerticalAlignment = VerticalAlignment.Top,
             Content = _rigidText,
         };
+        rigidCard.Margin = new Thickness(0, WindowsLayout.ToolsTileSpacing, 0, 0);
+
+        var body = new StackPanel();
+        body.Children.Add(_status);
+#if PHOTOVIEWER_DINO
+        _pcaTile = CreateTile("DINO PCA");
+        _cosineTile = CreateTile("Cosine 16,16");
+
+        var patchRow = new Grid
+        {
+            ColumnSpacing = WindowsLayout.ToolsTileSpacing,
+            RowSpacing = WindowsLayout.ToolsTileSpacing,
+        };
+        AddColumns(patchRow, 3);
+        AddTile(patchRow, _thumbnailTile, 0, 0);
+        AddTile(patchRow, _pcaTile, 1, 0);
+        AddTile(patchRow, _cosineTile, 2, 0);
 
         // 与 DINO patch 行同为三列:五张瓦片按 3+2 排列,第六格留空,保证两行瓦片同宽同高。
         var cvRow = new Grid
@@ -98,28 +118,43 @@ internal sealed class WindowsDinoToolPage : Grid
         AddTile(cvRow, _sharpnessTile, 0, 0);
         AddTile(cvRow, _shakeTile, 1, 0);
 
-        rigidCard.Margin = new Thickness(0, WindowsLayout.ToolsTileSpacing, 0, 0);
-
-        var body = new StackPanel();
-        body.Children.Add(_status);
         body.Children.Add(WindowsSettingsCard.SectionHeader("DINO patch (32×32，点击任意图设定参考点)"));
         body.Children.Add(patchRow);
         body.Children.Add(WindowsSettingsCard.SectionHeader("CV 网格诊断（32×32 中心采样，像素单位）"));
         body.Children.Add(cvRow);
+#else
+        var cvRow = new Grid
+        {
+            ColumnSpacing = WindowsLayout.ToolsTileSpacing,
+            RowSpacing = WindowsLayout.ToolsTileSpacing,
+        };
+        AddColumns(cvRow, 3);
+        AddTile(cvRow, _thumbnailTile, 0, 0);
+        AddTile(cvRow, _sharpnessTile, 1, 0);
+        AddTile(cvRow, _shakeTile, 2, 0);
+
+        body.Children.Add(WindowsSettingsCard.SectionHeader("CV 网格诊断（32×32 中心采样，像素单位）"));
+        body.Children.Add(cvRow);
+#endif
         body.Children.Add(rigidCard);
 
-        Children.Add(WindowsSettingsCard.Page("DINO 诊断", body));
+        Children.Add(WindowsSettingsCard.Page(WindowsProductInfo.DiagnosticName, body));
         _presenter.Changed += OnPresenterChanged;
         _presenter.CrosshairChanged += OnCrosshairChanged;
         Sync();
     }
 
-    /// <summary>DINO 瓦片数量(验收用)。</summary>
+    /// <summary>诊断瓦片数量(验收用)。</summary>
     internal int TileCount => TileCountValue;
 
+#if PHOTOVIEWER_DINO
     /// <summary>五张瓦片,顺序为 DINO patch 三张 + CV 两张(验收读几何用)。</summary>
     internal WindowsDiagnosticTile[] Tiles =>
         [_thumbnailTile, _pcaTile, _cosineTile, _sharpnessTile, _shakeTile];
+#else
+    /// <summary>三张 CV 瓦片,顺序为原图缩略图 + 锐度 + 抖动拖影(验收读几何用)。</summary>
+    internal WindowsDiagnosticTile[] Tiles => [_thumbnailTile, _sharpnessTile, _shakeTile];
+#endif
 
     /// <summary>缩略图瓦片是否已出图(验收用)。</summary>
     internal bool HasThumbnail => _thumbnailTile.HasBitmap;
@@ -128,8 +163,18 @@ internal sealed class WindowsDinoToolPage : Grid
     internal string StatusText => _status.Text;
 
     /// <summary>全部瓦片是否都已有内容(验收用)。</summary>
-    internal bool HasAllTiles => _thumbnailTile.HasBitmap && _pcaTile.HasContent
-        && _cosineTile.HasContent && _sharpnessTile.HasContent && _shakeTile.HasContent;
+    internal bool HasAllTiles
+    {
+        get
+        {
+            bool core = _thumbnailTile.HasBitmap && _sharpnessTile.HasContent && _shakeTile.HasContent;
+#if PHOTOVIEWER_DINO
+            return core && _pcaTile.HasContent && _cosineTile.HasContent;
+#else
+            return core;
+#endif
+        }
+    }
 
     /// <summary>退订 presenter,窗口关闭时调用。</summary>
     internal void Detach()
@@ -163,29 +208,44 @@ internal sealed class WindowsDinoToolPage : Grid
         double aspect = _presenter.AspectRatio;
         if (!double.IsNaN(_lastAspect) && Math.Abs(aspect - _lastAspect) > 1e-9)
         {
+#if PHOTOVIEWER_DINO
             _pcaSource = null;
             _cosineSource = null;
+#endif
             _sharpnessSource = null;
+            _shakeSource = null;
         }
 
         _lastAspect = aspect;
         SyncBitmap(_thumbnailTile, _presenter.ThumbnailTile, ref _thumbnailSource, aspect, upscale: false);
+#if PHOTOVIEWER_DINO
         SyncBitmap(_pcaTile, _presenter.PcaTile, ref _pcaSource, aspect, upscale: true);
         SyncBitmap(_cosineTile, _presenter.CosineTile, ref _cosineSource, aspect, upscale: true);
+#endif
         SyncBitmap(_sharpnessTile, _presenter.SharpnessTile, ref _sharpnessSource, aspect, upscale: true);
 
         _shakeTile.SetAspect(aspect);
         _shakeTile.SetLabel(_presenter.ShakeTile.ShortLabel);
         _shakeTile.SetCaption(CaptionFor(_presenter.ShakeTile));
-        _shakeTile.SetPlaceholder(_presenter.ShakeTile.Placeholder);
         var background = _presenter.ShakeTile.Background;
-        if (!ReferenceEquals(background, _shakeSource))
+        var shakeField = _presenter.ShakeTile.ShakeField;
+        if (background == null && shakeField == null)
         {
-            _shakeSource = background;
-            _shakeTile.SetBackground(background == null ? null : WindowsImageAdapter.ToSource(background));
+            // 未提取/失败/换图代际:压暗背景、矢量场与旧主图一起清掉,只留占位文字。
+            _shakeSource = null;
+            _shakeTile.ClearContent(_presenter.ShakeTile.Placeholder);
+        }
+        else
+        {
+            _shakeTile.SetPlaceholder(_presenter.ShakeTile.Placeholder);
+            if (!ReferenceEquals(background, _shakeSource))
+            {
+                _shakeSource = background;
+                _shakeTile.SetBackground(background == null ? null : WindowsImageAdapter.ToSource(background));
+            }
         }
 
-        _shakeOverlay.ShakeField = _presenter.ShakeTile.ShakeField;
+        _shakeOverlay.ShakeField = shakeField;
         SyncCrosshair();
     }
 
@@ -207,7 +267,10 @@ internal sealed class WindowsDinoToolPage : Grid
         }
     }
 
-    /// <summary>同步单张瓦片:aspect/标签/说明/占位与位图引用。</summary>
+    /// <summary>
+    /// 同步单张瓦片:aspect/标签/说明/占位与位图引用。源为空时无条件清掉旧图与缓存引用,
+    /// 只比较引用会漏掉"代际重置后源与缓存都为 null"的情形,旧图会留在瓦片上(与分析栏同一修正)。
+    /// </summary>
     /// <param name="view">目标瓦片</param>
     /// <param name="tile">presenter 侧状态</param>
     /// <param name="source">最近一次处理的源位图</param>
@@ -223,20 +286,23 @@ internal sealed class WindowsDinoToolPage : Grid
         view.SetAspect(aspect);
         view.SetLabel(tile.ShortLabel);
         view.SetCaption(CaptionFor(tile));
+        if (tile.Source == null)
+        {
+            source = null;
+            view.ClearContent(tile.Placeholder);
+            return;
+        }
+
         if (!ReferenceEquals(tile.Source, source))
         {
             source = tile.Source;
-            var bitmap = tile.Source == null
-                ? null
-                : upscale
-                    ? WindowsDiagnosticBitmap.ToUpscaled(tile.Source, aspect)
-                    : WindowsImageAdapter.ToSource(tile.Source);
-            view.SetBitmap(bitmap, tile.Placeholder);
+            view.SetBitmap(
+                upscale ? WindowsDiagnosticBitmap.ToUpscaled(tile.Source, aspect) : WindowsImageAdapter.ToSource(tile.Source),
+                tile.Placeholder);
+            return;
         }
-        else
-        {
-            view.SetPlaceholder(tile.Placeholder);
-        }
+
+        view.SetPlaceholder(tile.Placeholder);
     }
 
     /// <summary>说明文字与角标重复时不再重复占一行。</summary>
@@ -245,18 +311,18 @@ internal sealed class WindowsDinoToolPage : Grid
     private static string? CaptionFor(AnalysisTile tile)
         => string.Equals(tile.Caption, tile.ShortLabel, StringComparison.Ordinal) ? null : tile.Caption;
 
-    /// <summary>把 presenter 的准星同步到全部瓦片。</summary>
+    /// <summary>把 presenter 的准星同步到本页全部瓦片(标准版三张瓦片共享同一准星,EDITION-04)。</summary>
     private void SyncCrosshair()
     {
         double? u = _presenter.CrosshairU;
         double? v = _presenter.CrosshairV;
-        foreach (var tile in new[] { _thumbnailTile, _pcaTile, _cosineTile, _sharpnessTile, _shakeTile })
+        foreach (var tile in Tiles)
         {
             tile.SetCrosshair(u, v);
         }
     }
 
-    /// <summary>瓦片内容点击:落准星并以点击点为 cosine 参考点重算。</summary>
+    /// <summary>瓦片内容点击:落准星;AI 版同时设为 cosine 参考点重算。</summary>
     private void OnTileClicked(double u, double v) => _presenter.OnTileClicked(u, v);
 
     /// <summary>瓦片空白点击:清空准星。</summary>
@@ -265,7 +331,7 @@ internal sealed class WindowsDinoToolPage : Grid
     /// <summary>清空全部瓦片引用。</summary>
     private void ClearTiles()
     {
-        foreach (var tile in new[] { _thumbnailTile, _pcaTile, _cosineTile, _sharpnessTile, _shakeTile })
+        foreach (var tile in Tiles)
         {
             tile.Dispose();
         }

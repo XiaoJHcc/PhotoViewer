@@ -15,10 +15,10 @@ namespace PhotoViewer.Core.AI;
 /// 合并成一个常驻侧栏,由 macOS / iOS / Android / Windows 原生分析栏共用同一份编排逻辑。
 /// 诊断瓦片有三条数据来源路径:
 /// 1. 只读库:指纹 → <see cref="AnalysisResultCache"/> → DB,不触发解码 / ONNX 推理 / CV 重算;
-/// 2. 增强预览联动:增强图就绪时对增强位图立即重算(CV + DINO 推理),不走 DB;
-/// 3. 未提取回退:库里没有提取结果时,不再显示"未提取",改为对当前主图位图立即计算 —
-///    先延迟再等主图 / 缩略图通道空闲,绝不抢主图浏览资源,期间占位显示"计算中…"。
-/// 路径 2/3 由设置"分析诊断 / 即时计算DINO/CV"(默认关)门控;关闭时只走路径 1。
+/// 2. 增强预览联动:先取当前照片的只读基线,再按独立开关重算 CV 和/或 DINO,不回写 DB;
+/// 3. 未提取回退:库里缺少已启用能力的结果时,对当前主图位图计算缺失部分 —
+///    先延迟再等主图 / 缩略图通道空闲,绝不抢主图浏览资源,期间只在对应瓦片显示"计算中…"。
+/// 路径 2/3 由「即时计算 DINO」「即时计算 CV」分别门控;标准版仅编译 CV 路径。
 ///
 /// 派生层按指纹走 <see cref="AnalysisResultCache"/>,与邻居预取同步预热,命中时切图变成纯 UI swap。
 /// 4 张诊断瓦片的位图(PCA / 中心 cosine / 锐度 / 抖动)归 cache 所有 — presenter 仅引用、不 Dispose;
@@ -118,10 +118,13 @@ public sealed class AnalysisPresenter : IDisposable
         _cosineTile = new AnalysisTile(AnalysisTileKind.Diagnostic, FormatCosineLabel(RefGridX, RefGridY));
         _sharpnessTile = new AnalysisTile(AnalysisTileKind.Diagnostic, "锐度");
         _shakeTile = new AnalysisTile(AnalysisTileKind.Diagnostic, "抖动拖影");
+#if PHOTOVIEWER_DINO
         _tiles = [_centerTile, _histogramTile, _pcaTile, _cosineTile, _sharpnessTile, _shakeTile];
-        _host.HostChanged += Refresh;
-        // 特征入库 / 清库后库内容变化：对当前照片重新路由，否则诊断瓦片会停在旧结果（含"未提取"空 entry）。
         FolderFeatureIndexer.FeaturesWritten += Refresh;
+#else
+        _tiles = [_centerTile, _histogramTile, _sharpnessTile, _shakeTile];
+#endif
+        _host.HostChanged += Refresh;
         ShakeFlagService.RecheckRequested += Refresh;
     }
 
@@ -150,6 +153,8 @@ public sealed class AnalysisPresenter : IDisposable
         }
 
         _cts?.Cancel();
+        _cts?.Dispose();
+        if (!ReferenceEquals(_loadingFile, file)) ClearDiagnostics();
         _loadingFile = file;
         var cts = new CancellationTokenSource();
         _cts = cts;
@@ -174,6 +179,7 @@ public sealed class AnalysisPresenter : IDisposable
         CrosshairV = v;
         CrosshairChanged?.Invoke();
 
+#if PHOTOVIEWER_DINO
         if (_patchTokens == null) return;
         int gx = Math.Clamp((int)(u * PatchGridPixels), 0, PatchGridPixels - 1);
         int gy = Math.Clamp((int)(v * PatchGridPixels), 0, PatchGridPixels - 1);
@@ -189,6 +195,7 @@ public sealed class AnalysisPresenter : IDisposable
         _cosineTile.ShortLabel = FormatCosineLabel(gx, gy);
         old?.Dispose();
         TilesChanged?.Invoke();
+#endif
     }
 
     /// <summary>空白处点击:清空准星。</summary>
@@ -200,131 +207,95 @@ public sealed class AnalysisPresenter : IDisposable
         CrosshairChanged?.Invoke();
     }
 
-    /// <summary>Background 优先级回调:主图已渲染后才执行。快路径同步 swap;慢路径启动异步加载。</summary>
+    private bool DinoImmediate
+    {
+#if PHOTOVIEWER_DINO
+        get => _host.ImmediateCompute;
+#else
+        get => false;
+#endif
+    }
+
+    private bool CvImmediate => _host.ImmediateCvCompute;
+
     private void LoadDeferred(ImageFile file, CancellationToken ct)
     {
         if (ct.IsCancellationRequested) return;
-
-        // 增强模式且增强图就绪且开启即时计算 → 对增强图实时重算诊断瓦片(ONNX 推理 + CV),不走 DB。
-        if (_host.ImmediateCompute && _host.EnhancedDisplay && _host.DisplayImage is { } enhanced)
-        {
-            var enhancedKey = AnalysisResultCache.ImmediateKey(file.File.StorageId.Value, enhanced: true);
-            var enhancedHit = AnalysisResultCache.TryGetImmediate(enhancedKey);
-            if (enhancedHit != null) ApplyEntry(enhancedHit);
-            else
-            {
-                SetPlaceholder("计算中…");
-                _ = RunImmediateAsync(enhanced, enhancedKey, ct);
-            }
-            return;
-        }
-
-        // 快路径:EXIF 已加载 + 缓存命中 → 直接 swap。
         if (file.IsExifLoaded)
         {
-            var fp = TryComputeFingerprintSync(file);
-            var hit = fp != null ? AnalysisResultCache.TryGet(fp) : null;
+            var fingerprint = TryComputeFingerprintSync(file);
+            var hit = AnalysisResultCache.TryGet(fingerprint);
             if (hit != null)
             {
-                ApplyEntry(hit);
-                // 命中空 entry(未提取)且开启即时计算 → 回退到立即计算;已有即时结果则直接 swap。
-                if (IsEntryEmpty(hit) && _host.ImmediateCompute)
-                {
-                    var imm = AnalysisResultCache.TryGetImmediate(file.File.StorageId.Value);
-                    if (imm != null) ApplyEntry(imm);
-                    else
-                    {
-                        SetPlaceholder("计算中…");
-                        _ = LoadFallbackAsync(file, ct);
-                    }
-                }
+                RouteEntry(file, hit, ct);
                 return;
             }
         }
-
-        // 慢路径:异步加载,不清空旧图(避免 layout storm)。
         _ = LoadAsync(file, ct);
     }
 
-    /// <summary>
-    /// 慢路径异步加载:算指纹 → 查缓存 → miss 则读库 + 派生层现算 + 落 cache → UI swap。
-    /// </summary>
+    private void RouteEntry(ImageFile file, AnalysisResultCache.Entry baseline, CancellationToken ct)
+    {
+        if (ct.IsCancellationRequested) return;
+        bool dino = DinoImmediate;
+        bool cv = CvImmediate;
+        bool enhanced = _host.EnhancedDisplay;
+        string key = AnalysisResultCache.ImmediateKey(file.File.StorageId.Value, enhanced, dino, cv);
+        var immediate = AnalysisResultCache.TryGetImmediate(key) ?? new AnalysisResultCache.Entry();
+        double aspect = DisplayAspectRatio(_host.DisplayImage, baseline.AspectRatio);
+        var merged = MergeEntries(baseline, immediate, aspect);
+        ApplyEntry(merged);
+        bool computeDino = dino && (enhanced ? immediate.Patches == null : merged.Patches == null);
+        bool computeCv = cv && (enhanced ? immediate.SharpnessBmp == null : merged.SharpnessBmp == null);
+        if (!computeDino && !computeCv) return;
+        SetPlaceholder("计算中…", computeDino, computeCv);
+        _ = RunImmediateAsync(file, key, baseline, immediate, enhanced, computeDino, computeCv, ct);
+    }
+
     private async Task LoadAsync(ImageFile file, CancellationToken ct)
     {
         try
         {
-            ct.ThrowIfCancellationRequested();
-
             var fingerprint = await AnalysisDataReader.ComputeFingerprintAsync(file, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
-
-            // 命中 cache:不读库、不重算,直接 UI swap。
-            var hit = AnalysisResultCache.TryGet(fingerprint);
-            if (hit != null)
+            var entry = AnalysisResultCache.TryGet(fingerprint);
+            if (entry == null)
             {
-                PostEntry(hit, ct);
-                return;
+                var data = string.IsNullOrEmpty(fingerprint)
+                    ? new AnalysisDataReader.Result()
+                    : await AnalysisDataReader.ReadByFingerprintAsync(fingerprint, ct).ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
+                entry = await Task.Run(() => AnalysisComputer.Compute(data), ct).ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
+                if (!string.IsNullOrEmpty(fingerprint)) AnalysisResultCache.Put(fingerprint, entry);
             }
-
-            // miss:读库 → 派生层现算 → 落 cache。指纹缺失(无 EXIF 时间戳)直接喂空 Result。
-            var data = string.IsNullOrEmpty(fingerprint)
-                ? new AnalysisDataReader.Result()
-                : await AnalysisDataReader.ReadByFingerprintAsync(fingerprint, ct).ConfigureAwait(false);
-            ct.ThrowIfCancellationRequested();
-
-            var entry = AnalysisComputer.Compute(data);
-            if (!string.IsNullOrEmpty(fingerprint))
-                AnalysisResultCache.Put(fingerprint, entry);
-
-            ct.ThrowIfCancellationRequested();
-            PostEntry(entry, ct);
-
-            // 库里没有提取结果且开启即时计算 → 回退到立即计算。
-            if (data.IsEmpty && _host.ImmediateCompute)
-            {
-                var imm = AnalysisResultCache.TryGetImmediate(file.File.StorageId.Value);
-                if (imm != null)
-                {
-                    PostEntry(imm, ct);
-                    return;
-                }
-                PostPlaceholder("计算中…", ct);
-                await LoadFallbackAsync(file, ct).ConfigureAwait(false);
-            }
+            var baseline = entry;
+            UiDispatcher.Post(() => RouteEntry(file, baseline, ct), UiPriority.Background);
         }
-        catch (OperationCanceledException)
-        {
-            // 被覆盖,忽略
-        }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             Console.WriteLine($"[Analysis] load failed: {ex.Message}");
-            // ANALYSIS-10：失败不得停在“计算中”，清掉旧瓦片并进入独立失败态。
             PostFailure("分析失败", ct);
         }
     }
 
-    /// <summary>把 cache 项内容贴到 UI 线程;过期 token 直接丢弃。</summary>
-    private void PostEntry(AnalysisResultCache.Entry entry, CancellationToken ct)
-        => UiDispatcher.Post(() =>
-        {
-            if (ct.IsCancellationRequested) return;
-            ApplyEntry(entry);
-        }, UiPriority.Background);
+    private static double DisplayAspectRatio(DecodedImage? image, double fallback)
+    {
+        if (image == null) return fallback;
+        return image.Orientation >= 5 ? (double)image.Height / image.Width : (double)image.Width / image.Height;
+    }
 
     /// <summary>把 Entry 贴到诊断瓦片。位图归 cache 所有(含即时缓存),presenter 只引用不释放。</summary>
     private void ApplyEntry(AnalysisResultCache.Entry entry)
     {
-        _patchTokens = entry.Patches;
         AspectRatio = entry.AspectRatio;
-
         _sharpnessTile.Source = entry.SharpnessBmp;
         _sharpnessTile.Placeholder = entry.SharpnessBmp == null ? "未提取" : null;
-
+#if PHOTOVIEWER_DINO
+        _patchTokens = entry.Patches;
         _pcaTile.Source = entry.PcaBmp;
         _pcaTile.Placeholder = entry.PcaBmp == null ? "未提取" : null;
-
-        // 切图时还原到中心参考点;用户点击产生的位图归 presenter,这里释放。
         var oldCustom = _customCosine;
         _customCosine = null;
         int rx = PatchGridPixels / 2;
@@ -335,130 +306,128 @@ public sealed class AnalysisPresenter : IDisposable
         _cosineTile.Placeholder = entry.CenterCosineBmp == null ? "未提取" : null;
         _cosineTile.ShortLabel = FormatCosineLabel(rx, ry);
         oldCustom?.Dispose();
-
+#endif
         _shakeTile.ShakeField = entry.ShakeField;
         _shakeTile.ShortLabel = entry.ShakeLabel;
         _shakeTile.Placeholder = entry.ShakeField == null ? "未提取" : null;
-
         TilesChanged?.Invoke();
     }
 
-    /// <summary>立即计算的三种结果:成功 / 被取消 / 失败(用于把失败与“未提取”区分开,ANALYSIS-10)。</summary>
-    private enum ComputeOutcome
+    private static AnalysisResultCache.Entry MergeEntries(
+        AnalysisResultCache.Entry baseline, AnalysisResultCache.Entry computed, double aspect) => new()
     {
-        Success,
-        Canceled,
-        Failed,
-    }
+        AspectRatio = aspect,
+        PcaBmp = computed.Patches != null ? computed.PcaBmp : baseline.PcaBmp,
+        CenterCosineBmp = computed.Patches != null ? computed.CenterCosineBmp : baseline.CenterCosineBmp,
+        SharpnessBmp = computed.SharpnessBmp ?? baseline.SharpnessBmp,
+        ShakeField = computed.ShakeField ?? baseline.ShakeField,
+        ShakeLabel = computed.ShakeField != null ? computed.ShakeLabel : baseline.ShakeLabel,
+        Patches = computed.Patches ?? baseline.Patches,
+    };
 
-    /// <summary>
-    /// 立即计算:对指定位图跑 CV 7 标量 + DINO patch 推理 → 复用 <see cref="AnalysisComputer.Compute"/> 出诊断瓦片。
-    /// 增强预览联动与未提取回退共用;不读库、不写库。产物按 <paramref name="cacheKey"/> 落即时缓存。
-    /// 展示图先转成 CV/DINO 需要的 8 位显示朝向口径(已符合时复用同一对象),后台读取前先取一份租约,
-    /// 避免宿主在计算期间释放展示图。
-    /// </summary>
-    private async Task<ComputeOutcome> ComputeDiagnosticsAsync(DecodedImage image, string cacheKey, CancellationToken ct)
+    private async Task RunImmediateAsync(ImageFile file, string cacheKey,
+        AnalysisResultCache.Entry baseline, AnalysisResultCache.Entry immediate,
+        bool enhanced, bool dino, bool cv, CancellationToken ct)
     {
-        if (!image.TryAcquire()) return ComputeOutcome.Failed;
-        DecodedImage? analysis = null;
+        DecodedImage? image = null;
         try
         {
-            ct.ThrowIfCancellationRequested();
-            analysis = ColorEngine.ToAnalysisSrgb8(image);
-            int cvW = analysis.Width;
-            int cvH = analysis.Height;
-
-            var cv = await CvGridExtractor.ExtractAsync(analysis, ct).ConfigureAwait(false);
-            ct.ThrowIfCancellationRequested();
-            var (_, patches) = await DinoFeatureExtractor.ExtractDualAsync(analysis, includePatches: true, ct).ConfigureAwait(false);
-            ct.ThrowIfCancellationRequested();
-
-            var data = new AnalysisDataReader.Result
+            if (!enhanced)
             {
-                Patches = patches,
-                Cv = cv,
-                CvImageWidth = cvW,
-                CvImageHeight = cvH,
-            };
-            var entry = AnalysisComputer.Compute(data);
-            ct.ThrowIfCancellationRequested();
-            AnalysisResultCache.PutImmediate(cacheKey, entry);
-            PostEntry(entry, ct);
-            return ComputeOutcome.Success;
+                await Task.Delay(FallbackDelayMs, ct).ConfigureAwait(false);
+                for (int waited = 0; waited < 5000; waited += 120)
+                {
+                    bool ready = await UiDispatcher.InvokeAsync(() =>
+                        _host.DisplayImage != null && !_host.ThumbnailsBusy).ConfigureAwait(false);
+                    if (ready) break;
+                    await Task.Delay(120, ct).ConfigureAwait(false);
+                }
+            }
+            image = await UiDispatcher.InvokeAsync(() =>
+            {
+                ct.ThrowIfCancellationRequested();
+                if (!ReferenceEquals(file, _host.CurrentFile) || !_host.AnalysisVisible
+                    || enhanced != _host.EnhancedDisplay) return null;
+                var source = _host.DisplayImage;
+                return source?.TryAcquire() == true ? source : null;
+            }).ConfigureAwait(false);
+            if (image == null)
+            {
+                PostPlaceholder("未提取", ct, dino, cv);
+                return;
+            }
+            var source = image;
+            await Task.Run(() => ComputeDiagnosticsAsync(source, cacheKey, baseline, immediate, dino, cv, ct), ct)
+                .ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
-        {
-            return ComputeOutcome.Canceled;
-        }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             Console.WriteLine($"[Analysis] immediate compute failed: {ex.Message}");
-            return ComputeOutcome.Failed;
+            PostFailure("分析失败", ct, dino, cv);
         }
-        finally
-        {
-            analysis?.Release();
-            image.Release();
-        }
+        finally { image?.Release(); }
     }
 
-    /// <summary>增强图即时计算:失败时进入独立失败态,不把“计算中…”留在界面上(ANALYSIS-10)。</summary>
-    private async Task RunImmediateAsync(DecodedImage image, string cacheKey, CancellationToken ct)
+    private async Task ComputeDiagnosticsAsync(DecodedImage image, string cacheKey,
+        AnalysisResultCache.Entry baseline, AnalysisResultCache.Entry immediate,
+        bool dino, bool cv, CancellationToken ct)
     {
-        var outcome = await ComputeDiagnosticsAsync(image, cacheKey, ct).ConfigureAwait(false);
-        if (outcome == ComputeOutcome.Failed && !ct.IsCancellationRequested)
-            PostFailure("分析失败", ct);
-    }
-
-    /// <summary>
-    /// 未提取回退:库 / cache 都没有该照片结果时,对当前主图位图立即计算诊断瓦片。
-    /// 为保护主图浏览性能:先延迟 <see cref="FallbackDelayMs"/>,再让位等待主图解码完成且缩略图通道空闲。
-    /// </summary>
-    private async Task LoadFallbackAsync(ImageFile file, CancellationToken ct)
-    {
-        try
+        ct.ThrowIfCancellationRequested();
+        using var analysis = ColorEngine.ToAnalysisSrgb8(image);
+        double aspect = (double)analysis.Width / analysis.Height;
+        var successful = immediate;
+        bool cvFailed = false;
+        bool dinoFailed = false;
+        if (cv)
         {
-            await Task.Delay(FallbackDelayMs, ct).ConfigureAwait(false);
-
-            // 让位:主图未解码完或缩略图通道忙时退避,上限 5s 后放行。
-            int waited = 0;
-            while (!ct.IsCancellationRequested && waited < 5000)
+            try
             {
-                if (_host.DisplayImage != null && !_host.ThumbnailsBusy) break;
-                await Task.Delay(120, ct).ConfigureAwait(false);
-                waited += 120;
+                var grid = await CvGridExtractor.ExtractAsync(analysis, ct).ConfigureAwait(false);
+                var computed = AnalysisComputer.Compute(new AnalysisDataReader.Result
+                {
+                    Cv = grid, CvImageWidth = analysis.Width, CvImageHeight = analysis.Height,
+                });
+                successful = MergeEntries(successful, computed, aspect);
             }
-            ct.ThrowIfCancellationRequested();
-
-            // 延迟 / 让位期间可能已被其他路径算好,命中则直接贴,不再重算。
-            var cacheKey = AnalysisResultCache.ImmediateKey(file.File.StorageId.Value, enhanced: false);
-            var imm = AnalysisResultCache.TryGetImmediate(cacheKey);
-            if (imm != null)
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
             {
-                PostEntry(imm, ct);
-                return;
+                cvFailed = true;
+                Console.WriteLine($"[Analysis] immediate CV failed: {ex.Message}");
             }
-
-            var source = _host.DisplayImage;
-            if (source == null)
-            {
-                PostPlaceholder("未提取", ct);
-                return;
-            }
-
-            var outcome = await ComputeDiagnosticsAsync(source, cacheKey, ct).ConfigureAwait(false);
-            if (outcome == ComputeOutcome.Failed && !ct.IsCancellationRequested)
-                PostFailure("分析失败", ct);
         }
-        catch (OperationCanceledException)
+#if PHOTOVIEWER_DINO
+        if (dino)
         {
-            // 被新任务覆盖,忽略
+            try
+            {
+                var (_, patches) = await DinoFeatureExtractor.ExtractDualAsync(analysis, includePatches: true, ct).ConfigureAwait(false);
+                if (patches == null) throw new InvalidOperationException("DINO patch 输出为空");
+                var computed = AnalysisComputer.Compute(new AnalysisDataReader.Result
+                {
+                    Patches = patches, CvImageWidth = analysis.Width, CvImageHeight = analysis.Height,
+                });
+                successful = MergeEntries(successful, computed, aspect);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                dinoFailed = true;
+                Console.WriteLine($"[Analysis] immediate DINO failed: {ex.Message}");
+            }
         }
-        catch (Exception ex)
+#endif
+        ct.ThrowIfCancellationRequested();
+        if (successful.Patches != null || successful.SharpnessBmp != null)
+            AnalysisResultCache.PutImmediate(cacheKey, successful);
+        var result = MergeEntries(baseline, successful, aspect);
+        UiDispatcher.Post(() =>
         {
-            Console.WriteLine($"[Analysis] fallback compute failed: {ex.Message}");
-            PostFailure("分析失败", ct);
-        }
+            if (ct.IsCancellationRequested) return;
+            ApplyEntry(result);
+            if (cvFailed || dinoFailed) SetFailure("分析失败", dinoFailed, cvFailed);
+        }, UiPriority.Background);
     }
 
     /// <summary>
@@ -681,53 +650,88 @@ public sealed class AnalysisPresenter : IDisposable
         _patchTokens = null;
         CrosshairU = null;
         CrosshairV = null;
-        _pcaTile.Source = null;
-        _cosineTile.Source = null;
         _sharpnessTile.Source = null;
-        _pcaTile.Placeholder = "未提取";
-        _cosineTile.Placeholder = "未提取";
-        _cosineTile.ShortLabel = FormatCosineLabel(RefGridX, RefGridY);
         _sharpnessTile.Placeholder = "未提取";
         _shakeTile.ShakeField = null;
         _shakeTile.ShortLabel = "抖动拖影";
         _shakeTile.Placeholder = "未提取";
         AspectRatio = 1.0;
-
+#if PHOTOVIEWER_DINO
+        _pcaTile.Source = null;
+        _cosineTile.Source = null;
+        _pcaTile.Placeholder = "未提取";
+        _cosineTile.Placeholder = "未提取";
+        _cosineTile.ShortLabel = FormatCosineLabel(RefGridX, RefGridY);
         var old = _customCosine;
         _customCosine = null;
         old?.Dispose();
+#endif
         TilesChanged?.Invoke();
         CrosshairChanged?.Invoke();
     }
 
-    /// <summary>设置 4 个诊断瓦片的占位文本(调用方须在 UI 线程;在 <see cref="ApplyEntry"/> 之后调用以覆盖"未提取")。</summary>
-    private void SetPlaceholder(string text)
+    private void SetPlaceholder(string text, bool dino, bool cv)
     {
-        _pcaTile.Placeholder = text;
-        _cosineTile.Placeholder = text;
-        _sharpnessTile.Placeholder = text;
-        _shakeTile.Placeholder = text;
+#if PHOTOVIEWER_DINO
+        if (dino)
+        {
+            _pcaTile.Placeholder = text;
+            _cosineTile.Placeholder = text;
+        }
+#endif
+        if (cv)
+        {
+            _sharpnessTile.Placeholder = text;
+            _shakeTile.Placeholder = text;
+        }
         TilesChanged?.Invoke();
     }
 
-    /// <summary>Background 优先级设置占位文本;供后台路径在 <see cref="PostEntry"/> 之后调用(同优先级 FIFO,保证顺序)。</summary>
-    private void PostPlaceholder(string text, CancellationToken ct)
+    private void PostPlaceholder(string text, CancellationToken ct, bool dino, bool cv)
         => UiDispatcher.Post(() =>
         {
             if (ct.IsCancellationRequested) return;
-            SetPlaceholder(text);
+            SetPlaceholder(text, dino, cv);
         }, UiPriority.Background);
 
-    /// <summary>
-    /// 后台失败态:清空诊断瓦片与旧结果后显示失败文案,避免把上一张的图挂在当前照片下、
-    /// 也避免无限停在“计算中”(ANALYSIS-10)。
-    /// </summary>
     private void PostFailure(string text, CancellationToken ct)
         => UiDispatcher.Post(() =>
         {
             if (ct.IsCancellationRequested) return;
             ClearDiagnostics();
-            SetPlaceholder(text);
+#if PHOTOVIEWER_DINO
+            SetPlaceholder(text, true, true);
+#else
+            SetPlaceholder(text, false, true);
+#endif
+        }, UiPriority.Background);
+
+    private void SetFailure(string text, bool dino, bool cv)
+    {
+#if PHOTOVIEWER_DINO
+        if (dino)
+        {
+            _patchTokens = null;
+            _pcaTile.Source = null;
+            _cosineTile.Source = null;
+            _customCosine?.Dispose();
+            _customCosine = null;
+        }
+#endif
+        if (cv)
+        {
+            _sharpnessTile.Source = null;
+            _shakeTile.ShakeField = null;
+            _shakeTile.ShortLabel = "抖动拖影";
+        }
+        SetPlaceholder(text, dino, cv);
+    }
+
+    private void PostFailure(string text, CancellationToken ct, bool dino, bool cv)
+        => UiDispatcher.Post(() =>
+        {
+            if (ct.IsCancellationRequested) return;
+            SetFailure(text, dino, cv);
         }, UiPriority.Background);
 
     /// <summary>跟踪当前文件的 EXIF 到达,驱动对焦点瓦片的增删。</summary>
@@ -788,9 +792,6 @@ public sealed class AnalysisPresenter : IDisposable
         _loadingFile = null;
     }
 
-    /// <summary>cache entry 是否为空(未提取):DINO patch 与 CV 锐度均缺失。</summary>
-    private static bool IsEntryEmpty(AnalysisResultCache.Entry entry) => entry.Patches == null && entry.SharpnessBmp == null;
-
     /// <summary>同步计算指纹(仅当 EXIF 已加载时可用);失败返回 null。</summary>
     private static string? TryComputeFingerprintSync(ImageFile file)
     {
@@ -811,7 +812,9 @@ public sealed class AnalysisPresenter : IDisposable
         if (_disposed) return;
         _disposed = true;
         _host.HostChanged -= Refresh;
+#if PHOTOVIEWER_DINO
         FolderFeatureIndexer.FeaturesWritten -= Refresh;
+#endif
         ShakeFlagService.RecheckRequested -= Refresh;
         ObserveFile(null);
         _cts?.Cancel();

@@ -378,6 +378,24 @@ test("SCOPE-02：只读库只在已提取且有指纹时返回特征", async () 
     assert.equal(await b, null);
 });
 
+test("EDITION-03/05：featuresFor 分侧只生成该侧字段，字段值与 all 逐值一致", () => {
+    const photo = fakePhoto({ scene: { base: 303, variant: 2 } });
+    const all = featuresFor(photo);
+    const dino = featuresFor(photo, "dino");
+    const cv = featuresFor(photo, "cv");
+    assert.deepEqual(Object.keys(dino), ["cls", "patches", "pca"]);
+    assert.deepEqual(Object.keys(cv), ["sharpness", "shake", "verdict"]);
+    const same = (a, b) => a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
+    assert.ok(same(all.cls, dino.cls));
+    assert.ok(same(all.patches, dino.patches));
+    assert.ok(same(all.pca, dino.pca));
+    assert.ok(same(all.sharpness, cv.sharpness));
+    assert.ok(same(all.shake.dx, cv.shake.dx));
+    assert.ok(same(all.shake.dy, cv.shake.dy));
+    assert.ok(same(all.shake.mask, cv.shake.mask));
+    assert.equal(cv.verdict, all.verdict);
+});
+
 test("SCOPE-02：同一照片的并发现算合并为一次，结果对象相同", async () => {
     const clock = manualClock();
     const store = createStore({ clock, computeLatency: 700 });

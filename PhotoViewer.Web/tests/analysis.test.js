@@ -4,6 +4,7 @@ import { createTokens } from "../src/core/tokens.js";
 import { manualClock } from "../src/core/clock.js";
 import { AnalysisPresenter, isValidFocus } from "../src/core/analysis.js";
 import { featuresFor } from "../src/core/features.js";
+import { createStore } from "../src/render/store.js";
 import { GRID } from "../src/core/types.js";
 
 const t = createTokens();
@@ -61,6 +62,7 @@ function makeStore(clock, options = {}) {
         computeDelay = 0,
         computeFeatures = (target) => featuresFor(target),
         failRead = false,
+        failCompute = null,
         ignoreAbort = false,
     } = options;
     const calls = { read: [], compute: [] };
@@ -72,9 +74,10 @@ function makeStore(clock, options = {}) {
             const wait = typeof readDelay === "function" ? readDelay(target) : readDelay;
             return delayed(clock, wait, features.get(target.id) ?? null, signal, ignoreAbort);
         },
-        compute(target, { signal, variant } = {}) {
-            calls.compute.push({ photo: target, variant, signal });
-            return delayed(clock, computeDelay, computeFeatures(target, variant), signal, ignoreAbort);
+        compute(target, { signal, variant, scope } = {}) {
+            calls.compute.push({ photo: target, variant, scope, signal });
+            if (failCompute && failCompute(scope, target)) return Promise.reject(new Error("compute failed"));
+            return delayed(clock, computeDelay, computeFeatures(target, variant, scope), signal, ignoreAbort);
         },
         extractGroup: async () => {},
     };
@@ -226,21 +229,55 @@ test("ANALYSIS-09：只读库优先；缺结果且即时计算关闭时保持未
     assert.equal(tile(empty, "histogram").state, "empty");
 });
 
-test("ANALYSIS-09：雾天增强联动优先于只读库，按 enhanced 变体现算", async () => {
+test("ANALYSIS-09：先读当前图既有数据；增强态下启用侧重算、禁用侧保留只读结果", async () => {
     const clock = manualClock();
     const target = photo("a");
     const store = makeStore(clock, { features: new Map([[target.id, featuresFor(target)]]) });
     const presenter = new AnalysisPresenter({ t, clock, store });
-    presenter.setImmediateCompute(true);
+    presenter.setImmediateDino(true);
     presenter.setEnhanced(true);
     presenter.setVisible(true);
     presenter.setPhoto(target);
     await flush();
 
-    assert.equal(store.calls.read.length, 0);
-    assert.equal(store.calls.compute.length, 1);
+    assert.equal(store.calls.read.length, 1, "增强态也应先读当前图既有数据");
+    assert.equal(store.calls.compute.length, 1, "库已有结果时启用侧仍应按增强图重算");
+    assert.equal(store.calls.compute[0].scope, "dino");
     assert.equal(store.calls.compute[0].variant, "enhanced");
     assert.equal(tile(presenter, "pca").state, "content");
+    assert.equal(tile(presenter, "sharpness").state, "content", "禁用侧应保留只读 CV 结果");
+
+    const emptyStore = makeStore(clock);
+    const missing = new AnalysisPresenter({ t, clock, store: emptyStore });
+    missing.setImmediateDino(true);
+    missing.setEnhanced(true);
+    missing.setVisible(true);
+    missing.setPhoto(photo("b"));
+    await flush();
+    assert.equal(emptyStore.calls.read.length, 1);
+    assert.equal(emptyStore.calls.compute.length, 1);
+    assert.equal(emptyStore.calls.compute[0].variant, "enhanced");
+    assert.equal(emptyStore.calls.compute[0].scope, "dino");
+    assert.equal(tile(missing, "pca").state, "content");
+    assert.equal(tile(missing, "sharpness").state, "empty", "DINO 现算不得顺带生成 CV");
+});
+
+test("ANALYSIS-09：库命中且未开雾天增强时启用侧不现算", async () => {
+    const clock = manualClock();
+    const target = photo("a");
+    const store = makeStore(clock, { features: new Map([[target.id, featuresFor(target)]]) });
+    const presenter = new AnalysisPresenter({ t, clock, store });
+    presenter.setImmediateDino(true);
+    presenter.setImmediateCv(true);
+    presenter.setEnhanced(false);
+    presenter.setDisplaySurfaceReady(true);
+    presenter.setVisible(true);
+    presenter.setPhoto(target);
+    await flush();
+    assert.equal(store.calls.read.length, 1);
+    assert.equal(store.calls.compute.length, 0, "库命中且无增强时不应再现算");
+    assert.equal(tile(presenter, "pca").state, "content");
+    assert.equal(tile(presenter, "sharpness").state, "content");
 });
 
 test("ANALYSIS-09：未提取回退让位同时等缩略图通道空闲，超时后照常计算", async () => {
@@ -248,7 +285,7 @@ test("ANALYSIS-09：未提取回退让位同时等缩略图通道空闲，超时
     let busy = true;
     const store = makeStore(clock);
     const presenter = new AnalysisPresenter({ t, clock, store, thumbnailsBusy: () => busy });
-    presenter.setImmediateCompute(true);
+    presenter.setImmediateDino(true);
     presenter.setDisplaySurfaceReady(true);
     presenter.setVisible(true);
     presenter.setPhoto(photo("a"));
@@ -267,7 +304,7 @@ test("ANALYSIS-09：未提取回退让位同时等缩略图通道空闲，超时
 
     const timeoutStore = makeStore(clock);
     const stuck = new AnalysisPresenter({ t, clock, store: timeoutStore, thumbnailsBusy: () => true });
-    stuck.setImmediateCompute(true);
+    stuck.setImmediateDino(true);
     stuck.setDisplaySurfaceReady(true);
     stuck.setVisible(true);
     stuck.setPhoto(photo("b"));
@@ -285,7 +322,7 @@ test("ANALYSIS-09：未提取回退先延迟 500ms，快速切图期间零计算
     const second = photo("b");
     const store = makeStore(clock);
     const presenter = new AnalysisPresenter({ t, clock, store });
-    presenter.setImmediateCompute(true);
+    presenter.setImmediateDino(true);
     presenter.setDisplaySurfaceReady(true);
     presenter.setVisible(true);
 
@@ -305,7 +342,7 @@ test("ANALYSIS-09：未提取回退先延迟 500ms，快速切图期间零计算
 
     const quickStore = makeStore(clock);
     const quick = new AnalysisPresenter({ t, clock, store: quickStore });
-    quick.setImmediateCompute(true);
+    quick.setImmediateDino(true);
     quick.setDisplaySurfaceReady(true);
     quick.setVisible(true);
     quick.setPhoto(first);
@@ -600,4 +637,325 @@ test("ANALYSIS-04：双击细节预览抛出定位事件，不改变照片与评
     assert.deepEqual(calls, [{ u: 0.5, v: 0.5 }, { u: 0.25, v: 0.75 }]);
     assert.equal(presenter.photo, target);
     assert.equal(target.rating, 3);
+});
+
+test("EDITION-03：DINO/CV 四种开关组合按侧独立现算，另一侧保持未提取", async () => {
+    const clock = manualClock();
+    const cases = [
+        { dino: false, cv: false, pca: "empty", sharpness: "empty", scopes: [] },
+        { dino: true, cv: false, pca: "content", sharpness: "empty", scopes: ["dino"] },
+        { dino: false, cv: true, pca: "empty", sharpness: "content", scopes: ["cv"] },
+        { dino: true, cv: true, pca: "content", sharpness: "content", scopes: ["cv", "dino"] },
+    ];
+    for (const [index, entry] of cases.entries()) {
+        const store = makeStore(clock);
+        const presenter = new AnalysisPresenter({ t, clock, store });
+        presenter.setImmediateDino(entry.dino);
+        presenter.setImmediateCv(entry.cv);
+        presenter.setDisplaySurfaceReady(true);
+        presenter.setVisible(true);
+        presenter.setPhoto(photo(`combo-${index}`));
+        await flush();
+        clock.advance(500);
+        await flush();
+        assert.equal(tile(presenter, "pca").state, entry.pca, `组合 ${index} PCA 状态`);
+        assert.equal(tile(presenter, "sharpness").state, entry.sharpness, `组合 ${index} 锐度状态`);
+        assert.deepEqual(store.calls.compute.map((call) => call.scope).sort(), entry.scopes, `组合 ${index} 计算范围`);
+        assert.equal(tile(presenter, "pca").message, entry.pca === "empty" ? "未提取" : null);
+    }
+});
+
+test("EDITION-03：既有库结果两侧都显示，不受即时计算开关影响且不再现算", async () => {
+    const clock = manualClock();
+    const target = photo("a");
+    const store = makeStore(clock, { features: new Map([[target.id, featuresFor(target)]]) });
+    const presenter = new AnalysisPresenter({ t, clock, store });
+    presenter.setImmediateDino(false);
+    presenter.setImmediateCv(false);
+    presenter.setDisplaySurfaceReady(true);
+    presenter.setVisible(true);
+    presenter.setPhoto(target);
+    await flush();
+    assert.equal(tile(presenter, "pca").state, "content");
+    assert.equal(tile(presenter, "sharpness").state, "content");
+    assert.equal(store.calls.compute.length, 0);
+});
+
+test("EDITION-03：一侧现算失败不影响另一侧结果，失败可区分", async () => {
+    const clock = manualClock();
+    const store = makeStore(clock, { failCompute: (scope) => scope === "dino" });
+    const presenter = new AnalysisPresenter({ t, clock, store });
+    presenter.setImmediateDino(true);
+    presenter.setImmediateCv(true);
+    presenter.setDisplaySurfaceReady(true);
+    presenter.setVisible(true);
+    presenter.setPhoto(photo("a"));
+    await flush();
+    clock.advance(500);
+    await flush();
+    assert.equal(tile(presenter, "pca").state, "failed");
+    assert.equal(tile(presenter, "pca").message, "计算失败");
+    assert.equal(tile(presenter, "sharpness").state, "content");
+    assert.equal(tile(presenter, "shake").state, "content");
+});
+
+test("EDITION-03：隐藏分析栏取消两侧在途现算", async () => {
+    const clock = manualClock();
+    const store = makeStore(clock, { computeDelay: 400 });
+    const presenter = new AnalysisPresenter({ t, clock, store });
+    presenter.setImmediateDino(true);
+    presenter.setImmediateCv(true);
+    presenter.setDisplaySurfaceReady(true);
+    presenter.setVisible(true);
+    presenter.setPhoto(photo("a"));
+    await flush();
+    clock.advance(500);
+    await flush();
+    assert.equal(store.calls.compute.length, 2);
+    const signals = store.calls.compute.map((call) => call.signal);
+    presenter.setVisible(false);
+    assert.ok(signals.every((signal) => signal.aborted), "隐藏后未取消两侧在途计算");
+    assert.equal(clock.pendingTimers(), 0);
+});
+
+test("EDITION-02/03：标准版只有 CV 瓦片，准星不建立 cosine 参考点", async () => {
+    const clock = manualClock();
+    const target = photo("a");
+    const store = makeStore(clock, { features: new Map([[target.id, featuresFor(target)]]) });
+    const presenter = new AnalysisPresenter({ t, clock, store, dino: false });
+    presenter.setDisplaySurfaceReady(true);
+    presenter.setVisible(true);
+    presenter.setPhoto(target);
+    await flush();
+    assert.deepEqual(
+        presenter.tiles().map((entry) => entry.kind),
+        ["center", "histogram", "sharpness", "shake"],
+    );
+    presenter.clickDiagnostic(0.3, 0.7);
+    assert.deepEqual(presenter.crosshair, { u: 0.3, v: 0.7 });
+    assert.equal(presenter.cosineMap(), null);
+    assert.equal(presenter.diagnostics().patches, undefined, "标准版不读取 DINO patch");
+    assert.equal(presenter.cache.get(presenter.libraryKey(target)).patches, undefined, "标准版缓存了 DINO patch");
+});
+
+test("EDITION-02：标准版即使收到 DINO 即时计算开关也不发起 DINO 任务", async () => {
+    const clock = manualClock();
+    const store = makeStore(clock);
+    const presenter = new AnalysisPresenter({ t, clock, store, dino: false });
+    presenter.setImmediateDino(true);
+    presenter.setImmediateCv(true);
+    presenter.setDisplaySurfaceReady(true);
+    presenter.setVisible(true);
+    presenter.setPhoto(photo("a"));
+    await flush();
+    clock.advance(500);
+    await flush();
+    assert.deepEqual(store.calls.compute.map((call) => call.scope), ["cv"]);
+    assert.equal(tile(presenter, "sharpness").state, "content");
+    assert.equal(tile(presenter, "pca"), undefined);
+    assert.equal(tile(presenter, "cosine"), undefined);
+});
+
+test("EDITION-03：已提取图 + 增强的 DINO/CV 四组合（fake store）", async () => {
+    const clock = manualClock();
+    const base = featuresFor(photo("combo-fake"));
+    const marker = (scope) => {
+        if (scope === "dino") return { ...base, pca: new Float32Array(base.pca.length).fill(0.42) };
+        return { ...base, sharpness: new Float32Array(base.sharpness.length).fill(0.42) };
+    };
+    const markerValue = Math.fround(0.42);
+    const cases = [
+        { dino: false, cv: false, calls: [], pca: base.pca[0], sharpness: base.sharpness[0] },
+        { dino: true, cv: false, calls: ["dino:enhanced"], pca: markerValue, sharpness: base.sharpness[0] },
+        { dino: false, cv: true, calls: ["cv:enhanced"], pca: base.pca[0], sharpness: markerValue },
+        { dino: true, cv: true, calls: ["dino:enhanced", "cv:enhanced"], pca: markerValue, sharpness: markerValue },
+    ];
+    for (const [index, entry] of cases.entries()) {
+        const target = photo(`combo-fake-${index}`);
+        const store = makeStore(clock, {
+            features: new Map([[target.id, base]]),
+            computeFeatures: (photoValue, variant, scope) => marker(scope),
+        });
+        const presenter = new AnalysisPresenter({ t, clock, store });
+        presenter.setImmediateDino(entry.dino);
+        presenter.setImmediateCv(entry.cv);
+        presenter.setEnhanced(true);
+        presenter.setDisplaySurfaceReady(true);
+        presenter.setVisible(true);
+        presenter.setPhoto(target);
+        await flush();
+        assert.equal(store.calls.read.length, 1, `组合 ${index} 未先读只读库`);
+        assert.deepEqual(store.calls.compute.map((call) => `${call.scope}:${call.variant}`), entry.calls,
+            `组合 ${index} 增强重算范围`);
+        assert.equal(tile(presenter, "pca").state, "content");
+        assert.equal(tile(presenter, "sharpness").state, "content");
+        const diagnostics = presenter.diagnostics();
+        assert.equal(diagnostics.pca[0], entry.pca, `组合 ${index} DINO 结果`);
+        assert.equal(diagnostics.sharpness[0], entry.sharpness, `组合 ${index} CV 结果`);
+    }
+});
+
+test("EDITION-03：已提取图 + 增强的 DINO/CV 四组合（真实 store）", async () => {
+    const cases = [
+        { dino: false, cv: false, calls: [] },
+        { dino: true, cv: false, calls: ["dino:enhanced"] },
+        { dino: false, cv: true, calls: ["cv:enhanced"] },
+        { dino: true, cv: true, calls: ["dino:enhanced", "cv:enhanced"] },
+    ];
+    for (const [index, entry] of cases.entries()) {
+        const clock = manualClock();
+        const target = photo(`combo-real-${index}`, { scene: { base: 900 + index, variant: 0 } });
+        const store = createStore({ clock, readLatency: 0, computeLatency: 0 });
+        const calls = [];
+        const compute = store.compute.bind(store);
+        store.compute = (photoValue, request = {}) => {
+            calls.push(`${request.scope ?? "all"}:${request.variant ?? "original"}`);
+            return compute(photoValue, request);
+        };
+        const presenter = new AnalysisPresenter({ t, clock, store });
+        presenter.setImmediateDino(entry.dino);
+        presenter.setImmediateCv(entry.cv);
+        presenter.setEnhanced(true);
+        presenter.setDisplaySurfaceReady(true);
+        presenter.setVisible(true);
+        presenter.setPhoto(target);
+        for (let round = 0; round < 4; round += 1) {
+            clock.advance(16);
+            await flush();
+        }
+        assert.deepEqual(calls, entry.calls, `组合 ${index} 真实 store 增强重算范围`);
+        assert.equal(tile(presenter, "pca").state, "content");
+        assert.equal(tile(presenter, "sharpness").state, "content");
+        assert.equal(store.stats().computed, entry.calls.length, `组合 ${index} 现算缓存条目`);
+
+        const all = featuresFor(target);
+        const enhancedSharpness = new Float32Array(all.sharpness.length);
+        for (let i = 0; i < enhancedSharpness.length; i += 1) {
+            enhancedSharpness[i] = Math.min(1, all.sharpness[i] * 1.22 + 0.02);
+        }
+        const diagnostics = presenter.diagnostics();
+        // 启用侧取增强结果，禁用侧保留只读库原值。
+        assert.equal(diagnostics.sharpness[0], entry.cv ? enhancedSharpness[0] : all.sharpness[0],
+            `组合 ${index} CV 只读/增强结果`);
+        assert.equal(diagnostics.pca[0], all.pca[0], `组合 ${index} DINO 结果应保持只读基线`);
+    }
+});
+
+test("EDITION-03/05：真实 store 按 scope 读取与现算，CV-only 不含 DINO 且缓存分 scope", async () => {
+    const clock = manualClock();
+    const store = createStore({ clock, readLatency: 0, computeLatency: 0 });
+    const target = photo("scope-real", { scene: { base: 1234, variant: 1 } });
+
+    const cvReadPromise = store.read(target, { scope: "cv" });
+    clock.advance(1);
+    const cvRead = await cvReadPromise;
+    assert.equal(cvRead.cls, undefined);
+    assert.equal(cvRead.patches, undefined);
+    assert.equal(cvRead.pca, undefined);
+    assert.ok(cvRead.sharpness instanceof Float32Array);
+    assert.ok(cvRead.shake);
+
+    const dinoReadPromise = store.read(target, { scope: "dino" });
+    clock.advance(1);
+    const dinoRead = await dinoReadPromise;
+    assert.equal(dinoRead.sharpness, undefined);
+    assert.equal(dinoRead.shake, undefined);
+    assert.ok(dinoRead.cls instanceof Float32Array);
+    assert.ok(dinoRead.patches instanceof Float32Array);
+    assert.ok(dinoRead.pca instanceof Float32Array);
+
+    const allReadPromise = store.read(target, {});
+    clock.advance(1);
+    const allRead = await allReadPromise;
+    assert.ok(allRead.cls && allRead.sharpness && allRead.shake);
+
+    const cvPromise = store.compute(target, { scope: "cv" });
+    clock.advance(1);
+    const cv = await cvPromise;
+    assert.equal(cv.cls, undefined);
+    assert.equal(cv.patches, undefined);
+    assert.equal(cv.pca, undefined);
+    assert.equal(store.stats().computed, 1, "CV 现算缓存条目");
+    const cvAgain = await store.compute(target, { scope: "cv" });
+    assert.equal(cvAgain, cv, "同一 scope 的现算结果应复用");
+    assert.equal(store.stats().computed, 1);
+
+    const dinoPromise = store.compute(target, { scope: "dino" });
+    clock.advance(1);
+    const dino = await dinoPromise;
+    assert.equal(dino.sharpness, undefined);
+    assert.equal(dino.shake, undefined);
+    assert.equal(store.stats().computed, 2, "DINO 与 CV 缓存不得串 scope");
+
+    const allPromise = store.compute(target, {});
+    clock.advance(1);
+    const all = await allPromise;
+    assert.ok(all.cls && all.patches && all.pca && all.sharpness && all.shake);
+    assert.equal(store.stats().computed, 3, "all 与分侧缓存应分开");
+});
+
+test("EDITION-03：失败与空结果不缓存为成功", async () => {
+    const clock = manualClock();
+    const target = photo("empty-result");
+    const store = createStore({ clock, readLatency: 0, computeLatency: 100 });
+    const controller = new AbortController();
+    const aborted = store.compute(target, { scope: "dino", signal: controller.signal });
+    controller.abort();
+    clock.advance(1);
+    await assert.rejects(aborted, (error) => error.name === "AbortError");
+    assert.equal(store.stats().computed, 0, "取消/失败结果被缓存");
+
+    const retry = store.compute(target, { scope: "dino" });
+    clock.advance(100);
+    await retry;
+    assert.equal(store.stats().computed, 1, "重试成功结果未缓存");
+
+    let reads = 0;
+    const readStore = {
+        read: async () => {
+            reads += 1;
+            return reads === 1 ? {} : featuresFor(target);
+        },
+        compute: async () => featuresFor(target),
+        extractGroup: async () => {},
+    };
+    const presenter = new AnalysisPresenter({ t, clock, store: readStore });
+    presenter.setDisplaySurfaceReady(true);
+    presenter.setVisible(true);
+    presenter.setPhoto(target);
+    await flush();
+    assert.equal(tile(presenter, "pca").state, "empty");
+    assert.equal(presenter.cache.has(presenter.libraryKey(target)), false, "空只读结果被缓存");
+    presenter.refresh();
+    await flush();
+    assert.equal(reads, 2, "空结果后未重新读取");
+    assert.equal(tile(presenter, "pca").state, "content");
+
+    let computes = 0;
+    const computeStore = {
+        read: async () => null,
+        compute: async () => {
+            computes += 1;
+            return computes === 1 ? {} : featuresFor(target);
+        },
+        extractGroup: async () => {},
+    };
+    const computePresenter = new AnalysisPresenter({ t, clock, store: computeStore });
+    computePresenter.setImmediateDino(true);
+    computePresenter.setDisplaySurfaceReady(true);
+    computePresenter.setVisible(true);
+    computePresenter.setPhoto(target);
+    await flush();
+    clock.advance(500);
+    await flush();
+    assert.equal(computes, 1);
+    assert.equal(tile(computePresenter, "pca").state, "failed");
+    assert.equal(computePresenter.cache.has(computePresenter.computeKey(target, "dino", "original")), false,
+        "空现算结果被缓存");
+    computePresenter.refresh();
+    await flush();
+    clock.advance(500);
+    await flush();
+    assert.equal(computes, 2, "空结果后未重新现算");
+    assert.equal(tile(computePresenter, "pca").state, "content");
 });

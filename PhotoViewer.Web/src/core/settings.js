@@ -64,7 +64,9 @@ export function defaultSettings() {
         appleKeyboard: isApplePlatform(),
         similarityThreshold: 0.85,
         similarityMaxResults: 8,
-        analysisImmediateCompute: false,
+        // EDITION-03：分析栏两侧现算各由独立开关门控，默认均关闭。
+        analysisImmediateDinoCompute: false,
+        analysisImmediateCvCompute: false,
         similarityPanelExpanded: false,
     };
 }

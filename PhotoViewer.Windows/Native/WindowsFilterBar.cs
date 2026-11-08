@@ -17,16 +17,21 @@ namespace PhotoViewer.Windows.Native;
 /// <summary>
 /// 原生筛选条:排序方式、升降序、星级筛选与筛选后计数,名称与取值语义与旧壳一致(契约 FILTER-01)。
 /// 控件位置直接消费共享 <see cref="MainScreenLayout.FilterBarFrames"/>:行布局整组居中、
-/// 列布局在 116 栏内纵排,相似聚类 toggle 高 27,不再维护第二套间距。
+/// 列布局在 116 栏内纵排;AI 版末位另有相似聚类 toggle(共五项),标准版只有四项且不留空槽(EDITION-02)。
 /// </summary>
 internal sealed class WindowsFilterBar : Panel
 {
+    /// <summary>本条筛选条是否渲染相似聚类开关(标准版为 false)。</summary>
+    internal const bool ShowsSimilarityToggle = WindowsProductInfo.HasDino;
+
     private readonly FilterBarViewModel _filter;
     private readonly ComboBox _sortMode;
     private readonly ComboBox _sortOrder;
     private readonly ComboBox _ratingFilter;
     private readonly TextBlock _count;
+#if PHOTOVIEWER_DINO
     private readonly ToggleButton _similarityToggle;
+#endif
     private bool _syncing;
     private bool _isRowLayout = true;
     private MainScreenLayout.FilterFrames _frames;
@@ -55,7 +60,9 @@ internal sealed class WindowsFilterBar : Panel
             comboBox.DropDownOpened += (_, _) => PopupOpening?.Invoke();
         }
 
+#if PHOTOVIEWER_DINO
         _similarityToggle = CreateSimilarityToggle();
+#endif
         _count = new TextBlock
         {
             FontSize = 12,
@@ -69,7 +76,9 @@ internal sealed class WindowsFilterBar : Panel
         Children.Add(_sortOrder);
         Children.Add(_ratingFilter);
         Children.Add(_count);
+#if PHOTOVIEWER_DINO
         Children.Add(_similarityToggle);
+#endif
 
         _filter.PropertyChanged += OnFilterChanged;
         SyncFromViewModel();
@@ -118,11 +127,18 @@ internal sealed class WindowsFilterBar : Panel
         var order = _frames.Order;
         var rating = _frames.Rating;
         var count = _frames.Count;
+        double left = Math.Min(Math.Min(sort.X, order.X), Math.Min(rating.X, count.X));
+        double top = Math.Min(Math.Min(sort.Y, order.Y), Math.Min(rating.Y, count.Y));
+        double right = Math.Max(Math.Max(sort.MaxX, order.MaxX), Math.Max(rating.MaxX, count.MaxX));
+        double bottom = Math.Max(Math.Max(sort.MaxY, order.MaxY), Math.Max(rating.MaxY, count.MaxY));
+#if PHOTOVIEWER_DINO
         var toggle = _frames.Toggle;
-        double left = Math.Min(Math.Min(sort.X, order.X), Math.Min(rating.X, Math.Min(count.X, toggle.X)));
-        double top = Math.Min(Math.Min(sort.Y, order.Y), Math.Min(rating.Y, Math.Min(count.Y, toggle.Y)));
-        double right = Math.Max(Math.Max(sort.MaxX, order.MaxX), Math.Max(rating.MaxX, Math.Max(count.MaxX, toggle.MaxX)));
-        double bottom = Math.Max(Math.Max(sort.MaxY, order.MaxY), Math.Max(rating.MaxY, Math.Max(count.MaxY, toggle.MaxY)));
+        left = Math.Min(left, toggle.X);
+        top = Math.Min(top, toggle.Y);
+        right = Math.Max(right, toggle.MaxX);
+        bottom = Math.Max(bottom, toggle.MaxY);
+#endif
+
         return TransformToVisual(relativeTo).TransformBounds(new Rect(left, top, right - left, bottom - top));
     }
 
@@ -138,15 +154,15 @@ internal sealed class WindowsFilterBar : Panel
         if (_isRowLayout)
         {
             double width = double.IsInfinity(availableSize.Width) ? DesiredRowWidth(countWidth) : availableSize.Width;
-            _frames = MainScreenLayout.FilterBarFrames(true, width, 0, countWidth, true);
+            _frames = MainScreenLayout.FilterBarFrames(true, width, 0, countWidth, ShowsSimilarityToggle);
             return new Size(width, MainScreenLayout.FilterControlHeight + MainScreenLayout.FilterMargin * 2);
         }
 
         _frames = MainScreenLayout.FilterBarFrames(
-            false, MainScreenLayout.FileBarContentWidth, MainScreenLayout.FilterMargin, countWidth, true);
+            false, MainScreenLayout.FileBarContentWidth, MainScreenLayout.FilterMargin, countWidth, ShowsSimilarityToggle);
         return new Size(
             MainScreenLayout.FileBarContentWidth,
-            MainScreenLayout.FilterBarMainLength(false, MainScreenLayout.FilterMargin));
+            MainScreenLayout.FilterBarMainLength(false, MainScreenLayout.FilterMargin, ShowsSimilarityToggle));
     }
 
     /// <inheritdoc/>
@@ -155,15 +171,17 @@ internal sealed class WindowsFilterBar : Panel
         var previousFrames = _frames;
         double countWidth = Math.Max(1, _count.DesiredSize.Width);
         _frames = _isRowLayout
-            ? MainScreenLayout.FilterBarFrames(true, finalSize.Width, 0, countWidth, true)
+            ? MainScreenLayout.FilterBarFrames(true, finalSize.Width, 0, countWidth, ShowsSimilarityToggle)
             : MainScreenLayout.FilterBarFrames(
-                false, MainScreenLayout.FileBarContentWidth, MainScreenLayout.FilterMargin, countWidth, true);
+                false, MainScreenLayout.FileBarContentWidth, MainScreenLayout.FilterMargin, countWidth, ShowsSimilarityToggle);
 
         ArrangeChild(_sortMode, _frames.Sort);
         ArrangeChild(_sortOrder, _frames.Order);
         ArrangeChild(_ratingFilter, _frames.Rating);
         ArrangeChild(_count, _frames.Count);
+#if PHOTOVIEWER_DINO
         ArrangeChild(_similarityToggle, _frames.Toggle);
+#endif
         if (_frames != previousFrames)
         {
             InteractiveBoundsChanged?.Invoke();
@@ -171,15 +189,15 @@ internal sealed class WindowsFilterBar : Panel
         return finalSize;
     }
 
-    /// <summary>行布局在未知宽度下的自然宽:三个控件 + 计数 + toggle + 间距与两侧外边距。</summary>
+    /// <summary>行布局在未知宽度下的自然宽:三个控件 + 计数 + 间距与两侧外边距(AI 版另加相似聚类 toggle)。</summary>
     /// <param name="countWidth">计数文本自然宽。</param>
     /// <returns>自然宽。</returns>
     private static double DesiredRowWidth(double countWidth)
         => MainScreenLayout.FilterMargin * 2
             + MainScreenLayout.FilterControlWidth * 3
-            + MainScreenLayout.FilterGap * 4
+            + MainScreenLayout.FilterGap * (ShowsSimilarityToggle ? 4 : 3)
             + countWidth
-            + WindowsLayout.FilterToggleWidth;
+            + (ShowsSimilarityToggle ? WindowsLayout.FilterToggleWidth : 0);
 
     /// <summary>把子控件落到共享几何给出的矩形。</summary>
     /// <param name="child">子控件。</param>
@@ -203,8 +221,9 @@ internal sealed class WindowsFilterBar : Panel
     /// 相似聚类开关(旧壳 FilterBarView 的 ToggleButton):90×27、选中态走蓝底蓝框,
     /// 直接写回 <see cref="FilterBarViewModel.IsSimilarityPanelOpen"/>(持久化在设置里)。
     /// WinUI 的 ToggleButton 模板用主题键画四态,统一由 <see cref="WindowsControlStyles"/> 覆盖,
-    /// 悬停/按下不会回落到系统主题色。
+    /// 悬停/按下不会回落到系统主题色。标准版没有这个入口,不创建控件(EDITION-02)。
     /// </summary>
+#if PHOTOVIEWER_DINO
     private ToggleButton CreateSimilarityToggle()
     {
         var toggle = new ToggleButton
@@ -233,6 +252,7 @@ internal sealed class WindowsFilterBar : Panel
         };
         return toggle;
     }
+#endif
 
     /// <summary>排序方式变化。</summary>
     private void OnSortModeChanged(object sender, SelectionChangedEventArgs e)
@@ -275,9 +295,13 @@ internal sealed class WindowsFilterBar : Panel
             case nameof(FilterBarViewModel.SortMode):
             case nameof(FilterBarViewModel.SortOrder):
             case nameof(FilterBarViewModel.SelectedRatingFilter):
+                SyncFromViewModel();
+                break;
+#if PHOTOVIEWER_DINO
             case nameof(FilterBarViewModel.IsSimilarityPanelOpen):
                 SyncFromViewModel();
                 break;
+#endif
             case nameof(FilterBarViewModel.FilteredCount):
                 RefreshCount();
                 break;
@@ -293,7 +317,9 @@ internal sealed class WindowsFilterBar : Panel
             _sortMode.SelectedIndex = IndexOf(_filter.SortModes.Select(option => (object)option.Value).ToList(), _filter.SortMode);
             _sortOrder.SelectedIndex = IndexOf(_filter.SortOrders.Select(option => (object)option.Value).ToList(), _filter.SortOrder);
             _ratingFilter.SelectedIndex = IndexOf(_filter.RatingFilters.Select(option => (object)option.Key).ToList(), _filter.SelectedRatingFilter);
+#if PHOTOVIEWER_DINO
             _similarityToggle.IsChecked = _filter.IsSimilarityPanelOpen;
+#endif
             RefreshCount();
         }
         finally

@@ -95,7 +95,7 @@ internal static class iOSNativeSimilarityCheck
                 await SettleAsync(root);
                 var filter = main.FileVM.FilterBar;
                 var panel = root.SimilarityPane;
-                if (root.FilterBar.SimilarityToggle.Hidden) throw new InvalidOperationException("相似聚类 toggle 仍被隐藏（SCOPE-01 应解禁）");
+                if (root.FilterBar.SimilarityToggle!.Hidden) throw new InvalidOperationException("相似聚类 toggle 仍被隐藏（SCOPE-01 应解禁）");
                 lines.Add($"PASS 素材：{fixtures.Length} 张自有夹具 → 工作副本 {workspace}");
 
                 // 一、toggle 与共享状态双向一致 + 真实点击开合。
@@ -105,9 +105,9 @@ internal static class iOSNativeSimilarityCheck
                 filter.IsSimilarityPanelOpen = true;
                 await SettleAsync(root);
                 if (panel.Hidden) throw new InvalidOperationException("展开后相似面板仍隐藏");
-                await UiDispatcher.InvokeAsync(() => root.FilterBar.SimilarityToggle.SendActionForControlEvents(UIControlEvent.TouchUpInside));
+                await UiDispatcher.InvokeAsync(() => root.FilterBar.SimilarityToggle!.SendActionForControlEvents(UIControlEvent.TouchUpInside));
                 await WaitAsync(() => !filter.IsSimilarityPanelOpen && panel.Hidden, "真实点击收起面板");
-                await UiDispatcher.InvokeAsync(() => root.FilterBar.SimilarityToggle.SendActionForControlEvents(UIControlEvent.TouchUpInside));
+                await UiDispatcher.InvokeAsync(() => root.FilterBar.SimilarityToggle!.SendActionForControlEvents(UIControlEvent.TouchUpInside));
                 await WaitAsync(() => filter.IsSimilarityPanelOpen && !panel.Hidden, "真实点击展开面板");
                 await SettleAsync(root);
                 lines.Add("PASS toggle：与共享 IsSimilarityPanelOpen 双向一致，真实点击可收起并重开");

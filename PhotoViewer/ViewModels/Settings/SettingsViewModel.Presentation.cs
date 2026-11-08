@@ -53,7 +53,7 @@ public partial class SettingsViewModel
             nameof(UseAppleKeyboard) or nameof(MapCommandTarget) or nameof(MapOptionTarget) or nameof(MapControlTarget)
                 => SettingsChangeImpact.Commands | SettingsChangeImpact.InputBindings,
             nameof(SelectedFormats) or nameof(SameNameAsOnePhoto) => SettingsChangeImpact.FileProjection,
-            nameof(AnalysisImmediateCompute) => SettingsChangeImpact.Analysis,
+            nameof(AnalysisImmediateCompute) or nameof(AnalysisImmediateCvCompute) => SettingsChangeImpact.Analysis,
             nameof(SimilarityPanelExpanded) or nameof(SimilarityThreshold) or nameof(SimilarityMaxResults)
                 => SettingsChangeImpact.Similarity,
             _ => SettingsChangeImpact.None,

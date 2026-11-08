@@ -66,14 +66,19 @@ public partial class SettingsViewModel
     // ── 分析诊断 ─────────────────────────────────────────────────────────────
 
     private bool _analysisImmediateCompute = false;
-    /// <summary>
-    /// 分析栏即时计算 DINO/CV 诊断(默认关)。开启后:库里没有提取结果时分析栏对当前主图立即计算
-    /// (延迟 + 让位,不抢主图浏览资源),增强预览时对增强图实时重算;关闭时未提取照片保持"未提取"占位。
-    /// </summary>
+    /// <summary>分析栏即时计算 DINO 诊断；缺失时只计算 PCA 与 Cosine 所需数据。</summary>
     public bool AnalysisImmediateCompute
     {
         get => _analysisImmediateCompute;
         set => this.RaiseAndSetIfChanged(ref _analysisImmediateCompute, value);
+    }
+
+    private bool _analysisImmediateCvCompute = false;
+    /// <summary>分析栏即时计算 CV 诊断；缺失时只计算锐度与抖动拖影所需数据。</summary>
+    public bool AnalysisImmediateCvCompute
+    {
+        get => _analysisImmediateCvCompute;
+        set => this.RaiseAndSetIfChanged(ref _analysisImmediateCvCompute, value);
     }
 
     // ── 清除特征数据库(开发者用)─────────────────────────────────────────────
@@ -115,7 +120,7 @@ public partial class SettingsViewModel
     /// <summary>
     /// AI 设置页"清除特征数据库"按钮命令。
     /// 首次点击进入确认态(3 秒内有效);确认态再次点击才真正执行 — 关闭连接、删 photos.db / -wal / -shm、
-    /// 清空 <see cref="DinoFeatureCache"/> 进程缓存,然后重建空库。
+    /// 清空 DINO（AI 版）、抖动判定与分析派生进程缓存,然后重建空库。
     /// 没有系统确认控件的壳使用本命令；有系统确认控件的壳改用
     /// <see cref="ClearFeatureDatabaseConfirmedAsync"/>，不进入对用户不可见的 arm 态。
     /// 不重启应用;相似聚类面板会在下次 OnPanelOpened 时自动统计未提取数。
@@ -161,7 +166,9 @@ public partial class SettingsViewModel
         try
         {
             await PhotoDatabase.DeleteDatabaseAsync().ConfigureAwait(true);
+#if PHOTOVIEWER_DINO
             DinoFeatureCache.InvalidateAll();
+#endif
             ShakeFlagService.InvalidateAll();
             AnalysisResultCache.InvalidateAll();
             ClearDbStatus = "已清除";

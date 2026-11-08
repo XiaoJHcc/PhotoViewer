@@ -8,10 +8,13 @@ using Android.App;
 using Android.Content;
 using Android.OS;
 using Android.Views;
+#if PHOTOVIEWER_DINO
 using Microsoft.ML.OnnxRuntime;
+#endif
 using PhotoViewer.Android.Core;
 using PhotoViewer.Core;
 using PhotoViewer.Core.AI;
+using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Image.Heif;
 using PhotoViewer.Core.Memory;
@@ -114,7 +117,11 @@ public static class AndroidNativeShell
     {
         AndroidDisplayCapabilities.ForceSrgb = intent?.GetBooleanExtra("pv-srgb", false) == true
             || intent?.GetBooleanExtra("pv-p3", true) == false;
-        if (string.Equals(intent?.GetStringExtra("pv-check"), "color", StringComparison.OrdinalIgnoreCase))
+        // 往返验收（pv-check=roundtrip）：隔离设置档必须在设置仓库初始化前选定，绝不读写用户真实设置。
+        bool roundtrip = string.Equals(intent?.GetStringExtra("pv-check"), "roundtrip", StringComparison.OrdinalIgnoreCase);
+        if (roundtrip)
+            AndroidSettingsStorage.UseIsolatedProfile("edition-roundtrip");
+        else if (string.Equals(intent?.GetStringExtra("pv-check"), "color", StringComparison.OrdinalIgnoreCase))
             AndroidSettingsStorage.UseIsolatedProfile("color");
         else if (!string.IsNullOrWhiteSpace(intent?.GetStringExtra("pv-stress")))
             AndroidSettingsStorage.UseIsolatedProfile("stress");
@@ -136,6 +143,13 @@ public static class AndroidNativeShell
         if (!string.IsNullOrWhiteSpace(perfProbeFolder))
             return RunPerfProbe(activity, perfProbeFolder, intent?.GetIntExtra("pv-perf-probe-target", 0) ?? 0);
 
+        if (roundtrip && _main == null)
+        {
+            // 往返验收共用隔离库；数据库路径在首次读取后不可更换，必须在构造主 VM 前配置。
+            PhotoDatabase.Initialize(
+                Path.Combine(activity.FilesDir!.AbsolutePath, "PhotoViewer", "edition-roundtrip", "photos.db"));
+        }
+
         if (_main == null)
         {
             var settingsRepository = CreateSettingsRepository();
@@ -155,7 +169,8 @@ public static class AndroidNativeShell
         _root?.Dispose();
         _root = new AndroidNativeRootView(activity, _main, _session);
         HandleIntent(intent);
-        AndroidNativeChecks.MaybeStart(activity, _main, _session, _root, intent?.GetStringExtra("pv-check"));
+        if (!AndroidNativeChecks.TryStartRoundtrip(activity, _main, _session, _root, intent))
+            AndroidNativeChecks.MaybeStart(activity, _main, _session, _root, intent?.GetStringExtra("pv-check"));
         if (intent != null) MaybeStartStress(activity, intent, _main, _session);
         return _root;
     }
@@ -317,10 +332,12 @@ public static class AndroidNativeShell
         _filePicker = new AndroidFilePicker(activity);
         FilePicker.Initialize(_filePicker);
         AppResources.Initialize(new AndroidAppResourceProvider());
+#if PHOTOVIEWER_DINO
         using (var model = AppResources.OpenAsset(PhotoViewer.Core.AI.DinoModelResources.ModelAssetUri))
         {
             Console.WriteLine($"[Native] DINO 模型资源={(model != null ? "ok" : "missing")}");
         }
+#endif
         ConfigureHeifFastDecoder();
         HeifLoader.Initialize(new AndroidLibHeifDecoder());
         _presentationDecoder = new AndroidPresentationDecoder();
@@ -339,8 +356,10 @@ public static class AndroidNativeShell
         AndroidInputDevices.Initialize(activity);
         _settingsPresenter = new AndroidNativeSettingsPresenter(activity);
         NativeSettingsPresenter.Initialize(_settingsPresenter);
+#if PHOTOVIEWER_DINO
         DinoFeatureExtractor.ConfigureSession(options => options.AppendExecutionProvider_Nnapi());
-        Console.WriteLine("[Native] 平台门面就绪（dispatcher/heif/decode/budget/governor/storage/settings/dino）");
+#endif
+        Console.WriteLine($"[Native] 平台门面就绪（dispatcher/heif/decode/budget/governor/storage/settings，edition={AndroidAppCapabilities.EditionName}）");
     }
 
     /// <summary>

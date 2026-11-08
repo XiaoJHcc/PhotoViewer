@@ -39,6 +39,8 @@ internal sealed class SettingsDocumentDto
 
     public bool? AnalysisImmediateCompute { get; set; }
 
+    public bool? AnalysisImmediateCvCompute { get; set; }
+
     public int? BitmapCacheMaxCount { get; set; }
 
     public int? BitmapCacheMaxMemory { get; set; }

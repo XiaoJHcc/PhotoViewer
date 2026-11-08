@@ -16,8 +16,9 @@ namespace PhotoViewer.iOS.Native;
 /// 验收专用（非产品行为，测试钩子）：<c>--pv-native-tools-check &lt;目录&gt;</c> 在模拟器/真机上程序化核对
 /// 工具页——sheet + 导航控制器展示/关闭、列表页两个入口（照片数据统计为 Windows 专属，不出现）、
 /// EXIF 详情页按共享 7 列几何渲染分组与标签（多格式时真实切换格式），并在 320–1024 点七档宽度下核对卡片
-/// 内缩只取系统 InsetGrouped 一次边距、7 列与行高按实际卡片宽重算、行内无自绘圆角；DINO 诊断页 5 张瓦片与共享
-/// presenter 就绪、返回列表页，以及控制栏 EXIF 信息块直达 EXIF 详情（工具 sheet 与设置页同配置）。
+/// 内缩只取系统 InsetGrouped 一次边距、7 列与行高按实际卡片宽重算、行内无自绘圆角；当前发行版的诊断页
+/// （AI 版 DINO 五瓦片、标准版 CV 三瓦片）与共享 presenter 就绪、返回列表页，以及控制栏 EXIF 信息块直达
+/// EXIF 详情（工具 sheet 与设置页同配置）。
 /// 素材要求：目录内至少 1 张自有 jpg 且能读到 EXIF；只读素材，不写用户照片或 TestCase。
 /// 报告写 Documents/PhotoViewer/native-tools-checks.txt。
 /// </summary>
@@ -122,8 +123,8 @@ internal static class iOSNativeToolsCheck
                 "控制栏 EXIF 块直达 EXIF 详情");
             if (mainVm.Tools.CurrentTool is not ExifDetailViewModel)
                 throw new InvalidOperationException("控制栏 EXIF 块进入详情后共享导航状态不是 EXIF 详情");
-            if (mainVm.Tools.DinoPresenter.Status != "未加载")
-                throw new InvalidOperationException("控制栏 EXIF 块入口启动了 DINO 推理");
+            if (DiagnosticStatus(mainVm) != "未加载")
+                throw new InvalidOperationException("控制栏 EXIF 块入口启动了诊断任务");
             var list = presenter.ListPage!;
             if (list.TableView.Style != UITableViewStyle.InsetGrouped) throw new InvalidOperationException("工具根列表不是InsetGrouped");
             if (navigation.ViewControllers?.FirstOrDefault() is not iOSNativeToolsListViewController)
@@ -131,11 +132,14 @@ internal static class iOSNativeToolsCheck
             await UiDispatcher.InvokeAsync(() => navigation.PopViewController(true));
             await WaitAsync(() => navigation.TopViewController is iOSNativeToolsListViewController && !mainVm.Tools.CanGoBack, "从 EXIF 详情返回工具列表");
             var titles = list.Entries.ToArray();
-            if (!titles.Contains("EXIF 详情", StringComparer.Ordinal) || !titles.Contains("DINO 诊断", StringComparer.Ordinal))
+            if (!titles.Contains("EXIF 详情", StringComparer.Ordinal) || !titles.Contains(iOSAppCapabilities.DiagnosticName, StringComparer.Ordinal))
                 throw new InvalidOperationException($"工具列表页缺少入口按钮：{string.Join(" | ", titles)}");
             if (titles.Contains("照片数据统计", StringComparer.Ordinal))
                 throw new InvalidOperationException("iOS 不应显示 Windows 专属的照片数据统计入口");
-            lines.Add($"PASS 入口：控制栏 EXIF 信息块直达 EXIF 详情（列表页保留为返回目标），DINO未加载；工具 sheet 与设置页同配置；入口 = {string.Join(" / ", titles)}");
+            string unexpected = iOSAppCapabilities.HasDino ? "CV 诊断" : "DINO 诊断";
+            if (titles.Contains(unexpected, StringComparer.Ordinal))
+                throw new InvalidOperationException($"工具列表页出现另一发行版的诊断入口：{unexpected}");
+            lines.Add($"PASS 入口：控制栏 EXIF 信息块直达 EXIF 详情（列表页保留为返回目标），诊断未加载；工具 sheet 与设置页同配置；入口 = {string.Join(" / ", titles)}");
             await iOSNativeSettingsCheck.SnapshotStageAsync("tools-list");
 
             // 二、EXIF 详情页：真实按钮进入，分组/标签渲染 + 多格式切换。
@@ -267,58 +271,62 @@ internal static class iOSNativeToolsCheck
             await UiDispatcher.InvokeAsync(() => navigation.PopViewController(true));
             await WaitAsync(() => navigation.TopViewController is iOSNativeToolsListViewController && !mainVm.Tools.CanGoBack, "返回工具列表页");
 
-            // 四、DINO 诊断页：5 张原生瓦片 + 共享 presenter 就绪。
+            // 四、诊断页：AI 版 5 张瓦片（DINO patch + CV），标准版 3 张 CV 瓦片；共享 presenter 就绪。
             await UiDispatcher.InvokeAsync(() => list.RowSelected(list.TableView, NSIndexPath.FromRowSection(1, 0)));
-            await WaitAsync(() => navigation.TopViewController is iOSDinoDiagnosticView && mainVm.Tools.CanGoBack, "DINO 诊断页压栈");
-            var dino = presenter.DinoPage!;
-            await WaitAsync(() => mainVm.Tools.DinoPresenter.Status == mainVm.CurrentFile!.Name, "DINO 状态就绪");
-            await WaitAsync(() => dino.Tiles.Count == 5, "DINO 五张瓦片");
-            await WaitAsync(() => dino.Tiles[0].HasContent, "DINO 缩略图瓦片出图");
+            await WaitAsync(() => navigation.TopViewController is iOSDinoDiagnosticView && mainVm.Tools.CanGoBack, "诊断页压栈");
+            var diagnostic = presenter.DiagnosticPage!;
+            await WaitAsync(() => DiagnosticStatus(mainVm) == mainVm.CurrentFile!.Name, "诊断状态就绪");
+#if PHOTOVIEWER_DINO
+            await WaitAsync(() => diagnostic.Tiles.Count == 5, "DINO 五张瓦片");
+#else
+            await WaitAsync(() => diagnostic.Tiles.Count == 3, "CV 三张瓦片");
+#endif
+            await WaitAsync(() => diagnostic.Tiles[0].HasContent, "诊断缩略图瓦片出图");
             await UiDispatcher.InvokeAsync(() =>
             {
-                dino.View!.LayoutIfNeeded();
-                foreach (var tile in dino.Tiles)
+                diagnostic.View!.LayoutIfNeeded();
+                foreach (var tile in diagnostic.Tiles)
                 {
                     iOSNativeTapProbe.Tap(tile, .65, .65);
-                    if (dino.Presenter.CrosshairU is not { } u || Math.Abs(u - .65) > .001)
-                        throw new InvalidOperationException("DINO工具瓦片事件未落共享准星");
+                    if (diagnostic.Presenter.CrosshairU is not { } u || Math.Abs(u - .65) > .001)
+                        throw new InvalidOperationException("诊断工具瓦片事件未落共享准星");
                     tile.TapAt(CGPoint.Empty);
-                    if (dino.Presenter.CrosshairU != null) throw new InvalidOperationException("DINO工具瓦片边框未清准星");
+                    if (diagnostic.Presenter.CrosshairU != null) throw new InvalidOperationException("诊断工具瓦片边框未清准星");
                 }
-                dino.View.Subviews.OfType<UIScrollView>().Single().SetContentOffset(CGPoint.Empty, false);
+                diagnostic.View.Subviews.OfType<UIScrollView>().Single().SetContentOffset(CGPoint.Empty, false);
             });
-            lines.Add("PASS DINO五瓦片：Window.HitTest与瓦片事件处理注入落共享准星/边框清除（非系统触摸注入）");
-            double pageWidth = (double)dino.View!.Bounds.Width;
-            // TOOLS-05：刚体拟合文本是网格下方的整宽块（左右 16 点页边距），不占第六格。
-            if (Math.Abs((double)dino.RigidTitleFrame.X - 16) > .5
-                || Math.Abs((double)dino.RigidTitleFrame.Width - Math.Max(1, pageWidth - 32)) > .5
-                || (double)dino.RigidTitleFrame.Y < dino.SecondRowBottom)
-                throw new InvalidOperationException($"TOOLS-05：刚体拟合文本未以整宽块位于网格下方：{dino.RigidTitleFrame}（页宽 {pageWidth}）");
-            lines.Add($"PASS DINO 诊断：5 张瓦片，状态 = {mainVm.Tools.DinoPresenter.Status}；刚体拟合文本为网格下方整宽块");
-            await iOSNativeSettingsCheck.SnapshotStageAsync("tools-dino");
+            lines.Add($"PASS 诊断瓦片：{diagnostic.Tiles.Count} 张；Window.HitTest与瓦片事件处理注入落共享准星/边框清除（非系统触摸注入）");
+            double pageWidth = (double)diagnostic.View!.Bounds.Width;
+            // TOOLS-05：刚体拟合文本是网格下方的整宽块（左右 16 点页边距），不占瓦片格。
+            if (Math.Abs((double)diagnostic.RigidTitleFrame.X - 16) > .5
+                || Math.Abs((double)diagnostic.RigidTitleFrame.Width - Math.Max(1, pageWidth - 32)) > .5
+                || (double)diagnostic.RigidTitleFrame.Y < diagnostic.SecondRowBottom)
+                throw new InvalidOperationException($"TOOLS-05：刚体拟合文本未以整宽块位于网格下方：{diagnostic.RigidTitleFrame}（页宽 {pageWidth}）");
+            lines.Add($"PASS {iOSAppCapabilities.DiagnosticName}：{diagnostic.Tiles.Count} 张瓦片，状态 = {DiagnosticStatus(mainVm)}；刚体拟合文本为网格下方整宽块");
+            await iOSNativeSettingsCheck.SnapshotStageAsync(iOSAppCapabilities.HasDino ? "tools-dino" : "tools-cv");
 
-            // TOOLBAR-06：已展示 DINO 时控制栏 EXIF 入口仍明确切到 EXIF 详情，并取消在途 DINO。
+            // TOOLBAR-06：已展示诊断页时控制栏 EXIF 入口仍明确切到 EXIF 详情，并取消在途诊断计算。
             await UiDispatcher.InvokeAsync(root.ControlBar.TapExifGroup);
             await WaitAsync(() => navigation.TopViewController is iOSExifDetailView && mainVm.Tools.CurrentTool is ExifDetailViewModel,
-                "已展示 DINO 时 EXIF 入口切回详情");
-            if (mainVm.Tools.DinoPresenter.IsBusy) throw new InvalidOperationException("切到 EXIF 后 DINO 仍在计算");
-            lines.Add("PASS TOOLBAR-06：已展示 DINO 时控制栏 EXIF 入口切到 EXIF 详情并取消在途 DINO");
+                "已展示诊断页时 EXIF 入口切回详情");
+            if (DiagnosticBusy(mainVm)) throw new InvalidOperationException("切到 EXIF 后诊断仍在计算");
+            lines.Add("PASS TOOLBAR-06：已展示诊断页时控制栏 EXIF 入口切到 EXIF 详情并取消在途诊断");
             await UiDispatcher.InvokeAsync(() => navigation.PopViewController(true));
-            await WaitAsync(() => navigation.TopViewController is iOSNativeToolsListViewController && !mainVm.Tools.CanGoBack, "返回列表页（DINO）");
+            await WaitAsync(() => navigation.TopViewController is iOSNativeToolsListViewController && !mainVm.Tools.CanGoBack, "返回列表页（诊断）");
 
-            // 关闭后复用页面，重开回分组列表，不触发DINO。
+            // 关闭后复用页面，重开回分组列表，不触发诊断现算。
             await UiDispatcher.InvokeAsync(presenter.Dismiss);
             await WaitAsync(() => !presenter.IsPresented && !mainVm.Tools.IsPresented, "工具页关闭并复位共享展示态");
-            await WaitAsync(() => mainVm.Tools.DinoPresenter.Status == "未加载", "关闭工具页取消在途 DINO");
-            lines.Add("PASS TOOLS-06：关闭工具页写回 IsPresented=false 并取消在途 DINO 任务");
+            await WaitAsync(() => DiagnosticStatus(mainVm) == "未加载", "关闭工具页取消在途诊断");
+            lines.Add("PASS TOOLS-06：关闭工具页写回 IsPresented=false 并取消在途诊断任务");
             await UiDispatcher.InvokeAsync(root.ShowTools);
             await WaitAsync(() => presenter.IsPresented, "工具页重开");
             await WaitAsync(() => presenter.Navigation!.ViewIfLoaded?.Window != null, "工具页重开上屏");
             // TOOLS-01：关闭后复用同一导航控制器，重开的 sheet 仍按设置页同一份配置。
             VerifySheetMatchesSettings(presenter.Navigation!, "关闭后重开");
             await WaitAsync(() => presenter.Navigation!.TopViewController is iOSNativeToolsListViewController && mainVm.Tools.CurrentTool == null, "重开后返回分组列表");
-            if (mainVm.Tools.DinoPresenter.Status != "未加载") throw new InvalidOperationException("重开列表触发了DINO");
-            lines.Add("PASS 生命周期：关闭释放展示、保留详情对象，重开回分组列表且DINO未加载");
+            if (DiagnosticStatus(mainVm) != "未加载") throw new InvalidOperationException("重开列表触发了诊断计算");
+            lines.Add("PASS 生命周期：关闭释放展示、保留详情对象，重开回分组列表且诊断未加载");
 
             // TOOLBAR-06 / TOOLS-02：EXIF 加载中不算缺 EXIF；真正无照片时才回退工具列表。
             var loadedFile = mainVm.CurrentFile!;
@@ -410,6 +418,22 @@ internal static class iOSNativeToolsCheck
                 $"{scope} 工具 sheet 外观与设置页不一致：grabber={sheet.PrefersGrabberVisible} " +
                 $"expand={sheet.PrefersScrollingExpandsWhenScrolledToEdge} corner={sheet.PreferredCornerRadius}");
     }
+
+    /// <summary>发行版诊断 presenter 的状态文本（AI 版 DINO，标准版 CV）。</summary>
+    private static string DiagnosticStatus(MainViewModel main)
+#if PHOTOVIEWER_DINO
+        => main.Tools.DinoPresenter.Status;
+#else
+        => main.Tools.CvPresenter.Status;
+#endif
+
+    /// <summary>发行版诊断 presenter 是否在计算。</summary>
+    private static bool DiagnosticBusy(MainViewModel main)
+#if PHOTOVIEWER_DINO
+        => main.Tools.DinoPresenter.IsBusy;
+#else
+        => main.Tools.CvPresenter.IsBusy;
+#endif
 
     /// <summary>轮询等待条件成立，超时即失败。</summary>
     /// <param name="condition">条件。</param>

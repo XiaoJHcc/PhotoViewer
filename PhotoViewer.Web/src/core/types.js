@@ -13,7 +13,8 @@
  * @property {string|null} wb           白平衡文字
  * @property {string|null} flash        闪光灯文字
  *
- * @typedef {Object} Features           特征库中的一条（DINO + CV），网格 32×32、按显示朝向
+ * @typedef {Object} Features           特征库中的一条（DINO + CV），网格 32×32、按显示朝向；
+ *                                      scope "dino"/"cv" 的读取结果只含对应侧字段
  * @property {Float32Array} cls         全局特征，单位向量
  * @property {Float32Array} patches     32×32 个 patch 特征，行优先，每个 PATCH_DIM 维单位向量
  * @property {Float32Array} pca         32×32×3 PCA-RGB，0–1

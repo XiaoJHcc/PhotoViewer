@@ -293,9 +293,13 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
             },
             Ai = new MacAiStateDto
             {
+#if PHOTOVIEWER_DINO
+                DinoEnabled = true,
+#endif
                 SimilarityThreshold = (int)Math.Round(settings.SimilarityThreshold * 100),
                 MaxResults = settings.SimilarityMaxResults,
                 ImmediateCompute = settings.AnalysisImmediateCompute,
+                ImmediateCvCompute = settings.AnalysisImmediateCvCompute,
                 ClearButtonText = settings.ClearDbButtonText,
                 ClearStatus = settings.ClearDbStatus,
                 ClearBusy = settings.ClearDbBusy,
@@ -390,6 +394,7 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
             case "exif.showRating": settings.ShowRating = value; break;
             case "exif.safeSetRating": settings.SafeSetRating = value; break;
             case "ai.immediateCompute": settings.AnalysisImmediateCompute = value; break;
+            case "ai.immediateCvCompute": settings.AnalysisImmediateCvCompute = value; break;
             default:
                 if (key.StartsWith("file.format.", StringComparison.Ordinal))
                 {

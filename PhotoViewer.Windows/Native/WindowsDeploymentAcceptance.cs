@@ -99,16 +99,39 @@ internal sealed partial class WindowsMainWindow
         context.WriteToFile(path);
     }
 
+    /// <summary>
+    /// portable 原生依赖核查(单文件解包目录)。分两类,不再把"进程里恰好加载过"当成唯一证据:
+    /// <list type="bullet">
+    /// <item>真实使用模块(libheif / pvhevc / AI 版 ONNX+DirectML):必须已在本进程加载,且来源必须是解包目录;</item>
+    /// <item>分发 CRT(msvcp140 / msvcp140_1 / vcruntime140 / vcruntime140_1):去掉推理后端后不一定有使用者,
+    /// 因此这里按解包目录显式加载,核对文件确实随包分发、可被本机加载、加载后的实际路径就是解包目录 ——
+    /// 系统目录的同名 CRT 不能顶替。</item>
+    /// </list>
+    /// </summary>
+    /// <param name="checks">验收结果收集器。</param>
     private static void CheckPortableModuleOrigins(List<string> checks)
     {
         var applicationDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(AppContext.BaseDirectory));
+        // 真实使用模块:缺失或不是应用本地来源都算失败。
+        string[] usedModules =
+        [
+            "libheif.dll", "pvhevc.dll",
+#if PHOTOVIEWER_DINO
+            "onnxruntime.dll", "DirectML.dll",
+#endif
+        ];
+        // 随包分发的 CRT:显式加载验证本地可用,不依赖启动期是否被用上。
+        string[] distributedCrt =
+            ["msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll"];
         using var process = Process.GetCurrentProcess();
         var modules = process.Modules.Cast<ProcessModule>().ToArray();
         try
         {
-            foreach (var name in new[] { "msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll", "libheif.dll", "pvhevc.dll", "onnxruntime.dll", "DirectML.dll" })
+            foreach (var name in usedModules)
             {
-                var matches = modules.Where(module => string.Equals(module.ModuleName, name, StringComparison.OrdinalIgnoreCase)).ToArray();
+                var matches = modules
+                    .Where(module => string.Equals(module.ModuleName, name, StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
                 RequireSmoke(matches.Length > 0, $"portable 原生模块未实际加载：{name}; base={applicationDirectory}");
                 foreach (var module in matches)
                 {
@@ -120,10 +143,58 @@ internal sealed partial class WindowsMainWindow
                     checks.Add($"PASS portable loaded module: {name}; path={path}; fileVersion={version.FileVersion}; productVersion={version.ProductVersion}");
                 }
             }
+
+            foreach (var name in distributedCrt)
+            {
+                checks.Add(CheckPortableDistributedCrt(name, applicationDirectory));
+            }
+
+#if !PHOTOVIEWER_DINO
+            foreach (var name in new[] { "onnxruntime.dll", "onnxruntime_providers_shared.dll", "DirectML.dll" })
+            {
+                RequireSmoke(!modules.Any(module => string.Equals(module.ModuleName, name, StringComparison.OrdinalIgnoreCase)),
+                    $"标准版仍加载了推理原生模块：{name}");
+                RequireSmoke(!File.Exists(Path.Combine(applicationDirectory, name)),
+                    $"标准版输出仍包含推理原生模块：{name}");
+            }
+
+            checks.Add("PASS portable standard edition: no ONNX Runtime / DirectML modules loaded or shipped");
+#endif
         }
         finally
         {
             foreach (var module in modules) module.Dispose();
         }
+    }
+
+    /// <summary>
+    /// 分发 CRT 核查:文件必须随包分发,按解包目录显式加载成功,且加载后的模块路径就是解包目录。
+    /// 系统目录里的同名 CRT 不会满足这条断言(缺件也不允许用系统副本顶替)。
+    /// </summary>
+    /// <param name="name">CRT 文件名。</param>
+    /// <param name="applicationDirectory">解包/应用目录。</param>
+    /// <returns>验收文案。</returns>
+    private static string CheckPortableDistributedCrt(string name, string applicationDirectory)
+    {
+        var local = Path.Combine(applicationDirectory, name);
+        RequireSmoke(File.Exists(local),
+            $"portable CRT 未随包分发：{name}; expected={local}(portable 验收针对单文件发布解包目录,系统 CRT 不顶替)");
+        var handle = NativeLibrary.Load(local);
+        RequireSmoke(handle != IntPtr.Zero, $"portable CRT 无法从解包目录加载：{name}; path={local}");
+        using var process = Process.GetCurrentProcess();
+        var matches = process.Modules.Cast<ProcessModule>()
+            .Where(module => string.Equals(module.ModuleName, name, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        RequireSmoke(matches.Length > 0, $"portable CRT 显式加载后仍未出现在模块表：{name}; path={local}");
+        var localModule = matches.FirstOrDefault(module =>
+            string.Equals(
+                Path.TrimEndingDirectorySeparator(Path.GetDirectoryName(Path.GetFullPath(module.FileName))!),
+                applicationDirectory,
+                StringComparison.OrdinalIgnoreCase));
+        RequireSmoke(localModule != null,
+            $"portable CRT 未从解包目录加载：{name}; actual=[{string.Join(";", matches.Select(module => module.FileName))}]");
+        var version = localModule!.FileVersionInfo;
+        return $"PASS portable distributed CRT: {name}; path={Path.GetFullPath(localModule.FileName)}"
+            + $" size={new FileInfo(local).Length}; fileVersion={version.FileVersion}";
     }
 }

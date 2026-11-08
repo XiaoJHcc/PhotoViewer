@@ -6,7 +6,7 @@
 
 **验收边界（作者裁定）**：以下不作为验收待办——真实相机八方向素材（自生成八方向素材 + 代码核对即足）、雾天增强 + 分析同时开启的长时间稳定性、桌面端外设热插拔与触控板分流、Windows 程序化失败注入（相关格子以 `代码核对` 为终态）。硬件条件不具备的项（Windows 真屏 ACM/HDR 切换、Win10、校色仪；iPad 外接显示与广色域对拍；移动端真实存储 Provider 等）只在格内保留未验边界，不扩大为通过。
 
-证据文档：[macOS P3](../Plans/native-rebuild-phase-3.md) · [iPad](../Plans/native-rebuild-phase-ipad.md) · [Windows P2](../Plans/native-rebuild-windows-p2.md) · [Windows 主屏控件](../Plans/windows-main-screen-controls.md) · [Android](../Plans/native-rebuild-phase-android.md) · [共享 Core 重建](../Plans/core-legacy-rebuild-plan-1.md) · [评分存储纠正](../Plans/rating-storage-correction-plan-1.md) · [原生输入与设置/工具界面收口](../Plans/native-input-ui-refinement.md) · [Web 参考壳差分台账](../Plans/web-shell-gaps.md)（Web 只作规范检验，不设状态列）。
+证据文档：[macOS P3](../Plans/native-rebuild-phase-3.md) · [iPad](../Plans/native-rebuild-phase-ipad.md) · [Windows P2](../Plans/native-rebuild-windows-p2.md) · [Windows 主屏控件](../Plans/windows-main-screen-controls.md) · [Android](../Plans/native-rebuild-phase-android.md) · [共享 Core 重建](../Plans/core-legacy-rebuild-plan-1.md) · [评分存储纠正](../Plans/rating-storage-correction-plan-1.md) · [原生输入与设置/工具界面收口](../Plans/native-input-ui-refinement.md) · [双版本分发与包体](../Plans/distribution-package-size-optimization-plan.md) · [Web 参考壳差分台账](../Plans/web-shell-gaps.md)（Web 只作规范检验，不设状态列）。
 
 ## film
 
@@ -86,7 +86,7 @@
 | ANALYSIS-06 | 作者手验通过；小图 40×400 绿框同 40px | 作者手验通过；裁剪像素/绿框读回 | 作者手验通过 | 作者手验通过；基础操作 |
 | ANALYSIS-07 | 作者手验通过；占位与计算中分离 | 作者手验通过；占位与计算中分离 | 作者手验通过；占位与计算中分离 | 作者手验通过；基础操作；占位与计算中分离 |
 | ANALYSIS-08 | 作者手验通过；空白区清准星 | 作者手验通过；诊断点按/清空准星 | 作者手验通过；诊断瓦片有准星、直方图无准星 | 作者手验通过；基础操作；诊断点按/滑动释放准星 |
-| ANALYSIS-09 | 待实现；DINO/CV 独立门控与标准版只读 CV | 待实现；DINO/CV 独立门控与标准版只读 CV | 待实现；DINO/CV 独立门控与标准版只读 CV | 待实现；DINO/CV 独立门控与标准版只读 CV |
+| ANALYSIS-09 | 程序化通过；DINO/CV 四种组合只现算启用侧，标准版仅 CV；即时产物不写 `cv_grid` | 待实现；DINO/CV 独立门控与标准版只读 CV | 程序化通过；实际双版本独立门控、标准版仅现算当前照片 CV 且不写库，切图清空旧瓦片 | 程序化通过；DINO/CV 独立门控，标准版仅 CV 且现算不写 `cv_grid` |
 | ANALYSIS-10 | 程序化通过；faults: DINO 失败清图并显示文案 | 程序化通过；faults: DINO 失败清图并显示文案 | 代码核对；失败态独立文案 | 程序化通过；DINO 失败清图并显示失败文案 |
 | ANALYSIS-11 | 作者手验通过；绿框/触控已验证 | 作者手验通过；绿框/触控已验证 | 作者手验通过；绿框/触控已验证 | 作者手验通过；基础操作；触控绿框/准星已验 |
 
@@ -191,7 +191,7 @@
 | SETTINGS-07 | 代码核对；指示器无小标题，原生验收待 macOS | 代码核对；指示器无小标题，原生验收待 iOS | 程序化通过；指示器无小标题、预设整组居中 | 程序化通过；无冗余脚注、单值组居中、48dp 行高与原地编辑 |
 | SETTINGS-08 | 代码核对；边栏布局位置文案，原生验收待 macOS | 代码核对；边栏布局位置文案，原生验收待 iOS | 程序化通过；边栏布局位置文案 | 程序化通过；控制列表完整 17 项、纯触控 48dp 行高与命令图标 |
 | SETTINGS-09 | 程序化通过；SettingsDefaultsCheck + CoreContractCheck 安全模式 | 程序化通过；SettingsDefaultsCheck + CoreContractCheck | 程序化通过；CoreContractCheck 安全模式默认值 | 程序化通过；48dp 行高、勾选左缘 16dp、无操作脚注；安全模式契约不变 |
-| SETTINGS-10 | 待实现；独立 DINO/CV 开关与标准版单 CV 开关 | 待实现；独立 DINO/CV 开关与标准版单 CV 开关；清库仍不适用 | 待实现；独立 DINO/CV 开关与标准版单 CV 开关 | 待实现；独立 DINO/CV 开关与标准版单 CV 开关；清库仍不适用 |
+| SETTINGS-10 | 程序化通过；AI 版独立 DINO/CV 开关、标准版单 CV 开关，旧组合字段继承与独立往返契约通过 | 待实现；独立 DINO/CV 开关与标准版单 CV 开关；清库仍不适用 | 程序化通过；AI 独立 DINO/CV 开关、标准版单 CV 开关，隐藏 DINO/相似参数在实际 EXE 往返中保留 | 程序化通过；AI 版独立 DINO/CV 开关、标准版单 CV 开关与旧字段继承契约；清库仍不适用 |
 | SETTINGS-11 | 作者手验通过；外设断开未验 | 作者手验通过；真实外接键盘未验 | 作者手验通过 | 程序化通过；录制/冲突/断连（能力注入） |
 | SETTINGS-12 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作；@android 步进已登记 |
 | SETTINGS-13 | 作者手验通过；设置键盘操作/动态字体已验 | 作者手验通过；动态字体/显示缩放已验 | 作者手验通过；设置键盘操作/动态字体已验 | 程序化通过；相关检查覆盖字号 1.0/1.3、密度 420/525 与横屏；窄屏另有主屏筛选条旧断言失败 |
@@ -228,10 +228,10 @@
 
 | ID | macOS | iOS·iPadOS | Windows | Android |
 |---|---|---|---|---|
-| EDITION-01 | 待实现；标准版能力裁剪与 AI 版基线 | 待实现；标准版能力裁剪与 AI 版基线 | 待实现；标准版能力裁剪与 AI 版基线 | 待实现；标准版能力裁剪与 AI 版基线 |
-| EDITION-02 | 待实现；双版本入口与实际几何 | 待实现；双版本入口与实际几何 | 待实现；双版本入口与实际几何 | 待实现；双版本入口与实际几何 |
-| EDITION-03 | 待实现；DINO/CV 独立门控 | 待实现；DINO/CV 独立门控 | 待实现；DINO/CV 独立门控 | 待实现；DINO/CV 独立门控 |
-| EDITION-04 | 待实现；CV 诊断与导航回退 | 待实现；CV 诊断与导航回退 | 待实现；CV 诊断与导航回退 | 待实现；CV 诊断与导航回退 |
-| EDITION-05 | 待实现；计算、缓存与数据库边界 | 待实现；计算、缓存与数据库边界 | 待实现；计算、缓存与数据库边界 | 待实现；计算、缓存与数据库边界 |
-| EDITION-06 | 待实现；设置与视图状态版本往返 | 待实现；设置与视图状态版本往返 | 待实现；设置与视图状态版本往返 | 待实现；设置与视图状态版本往返 |
-| EDITION-07 | 待实现；双版本验收 | 待实现；双版本验收 | 待实现；双版本验收 | 待实现；双版本验收 |
+| EDITION-01 | 程序化通过；标准版无 DINO 实现/入口/推理资产，AI 版模型与既有功能基线通过 | 程序化通过；标准版编译及实包无模型/ORT，AI 版固定模型与实际推理通过；真机启动未验 | 程序化通过；标准版编译及实际单 EXE 无模型/ORT/DirectML/MathNet，AI 版保持既有发布模型并实际推理 | 程序化通过；标准版编译及实包无 DINO/ORT/MathNet，AI 版固定模型与实际推理通过；真机未验 |
+| EDITION-02 | 程序化通过；标准版四项居中且无空槽，AI 版五项与相似面板几何通过 | 程序化通过；标准版四项/AI 版五项筛选、实际分析瓦片与相似面板几何，无空槽 | 程序化通过；标准版四项筛选、4/5 张分析瓦片、三张 CV 诊断，无相似空槽；AI 版完整入口 | 程序化通过；标准版四项/AI 版五项筛选、实际分析瓦片与相似面板几何，无空槽 |
+| EDITION-03 | 程序化通过；独立开关、当前照片只读基线、增强与缺失回退、部分失败重试/成功侧复用及切图隔离；DINO-only 比例不依赖 CV | 程序化通过；四组合真实出图、独立开关通知路由、DINO 失败不影响 CV；增强/取消与只读库回归通过 | 程序化通过；独立 DINO/CV 四组合、增强与未提取门控；成功出图后切图清除旧位图/矢量场，占位实际可见 | 程序化通过；独立设置接线与共享四组合契约、DINO 故障不影响 CV、标准版只算 CV |
+| EDITION-04 | 程序化通过；标准版三瓦片、无 EXIF 回退与取消生命周期；P3/F16/旋转输入与显示方向 sRGB8 参考逐像素一致 | 程序化通过；标准版三瓦片 CV 诊断、独立参考对拍、无 EXIF 回列表与关闭取消；AI 五瓦片保留 | 程序化通过；标准版三瓦片 CV 显式现算/共享准星/关闭取消，无 EXIF 回统计；AI 五瓦片保留 | 程序化通过；标准版三瓦片 CV 诊断实际出图与取消，AI 五瓦片保留 |
+| EDITION-05 | 程序化通过；即时产物不写库，标准版忽略 DINO 数据，CLS/patch/CV 内容与版本标识往返保留 | 程序化通过；现算不写库、标准版不派生 DINO，CLS/patch/CV 哈希与模型/CV 版本、尺寸往返一致 | 程序化通过；标准版 CV 现算不写库、不派生 DINO，既有 CLS/patch/CV 逐行 SHA-256 往返保留 | 程序化通过；标准版 CV 现算不写库、无后台批量写库，既有库故障状态如实呈现 |
+| EDITION-06 | 程序化通过；AI → 标准 → AI 跨进程设置、视图状态与特征内容哈希往返 | 程序化通过；实际覆盖安装往返，隔离 Apple 偏好设置/视图状态及特征内容保留；标准版忽略面板展开态但不清除 | 程序化通过；实际双 EXE 跨进程往返，阈值/数量/DINO 与 CV 偏好及展开态保留，标准版不恢复面板但不清值 | 程序化通过；实际覆盖安装往返，隔离设置档与数据库的展开态、DINO/CV 设置及 CLS/patch/CV 哈希、model_id、spec/尺寸一致；标准版忽略面板但不清值 |
+| EDITION-07 | 程序化通过；隔离构建、包身份与依赖正反扫描、双版本原生套件及本地 adhoc DMG 只读装载校验；Developer ID、公证和正式发布未验 | 程序化通过；双版 Debug/开发签名 Release/IPA、身份及静态 ORT 正反扫描、原生回归与覆盖安装；真机、分发归档、TestFlight 和作者手验未验 | 程序化通过；双版 Debug/Release 单 EXE 扫描、原名/中文改名空缓存原生回归与跨进程往返；正式归档、干净系统及作者手验未验 | 程序化通过；双版 Debug/Release 实包扫描、仅 arm64、原生十三套回归及 Release 冷启动；真机与正式归档未验 |

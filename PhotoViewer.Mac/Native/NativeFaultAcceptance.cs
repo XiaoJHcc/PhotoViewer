@@ -49,8 +49,10 @@ public static class NativeFaultAcceptance
             await VerifyOpenFailureAsync(window, small, checks);
             await VerifyRatingFailureAsync(window, small, checks);
             await VerifyCorruptSettingsAsync(root, checks);
+#if PHOTOVIEWER_DINO
             await VerifySimilarityFailureAsync(window, output, checks);
             await VerifyAnalysisFailureAsync(window, root, checks);
+#endif
             await VerifyRawCapabilityAsync(root, checks);
             await VerifyEnhanceClosedByMemoryPressureAsync(window, small, checks);
         }
@@ -171,6 +173,7 @@ public static class NativeFaultAcceptance
         checks.Add("settings14: corrupt JSON is backed up before defaults load and the diagnostic status reports it");
     }
 
+#if PHOTOVIEWER_DINO
     /// <summary>SIM-10：批量提取失败时列表态动作区显示错误标签。</summary>
     private static async Task VerifySimilarityFailureAsync(MacMainWindow window, string output, List<string> checks)
     {
@@ -206,28 +209,34 @@ public static class NativeFaultAcceptance
         File.Copy(FixturePaths.Resolve("jpeg", "color-srgb.jpg"), path, true);
         byte[]? originalModel = DinoModelResources.TryLoadModelBytes();
         bool previousImmediate = window.Main.Settings.AnalysisImmediateCompute;
+        bool previousCvImmediate = window.Main.Settings.AnalysisImmediateCvCompute;
         bool previousVisible = window.Main.IsAnalysisViewVisible;
         try
         {
             DinoFeatureExtractor.ConfigureModelOverride([1, 2, 3]);
+            window.Main.Settings.AnalysisImmediateCvCompute = false;
             window.Main.Settings.AnalysisImmediateCompute = true;
             window.Main.IsAnalysisViewVisible = true;
             await window.Main.FolderVM.OpenImageAsync(new LocalFileRef(path));
             await WaitAsync(() => window.Main.CurrentFile?.Name == Path.GetFileName(path) && window.Session.Image != null, "分析失败素材上屏");
-            await WaitAsync(() => window.Analysis.Presenter.Tiles
-                .Where(tile => tile.Kind == AnalysisTileKind.Diagnostic)
-                .All(tile => tile.Placeholder == "分析失败"), "分析失败占位");
-            if (window.Analysis.Presenter.Tiles.Any(tile => tile.Kind == AnalysisTileKind.Diagnostic && tile.Source != null))
-                throw new InvalidOperationException("分析失败后仍保留旧诊断图");
-            checks.Add("analysis10: injected DINO failure clears diagnostics and shows 分析失败");
+            var presenter = window.Analysis.Presenter;
+            await WaitAsync(() => presenter.PcaTile.Placeholder == "分析失败" && presenter.CosineTile.Placeholder == "分析失败",
+                "DINO 独立失败占位");
+            if (presenter.PcaTile.Source != null || presenter.CosineTile.Source != null)
+                throw new InvalidOperationException("DINO 失败后仍保留旧诊断图");
+            if (presenter.SharpnessTile.Placeholder != "未提取" || presenter.ShakeTile.Placeholder != "未提取")
+                throw new InvalidOperationException("DINO 失败错误地覆盖了未启用 CV 的状态");
+            checks.Add("analysis10: injected DINO failure affects only DINO tiles; disabled CV remains 未提取");
         }
         finally
         {
             window.Main.IsAnalysisViewVisible = previousVisible;
             window.Main.Settings.AnalysisImmediateCompute = previousImmediate;
+            window.Main.Settings.AnalysisImmediateCvCompute = previousCvImmediate;
             if (originalModel != null) DinoFeatureExtractor.ConfigureModelOverride(originalModel);
         }
     }
+#endif
 
     /// <summary>
     /// SCOPE-04：RAW 走平台全分辨率引擎；引擎不可用时回退 ImageIO，并如实报出容器实际像素尺寸，

@@ -1,9 +1,32 @@
+<#
+.SYNOPSIS
+    Windows 版 Android APK 发布脚本，等价于 publish-android-apk.sh。
+
+.DESCRIPTION
+    用法：powershell -ExecutionPolicy Bypass -File publish-android-apk.ps1
+              [-Edition standard|ai|both] [-Local] [-AndroidSdkDirectory <path>]
+
+    两版共用 ApplicationId（cc.xiaojh.PhotoViewer），只按显示名与 AI 能力区分：
+      standard  PhotoViewer     无 DINO 模型 / ONNX Runtime / 许可证
+      ai        PhotoViewer AI  内置 DINOv3 模型、ONNX Runtime 与许可证
+    显示名（android:label）用空格；APK 文件名仍用横线（PhotoViewer-AI）。
+    只发 arm64-v8a，APK 不得含 x86_64 / armeabi-v7a。
+
+    正式发布写 release\packages\<PhotoViewer|PhotoViewer-AI>-<AppVersion>-android-arm64.apk；
+    -Local 只做本机验证，产物落 artifacts\scratch\android-local-publish，不写 release。
+    -Edition 默认 both。版本号与构建号唯一来源是根 Directory.Build.props。
+    构建与还原都显式传 -p:PhotoViewerEnableDino=true|false，两版 bin/obj 按 edition 隔离；
+    只清当前 edition 的发布输出，不删共享工程 obj。
+    签名凭据只进命令行参数，不打印。
+#>
 [CmdletBinding()]
 param(
+    [ValidateSet('standard', 'ai', 'both')]
+    [string]$Edition = 'both',
+    [switch]$Local,
     [string]$Configuration = 'Release',
     [string]$Framework = 'net10.0-android',
-    [string]$AndroidSdkDirectory = '',
-    [string]$OutputDirectory = ''
+    [string]$AndroidSdkDirectory = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -12,7 +35,29 @@ $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $androidProject = Join-Path $PSScriptRoot 'PhotoViewer.Android.csproj'
 $globalJson = Join-Path $repoRoot 'global.json'
 $directoryBuildProps = Join-Path $repoRoot 'Directory.Build.props'
-$releaseDirectory = Join-Path $repoRoot 'release'
+$packageDirectory = Join-Path $repoRoot 'release\packages'
+$localDirectory = Join-Path $repoRoot 'artifacts\scratch\android-local-publish'
+$reportDirectory = Join-Path $repoRoot 'artifacts\acceptance\android-editions'
+$scanner = Join-Path $repoRoot 'Tools\check-android-package.py'
+$packageId = 'cc.xiaojh.PhotoViewer'
+
+$editions = if ($Edition -eq 'both') { @('standard', 'ai') } else { @($Edition) }
+
+if (-not (Test-Path $androidProject)) {
+    throw "未找到工程文件：$androidProject"
+}
+
+if (-not (Test-Path $scanner)) {
+    throw "缺少包扫描工具：$scanner"
+}
+
+$pythonPath = (Get-Command python3 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1)
+if (-not $pythonPath) {
+    $pythonPath = (Get-Command python -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1)
+}
+if (-not $pythonPath) {
+    throw 'Android 包扫描需要 python3（或 python）。'
+}
 
 if ([string]::IsNullOrWhiteSpace($AndroidSdkDirectory)) {
     if (-not [string]::IsNullOrWhiteSpace($env:ANDROID_SDK_ROOT)) {
@@ -28,14 +73,8 @@ if (-not (Test-Path $AndroidSdkDirectory)) {
     throw "未找到 Android SDK 目录：$AndroidSdkDirectory"
 }
 
-if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
-    $OutputDirectory = Join-Path $PSScriptRoot 'bin\Release\net10.0-android\publish'
-}
-
-$OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
-
 # ──────────────────────────────────────────────────────────────
-# 读取签名配置（signing.json 或环境变量）
+# 读取签名配置（signing.json 或环境变量）；凭据只进参数，不打印
 # ──────────────────────────────────────────────────────────────
 $signingJsonPath = Join-Path $PSScriptRoot 'signing.json'
 $signingConfig = $null
@@ -129,7 +168,7 @@ $dotnetPath = $selectedDotnet.Path
 
 Write-Host "[发布] 使用 dotnet: $dotnetPath"
 Write-Host "[发布] Android SDK: $AndroidSdkDirectory"
-Write-Host "[发布] 输出目录: $OutputDirectory"
+Write-Host "[发布] 发行版本: $($editions -join ', ')"
 
 if ($temporarilyBypassGlobalJson) {
     Write-Warning "当前未找到同时满足 SDK $requiredSdkVersion 与 android workload 的 dotnet，将临时绕开 global.json 并使用已安装 android workload 的 dotnet。"
@@ -140,19 +179,6 @@ $globalJsonBackup = "$globalJson.publishbak"
 try {
     if ($temporarilyBypassGlobalJson -and (Test-Path $globalJson)) {
         Move-Item $globalJson $globalJsonBackup -Force
-    }
-
-    foreach ($path in @(
-        (Join-Path $repoRoot 'PhotoViewer\obj'),
-        (Join-Path $repoRoot 'PhotoViewer.Android\obj')
-    )) {
-        if (Test-Path $path) {
-            Remove-Item $path -Recurse -Force -ErrorAction SilentlyContinue
-        }
-    }
-
-    if (Test-Path $OutputDirectory) {
-        Remove-Item $OutputDirectory -Recurse -Force -ErrorAction SilentlyContinue
     }
 
     $signingArgs = @()
@@ -174,52 +200,77 @@ try {
         )
     }
 
-    & $dotnetPath publish $androidProject `
-        -c $Configuration `
-        -f $Framework `
-        /p:AndroidPackageFormat=apk `
-        /p:AndroidSdkDirectory="$AndroidSdkDirectory" `
-        @signingArgs
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "dotnet publish 失败，退出码：$LASTEXITCODE"
+    $destinationDirectory = if ($Local) { $localDirectory } else { $packageDirectory }
+    if ($Local) {
+        Write-Host '[发布] 本地验证模式：产物写入 artifacts\scratch\android-local-publish，不写 release'
     }
 
-    if (-not (Test-Path $OutputDirectory)) {
-        throw "发布完成后未找到输出目录：$OutputDirectory"
+    foreach ($edition in $editions) {
+        $editionFlag = if ($edition -eq 'ai') { 'true' } else { 'false' }
+        $packageProduct = if ($edition -eq 'ai') { 'PhotoViewer-AI' } else { 'PhotoViewer' }
+        $publishDirectory = Join-Path $PSScriptRoot "bin\$edition\$Configuration\net10.0-android\publish"
+
+        Write-Host "[发布] === ${edition}（包名 ${packageProduct}） ==="
+
+        # 只清当前 edition 的发布输出；共享工程 obj 由 edition 隔离目录承担，不再整目录删除。
+        if (Test-Path $publishDirectory) {
+            Remove-Item $publishDirectory -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        & $dotnetPath publish $androidProject `
+            -c $Configuration `
+            -f $Framework `
+            "-p:PhotoViewerEnableDino=$editionFlag" `
+            /p:AndroidPackageFormat=apk `
+            "/p:AndroidSdkDirectory=$AndroidSdkDirectory" `
+            @signingArgs
+
+        if ($LASTEXITCODE -ne 0) {
+            throw "dotnet publish 失败（${edition}），退出码：$LASTEXITCODE"
+        }
+
+        $candidates = @(
+            (Join-Path $publishDirectory "$packageId-Signed.apk"),
+            (Join-Path $publishDirectory "$packageId.apk")
+        )
+        $apkPath = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if (-not $apkPath) {
+            $apkPath = Get-ChildItem $publishDirectory -Filter '*.apk' -File -ErrorAction SilentlyContinue |
+                Select-Object -First 1 -ExpandProperty FullName
+        }
+        if (-not $apkPath) {
+            throw "${edition} 发布完成后未找到 APK：$publishDirectory"
+        }
+
+        if (-not (Test-Path $destinationDirectory)) {
+            New-Item -ItemType Directory -Path $destinationDirectory | Out-Null
+        }
+        if (-not (Test-Path $reportDirectory)) {
+            New-Item -ItemType Directory -Path $reportDirectory | Out-Null
+        }
+
+        $destApk = Join-Path $destinationDirectory "$packageProduct-$appVersion-android-arm64.apk"
+        Copy-Item $apkPath $destApk -Force
+        Write-Host "[发布] 产物：$destApk"
+
+        # 包扫描读实际 APK：身份/显示名/版本/ABI/模型/许可证/推理组件，失败即中断发布。
+        & $pythonPath $scanner $destApk --edition $edition --output (Join-Path $reportDirectory "$edition-package.json")
+        if ($LASTEXITCODE -ne 0) {
+            throw "${edition} 包扫描未通过，发布中止。"
+        }
     }
 
-    if (-not (Test-Path $releaseDirectory)) {
-        New-Item -ItemType Directory -Path $releaseDirectory | Out-Null
+    if (-not $Local) {
+        & $pythonPath (Join-Path $repoRoot 'Tools\check-release.py') --write
+        if ($LASTEXITCODE -ne 0) {
+            throw 'check-release.py 校验 release/ 失败。'
+        }
     }
 
-    $signedApkPath = Join-Path $OutputDirectory 'cc.xiaojh.PhotoViewer-Signed.apk'
-    $apkPath = Join-Path $OutputDirectory 'cc.xiaojh.PhotoViewer.apk'
-
-    if (Test-Path $apkPath) {
-        $releaseApkPath = Join-Path $releaseDirectory "PhotoViewer-$appVersion-android.apk"
-        Copy-Item $apkPath $releaseApkPath -Force
-        Write-Host "[发布] 已复制到仓库根目录：$releaseApkPath"
-    }
-
-    if (Test-Path $signedApkPath) {
-        $releaseSignedApkPath = Join-Path $releaseDirectory "PhotoViewer-$appVersion-android-signed.apk"
-        Copy-Item $signedApkPath $releaseSignedApkPath -Force
-        Write-Host "[发布] 已复制到仓库根目录：$releaseSignedApkPath"
-    }
-
-    $outputFiles = Get-ChildItem $OutputDirectory -Filter '*.apk' -File | Sort-Object Name
-    if ($outputFiles.Count -eq 0) {
-        throw '发布完成后未找到任何 APK 文件。'
-    }
-
-    Write-Host '[发布] 输出文件：'
-    $outputFiles | Select-Object Name, Length | Format-Table -AutoSize
+    Write-Host "[发布] 完成：$($editions -join ', ')"
 }
 finally {
     if (Test-Path $globalJsonBackup) {
         Move-Item $globalJsonBackup $globalJson -Force
     }
 }
-
-

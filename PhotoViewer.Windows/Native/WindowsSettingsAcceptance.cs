@@ -106,7 +106,23 @@ internal static class WindowsSettingsAcceptance
 
             checks.Add("PASS navigation: every category shows exactly one page");
             window.Pages[4].UpdateLayout();
+#if PHOTOVIEWER_DINO
             Require(FindDescendant<InfoBar>(window.Pages[4]) != null, "AI 页没有 InfoBar");
+#else
+            // EDITION-02：标准版这一页只有「分析诊断」组的「即时计算 CV」一个开关,没有相似聚类参数与清库入口。
+            Require(FindDescendant<InfoBar>(window.Pages[4]) == null, "标准版仍显示特征数据库状态栏");
+            var aiToggles = FindDescendants<ToggleSwitch>(window.Pages[4]);
+            Require(aiToggles.Count == 1, $"标准版设置 AI 页开关数不是 1: {aiToggles.Count}");
+            var aiTexts = FindDescendants<TextBlock>(window.Pages[4])
+                .Select(text => text.Text)
+                .ToList();
+            Require(aiTexts.Any(text => text == "即时计算 CV"), "标准版设置 AI 页缺少即时计算 CV 开关");
+            Require(!aiTexts.Any(text => text.Contains("DINO", StringComparison.Ordinal)
+                || text.Contains("相似", StringComparison.Ordinal)
+                || text.Contains("特征数据库", StringComparison.Ordinal)),
+                "标准版设置 AI 页仍有 DINO / 相似聚类 / 特征数据库文案");
+            checks.Add($"PASS edition settings AI page ({WindowsProductInfo.EditionName}): only 即时计算 CV; no similarity parameters, no DINO toggle, no feature-database entry");
+#endif
 
             // 回到文件页做控件绑定检查。
             window.Navigation.SelectedItem = window.Navigation.MenuItems[0];
@@ -523,11 +539,17 @@ internal static class WindowsSettingsAcceptance
                 double? left = null;
                 double? right = null;
                 var count = 0;
+                var aiPageSliders = 0;
                 foreach (var page in new[] { 0, 4 })
                 {
                     window.Navigation.SelectedItem = window.Navigation.MenuItems[page];
                     await Task.Delay(60);
                     window.Root.UpdateLayout();
+                    if (page == 4)
+                    {
+                        aiPageSliders = FindDescendants<Slider>(window.Pages[page]).Count;
+                    }
+
                     foreach (var slider in FindDescendants<Slider>(window.Pages[page]))
                     {
                         var controls = (FrameworkElement)VisualTreeHelper.GetParent(slider);
@@ -569,7 +591,14 @@ internal static class WindowsSettingsAcceptance
                         count++;
                     }
                 }
-                Require(count == 4, $"SETTINGS-16 拉条数量不是4: {count}");
+                // 分析页在标准版没有相似度阈值拉条(EDITION-02),所以总计 3 条;AI 版仍是 4 条。
+#if PHOTOVIEWER_DINO
+                const int expectedSliders = 4;
+#else
+                const int expectedSliders = 3;
+                Require(aiPageSliders == 0, $"标准版分析页仍显示相似度阈值拉条: {aiPageSliders}");
+#endif
+                Require(count == expectedSliders, $"SETTINGS-16 拉条数量不是{expectedSliders}: {count}");
                 checks.Add($"PASS SETTINGS-16 aligned right-half sliders: width={width:0}, all {count} sliders={left:0.0}..{right:0.0}; fixed value column; cache tooltips disabled; SETTINGS-06 20 delay stops 100..2000 ms");
             }
         }

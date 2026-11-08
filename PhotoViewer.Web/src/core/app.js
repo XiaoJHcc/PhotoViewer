@@ -20,7 +20,8 @@ import { Viewport, displaySize } from "./viewport.js";
 import { FilmScroller, FilmPositioner, contentLength } from "./filmscroll.js";
 import { PhotoSession, RatingWriter } from "./session.js";
 import { AnalysisPresenter } from "./analysis.js";
-import { SimilarityPanel } from "./similarity.js";
+import { DisabledSimilarityPanel, SimilarityPanel } from "./similarity.js";
+import { editionCapabilities, normalizeEdition } from "./edition.js";
 import { CommandMap, KeyDispatcher, WheelInterpreter, gestureFromMouse, gestureText, tooltipText, WHEEL_PIXEL_NOTCH } from "./input.js";
 import { defaultSettings } from "./settings.js";
 import { computeLayout, approximateTextWidth } from "./layout/index.js";
@@ -121,9 +122,21 @@ export function normalizeSettings(raw, base = defaultSettings()) {
     if (LAYOUT_MODES.has(raw.layoutMode)) out.layoutMode = raw.layoutMode;
     for (const key of [
         "showZoomIndicator", "showRating", "safeSetRating", "sameNameAsOne",
-        "analysisImmediateCompute", "similarityPanelExpanded", "appleKeyboard",
+        "similarityPanelExpanded", "appleKeyboard",
     ]) {
         if (typeof raw[key] === "boolean") out[key] = raw[key];
+    }
+    // EDITION-06：原组合字段升级为即时计算 DINO；缺独立 CV 字段的旧文档让 CV 继承原组合值。
+    const legacyImmediate = typeof raw.analysisImmediateCompute === "boolean" ? raw.analysisImmediateCompute : null;
+    if (typeof raw.analysisImmediateDinoCompute === "boolean") {
+        out.analysisImmediateDinoCompute = raw.analysisImmediateDinoCompute;
+    } else if (legacyImmediate !== null) {
+        out.analysisImmediateDinoCompute = legacyImmediate;
+    }
+    if (typeof raw.analysisImmediateCvCompute === "boolean") {
+        out.analysisImmediateCvCompute = raw.analysisImmediateCvCompute;
+    } else if (legacyImmediate !== null) {
+        out.analysisImmediateCvCompute = legacyImmediate;
     }
     if (Array.isArray(raw.zoomPresets)) {
         const presets = raw.zoomPresets.filter((value) => finite(value) && value > 0 && value <= 1600);
@@ -145,6 +158,7 @@ class MainApp {
         t,
         clock,
         profile = "web",
+        edition = "ai",
         library,
         decoder,
         store,
@@ -161,6 +175,8 @@ class MainApp {
         this._t = t;
         this._clock = clock;
         this._profile = profile;
+        this._edition = normalizeEdition(edition);
+        this._capabilities = editionCapabilities(this._edition);
         this._storage = storage;
         this._reducedMotion = typeof reducedMotion === "function" ? reducedMotion : () => false;
         this._measureText = typeof measureText === "function" ? measureText : approximateTextWidth;
@@ -219,19 +235,24 @@ class MainApp {
             t,
             clock,
             store: this._store,
+            dino: this._capabilities.dino,
             onChange: () => this._onAnalysisChange(),
             onLocate: (u, v) => this.centerOn(u, v),
             thumbnailsBusy: () => Boolean(this._thumbnailsBusy()),
         });
-        this._analysis.setImmediateCompute(this._settings.analysisImmediateCompute);
+        this._analysis.setImmediateDino(this._settings.analysisImmediateDinoCompute);
+        this._analysis.setImmediateCv(this._settings.analysisImmediateCvCompute);
         this._analysisTileCount = this._analysis.tiles().length;
 
-        this._similarity = new SimilarityPanel({
-            t,
-            clock,
-            store: this._store,
-            onChange: () => this._onSimilarityChange(),
-        });
+        // EDITION-02：标准版不创建也不调度相似面板。
+        this._similarity = this._capabilities.similarity
+            ? new SimilarityPanel({
+                t,
+                clock,
+                store: this._store,
+                onChange: () => this._onSimilarityChange(),
+            })
+            : new DisabledSimilarityPanel();
         this._similarity.setFilebarVisible(this._panes.film);
         this._similarity.setParams({
             threshold: this._settings.similarityThreshold,
@@ -263,6 +284,14 @@ class MainApp {
 
     get settings() {
         return this._settings;
+    }
+
+    get edition() {
+        return this._edition;
+    }
+
+    get capabilities() {
+        return this._capabilities;
     }
 
     on(name, fn) {
@@ -486,6 +515,8 @@ class MainApp {
     }
 
     setSimilarityExpanded(value) {
+        // EDITION-06：标准版保留已存展开态，但不恢复可见性、不写回、不排队任务。
+        if (!this._capabilities.similarity) return false;
         const next = Boolean(value);
         if (this._settings.similarityPanelExpanded === next) return false;
         return this._applySimilarityExpanded(next, true);
@@ -745,7 +776,19 @@ class MainApp {
 
     updateSettings(patch) {
         if (!patch || typeof patch !== "object") return false;
-        this._settings = normalizeSettings({ ...this._settings, ...patch }, this._settings);
+        // EDITION-06：标准版只提交可编辑的 CV 开关与通用设置，隐藏的 DINO/相似值原样保留。
+        let nextPatch = patch;
+        if (!this._capabilities.dino || !this._capabilities.similarity) {
+            nextPatch = { ...patch };
+            if (!this._capabilities.dino) delete nextPatch.analysisImmediateDinoCompute;
+            if (!this._capabilities.similarity) {
+                delete nextPatch.analysisImmediateDinoCompute;
+                delete nextPatch.similarityThreshold;
+                delete nextPatch.similarityMaxResults;
+                delete nextPatch.similarityPanelExpanded;
+            }
+        }
+        this._settings = normalizeSettings({ ...this._settings, ...nextPatch }, this._settings);
         this._photoSession.setCacheLimit(this._settings.cacheCount);
         this._syncCached();
         const previousMode = this._layout ? this._layout.layoutMode : null;
@@ -761,7 +804,8 @@ class MainApp {
             maxResults: this._settings.similarityMaxResults,
         });
         this._similarity.setExpanded(this._settings.similarityPanelExpanded);
-        this._analysis.setImmediateCompute(this._settings.analysisImmediateCompute);
+        this._analysis.setImmediateDino(this._settings.analysisImmediateDinoCompute);
+        this._analysis.setImmediateCv(this._settings.analysisImmediateCvCompute);
         this._persistSettings();
         this._recomputeLayout();
         if (previousMode && this._layout.layoutMode !== previousMode) {
@@ -793,6 +837,8 @@ class MainApp {
     }
 
     extractAll() {
+        // EDITION-05：标准版没有批量提取入口，也不写特征库。
+        if (!this._capabilities.similarity) return Promise.resolve(false);
         return this._similarity.extractAll();
     }
 
@@ -827,12 +873,14 @@ class MainApp {
     }
 
     _syncSimilarityPool() {
+        if (!this._capabilities.similarity) return;
         // SIM-02/03：候选池取筛选结果；提取范围与未提取计数取同名合并后的整个文件夹。
         this._similarity.setPool(this._fileList.cards);
         this._similarity.setFolderCards(this._fileList.groups);
     }
 
     _applySimilarityExpanded(value, persist) {
+        if (!this._capabilities.similarity) return false;
         this._settings.similarityPanelExpanded = Boolean(value);
         this._similarity.setExpanded(Boolean(value));
         if (persist) this._persistSettings();
@@ -1033,7 +1081,8 @@ class MainApp {
             showFilmbar: this._panes.film,
             showControlbar: this._panes.control,
             showAnalysis: this._panes.analysis,
-            similarityExpanded: similarity.visible,
+            showSimilarity: this._capabilities.similarity,
+            similarityExpanded: this._capabilities.similarity && similarity.visible,
             similarityItemCount: similarity.items.length,
             similarityDockTexts,
             photoCount: this._fileList.count,
@@ -1101,6 +1150,8 @@ class MainApp {
     _buildState() {
         const similarity = this._similarity.snapshot();
         this._state = {
+            edition: this._edition,
+            capabilities: this._capabilities,
             window: { ...this._window },
             layout: this._layout,
             folder: this._folder ? { ...this._folder } : null,
@@ -1160,6 +1211,7 @@ class MainApp {
         const crosshair = this._analysis.crosshair;
         const hoverKind = this._analysis.hoverKind;
         return {
+            dino: this._capabilities.dino,
             focusDetail: this._detailGeometry("focus"),
             centerDetail: this._detailGeometry("center"),
             // ANALYSIS-04：主图绿框只在悬停/定格细节预览时存在，源像素矩形由壳层换算到视口。
@@ -1224,6 +1276,7 @@ class MainApp {
     }
 
     _onSimilarityChange() {
+        if (!this._capabilities.similarity) return;
         const snapshot = this._similarity.snapshot();
         // SIM-07：行布局面板宽由相似项数与停靠区文本共同决定，任一变化都要重算让位。
         const dockKey = `${snapshot.unextracted}|${snapshot.error ?? ""}`;

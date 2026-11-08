@@ -181,6 +181,9 @@ public static class SettingsDocumentCodec
             SimilarityThreshold = document.SimilarityThreshold ?? defaults.SimilarityThreshold,
             SimilarityMaxResults = document.SimilarityMaxResults ?? defaults.SimilarityMaxResults,
             AnalysisImmediateCompute = document.AnalysisImmediateCompute ?? defaults.AnalysisImmediateCompute,
+            AnalysisImmediateCvCompute = document.AnalysisImmediateCvCompute
+                ?? document.AnalysisImmediateCompute
+                ?? defaults.AnalysisImmediateCvCompute,
             BitmapCacheMaxCount = document.BitmapCacheMaxCount ?? defaults.BitmapCacheMaxCount,
             BitmapCacheMaxMemory = document.BitmapCacheMaxMemory ?? defaults.BitmapCacheMaxMemory,
             PreloadForwardCount = document.PreloadForwardCount ?? defaults.PreloadForwardCount,
@@ -458,6 +461,7 @@ public static class SettingsDocumentCodec
             SimilarityThreshold = settings.SimilarityThreshold,
             SimilarityMaxResults = settings.SimilarityMaxResults,
             AnalysisImmediateCompute = settings.AnalysisImmediateCompute,
+            AnalysisImmediateCvCompute = settings.AnalysisImmediateCvCompute,
             BitmapCacheMaxCount = settings.BitmapCacheMaxCount,
             BitmapCacheMaxMemory = settings.BitmapCacheMaxMemory,
             PreloadForwardCount = settings.PreloadForwardCount,

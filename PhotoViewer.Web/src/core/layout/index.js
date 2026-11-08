@@ -27,6 +27,7 @@ export function computeLayout(scene, { t, profile = "web", measureText = approxi
     const showFilmbar = Boolean(scene.showFilmbar);
     const showControlbar = Boolean(scene.showControlbar);
     const showAnalysis = Boolean(scene.showAnalysis);
+    const showSimilarity = scene.showSimilarity !== false;
     const photoCount = scene.photoCount ?? 0;
     const exifCount = scene.exifCount ?? 0;
     const commandCount = scene.commandCount ?? 0;
@@ -51,6 +52,7 @@ export function computeLayout(scene, { t, profile = "web", measureText = approxi
                 ? (profile === "mac" ? t("shell.filter.leadingInset") : t("filter.margin"))
                 : t("filter.margin"),
             countWidth,
+            showSimilarity,
         }, t)
         : null;
 
@@ -221,7 +223,8 @@ function collectNodes({ width, height, panes, filter, film, control, showFilmbar
     }
     if (filter) {
         Object.entries(filter.controls).forEach(([name, frame]) => {
-            nodes[`filter.${name}`] = rect(frame);
+            // EDITION-02：标准版没有相似开关，跳过其空槽。
+            if (frame) nodes[`filter.${name}`] = rect(frame);
         });
     }
     if (film) {

@@ -72,8 +72,10 @@ internal static class SettingsPresentationChecks
             SettingsViewModel.GetPresentationImpact(nameof(SettingsViewModel.SelectedFormats)));
         c.Equal("同名合并映射到文件投影", SettingsChangeImpact.FileProjection,
             SettingsViewModel.GetPresentationImpact(nameof(SettingsViewModel.SameNameAsOnePhoto)));
-        c.Equal("分析诊断开关映射到分析栏", SettingsChangeImpact.Analysis,
+        c.Equal("DINO 即时计算映射到分析栏", SettingsChangeImpact.Analysis,
             SettingsViewModel.GetPresentationImpact(nameof(SettingsViewModel.AnalysisImmediateCompute)));
+        c.Equal("CV 即时计算映射到分析栏", SettingsChangeImpact.Analysis,
+            SettingsViewModel.GetPresentationImpact(nameof(SettingsViewModel.AnalysisImmediateCvCompute)));
         foreach (var name in new[]
                  {
                      nameof(SettingsViewModel.SimilarityPanelExpanded),
@@ -129,7 +131,10 @@ internal static class SettingsPresentationChecks
         Single(c, "同名合并发布 FileProjection", recorder, SettingsChangeImpact.FileProjection);
 
         settings.AnalysisImmediateCompute = !settings.AnalysisImmediateCompute;
-        Single(c, "即时计算开关发布 Analysis", recorder, SettingsChangeImpact.Analysis);
+        Single(c, "DINO 即时计算发布 Analysis", recorder, SettingsChangeImpact.Analysis);
+
+        settings.AnalysisImmediateCvCompute = !settings.AnalysisImmediateCvCompute;
+        Single(c, "CV 即时计算发布 Analysis", recorder, SettingsChangeImpact.Analysis);
 
         settings.SimilarityThreshold = settings.SimilarityThreshold > 0.9 ? 0.8 : 0.9;
         Single(c, "相似阈值发布 Similarity", recorder, SettingsChangeImpact.Similarity);

@@ -10,8 +10,9 @@ namespace PhotoViewer.iOS.Native;
 
 /// <summary>
 /// iPad 原生工具页宿主：以 sheet（iPad 上为系统大页 sheet）承载一个
-/// <see cref="UINavigationController"/>，根页为工具列表（EXIF 详情 / DINO 诊断；照片数据统计为 Windows
-/// 专属，不建入口），子页为 EXIF 详情与 DINO 诊断。导航状态以共享 <see cref="ToolsViewModel"/> 为准：
+/// <see cref="UINavigationController"/>，根页为工具列表（EXIF 详情 / 诊断工具；照片数据统计为 Windows
+/// 专属，不建入口），子页为 EXIF 详情与当前发行版的诊断页（AI 版 DINO 诊断、标准版 CV 诊断）。
+/// 导航状态以共享 <see cref="ToolsViewModel"/> 为准：
 /// 进入子页写共享状态，返回列表页恢复 <c>ShowList</c>；关闭后对象保留，可再次展示。
 /// </summary>
 internal sealed class iOSNativeToolsPresenter
@@ -20,7 +21,7 @@ internal sealed class iOSNativeToolsPresenter
     private UINavigationController? _navigation;
     private iOSNativeToolsListViewController? _list;
     private iOSExifDetailView? _exif;
-    private iOSDinoDiagnosticView? _dino;
+    private iOSDinoDiagnosticView? _diagnostic;
     private ToolsDismissDelegate? _dismissDelegate;
 
     /// <summary>当前进程里的工具页宿主（验收读取真实导航栈与页面）。</summary>
@@ -41,8 +42,8 @@ internal sealed class iOSNativeToolsPresenter
     /// <summary>EXIF 详情页；尚未创建时为 null。</summary>
     internal iOSExifDetailView? ExifPage => _exif;
 
-    /// <summary>DINO 诊断页；尚未创建时为 null。</summary>
-    internal iOSDinoDiagnosticView? DinoPage => _dino;
+    /// <summary>发行版诊断页（AI 版 DINO 诊断、标准版 CV 诊断）；尚未创建时为 null。</summary>
+    internal iOSDinoDiagnosticView? DiagnosticPage => _diagnostic;
 
     /// <summary>打开或前置工具页；已在展示时只做内容同步。</summary>
     /// <param name="tools">共享工具壳 ViewModel。</param>
@@ -96,7 +97,7 @@ internal sealed class iOSNativeToolsPresenter
 
     /// <summary>
     /// 控制栏 EXIF 入口的导航：可用时压入 EXIF 详情（列表页保留为返回目标），
-    /// 不可用时回退列表；已展示 DINO 等其他页时同样切过来（TOOLBAR-06）。
+    /// 不可用时回退列表；已展示其他诊断页时同样切过来（TOOLBAR-06）。
     /// </summary>
     /// <param name="tools">共享工具壳 ViewModel。</param>
     private void ShowExifEntry(ToolsViewModel tools)
@@ -167,14 +168,18 @@ internal sealed class iOSNativeToolsPresenter
         _navigation.PushViewController(_exif, true);
     }
 
-    /// <summary>列表页按钮：进入 DINO 诊断（共享状态先行，再压入页面）。</summary>
-    internal void OpenDino()
+    /// <summary>列表页按钮：进入当前发行版的诊断工具（共享状态先行，再压入页面）。</summary>
+    internal void OpenDiagnostic()
     {
         if (_tools == null || _navigation == null) return;
-        _tools.OpenDinoDebug();
-        _dino ??= new iOSDinoDiagnosticView(_tools.DinoPresenter);
-        _dino.Sync();
-        _navigation.PushViewController(_dino, true);
+        _tools.OpenDiagnostic();
+#if PHOTOVIEWER_DINO
+        _diagnostic ??= new iOSDinoDiagnosticView(_tools.DinoPresenter);
+#else
+        _diagnostic ??= new iOSDinoDiagnosticView(_tools.CvPresenter);
+#endif
+        _diagnostic.Sync();
+        _navigation.PushViewController(_diagnostic, true);
     }
 
     /// <summary>返回列表首页（系统返回按钮/滑动返回后由列表页调用）。</summary>
@@ -192,7 +197,7 @@ internal sealed class iOSNativeToolsPresenter
             if (_exif != null && _tools.ExifDetail is { } detail) _exif.Show(detail);
             return;
         }
-        if (_tools.CurrentTool is DinoDebugViewModel) _dino?.Sync();
+        if (ReferenceEquals(_tools.CurrentTool, _tools.DiagnosticDebug)) _diagnostic?.Sync();
     }
 
     /// <summary>共享导航状态变化：EXIF VM 被替换或回到列表态时同步页面内容。</summary>
@@ -202,11 +207,11 @@ internal sealed class iOSNativeToolsPresenter
     {
         if (args.PropertyName == nameof(ToolsViewModel.ExifDetail) && _exif != null && _tools?.ExifDetail != null)
             _exif.Show(_tools.ExifDetail);
-        if (args.PropertyName == nameof(ToolsViewModel.DinoDebug)) _dino?.Sync();
+        if (args.PropertyName == nameof(ToolsViewModel.DiagnosticDebug)) _diagnostic?.Sync();
     }
 
     /// <summary>
-    /// sheet 已关闭（下滑、关闭按钮或程序化 Dismiss 的统一收口）：清除共享展示态并取消在途 DINO 任务，
+    /// sheet 已关闭（下滑、关闭按钮或程序化 Dismiss 的统一收口）：清除共享展示态并取消在途诊断任务，
     /// 页面对象保留以便重开（TOOLS-01/TOOLS-06）。
     /// </summary>
     private void HandleDismissed()
@@ -225,12 +230,13 @@ internal sealed class iOSNativeToolsPresenter
     }
 }
 
-/// <summary>工具列表首页：EXIF 详情 / DINO 诊断两个入口（照片数据统计为 Windows 专属，不建入口）。</summary>
+/// <summary>工具列表首页：EXIF 详情 / 发行版诊断工具两个入口（照片数据统计为 Windows 专属，不建入口）。</summary>
 internal sealed class iOSNativeToolsListViewController : UITableViewController
 {
     private readonly ToolsViewModel _tools;
     private readonly iOSNativeToolsPresenter _owner;
-    internal IReadOnlyList<string> Entries => ["EXIF 详情", "DINO 诊断"];
+    internal static IReadOnlyList<string> Titles => ["EXIF 详情", iOSAppCapabilities.DiagnosticName];
+    internal IReadOnlyList<string> Entries => Titles;
     internal iOSNativeToolsListViewController(ToolsViewModel tools, iOSNativeToolsPresenter owner) : base(UITableViewStyle.InsetGrouped)
     {
         _tools = tools;
@@ -263,6 +269,6 @@ internal sealed class iOSNativeToolsListViewController : UITableViewController
     {
         tableView.DeselectRow(indexPath, true);
         if (indexPath.Row == 0) { if (_tools.IsExifDetailEnabled) _owner.OpenExif(); }
-        else _owner.OpenDino();
+        else _owner.OpenDiagnostic();
     }
 }

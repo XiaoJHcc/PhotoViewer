@@ -192,7 +192,7 @@ public sealed class iOSAppResources : IAppResourceProvider
 
 /// <summary>
 /// 共享窗口门面在 iOS 原生壳的实现：设置页走原生半屏浮窗；工具页由
-/// <see cref="iOSNativeToolsPresenter"/> 以 sheet + 导航控制器承载（EXIF 详情 / DINO 诊断）。
+/// <see cref="iOSNativeToolsPresenter"/> 以 sheet + 导航控制器承载（EXIF 详情 / 当前发行版诊断页）。
 /// </summary>
 public sealed class iOSWindowPresenter : INativeWindowPresenter
 {

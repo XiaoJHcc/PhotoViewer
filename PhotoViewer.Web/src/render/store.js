@@ -2,18 +2,19 @@
  * 合成特征库：实现 analysis.js / similarity.js 的 store 接口。
  *
  * createStore({ clock?, readLatency?, computeLatency?, extractLatency? }) → {
- *     read(photo, { signal }) -> Promise<Features|null>       只读库，未提取或未入指纹 → null
- *     compute(photo, { signal, variant }) -> Promise<Features> 现算；variant "enhanced" 小幅提升锐度
+ *     read(photo, { signal, scope }) -> Promise<Features|null>       只读库，未提取或未入指纹 → null
+ *     compute(photo, { signal, variant, scope }) -> Promise<Features> 现算；variant "enhanced" 小幅提升锐度
  *     extractGroup(photos) -> Promise<void>                   每组约 300ms，成功后组内 extracted = true
  *     failNext = n                                            接下来 n 次提取失败（演示 SIM-10）
  *     clear()                                                 清进程内现算缓存
  * }
  *
- * read 默认 20–60ms，compute 默认 600–1200ms，extract 默认每组 300ms；
- * 延迟可传数字或 [min,max]。compute 只进进程缓存，不改 photo.extracted（SCOPE-03）。
+ * scope 取 "all"（缺省）、"dino" 或 "cv"：只生成并返回该侧字段，读/现算缓存与在途任务按 scope 分开，
+ * 不把空结果或失败结果缓存为成功。read 默认 20–60ms，compute 默认 600–1200ms，
+ * extract 默认每组 300ms；延迟可传数字或 [min,max]。compute 只进进程缓存，不改 photo.extracted（SCOPE-03）。
  */
 import { systemClock } from "../core/clock.js";
-import { featuresFor, mulberry32 } from "../core/features.js";
+import { featuresFor, mulberry32, normalizeFeatureScope } from "../core/features.js";
 
 function toNumber(value, fallback) {
     const number = Number(value);
@@ -116,8 +117,16 @@ function photoKey(photo) {
     return `scene:${scene.base ?? 0}:${scene.variant ?? 0}`;
 }
 
-function enhancedFeatures(photo) {
-    const base = featuresFor(photo);
+function hasScopeData(features, scope) {
+    if (!features) return false;
+    if (scope === "dino") return Boolean(features.cls || features.patches || features.pca);
+    if (scope === "cv") return Boolean(features.sharpness && features.shake);
+    return Boolean(features.cls && features.patches && features.pca && features.sharpness && features.shake);
+}
+
+function enhancedFeatures(photo, scope) {
+    const base = featuresFor(photo, scope);
+    if (!base.sharpness) return { ...base, enhanced: true };
     const sharpness = new Float32Array(base.sharpness.length);
     for (let i = 0; i < base.sharpness.length; i++) {
         sharpness[i] = Math.min(1, base.sharpness[i] * 1.22 + 0.02);
@@ -159,17 +168,19 @@ export function createStore(options = {}) {
         failNext: 0,
 
         read(photo, request = {}) {
-            const delay = pickLatency(readLatency, `read:${photo ? photo.id : ""}`);
+            const scope = normalizeFeatureScope(request.scope);
+            const delay = pickLatency(readLatency, `read:${photo ? photo.id : ""}:${scope}`);
             return wait(clock, delay, request.signal).then(() => {
                 if (!photo || photo.extracted !== true || !photo.fingerprint) return null;
-                return featuresFor(photo);
+                return featuresFor(photo, scope);
             });
         },
 
         compute(photo, request = {}) {
             if (!photo) return Promise.reject(new Error("缺少照片"));
             const variant = request.variant === "enhanced" ? "enhanced" : "original";
-            const key = `${photoKey(photo)}:${variant}`;
+            const scope = normalizeFeatureScope(request.scope);
+            const key = `${photoKey(photo)}:${variant}:${scope}`;
             const cached = computed.get(key);
             if (cached) return withSignal(Promise.resolve(cached), request.signal);
 
@@ -178,20 +189,23 @@ export function createStore(options = {}) {
                 const delay = pickLatency(computeLatency, `compute:${key}`);
                 const controller = new AbortController();
                 entry = { controller, waiters: 0, done: false, promise: null };
-                entry.promise = wait(clock, delay, controller.signal).then(
-                    () => {
-                        const features = variant === "enhanced" ? enhancedFeatures(photo) : featuresFor(photo);
+                entry.promise = wait(clock, delay, controller.signal)
+                    .then(() => {
+                        const features = variant === "enhanced"
+                            ? enhancedFeatures(photo, scope)
+                            : featuresFor(photo, scope);
+                        // EDITION-03：空结果或失败结果不得缓存为成功。
+                        if (!hasScopeData(features, scope)) throw new Error("缺少特征结果");
                         entry.done = true;
                         computed.set(key, features);
                         computing.delete(key);
                         return features;
-                    },
-                    (error) => {
+                    })
+                    .catch((error) => {
                         entry.done = true;
-                        computing.delete(key);
+                        if (computing.get(key) === entry) computing.delete(key);
                         throw error;
-                    },
-                );
+                    });
                 computing.set(key, entry);
             }
             return acquire(entry, request.signal);

@@ -38,7 +38,9 @@ internal static class RatingChecks
         await CheckMultiXmpAsync(c, root);
         await CheckFolderIndexAsync(c, root);
         await CheckRefreshSequenceAsync(c, root);
+#if PHOTOVIEWER_DINO
         await CheckTrainingRatingAsync(c);
+#endif
         await CheckFiltersAsync(c, root);
     }
 
@@ -1499,6 +1501,7 @@ internal static class RatingChecks
 
     // ---------------------------------------------------------------- 训练
 
+#if PHOTOVIEWER_DINO
     private static Task CheckTrainingRatingAsync(Checks c)
     {
         c.Section("训练 Rating 只取本文件内嵌语义");
@@ -1542,6 +1545,7 @@ internal static class RatingChecks
 
         return Task.CompletedTask;
     }
+#endif
 
     // ---------------------------------------------------------------- 筛选
 

@@ -35,6 +35,52 @@ internal static partial class AndroidNativeChecks
         }
     }
 
+    /// <summary>
+    /// EDITION-02/EDITION-06：AI 页按发行版提供控件——标准版只有「即时计算 CV」一个开关，
+    /// 不出现相似聚类参数或 DINO 控件；AI 版两个即时计算开关可独立读写。断言读取真实视图树文本。
+    /// </summary>
+    /// <param name="sheet">当前设置 sheet。</param>
+    private static async Task RunSettingsEditionChecksAsync(AndroidSettingsSheetView sheet)
+    {
+        sheet.ShowPageForChecks("ai");
+        await Task.Delay(350);
+        bool hasCv = HasText(sheet, "即时计算 CV");
+        bool hasDino = HasText(sheet, "即时计算 DINO");
+        bool hasSimilarity = HasText(sheet, "相似聚类");
+        bool hasThreshold = HasText(sheet, "相似度阈值");
+        bool hasMax = HasText(sheet, "最多数量");
+#if PHOTOVIEWER_DINO
+        Check("AI 版设置页含相似聚类参数与 DINO/CV 两个开关",
+            hasCv && hasDino && hasSimilarity && hasThreshold && hasMax,
+            $"cv={hasCv} dino={hasDino} similarity={hasSimilarity} threshold={hasThreshold} max={hasMax}");
+        var settings = sheet.Settings;
+        bool previousDino = settings.AnalysisImmediateCompute;
+        bool previousCv = settings.AnalysisImmediateCvCompute;
+        try
+        {
+            settings.AnalysisImmediateCompute = true;
+            settings.AnalysisImmediateCvCompute = false;
+            bool dinoOnly = settings.AnalysisImmediateCompute && !settings.AnalysisImmediateCvCompute;
+            settings.AnalysisImmediateCompute = false;
+            settings.AnalysisImmediateCvCompute = true;
+            bool cvOnly = !settings.AnalysisImmediateCompute && settings.AnalysisImmediateCvCompute;
+            Check("即时计算 DINO/CV 是独立开关", dinoOnly && cvOnly,
+                $"dinoOnly={dinoOnly} cvOnly={cvOnly}");
+        }
+        finally
+        {
+            settings.AnalysisImmediateCompute = previousDino;
+            settings.AnalysisImmediateCvCompute = previousCv;
+        }
+#else
+        Check("标准版设置页只有即时计算 CV",
+            hasCv && !hasDino && !hasSimilarity && !hasThreshold && !hasMax,
+            $"cv={hasCv} dino={hasDino} similarity={hasSimilarity} threshold={hasThreshold} max={hasMax}");
+#endif
+        sheet.ShowPageForChecks("root");
+        await Task.Delay(150);
+    }
+
     /// <summary>设置页体验检查主体。</summary>
     /// <param name="sheet">当前设置 sheet。</param>
     private static async Task RunSettingsExperienceCoreAsync(AndroidSettingsSheetView sheet)

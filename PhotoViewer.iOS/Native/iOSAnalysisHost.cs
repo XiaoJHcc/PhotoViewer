@@ -27,8 +27,11 @@ internal sealed class iOSAnalysisHost : IAnalysisHost
     /// <summary>分析栏是否可见。</summary>
     public bool AnalysisVisible => _main.IsAnalysisViewVisible;
 
-    /// <summary>设置「即时计算DINO/CV」是否开启。</summary>
+    /// <summary>设置「即时计算 DINO」是否开启（标准版不编译 DINO 路径，恒为已存值但不生效）。</summary>
     public bool ImmediateCompute => _main.Settings.AnalysisImmediateCompute;
+
+    /// <summary>设置「即时计算 CV」是否开启。</summary>
+    public bool ImmediateCvCompute => _main.Settings.AnalysisImmediateCvCompute;
 
     /// <summary>当前照片。</summary>
     public ImageFile? CurrentFile => _main.CurrentFile;

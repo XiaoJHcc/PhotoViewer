@@ -6,7 +6,7 @@ using UIKit;
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// 原生诊断瓦片（UIKit 版，分析栏与 DINO 诊断页共用）：正方形外框跟随宽度定高，内容按
+/// 原生诊断瓦片（UIKit 版，分析栏与当前发行版诊断页共用）：正方形外框跟随宽度定高，内容按
 /// <see cref="AspectRatio"/> letterbox 居中铺开（横图取满宽、竖图取满高，不裁切不变形），
 /// 说明文字排在正方形下方、仍属瓦片自身范围。
 /// 绘制层自下而上：外框与内层圆角裁剪 → 压暗背景图（<see cref="BackgroundSource"/>，alpha 0.30，平滑插值）

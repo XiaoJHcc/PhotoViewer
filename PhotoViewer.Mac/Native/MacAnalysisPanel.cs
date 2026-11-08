@@ -266,7 +266,8 @@ internal sealed class MacAnalysisPanel : NSView
     /// <summary>「即时计算DINO/CV」开关变化后重新路由。</summary>
     private void OnSettingsChanged(object? sender, PropertyChangedEventArgs args)
     {
-        if (args.PropertyName == nameof(SettingsViewModel.AnalysisImmediateCompute)) _host.Raise();
+        if (args.PropertyName is nameof(SettingsViewModel.AnalysisImmediateCompute)
+            or nameof(SettingsViewModel.AnalysisImmediateCvCompute)) _host.Raise();
     }
 
     /// <summary>展示图（代理 ↔ Full、增强切换）变化后刷新细节裁剪并重新路由。</summary>

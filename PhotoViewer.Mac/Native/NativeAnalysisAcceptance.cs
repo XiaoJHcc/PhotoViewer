@@ -3,6 +3,7 @@ using CoreGraphics;
 using PhotoViewer.Apple;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Color;
+using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.Core.Storage;
@@ -173,9 +174,12 @@ internal static class NativeAnalysisAcceptance
             VerifyGeometry(window, panel, row: false, checks);
             NativeSnapshots.SaveMain(window, Path.Combine(output, "native-analysis-col.png"));
 
-            // 8) 特征入库后分析栏即时刷新（回归"点『提取全部』后诊断瓦片仍停在未提取"）。
-            //    用一个本次会话才出现的固定名副本保证"尚未提取"，跑一次真实索引后断言瓦片自行出图且未切图。
+#if PHOTOVIEWER_DINO
+            // 特征入库后分析栏即时刷新，不切当前照片。
             await VerifyIndexRefreshAsync(main, window, output, checks);
+#endif
+            await VerifyImmediateComputeIndependenceAsync(main, window, output, checks);
+            await NativeEditionAnalysisChecks.RunAsync(window, output, checks);
 
             // 7) 关闭分析栏后主图恢复占满剩余区域。
             window.Execute("ToggleAnalysisView");
@@ -258,7 +262,12 @@ internal static class NativeAnalysisAcceptance
     private static void VerifyGeometry(MacMainWindow window, MacAnalysisPanel panel, bool row, List<string> checks)
     {
         var tiles = panel.TileViews;
-        if (tiles.Count < 6) throw new InvalidOperationException($"分析栏瓦片数不足：{tiles.Count}");
+#if PHOTOVIEWER_DINO
+        const int minimumTiles = 6;
+#else
+        const int minimumTiles = 4;
+#endif
+        if (tiles.Count < minimumTiles) throw new InvalidOperationException($"分析栏瓦片数不足：{tiles.Count}");
         int count = tiles.Count;
         double main = row ? (double)panel.Bounds.Width : (double)panel.Bounds.Height;
         double cross = row ? (double)panel.Bounds.Height : (double)panel.Bounds.Width;
@@ -285,16 +294,22 @@ internal static class NativeAnalysisAcceptance
     private static void VerifyTiles(MacAnalysisPanel panel, List<string> checks)
     {
         var labels = panel.Presenter.Tiles.Select(tile => tile.ShortLabel).ToArray();
+#if PHOTOVIEWER_DINO
         string[] expected = ["中心", "直方图", "DINO PCA", "Cosine 16,16", "锐度"];
-        if (!labels.Take(5).SequenceEqual(expected))
+        int shakeIndex = 5;
+#else
+        string[] expected = ["中心", "直方图", "锐度"];
+        int shakeIndex = 3;
+#endif
+        if (!labels.Take(expected.Length).SequenceEqual(expected))
             throw new InvalidOperationException($"分析栏瓦片顺序/角标不符：{string.Join(" | ", labels)}");
         string[] verdicts = ["抖动拖影", "信息不足", "静止纹理", "强旋转抖动", "旋转抖动", "平移抖动",
             "混乱场景（车流 / 树叶 / 各向异性纹理）", "弱信号 / 难判"];
-        if (!verdicts.Contains(labels[5], StringComparer.Ordinal))
-            throw new InvalidOperationException($"抖动瓦片角标既不是占位也不是判定文字：{labels[5]}");
+        if (!verdicts.Contains(labels[shakeIndex], StringComparer.Ordinal))
+            throw new InvalidOperationException($"抖动瓦片角标既不是占位也不是判定文字：{labels[shakeIndex]}");
         if (panel.Presenter.Tiles.Any(tile => tile.Kind == AnalysisTileKind.Detail) is false)
             throw new InvalidOperationException("分析栏缺少细节预览瓦片");
-        checks.Add($"tiles: order and labels match the old analysis panel (shake label = {labels[5]})");
+        checks.Add($"tiles: edition-specific order and labels (shake label = {labels[shakeIndex]})");
     }
 
     /// <summary>抓取主图当前 GPU 帧并归一为 BGRA8 sRGB，供增强前后逐像素比较。</summary>
@@ -319,6 +334,7 @@ internal static class NativeAnalysisAcceptance
     private static bool DetailHasContent(MacAnalysisPanel panel)
         => panel.TileViews.OfType<MacDetailPreview>().All(preview => preview.HasContent);
 
+#if PHOTOVIEWER_DINO
     /// <summary>
     /// 特征入库后分析栏即时刷新：复制一份唯一文件名的素材（指纹必然未入库）→ 打开它并确认四张诊断瓦片为
     /// "未提取" → 跑一次真实批量索引 → 断言瓦片自行出图，且期间没有切换当前照片。
@@ -346,6 +362,67 @@ internal static class NativeAnalysisAcceptance
             if (main.CurrentFile?.Name != Path.GetFileName(probe))
                 throw new InvalidOperationException("回归期间当前照片被切换，无法证明是入库信号触发的刷新");
             checks.Add("index refresh: diagnostic tiles populate right after features are written, without switching photo");
+        }
+        finally
+        {
+            File.Delete(probe);
+        }
+    }
+#endif
+
+    private static async Task VerifyImmediateComputeIndependenceAsync(
+        MainViewModel main, MacMainWindow window, string output, List<string> checks)
+    {
+        string probe = Path.Combine(output, $"immediate-probe-{DateTime.UtcNow.Ticks}.jpg");
+        File.Copy(FixturePaths.Resolve("jpeg", "color-srgb.jpg"), probe, true);
+        try
+        {
+            await main.FolderVM.OpenImageAsync(new LocalFileRef(probe));
+            await WaitAsync(() => main.CurrentFile?.Name == Path.GetFileName(probe) && window.Session.Image != null,
+                "即时计算探针上屏");
+            (bool Dino, bool Cv)[] combinations = [(false, false), (false, true), (true, false), (true, true)];
+            foreach (var (dino, cv) in combinations)
+            {
+                AnalysisResultCache.InvalidateAll();
+                main.Settings.ApplySnapshot(main.Settings.CreateSnapshot() with
+                {
+                    AnalysisImmediateCompute = dino,
+                    AnalysisImmediateCvCompute = cv,
+                });
+                await WaitAsync(() =>
+                {
+                    var presenter = window.Analysis.Presenter;
+                    bool cvReady = cv
+                        ? presenter.SharpnessTile.Source != null && presenter.ShakeTile.ShakeField != null
+                        : presenter.SharpnessTile.Source == null && presenter.SharpnessTile.Placeholder == "未提取"
+                            && presenter.ShakeTile.ShakeField == null && presenter.ShakeTile.Placeholder == "未提取";
+#if PHOTOVIEWER_DINO
+                    bool dinoReady = dino
+                        ? presenter.PcaTile.Source != null && presenter.CosineTile.Source != null
+                        : presenter.PcaTile.Source == null && presenter.PcaTile.Placeholder == "未提取"
+                            && presenter.CosineTile.Source == null && presenter.CosineTile.Placeholder == "未提取";
+                    return cvReady && dinoReady;
+#else
+                    return cvReady;
+#endif
+                }, $"DINO={dino}, CV={cv} 独立即时计算");
+#if PHOTOVIEWER_DINO
+                if (dino && !cv)
+                {
+                    using var image = ColorEngine.ToAnalysisSrgb8(window.Session.Image!);
+                    double expectedRatio = (double)image.Width / image.Height;
+                    if (Math.Abs(window.Analysis.Presenter.AspectRatio - expectedRatio) > 0.001)
+                        throw new InvalidOperationException("无 CV 基线的 DINO 现算宽高比未取当前分析图尺寸");
+                    checks.Add($"immediate DINO-only: missing-library inference keeps display aspect {expectedRatio:0.###}");
+                }
+#endif
+                checks.Add($"immediate: DINO={dino}, CV={cv} computes only the enabled capability");
+            }
+
+            var fingerprint = await AnalysisDataReader.ComputeFingerprintAsync(main.CurrentFile!, CancellationToken.None);
+            if (fingerprint == null || await PhotoDatabase.ReadCvGridAsync(fingerprint) != null)
+                throw new InvalidOperationException("分析栏即时计算不应写入 CV 特征数据库");
+            checks.Add("immediate: current-photo results stay in memory and do not write cv_grid");
         }
         finally
         {
