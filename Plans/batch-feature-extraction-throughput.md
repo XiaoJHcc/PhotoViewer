@@ -45,6 +45,11 @@
 | Core 契约自检 AI | 1228 PASS / 1 SKIP / 0 FAIL |
 | Core 契约自检标准版 | 1212 PASS / 1 SKIP / 0 FAIL；两版唯一跳过项均为 macOS 文件系统拼写身份 |
 | 色彩通用转换对照 | `Tools/ColorEngineLutCheck general` 全部逐字节一致，涵盖广色域、行距、alpha、已释放源与取消 |
+| macOS 标准 Debug / AI Release 构建 | 均通过，0 错误；保留既有裁剪与原生绑定告警 |
+| iOS 标准模拟器 Debug / AI 真机 Release 构建 | 均通过，0 错误；保留既有裁剪告警 |
+| macOS AI Release 批量定向验收 | Apple M5 / 10 核，CoreML，8/8 组通过，整批 7.28s；报告 `artifacts/acceptance/batch-throughput/mac-release-current.txt` |
+| iPad AI Release 批量定向验收 | iPad mini A17 Pro / 6 核，CPU，两轮 8/8 组通过，整批 4.82s / 4.86s；报告 `artifacts/acceptance/batch-throughput/ipad-current-1.txt`、`ipad-current-2.txt` |
+| iPad 原生相似面板 | 10 PASS / 0 FAIL；真实「提取全部」按钮、三路结果驱动的列表、双高亮与布局均通过；报告 `artifacts/acceptance/batch-throughput/ipad-native-similarity-checks.txt` |
 
 ### 提取定向场景
 
@@ -52,13 +57,21 @@
 2. 中途 Warning：8 份仓库 6000×4000 P3 夹具副本，新文件名保证新指纹。第 1 组完成时进入 Warning，仍完成 8/8，无失败；每组进度恰好一次、三路数据齐备，另逐组断言库内 CV 尺寸仍为 6000×4000。最终一轮流水线 1828ms，UI 心跳最大间隔 145ms。
 3. 两轮定向检查中，停用套件的机会型预取以隔离缓存来源；排除当前展示照片后，待提取文件的浏览 Full 条目均为 0→0，无批量全图灌入。收尾恢复原预取状态和真实预算源。
 4. Core 新增回归覆盖显式分析在 Caution/Warning 获批、普通后台在 Warning 仍拒、Critical 安全拒绝、可用量 0 拒绝、拒因嵌套/并发隔离、取消/应用代际、CPU 并发与独占通道互斥。
+5. Apple 共用探针对同一 6000×4000 P3 夹具做 8 份新文件名副本，从 Caution 起跑、首组后进入 Warning，逐组核对 CLS/patch/CV、CV 尺寸非零与进度序列，并记录真实 `phys_footprint` 和在途预留。Mac 峰值预留 1088MB，iPad 两轮峰值 917/909MB；临时夹具均收尾删除，iOS 使用独立验收数据库。
 
-压力只在测试进程包装预算源，不实际占满整机内存，不代表真实低内存硬件结果；夹具构图简单、模型和文件缓存已预热，耗时仅为本机套件读数，不代表用户整库吞吐或提速倍数。报告和压力日志保留，已删除本轮较早重复验收目录与最终目录中的临时夹具、数据库、设置。
+### Apple 调度复核
+
+- 生产调度未改。Mac 的 CoreML 仅接管 758 个节点中的 398 个，其余仍可能使用 CPU，但实测不能据此认定互斥更优：强制 CoreML native Run 与 CV 走同一独占调度器后，Debug 整批由原方案 7.54–7.66s 变为 7.86s，DINO/CV 单组耗时均因等待增加；保留 GPU 后端与 CV 重叠。
+- Mac CoreML intra-op 从 10 线程裁到 5 线程为 7.59s，没有超出原方案波动范围的收益，未采纳。iPad 的 CPU 推理继续与 CV 互斥，避免 native intra-op 与 CV 双重占满 6 核。
+- 两组 Mac Debug 基线写库合计仅 25/43ms，Release 为 35ms；writer 不是瓶颈。Mac 冷批次约 4.1s 用于首次 CoreML 会话构建，稳态主要受单路 DINO 推理限制；双缩略图解码头、单全图解码头、容量 1 的准备队列与有界背压未表现出需要扩队列的空等证据。
+- 当前结论只覆盖上述 JPEG/P3 负载与两种候选，不宣称对所有素材和后端达到理论最优。首次 CoreML 构建成本和混合 RAW/HEIF 调度是后续独立优化对象，不在未取得收益时改动共享策略。
+
+压力只在测试进程包装预算源，不实际占满整机内存，不代表真实低内存硬件结果；夹具构图简单，耗时仅为本机套件读数，不代表用户整库吞吐或提速倍数。Apple 冷批次包含真实首次会话构建。报告和压力日志保留，临时夹具已删除。
 
 ### 尚未覆盖
 
-- macOS / iOS：当前 Windows 宿主无 Xcode，未构建、未真机运行，不提升设计验收状态。
+- macOS / iOS：已覆盖构建、真实 JPEG/P3 批量提取与压力推进；尚未覆盖真实混合 RAW/HEIF 大目录、长时间系统低内存及 iOS 退后台/回前台后的部分落库，不提升其它设计验收状态。Mac `--pv-native-similarity` 的真实提取完成，但既有行布局 2 项列表宽度断言失败（170 vs 200），属独立 UI 问题，未混入吞吐结论。
 - Android：仅完成两版构建与共享 Core 回归；设备上的提取、退后台与恢复仍待验。
 - Windows：本轮覆盖 JPEG/P3 大图与原有 HEIF 解码冒烟，尚未覆盖真实混合 RAW/HEIF 大目录、长时间真实系统低内存、批次中断后的部分落库，以及 CPU-only 原生模型吞吐；不能用 8 组夹具替代原 74 张用户目录验收。
 
-复现命令：按 DEV 的 `dotnet build PhotoViewer.Windows -c Debug -p:PhotoViewerEnableDino=true|false`、`dotnet run --project PhotoViewer.Windows --no-build -c Debug -p:PhotoViewerEnableDino=... -- --pv-native-smoke --pv-acceptance-output=<独立目录>`；Core 用 `dotnet run --project Tools/CoreContractCheck -c Release -p:PhotoViewerEnableDino=true|false`；色彩用 `dotnet run --project Tools/ColorEngineLutCheck -c Release -p:PhotoViewerEnableDino=true -- general`。
+复现命令：按 DEV 的 `dotnet build PhotoViewer.Windows -c Debug -p:PhotoViewerEnableDino=true|false`、`dotnet run --project PhotoViewer.Windows --no-build -c Debug -p:PhotoViewerEnableDino=... -- --pv-native-smoke --pv-acceptance-output=<独立目录>`；Core 用 `dotnet run --project Tools/CoreContractCheck -c Release -p:PhotoViewerEnableDino=true|false`；色彩用 `dotnet run --project Tools/ColorEngineLutCheck -c Release -p:PhotoViewerEnableDino=true -- general`。Mac 用 `dotnet build PhotoViewer.Mac -c Release -r osx-arm64 -p:PhotoViewerEnableDino=true` 后向 AI 版可执行文件传 `--pv-native-smoke --pv-native-batch Fixtures/jpeg-large/color-p3-large.jpg`；iPad 安装 AI Release 并拷入自有 JPEG 后传 `--pv-native-batch-check batch-input/color-p3-large.jpg`，从 `Documents/PhotoViewer/native-batch-throughput.txt` 取回报告。

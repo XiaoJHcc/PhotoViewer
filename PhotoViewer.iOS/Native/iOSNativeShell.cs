@@ -79,6 +79,10 @@ public static class iOSNativeShell
         InitializePlatform();
         if (iOSNativeEditionCheck.IsRoundtripStage(args))
             PhotoDatabase.Initialize(iOSNativeEditionCheck.DatabasePath);
+#if PHOTOVIEWER_DINO
+        else if (iOSNativeBatchCheck.DatabasePath(args) is { } batchDatabase)
+            PhotoDatabase.Initialize(batchDatabase);
+#endif
         var main = InitializeMainViewModel(args);
         ApplyLaunchLayoutMode(args, main);
         ApplyLaunchAnalysisOpen(args, main);
@@ -93,6 +97,7 @@ public static class iOSNativeShell
         iOSNativeAnalysisCheck.MaybeStart(args, _rootViewController, _session);
 #if PHOTOVIEWER_DINO
         iOSNativeSimilarityCheck.MaybeStart(args, _rootViewController, _session);
+        iOSNativeBatchCheck.MaybeStart(args);
 #endif
         iOSNativeToolsCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeSheetShotCheck.MaybeStart(args, _rootViewController, _session);

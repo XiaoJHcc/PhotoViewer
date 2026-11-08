@@ -63,6 +63,19 @@ public static class NativeAcceptanceRunner
                 return;
             }
             await WaitAsync(() => window.Main.CurrentFile != null && window.Session.Image != null, "首图加载");
+            if (args.Contains("--pv-native-batch"))
+            {
+#if PHOTOVIEWER_DINO
+                await AppleBatchThroughputChecks.RunAsync(
+                    window.Main.CurrentFile!.File.RequireLocalPath(), output, new Mac.Core.MacMemoryBudgetProvider());
+                File.Delete(System.IO.Path.Combine(output, "native-smoke-error.txt"));
+                Console.WriteLine("[NativeSmoke] PASS batch-throughput");
+                Environment.ExitCode = 0;
+                return;
+#else
+                throw new InvalidOperationException("标准版不包含批量 DINO 吞吐验收");
+#endif
+            }
             if (args.Any(argument => argument.StartsWith("--pv-native-edition-", StringComparison.Ordinal)))
             {
                 await NativeEditionAcceptance.RunAsync(window, args);
