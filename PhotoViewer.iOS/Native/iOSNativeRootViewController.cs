@@ -238,7 +238,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _photoPane.AddSubview(_photo);
         _hintLabel.Text = HintText();
         _hintLabel.Font = UIFont.SystemFontOfSize((nfloat)DesignTokens.ImageHintTitleFontSize);
-        _hintLabel.TextColor = UIColor.SecondaryLabel;
+        _hintLabel.TextColor = UIColor.Label;
         _hintLabel.TextAlignment = UITextAlignment.Center;
         _hintLabel.Lines = 0;
         _hintDetail.Font = UIFont.SystemFontOfSize((nfloat)DesignTokens.ImageHintDetailFontSize);
@@ -1468,7 +1468,26 @@ internal sealed class iOSNativeRootViewController : UIViewController
         var (title, detail) = PhotoHintText.Resolve(
             _main.CurrentFile != null, _session.Error, _session.IsLoadingVisible, touch: true);
         _hintLabel.Text = title;
-        _hintDetail.Text = detail;
+        if (_main.CurrentFile == null && string.IsNullOrWhiteSpace(_session.Error))
+        {
+            var parts = PhotoHintText.EmptyDetailParts(touch: true);
+            var attributed = new NSMutableAttributedString(new NSAttributedString(detail, new UIStringAttributes
+            {
+                Font = _hintDetail.Font,
+                ForegroundColor = UIColor.SecondaryLabel,
+            }));
+            attributed.AddAttribute(UIStringAttributeKey.ForegroundColor, UIColor.TertiaryLabel,
+                new NSRange(parts.Prefix.Length, parts.Separator.Length));
+            _hintDetail.AttributedText = attributed;
+        }
+        else
+        {
+            _hintDetail.AttributedText = new NSAttributedString(detail, new UIStringAttributes
+            {
+                Font = _hintDetail.Font,
+                ForegroundColor = UIColor.SecondaryLabel,
+            });
+        }
         _hintLabel.Hidden = title.Length == 0;
         _hintDetail.Hidden = detail.Length == 0;
     }

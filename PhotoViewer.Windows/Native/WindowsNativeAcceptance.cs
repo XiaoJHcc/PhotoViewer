@@ -123,8 +123,14 @@ internal sealed partial class WindowsMainWindow
             // SHELL-02：空态标题只有应用名，窗口态保留系统边框、去掉系统标题栏。
             RequireSmoke(_main.CurrentFile == null, "空态检查前已存在当前照片");
             RequireSmoke(Title == WindowsProductInfo.DisplayName, $"空态窗口标题不符: {Title}");
+            RequireSmoke(_hintTitle.Text == WindowsProductInfo.DisplayName, $"空态主标题不符: {_hintTitle.Text}");
+            RequireSmoke(_hintDetail.Text == PhotoHintText.EmptyDesktopDetail, $"空态副标题不符: {_hintDetail.Text}");
+            var separator = _hintDetail.Inlines.OfType<Microsoft.UI.Xaml.Documents.Run>().Single(run => run.Text == "/");
+            RequireSmoke(separator.Foreground is SolidColorBrush separatorBrush
+                && separatorBrush.Color == WindowsLayout.HintDetailSeparatorForeground, "空态副标题分隔字未使用三级文字色");
             CheckWindowChrome();
             checks.Add($"PASS SHELL-02: content extends to the window top edge with system border kept and system title bar removed; empty state title {WindowsProductInfo.DisplayName}");
+            checks.Add("PASS STATE-01: empty state product title, desktop operation subtitle and tertiary separator color");
 
             await RunDeploymentChecksAsync(checks);
 

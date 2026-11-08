@@ -523,10 +523,13 @@ internal static class WindowsLayout
     public const double DisabledContentAlpha = DesignTokens.ColorToolbarDisabledContentAlpha;
 
     /// <summary>提示标题文字色。</summary>
-    public static readonly Color HintTitleForeground = Color.FromArgb(0xFF, 0x80, 0x80, 0x80);
+    public static readonly Color HintTitleForeground = Token(DesignTokens.ColorTextPrimary);
 
     /// <summary>提示副标题文字色。</summary>
-    public static readonly Color HintDetailForeground = Color.FromArgb(0xFF, 0x88, 0x88, 0x88);
+    public static readonly Color HintDetailForeground = Token(DesignTokens.ColorTextSecondary);
+
+    /// <summary>空态副标题分隔字的三级文字色。</summary>
+    public static readonly Color HintDetailSeparatorForeground = Token(DesignTokens.ColorTextTertiary);
 
     /// <summary>卡片第二行柱状进度槽底色(旧壳 #444444)。</summary>
     public static readonly Color SecondLineTrack = Token(DesignTokens.ColorFilmCardSecondLineTrack);

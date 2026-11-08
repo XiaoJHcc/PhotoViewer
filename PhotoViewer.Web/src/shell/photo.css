@@ -29,32 +29,45 @@
     box-shadow: inset 0 0 0 2px var(--pv-accent);
 }
 
-/* STATE-01：空态标题与可选副提示，提示层不挡点击 */
+/* STATE-01：空态产品名主标题与操作副标题，提示层不挡点击 */
 .pv-photo-hint {
     position: absolute;
     pointer-events: none;
 }
 
-.pv-photo-hint-title {
+.pv-photo-hint-title,
+.pv-photo-hint-detail {
     position: absolute;
     display: flex;
     align-items: center;
     justify-content: center;
     margin: 0;
     padding: 0;
+    pointer-events: none;
+    font-family: inherit;
+    font-weight: 400;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.pv-photo-hint-title {
     border: 0;
     border-radius: 4px;
     background: none;
     appearance: none;
     -webkit-appearance: none;
-    pointer-events: none;
-    font-family: inherit;
     font-size: var(--pv-image-hint-title-fontSize);
-    font-weight: 400;
-    color: var(--pv-color-text-secondary);
-    text-align: center;
-    white-space: nowrap;
+    color: var(--pv-color-text-primary);
     cursor: default;
+}
+
+.pv-photo-hint-detail {
+    font-size: var(--pv-image-hint-detail-fontSize);
+    color: var(--pv-color-text-secondary);
+}
+
+.pv-photo-hint-separator {
+    color: var(--pv-color-text-tertiary);
 }
 
 /* STATE-01：加载提示延迟出现，图一到即撤下 */

@@ -5,7 +5,7 @@
 数值令牌：`image.hint.*`、`status.*`、`motion.status.*`（见 [tokens.json](../tokens.json)）。平台实现与差异见 [platforms.md](../platforms.md)，验收状态见 [status.md](../status.md)。
 
 ## STATE-01 加载提示与延迟 · 必须
-- 无照片：主图区居中显示短标题（桌面「点击打开文件 或 拖拽图片到此处」，触屏「点击打开文件夹」）与可选副提示；标题 `image.hint.title.fontSize`（16）、副文 `image.hint.detail.fontSize`（11）、最大宽 `image.hint.maxWidth`（500）、间距 `image.hint.detail.gap`（28 = 标题行高 20 + 间距 8）；提示块（标题 + 副文自然高）整体垂直居中，左右各留 ≥ `image.hint.inset`（10）；提示层不挡空态点击与拖入。
+- 无照片：主图区居中显示产品名主标题与操作副标题。主标题标准版为「PhotoViewer」、AI 版为「PhotoViewer AI」，使用 `color.text.primary`（Apple 为系统主文字色）与 `image.hint.title.fontSize`（16）；副标题桌面为「点击打开文件/拖拽照片到此处」、触屏为「点击打开文件夹/长按更多功能」，使用 `color.text.secondary`（Apple 为系统次级文字色）与 `image.hint.detail.fontSize`（11），其中分隔符「/」单独使用更弱的 `color.text.tertiary`（Apple 为系统三级文字色）。提示最大宽 `image.hint.maxWidth`（500）、间距 `image.hint.detail.gap`（28 = 标题行高 20 + 间距 8）；提示块（标题 + 副文自然高）整体垂直居中，左右各留 ≥ `image.hint.inset`（10）；提示层不挡空态点击与拖入。
 - 切图（照片身份变化）到新图上屏之间的延迟只允许下列三种呈现，按延迟能否预知选择，不得用运行时计时临时等待：
 
 | 方案 | 适用 | 表现 |

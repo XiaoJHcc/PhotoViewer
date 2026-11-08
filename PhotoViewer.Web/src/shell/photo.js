@@ -17,7 +17,9 @@ const DETAIL_LINE_HEIGHT = 15;
 const DOUBLE_TAP_MS = 300;
 const DOUBLE_TAP_SLOP = 32;
 const TAP_SLOP = 6;
-const EMPTY_TITLE = "点击打开文件 或 拖拽图片到此处";
+const EMPTY_DETAIL_PREFIX = "点击打开文件";
+const EMPTY_DETAIL_SEPARATOR = "/";
+const EMPTY_DETAIL_SUFFIX = "拖拽照片到此处";
 const LOADING_TEXT = "正在载入…";
 const NO_LINE_START = "、。，．,.;:：；！？!?）)】」』》〉”’…—～";
 const IMAGE_FILE = /\.(jpe?g|png|heic|heif|hif|tiff?|dng|arw|cr2|cr3|nef|raf|orf|rw2)$/i;
@@ -42,8 +44,12 @@ export function mountPhoto(host, ctx) {
 
     const canvas = el("canvas", { class: "pv-photo-canvas", role: "img", "aria-label": "主图" });
     const highlight = el("div", { class: "pv-photo-highlight", hidden: true, "aria-hidden": "true" });
-    const hintTitle = el("button", { type: "button", class: "pv-photo-hint-title", hidden: true }, EMPTY_TITLE);
-    const hint = el("div", { class: "pv-photo-hint", hidden: true }, hintTitle);
+    const hintTitle = el("button", { type: "button", class: "pv-photo-hint-title", hidden: true });
+    const hintDetail = el("div", { class: "pv-photo-hint-detail", hidden: true },
+        el("span", {}, EMPTY_DETAIL_PREFIX),
+        el("span", { class: "pv-photo-hint-separator" }, EMPTY_DETAIL_SEPARATOR),
+        el("span", {}, EMPTY_DETAIL_SUFFIX));
+    const hint = el("div", { class: "pv-photo-hint", hidden: true }, hintTitle, hintDetail);
     const loading = el("div", { class: "pv-photo-loading", role: "status", hidden: true }, LOADING_TEXT);
     const errorTitle = el("div", { class: "pv-photo-error-title" });
     const errorDetail = el("div", { class: "pv-photo-error-detail" });
@@ -165,16 +171,14 @@ export function mountPhoto(host, ctx) {
     function syncHint(state, pane, empty) {
         hint.hidden = !empty;
         hintTitle.hidden = !empty;
+        hintDetail.hidden = !empty;
         if (!empty) return;
+        setText(hintTitle, state.edition === "ai" ? "PhotoViewer AI" : "PhotoViewer");
         place(hint, { x: 0, y: 0, w: pane.w, h: pane.h });
         const frames = state.layout.overlays.hintFrames(pane);
-        // STATE-01：副提示可省略；只有标题时按主图区垂直居中。
-        place(hintTitle, {
-            x: frames.title.x - pane.x,
-            y: Math.max(0, (pane.h - frames.title.h) / 2),
-            w: frames.title.w,
-            h: frames.title.h,
-        });
+        // STATE-01：产品名主标题与操作副标题作为整体居中，「/」单独使用三级文字色。
+        place(hintTitle, rel(frames.title, pane));
+        place(hintDetail, rel(frames.detail, pane));
     }
 
     function syncLoading(state, pane) {

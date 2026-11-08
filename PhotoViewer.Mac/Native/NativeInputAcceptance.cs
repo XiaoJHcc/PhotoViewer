@@ -33,14 +33,28 @@ internal static class NativeInputAcceptance
         // 2) 空首屏结构：提示可见、主图铺满展示区、提示不拦截点击。
         //    点击点取主图中心，正好落在提示文字上，故同时验证提示标签的点击透传。
         var pane = photo.Superview ?? throw new InvalidOperationException("主图缺少父视图");
-        var hint = pane.Subviews.OfType<NSTextField>().FirstOrDefault(field => field.StringValue.Contains("点击打开文件"))
-            ?? throw new InvalidOperationException("空首屏缺少“点击打开文件”提示");
-        if (hint.Hidden) throw new InvalidOperationException("空首屏提示被隐藏");
+        var parts = PhotoViewer.Core.Platform.PhotoHintText.EmptyDetailParts(touch: false);
+        var fields = pane.Subviews.OfType<NSTextField>().ToArray();
+        var prefix = fields.FirstOrDefault(field => field.StringValue == parts.Prefix)
+            ?? throw new InvalidOperationException("空首屏缺少副标题前段");
+        var separator = fields.FirstOrDefault(field => field.StringValue == parts.Separator)
+            ?? throw new InvalidOperationException("空首屏缺少副标题分隔字");
+        var suffix = fields.FirstOrDefault(field => field.StringValue == parts.Suffix)
+            ?? throw new InvalidOperationException("空首屏缺少副标题后段");
+        var title = fields.FirstOrDefault(field => field.StringValue == MacProductInfo.DisplayName)
+            ?? throw new InvalidOperationException("空首屏缺少产品名主标题");
+        if (prefix.Hidden || separator.Hidden || suffix.Hidden || title.Hidden) throw new InvalidOperationException("空首屏主标题或副标题被隐藏");
+        if (title.TextColor?.IsEqual(NSColor.Label) != true) throw new InvalidOperationException("空首屏主标题未使用系统主文字色");
+        if (separator.TextColor?.IsEqual(NSColor.TertiaryLabel) != true) throw new InvalidOperationException("空首屏副标题分隔字未使用系统三级文字色");
+        if (prefix.TextColor?.IsEqual(NSColor.SecondaryLabel) != true || suffix.TextColor?.IsEqual(NSColor.SecondaryLabel) != true)
+            throw new InvalidOperationException("空首屏副标题普通文字未使用系统次级文字色");
         if (photo.Frame != pane.Bounds) throw new InvalidOperationException($"主图未铺满展示区域：photo={photo.Frame} pane={pane.Bounds}");
         var center = new CGPoint(photo.Bounds.Width / 2, photo.Bounds.Height / 2);
-        if (!hint.Frame.Contains(center)) throw new InvalidOperationException("空首屏提示未覆盖主图中心，回归点选取无效");
-        if (hint.HitTest(center) != null) throw new InvalidOperationException("空首屏提示未透传点击");
-        checks.Add("empty state: hint visible over photo centre and passes clicks through to full-bleed photo view");
+        var hintFrame = new CGRect(prefix.Frame.Left, prefix.Frame.Y, suffix.Frame.Right - prefix.Frame.Left, prefix.Frame.Height);
+        if (!hintFrame.Contains(center)) throw new InvalidOperationException("空首屏提示未覆盖主图中心，回归点选取无效");
+        if (prefix.HitTest(center) != null || separator.HitTest(center) != null || suffix.HitTest(center) != null)
+            throw new InvalidOperationException("空首屏提示未透传点击");
+        checks.Add("empty state: product title + operation subtitle with tertiary separator visible over photo centre and passes clicks through");
 
         // 3) 键盘路径：默认绑定的方向键必须被主窗口消费（同一根因也曾使全部快捷键失效）。
         var location = photo.ConvertPointToView(center, null);

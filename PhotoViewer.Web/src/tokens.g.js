@@ -86,6 +86,7 @@ const tokens = Object.freeze({
     "color.status.toast.foreground": "#FFFFFF",
     "color.text.primary": "#EEEEEE",
     "color.text.secondary": "#AAAAAA",
+    "color.text.tertiary": "#666666",
     "color.titlebar.close.hover": "#C42B1C",
     "color.titlebar.close.pressed": "#E6C42B1C",
     "color.toolbar.block.background": "#222222",

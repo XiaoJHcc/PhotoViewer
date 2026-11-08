@@ -9,6 +9,7 @@ using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
@@ -1783,7 +1784,24 @@ internal sealed partial class WindowsMainWindow : Window
         var (title, detail) = PhotoHintText.Resolve(
             _main.CurrentFile != null, _session.Error, _session.IsLoadingVisible, touch: false);
         _hintTitle.Text = title;
-        _hintDetail.Text = detail;
+        _hintDetail.Inlines.Clear();
+        if (_main.CurrentFile == null && string.IsNullOrWhiteSpace(_session.Error))
+        {
+            var parts = PhotoHintText.EmptyDetailParts(touch: false);
+            _hintDetail.TextAlignment = TextAlignment.Center;
+            _hintDetail.Inlines.Add(new Run { Text = parts.Prefix });
+            _hintDetail.Inlines.Add(new Run
+            {
+                Text = parts.Separator,
+                Foreground = new SolidColorBrush(WindowsLayout.HintDetailSeparatorForeground),
+            });
+            _hintDetail.Inlines.Add(new Run { Text = parts.Suffix });
+        }
+        else
+        {
+            _hintDetail.TextAlignment = TextAlignment.Left;
+            _hintDetail.Inlines.Add(new Run { Text = detail });
+        }
 
         var visible = title.Length > 0 || detail.Length > 0;
         _hintPanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;

@@ -139,7 +139,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - Android 导航缩略图取当前展示产物（代理/Full/增强），按显示朝向抽样，不再二次解码原文件（`AndroidNavigationDecoder.CreateFromDisplayAsync`）。
 - **IMAGE-07**：增强状态 `PhotoViewer/Core/Image/PhotoLoadSession.cs`；药丸 `image.busy.*`、门槛 `image.busy.delay`（500ms）四端同一：macOS `MacMainWindow` 的 `_busyPill`、iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs` 的 `EnhanceBusyLabel`、Windows `PhotoViewer.Windows/Native/WindowsMainWindow.cs` 的 `_busyPill`、Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs` 的药丸标签。
 - **IMAGE-09**：定位入口 macOS `MacMainWindow.FocusDetailPoint`、iOS `iOSNativeRootViewController.FocusDetailPoint`、Windows `WindowsPhotoView.FocusOnImagePoint`、Android `AndroidPhotoView.FocusOnPoint`。
-- **IMAGE-10**：空态/加载/失败提示块由各端主图区标签显示（macOS `MacMainWindow.OnImageChanged`、iOS `iOSNativeRootViewController.UpdateHint`、Windows `WindowsMainWindow.UpdateHint`、Android `AndroidNativeRootView` 的提示刷新）。
+- **IMAGE-10**：空态/加载/失败提示块由各端主图区标签显示（macOS `MacMainWindow.OnImageChanged`、iOS `iOSNativeRootViewController.UpdateHint`、Windows `WindowsMainWindow.UpdateHint`、Android `AndroidNativeRootView` 的提示刷新）。空态副标题按共享文案拆段，四端用各自原生富文本或分段标签把「/」设为 `color.text.tertiary`；macOS/iOS 的主、次、三级文字色分别取系统 Label / SecondaryLabel / TertiaryLabel，Windows/Android/Web 取同名令牌。
 - **IMAGE-11**：缩放/平移/适应/跟随只存会话；导航图开关与缩放预设走设置（`SettingsViewModel.ImagePreview.cs` 的 `ShowZoomIndicator` 与缩放预设），增强开关不持久化（`PhotoViewer/Core/Image/PhotoLoadSession.cs`）。
 
 ## analysis

@@ -1131,6 +1131,24 @@ const CHECKS = [
         title: "缓存命中切图保留前一张，未命中即清图并延迟提示",
         async run(shell, h) {
             const { app } = shell;
+            const previousFolder = app.state.folder?.id;
+            app.openFolder("empty");
+            await h.tick(120);
+            const emptyTitle = h.dom(".pv-photo-hint-title");
+            const emptyDetail = h.dom(".pv-photo-hint-detail");
+            const emptySeparator = h.dom(".pv-photo-hint-separator");
+            const expectedProduct = app.state.edition === "ai" ? "PhotoViewer AI" : "PhotoViewer";
+            h.assert(!emptyTitle.hidden && !emptyDetail.hidden, "空态主标题或副标题未显示");
+            h.assert(emptyTitle.textContent === expectedProduct, `空态主标题 ${emptyTitle.textContent}`);
+            h.assert(emptyDetail.textContent === "点击打开文件/拖拽照片到此处", `空态副标题 ${emptyDetail.textContent}`);
+            h.assert(emptySeparator.textContent === "/", `空态分隔符 ${emptySeparator.textContent}`);
+            h.assert(getComputedStyle(emptyTitle).fontSize === `${shell.t("image.hint.title.fontSize")}px`, "空态主标题字号不符");
+            h.assert(getComputedStyle(emptyDetail).fontSize === `${shell.t("image.hint.detail.fontSize")}px`, "空态副标题字号不符");
+            h.assert(colorMatches(getComputedStyle(emptyTitle).color, shell.t("color.text.primary")), "空态主标题颜色不符");
+            h.assert(colorMatches(getComputedStyle(emptyDetail).color, shell.t("color.text.secondary")), "空态副标题颜色不符");
+            h.assert(colorMatches(getComputedStyle(emptySeparator).color, shell.t("color.text.tertiary")), "空态分隔字颜色不符");
+            app.openFolder(previousFolder);
+            await h.tick(120);
             const usable = app.state.cards
                 .map((card) => card.photo)
                 .filter((photo) => !(photo.fault && photo.fault.decode === "all"));

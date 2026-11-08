@@ -7,6 +7,8 @@ using System.Threading.Tasks;
 using Android.App;
 using Android.Graphics;
 using Android.Graphics.Drawables;
+using Android.Text;
+using Android.Text.Style;
 using Android.Views;
 using Android.Widget;
 using AndroidX.Core.View;
@@ -199,7 +201,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
 
         _hintLabel = new TextView(activity)
         {
-            Text = PhotoHintText.EmptyTouchTitle,
+            Text = PhotoHintText.EmptyProductTitle,
             TextSize = (float)DesignTokens.ImageHintTitleFontSize,
             Gravity = GravityFlags.Center,
         };
@@ -1253,7 +1255,18 @@ internal sealed class AndroidNativeRootView : FrameLayout
         var (title, detail) = PhotoHintText.Resolve(
             hasFile, _session.Error, _session.IsLoadingVisible, touch: true);
         _hintLabel.Text = title;
-        _hintDetail.Text = detail;
+        if (!hasFile && string.IsNullOrWhiteSpace(_session.Error))
+        {
+            var parts = PhotoHintText.EmptyDetailParts(touch: true);
+            var formatted = new SpannableString(detail);
+            formatted.SetSpan(new ForegroundColorSpan(AndroidUiTheme.TextTertiary),
+                parts.Prefix.Length, parts.Prefix.Length + parts.Separator.Length, SpanTypes.ExclusiveExclusive);
+            _hintDetail.TextFormatted = formatted;
+        }
+        else
+        {
+            _hintDetail.Text = detail;
+        }
     }
 
     /// <summary>导航图缩略图取当前展示产物（含增强），只在产物引用变化时重出；可见框与百分比每帧更新。</summary>

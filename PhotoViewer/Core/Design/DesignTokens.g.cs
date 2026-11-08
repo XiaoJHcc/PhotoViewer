@@ -177,6 +177,8 @@ public static class DesignTokens
     public const uint ColorTextPrimary = 0xFFEEEEEEu;
     /// <summary>color.text.secondary（color）：次要文字色；Apple 平台取系统次级文字色（G6-34@mac/@ios）。；平台语义：ios=system-secondary-label，macos=system-secondary-label</summary>
     public const uint ColorTextSecondary = 0xFFAAAAAAu;
+    /// <summary>color.text.tertiary（color） STATE-01：更弱的三级文字色，用于空态副标题中的分隔符「/」；Apple 平台取系统三级文字色。；平台语义：ios=system-tertiary-label，macos=system-tertiary-label</summary>
+    public const uint ColorTextTertiary = 0xFF666666u;
     /// <summary>color.titlebar.close.hover（color） SHELL-02：Windows 自绘关闭按钮悬停底色（Win11 系统 caption 关闭按钮同值），字形转白。</summary>
     public const uint ColorTitlebarCloseHover = 0xFFC42B1Cu;
     /// <summary>color.titlebar.close.pressed（color） SHELL-02：Windows 自绘关闭按钮按下底色（悬停色 90% 不透明）。</summary>

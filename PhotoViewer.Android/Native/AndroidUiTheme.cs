@@ -32,6 +32,8 @@ internal static class AndroidUiTheme
     internal static readonly Color TextPrimary = FromToken(DesignTokens.ColorTextPrimary);
     /// <summary>次要文字。</summary>
     internal static readonly Color TextSecondary = FromToken(DesignTokens.ColorTextSecondary);
+    /// <summary>三级文字（空态副标题分隔字）。</summary>
+    internal static readonly Color TextTertiary = FromToken(DesignTokens.ColorTextTertiary);
     /// <summary>蓝色高亮（当前卡片）。</summary>
     internal static readonly Color Accent = FromToken(DesignTokens.ColorFilmCardCurrentBorder);
     /// <summary>星级金色（FILM-05）。</summary>
