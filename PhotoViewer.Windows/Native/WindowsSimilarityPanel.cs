@@ -236,7 +236,7 @@ internal sealed class WindowsSimilarityPanel : Grid
     {
         _stackLayout.Orientation = _isRowLayout ? Orientation.Horizontal : Orientation.Vertical;
         _scroll.HorizontalScrollMode = _isRowLayout ? ScrollMode.Enabled : ScrollMode.Disabled;
-        _scroll.VerticalScrollMode = _isRowLayout ? ScrollMode.Enabled : ScrollMode.Disabled;
+        _scroll.VerticalScrollMode = _isRowLayout ? ScrollMode.Disabled : ScrollMode.Enabled;
         _scroll.HorizontalScrollBarVisibility = _isRowLayout ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled;
         _scroll.VerticalScrollBarVisibility = _isRowLayout ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
         _frame.VerticalAlignment = _isRowLayout ? VerticalAlignment.Top : VerticalAlignment.Stretch;
