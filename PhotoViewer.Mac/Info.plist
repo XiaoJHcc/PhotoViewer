@@ -35,10 +35,11 @@
 	<string>cc.xiaojh.PhotoViewer</string>
 	<key>CFBundleName</key>
 	<string>PhotoViewer</string>
+	<!-- 版本号与构建号由 Directory.Build.props 在构建时写入 obj/<edition>/Info.plist 副本。 -->
 	<key>CFBundleShortVersionString</key>
-	<string>0.9.0</string>
+	<string>0.0.0</string>
 	<key>CFBundleVersion</key>
-	<string>90</string>
+	<string>0</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>26.0</string>
 	<key>NSHighResolutionCapable</key>
