@@ -7,18 +7,18 @@ using PhotoViewer.Core.Settings;
 namespace PhotoViewer.Windows.Native;
 
 /// <summary>
-/// 主窗口栏位显隐的键名(SHELL-04)：与设置文档分开，普通运行存于
-/// <c>%LOCALAPPDATA%\PhotoViewer\native-ui.json</c>；隔离运行改存验收输出目录，不碰用户档。
+/// 主窗口栏位显隐的键名(SHELL-04)：与设置文档分开，普通运行存于产品私有目录
+/// <c>%LOCALAPPDATA%\{PhotoViewer|PhotoViewer AI}\native-ui.json</c>；隔离运行改存验收输出目录，不碰用户档。
+/// 窗口状态属于各产品私有，两版同时运行时不会互相覆盖。
 /// </summary>
 internal static class WindowsNativePreferences
 {
     internal const string ShowFilmKey = "PhotoViewer.Native.ShowFilm";
     internal const string ShowControlsKey = "PhotoViewer.Native.ShowControls";
 
-    /// <summary>普通运行的界面状态文件：<c>%LOCALAPPDATA%\PhotoViewer\native-ui.json</c>。</summary>
+    /// <summary>普通运行的界面状态文件：产品私有目录下的 <c>native-ui.json</c>。</summary>
     internal static string DefaultFilePath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "PhotoViewer",
+        WindowsProductInfo.PrivateStateDirectory,
         "native-ui.json");
 
     /// <summary>隔离运行的界面状态文件：与设置、数据库同在本轮验收输出目录。</summary>

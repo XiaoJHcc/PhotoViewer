@@ -10,13 +10,14 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <AssemblyName>CoreContractCheck</AssemblyName>
-    <PhotoViewerEnableDino Condition="'$(PhotoViewerEnableDino)' == ''">true</PhotoViewerEnableDino>
-    <DefineConstants Condition="'$(PhotoViewerEnableDino)' == 'true'">$(DefineConstants);PHOTOVIEWER_DINO</DefineConstants>
+    <PhotoViewerEdition Condition="'$(PhotoViewerEdition)' == ''">ai</PhotoViewerEdition>
+    <DefineConstants Condition="'$(PhotoViewerEdition)' == 'ai'">$(DefineConstants);PHOTOVIEWER_DINO</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
     <Compile Include="..\..\PhotoViewer.Shared\**\*.cs" />
     <Using Include="PhotoViewer.Shared" />
-    <ProjectReference Include="..\..\PhotoViewer\PhotoViewer.csproj" />
+    <ProjectReference Include="..\..\PhotoViewer\PhotoViewer.csproj"
+                      AdditionalProperties="PhotoViewerEdition=$(PhotoViewerEdition)" />
   </ItemGroup>
 </Project>

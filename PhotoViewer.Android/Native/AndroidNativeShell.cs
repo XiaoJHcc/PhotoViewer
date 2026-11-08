@@ -14,7 +14,6 @@ using Microsoft.ML.OnnxRuntime;
 using PhotoViewer.Android.Core;
 using PhotoViewer.Core;
 using PhotoViewer.Core.AI;
-using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Image.Heif;
 using PhotoViewer.Core.Memory;
@@ -120,11 +119,7 @@ public static class AndroidNativeShell
     {
         AndroidDisplayCapabilities.ForceSrgb = intent?.GetBooleanExtra("pv-srgb", false) == true
             || intent?.GetBooleanExtra("pv-p3", true) == false;
-        // 往返验收（pv-check=roundtrip）：隔离设置档必须在设置仓库初始化前选定，绝不读写用户真实设置。
-        bool roundtrip = string.Equals(intent?.GetStringExtra("pv-check"), "roundtrip", StringComparison.OrdinalIgnoreCase);
-        if (roundtrip)
-            AndroidSettingsStorage.UseIsolatedProfile("edition-roundtrip");
-        else if (string.Equals(intent?.GetStringExtra("pv-check"), "color", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(intent?.GetStringExtra("pv-check"), "color", StringComparison.OrdinalIgnoreCase))
             AndroidSettingsStorage.UseIsolatedProfile("color");
         else if (!string.IsNullOrWhiteSpace(intent?.GetStringExtra("pv-stress")))
             AndroidSettingsStorage.UseIsolatedProfile("stress");
@@ -146,13 +141,6 @@ public static class AndroidNativeShell
         if (!string.IsNullOrWhiteSpace(perfProbeFolder))
             return RunPerfProbe(activity, perfProbeFolder, intent?.GetIntExtra("pv-perf-probe-target", 0) ?? 0);
 
-        if (roundtrip && _main == null)
-        {
-            // 往返验收共用隔离库；数据库路径在首次读取后不可更换，必须在构造主 VM 前配置。
-            PhotoDatabase.Initialize(
-                Path.Combine(activity.FilesDir!.AbsolutePath, "PhotoViewer", "edition-roundtrip", "photos.db"));
-        }
-
         if (_main == null)
         {
             var settingsRepository = CreateSettingsRepository();
@@ -172,8 +160,7 @@ public static class AndroidNativeShell
         _root?.Dispose();
         _root = new AndroidNativeRootView(activity, _main, _session);
         HandleIntent(intent);
-        if (!AndroidNativeChecks.TryStartRoundtrip(activity, _main, _session, _root, intent))
-            AndroidNativeChecks.MaybeStart(activity, _main, _session, _root, intent?.GetStringExtra("pv-check"));
+        AndroidNativeChecks.MaybeStart(activity, _main, _session, _root, intent?.GetStringExtra("pv-check"));
         if (intent != null) MaybeStartStress(activity, intent, _main, _session);
         return _root;
     }

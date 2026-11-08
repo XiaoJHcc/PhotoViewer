@@ -1,8 +1,10 @@
 #!/bin/bash
 # 用法：bash publish.sh [--edition standard|ai|both] [--local] [版本号]
-# 生成两个可直接安装的本地发布包（开发签名，真机直装）：
-#   release/packages/PhotoViewer-<版本>-ios.ipa        （标准版，无 DINO/ONNX Runtime）
-#   release/packages/PhotoViewer-AI-<版本>-ios.ipa     （AI 版，内置模型与 ONNX Runtime）
+# 按 edition 生成两个可直接安装的本地发布包（开发签名，真机直装）：
+#   release/packages/PhotoViewer-<版本>-ios.ipa        （standard，无 DINO/ONNX Runtime）
+#   release/packages/PhotoViewer-AI-<版本>-ios.ipa     （ai，内置模型与 ONNX Runtime）
+# 产品名、Bundle ID、分发文件名前缀与 DINO 能力全部取自根 Directory.Build.props 的
+# edition 映射（cc.xiaojh.PhotoViewer / cc.xiaojh.PhotoViewer.AI），脚本不另立产品判断。
 # 稳定安装源按版本分开：release/ios-stable/<standard|ai>/PhotoViewer.iOS.app。
 # 本地直装 IPA 不带 IPA 顶层 Symbols/（构建产物不 strip、不改 AOT、不重签应用），
 # Symbols/ 与 dSYM 作为符号材料留在 bin/<edition>/…/publish/ 下继续可用。
@@ -12,7 +14,7 @@
 set -euo pipefail
 
 usage() {
-    sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 EDITION_ARG="both"
@@ -73,6 +75,7 @@ esac
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BUILD_PROPS="${REPO_ROOT}/Directory.Build.props"
+source "${SCRIPT_DIR}/edition-identity.sh"
 VERSION="$(sed -n 's:.*<AppVersion>\(.*\)</AppVersion>.*:\1:p' "${BUILD_PROPS}" | head -n 1)"
 BUILD_NUMBER="$(sed -n 's:.*<AppBuildNumber>\(.*\)</AppBuildNumber>.*:\1:p' "${BUILD_PROPS}" | head -n 1)"
 PROJECT_PATH="${SCRIPT_DIR}/PhotoViewer.iOS.csproj"
@@ -159,7 +162,8 @@ verify_and_scan_ipa() {
     local built_app="$2"
     local edition="$3"
     local display_name="$4"
-    local report="$5"
+    local package_id="$5"
+    local report="$6"
     local work
     WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pv-ipa-verify.XXXXXX")"
     work="${WORK_DIR}"
@@ -176,6 +180,7 @@ verify_and_scan_ipa() {
     python3 "${SCANNER}" "${app}" \
         --edition "${edition}" \
         --product-name "${display_name}" \
+        --bundle-id "${package_id}" \
         --version "${VERSION}" \
         --build-number "${BUILD_NUMBER}" \
         --output "${report}"
@@ -183,18 +188,13 @@ verify_and_scan_ipa() {
 }
 
 for EDITION in "${EDITIONS[@]}"; do
-    case "${EDITION}" in
-        ai)
-            DISPLAY_NAME="PhotoViewer AI"
-            PACKAGE_PRODUCT="PhotoViewer-AI"
-            DINO="true"
-            ;;
-        *)
-            DISPLAY_NAME="PhotoViewer"
-            PACKAGE_PRODUCT="PhotoViewer"
-            DINO="false"
-            ;;
-    esac
+    pv_load_edition_identity "${EDITION}" "${BUILD_PROPS}" \
+        || fail "无法从 ${BUILD_PROPS} 读取 ${EDITION} 版产品身份；Bundle ID、显示名与 DINO 能力只在根 props 映射。"
+    DISPLAY_NAME="${PV_DISPLAY_NAME}"
+    PACKAGE_PRODUCT="${PV_DISTRIBUTION_NAME}"
+    PACKAGE_ID="${PV_PACKAGE_ID}"
+    PRODUCT_ID="${PV_PRODUCT_ID}"
+    DINO="${PV_ENABLE_DINO}"
 
     if [[ "${LOCAL_ONLY}" -eq 1 ]]; then
         MODE="local"
@@ -212,19 +212,19 @@ for EDITION in "${EDITIONS[@]}"; do
 
     echo ""
     if [[ "${LOCAL_ONLY}" -eq 1 ]]; then
-        echo "=== [${EDITION}] 本地验证构建 ${DISPLAY_NAME} ${VERSION}（${BUILD_NUMBER}，PhotoViewerEnableDino=${DINO}）—— 不写入 release ==="
+        echo "=== [${EDITION}] 本地验证构建 ${DISPLAY_NAME} ${VERSION}（${BUILD_NUMBER}，${PACKAGE_ID}，DINO=${DINO}）—— 不写入 release ==="
     else
-        echo "=== [${EDITION}] ${DISPLAY_NAME} ${VERSION}（${BUILD_NUMBER}，PhotoViewerEnableDino=${DINO}）==="
+        echo "=== [${EDITION}] ${DISPLAY_NAME} ${VERSION}（${BUILD_NUMBER}，${PACKAGE_ID}，DINO=${DINO}）==="
     fi
 
     echo ""
     echo "=== [${EDITION}] 还原 ==="
-    dotnet restore "${PROJECT_PATH}" -r ios-arm64 -p:PhotoViewerEnableDino="${DINO}"
+    dotnet restore "${PROJECT_PATH}" -r ios-arm64 -p:PhotoViewerEdition="${EDITION}"
 
     echo ""
     echo "=== [${EDITION}] 发布（完整 dotnet publish 流程，保留 AOT 与符号）==="
     dotnet publish "${PROJECT_PATH}" -c Release -r ios-arm64 --no-restore \
-        -p:PhotoViewerEnableDino="${DINO}"
+        -p:PhotoViewerEdition="${EDITION}"
 
     APP_PATH="${SCRIPT_DIR}/bin/${EDITION}/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app"
     [[ -d "${APP_PATH}" ]] \
@@ -240,6 +240,7 @@ for EDITION in "${EDITIONS[@]}"; do
     python3 "${SCANNER}" "${APP_PATH}" \
         --edition "${EDITION}" \
         --product-name "${DISPLAY_NAME}" \
+        --bundle-id "${PACKAGE_ID}" \
         --version "${VERSION}" \
         --build-number "${BUILD_NUMBER}" \
         --output "${APP_SCAN}"
@@ -279,7 +280,7 @@ for EDITION in "${EDITIONS[@]}"; do
         echo "dSYM：${DSYM_SKIA}"
     fi
 
-    verify_and_scan_ipa "${RAW_IPA}" "${APP_PATH}" "${EDITION}" "${DISPLAY_NAME}" "${IPA_SCAN}"
+    verify_and_scan_ipa "${RAW_IPA}" "${APP_PATH}" "${EDITION}" "${DISPLAY_NAME}" "${PACKAGE_ID}" "${IPA_SCAN}"
 
     IPA_SIZE="$(stat -f%z "${RAW_IPA}")"
 
@@ -306,12 +307,17 @@ for EDITION in "${EDITIONS[@]}"; do
     write_evidence "${EVIDENCE}" \
         "mode=${MODE}" \
         "edition=${EDITION}" \
+        "platform=ios" \
+        "channel=$( [[ "${LOCAL_ONLY}" -eq 1 ]] && echo local || echo direct )" \
+        "arch=arm64" \
+        "productId=${PRODUCT_ID}" \
+        "packageId=${PACKAGE_ID}" \
         "productName=${DISPLAY_NAME}" \
-        "packageProduct=${PACKAGE_PRODUCT}" \
-        "photoViewerEnableDino=${DINO}" \
+        "distributionName=${PACKAGE_PRODUCT}" \
+        "enableDino=${DINO}" \
         "version=${VERSION}" \
-        "buildNumber=${BUILD_NUMBER}" \
-        "versionSource=Directory.Build.props" \
+        "build=${BUILD_NUMBER}" \
+        "identitySource=Directory.Build.props" \
         "appPath=${APP_PATH}" \
         "appScan=${APP_SCAN}" \
         "ipaPath=${PACKAGE_PATH}" \

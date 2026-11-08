@@ -1,16 +1,19 @@
 #!/bin/bash
 # 用法：bash validate-testflight-archive.sh [归档路径] [--edition standard|ai]
-# 检查 TestFlight 分发归档：版本号/构建号、Bundle ID、Apple Distribution 签名、
-# entitlements、dSYM 符号材料、App Store 图标，并调用 Tools/check-ios-package.py
-# 按发行版本扫描实际 .app（standard 不得有模型/ORT，ai 必须有固定模型、许可证与
-# ONNX Runtime 静态符号）。只读检查，不上传、不签名、不修改任何产物。
+# 检查 TestFlight 分发归档：版本号/构建号、Apple Distribution 签名、entitlements、
+# dSYM 符号材料、App Store 图标，并调用 Tools/check-ios-package.py 按发行版本扫描
+# 实际 .app（standard 不得有模型/ORT，ai 必须有固定模型、许可证与 ONNX Runtime 静态
+# 符号）。Bundle ID 是身份权威：由实际 ID 反查 edition（standard
+# cc.xiaojh.PhotoViewer / ai cc.xiaojh.PhotoViewer.AI），再与 --edition 和显示名交叉
+# 核对。只读检查，不上传、不签名、不修改任何产物。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-VERSION="$(sed -n 's:.*<AppVersion>\(.*\)</AppVersion>.*:\1:p' "${REPO_ROOT}/Directory.Build.props" | head -n 1)"
-BUILD="$(sed -n 's:.*<AppBuildNumber>\(.*\)</AppBuildNumber>.*:\1:p' "${REPO_ROOT}/Directory.Build.props" | head -n 1)"
-BUNDLE_ID="cc.xiaojh.PhotoViewer"
+BUILD_PROPS="${REPO_ROOT}/Directory.Build.props"
+source "${SCRIPT_DIR}/edition-identity.sh"
+VERSION="$(sed -n 's:.*<AppVersion>\(.*\)</AppVersion>.*:\1:p' "${BUILD_PROPS}" | head -n 1)"
+BUILD="$(sed -n 's:.*<AppBuildNumber>\(.*\)</AppBuildNumber>.*:\1:p' "${BUILD_PROPS}" | head -n 1)"
 SCANNER="${REPO_ROOT}/Tools/check-ios-package.py"
 REPORT_DIR="${REPO_ROOT}/artifacts/acceptance/ios-editions"
 
@@ -31,7 +34,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -h|--help)
-            sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         --*)
@@ -71,22 +74,30 @@ fi
 APP_PATH="${ARCHIVE_PATH}/Products/Applications/PhotoViewer.iOS.app"
 [[ -d "${APP_PATH}" ]] || fail "应用不存在：${APP_PATH}"
 
-DISPLAY_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "${APP_PATH}/Info.plist" 2>/dev/null || true)"
-case "${DISPLAY_NAME}" in
-    PhotoViewer)        INFERRED_EDITION="standard"; PACKAGE_PRODUCT="PhotoViewer" ;;
-    "PhotoViewer AI")   INFERRED_EDITION="ai"; PACKAGE_PRODUCT="PhotoViewer-AI" ;;
-    *)                  fail "归档产品名不是 PhotoViewer / PhotoViewer AI：${DISPLAY_NAME:-<空>}" ;;
-esac
+# Bundle ID 是产品身份的权威字段：由实际 ID 反推 edition，再与 --edition 和显示名交叉核对。
+BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${APP_PATH}/Info.plist" 2>/dev/null || true)"
+INFERRED_EDITION="$(pv_edition_for_package_id "${BUNDLE_ID}" "${BUILD_PROPS}" || true)"
+if [[ -z "${INFERRED_EDITION}" ]]; then
+    STANDARD_ID="$(pv_prop_for_edition "${BUILD_PROPS}" PhotoViewerPackageId standard)"
+    AI_ID="$(pv_prop_for_edition "${BUILD_PROPS}" PhotoViewerPackageId ai)"
+    fail "归档 Bundle ID 不属于任一产品：${BUNDLE_ID:-<空>}（standard ${STANDARD_ID} / ai ${AI_ID}）"
+fi
 if [[ -n "${EDITION}" && "${EDITION}" != "${INFERRED_EDITION}" ]]; then
-    fail "归档产品名为 ${DISPLAY_NAME}（${INFERRED_EDITION}），与 --edition ${EDITION} 不符"
+    fail "归档 Bundle ID 为 ${BUNDLE_ID}（${INFERRED_EDITION}），与 --edition ${EDITION} 不符"
 fi
 EDITION="${INFERRED_EDITION}"
+pv_load_edition_identity "${EDITION}" "${BUILD_PROPS}" \
+    || fail "无法从 ${BUILD_PROPS} 读取 ${EDITION} 版产品身份。"
+PACKAGE_PRODUCT="${PV_DISTRIBUTION_NAME}"
+[[ "${BUNDLE_ID}" == "${PV_PACKAGE_ID}" ]] || fail "Bundle ID 不匹配：期望 ${PV_PACKAGE_ID}，实际 ${BUNDLE_ID}"
 
+DISPLAY_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "${APP_PATH}/Info.plist" 2>/dev/null || true)"
+[[ "${DISPLAY_NAME}" == "${PV_DISPLAY_NAME}" ]] \
+    || fail "归档产品名 ${DISPLAY_NAME:-<空>} 与 ${EDITION} 版期望 ${PV_DISPLAY_NAME} 不符"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "${APP_PATH}/Info.plist" 2>/dev/null || true)" == "${DISPLAY_NAME}" ]] \
     || fail "CFBundleDisplayName 与 CFBundleName（${DISPLAY_NAME}）不一致"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${APP_PATH}/Info.plist")" == "${VERSION}" ]] || fail "CFBundleShortVersionString 不是 ${VERSION}"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${APP_PATH}/Info.plist")" == "${BUILD}" ]] || fail "CFBundleVersion 不是 ${BUILD}"
-[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${APP_PATH}/Info.plist")" == "${BUNDLE_ID}" ]] || fail "Bundle ID 不匹配"
 
 if [[ "${ARCHIVE_PATH}" == *"/release/testflight/"* ]]; then
     # 归档目录属于打包产物，文件名继续用 PhotoViewer-AI。

@@ -2,14 +2,14 @@
 """校验 release/ 只含分发包与打包过程产物，并生成 SHA256SUMS。
 
 release/ 允许的顶层内容：
-  packages/    分发包（历史与当前），文件名 <PhotoViewer|PhotoViewer-AI>-<版本>-<平台后缀>.<dmg|apk|ipa|exe>
+  packages/    分发包（历史与当前），文件名 <PhotoViewer|PhotoViewer-AI>-<版本>-<平台后缀>.<dmg|apk|aab|ipa|exe|msix>
   ios-stable/  最新 iOS 稳定安装源：<standard|ai>/PhotoViewer.iOS.app（旧布局为顶层 PhotoViewer.iOS.app）
   testflight/  最近一次 TestFlight 归档：<standard|ai>/*.xcarchive（旧布局为顶层单个 .xcarchive）
   SHA256SUMS   分发包校验清单
   README.md    可选说明
 
 双版本发布矩阵（见 Design/spec/editions.md 与 Plans/distribution-package-size-optimization-plan.md）：
-  -win-x64 .exe · -mac-arm64 .dmg · -android-arm64 .apk · -ios .ipa（-ios-arm64 同义）
+  -win-x64 .msix（附加/历史 .exe） · -mac-arm64 .dmg · -android-arm64 .aab（直接分发/历史 .apk） · -ios .ipa（-ios-arm64 同义）
 历史包继续按原后缀接受：-arm64 .dmg（macOS 0.8.x）、-android-signed .apk（Android 尚未迁移）。
 Android 只发布 arm64-v8a，x86_64/x64/x86/arm 后缀一律拒绝。
 
@@ -29,8 +29,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 RELEASE = ROOT / "release"
 
-PACKAGE_EXTENSIONS = {".dmg", ".apk", ".ipa", ".exe"}
-PACKAGE_NAME = re.compile(r"^(PhotoViewer(?:-AI)?)-(\d+\.\d+\.\d+)-(.+)\.(dmg|apk|ipa|exe)$")
+PACKAGE_EXTENSIONS = {".dmg", ".apk", ".aab", ".ipa", ".exe", ".msix"}
+PACKAGE_NAME = re.compile(r"^(PhotoViewer(?:-AI)?)-(\d+\.\d+\.\d+)-(.+)\.(dmg|apk|aab|ipa|exe|msix)$")
 ALLOWED_TOP_DIRS = {"packages", "ios-stable", "testflight"}
 ALLOWED_TOP_FILES = {"SHA256SUMS", "README.md"}
 IOS_STABLE_ALLOWED = {"PhotoViewer.iOS.app"}
@@ -113,9 +113,9 @@ def check_testflight(testflight: Path) -> tuple[list[Path], list[str], list[str]
 
 # 双版本发布矩阵：平台后缀 → 允许的扩展名
 MATRIX_SUFFIXES = {
-    "win-x64": {".exe"},
+    "win-x64": {".msix", ".exe"},
     "mac-arm64": {".dmg"},
-    "android-arm64": {".apk"},
+    "android-arm64": {".aab", ".apk"},
     "ios-arm64": {".ipa"},
     "ios": {".ipa"},
 }
@@ -238,6 +238,7 @@ def main() -> int:
             packages.append(entry)
 
     seen: dict[tuple[str, str, str], str] = {}
+    seen_artifacts: dict[tuple[str, str, str, str], str] = {}
     history: list[Path] = []
     for package in packages:
         match = PACKAGE_NAME.match(package.name)
@@ -245,10 +246,15 @@ def main() -> int:
             continue
         product, version, platform = match.group(1), match.group(2), match.group(3)
         key = (product, version, platform)
-        if key in seen:
-            errors.append(f"release/packages 中 {product} {version} 的 {platform} 出现多次：{seen[key]} / {package.name}")
+        artifact_key = (*key, package.suffix.lower())
+        if artifact_key in seen_artifacts:
+            errors.append(
+                f"release/packages 中 {product} {version} 的 {platform}{package.suffix} 出现多次："
+                f"{seen_artifacts[artifact_key]} / {package.name}"
+            )
         else:
-            seen[key] = package.name
+            seen_artifacts[artifact_key] = package.name
+        seen[key] = package.name
         if current_version and version != current_version:
             history.append(package)
 

@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MSIX 清单模板：Identity / 显示名 / Application Id / 文件关联名由
+  PhotoViewer.Windows.csproj 的 GenerateWindowsMsixManifest 按 edition 写入中间副本，
+  本文件不参与打包，也不作为最终身份来源。
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap10 rescap">
+
+  <Identity Name="PLACEHOLDER.PackageId" Publisher="PLACEHOLDER.Publisher" Version="PLACEHOLDER.Version" ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>PLACEHOLDER.DisplayName</DisplayName>
+    <PublisherDisplayName>xiaojh.cc</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="zh-CN" />
+    <Resource Language="en-US" />
+  </Resources>
+
+  <Applications>
+    <Application Id="PLACEHOLDER.ApplicationId" Executable="$targetnametoken$.exe" EntryPoint="$targetentrypoint$"
+                 uap10:TrustLevel="mediumIL" uap10:RuntimeBehavior="packagedClassicApp">
+      <uap:VisualElements DisplayName="PLACEHOLDER.DisplayName" Description="PLACEHOLDER.DisplayName"
+                          BackgroundColor="transparent"
+                          Square150x150Logo="Assets\Square150x150Logo.png"
+                          Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" Square71x71Logo="Assets\Square71x71Logo.png" />
+        <uap:ShowNameOnTiles>
+          <uap:ShowOn Tile="square150x150Logo" />
+        </uap:ShowNameOnTiles>
+      </uap:VisualElements>
+      <Extensions>
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap:FileTypeAssociation Name="PLACEHOLDER.FileAssociation">
+            <uap:DisplayName>PLACEHOLDER.DisplayName</uap:DisplayName>
+            <uap:SupportedFileTypes>
+              <uap:FileType>.jpg</uap:FileType>
+              <uap:FileType>.jpeg</uap:FileType>
+              <uap:FileType>.png</uap:FileType>
+              <uap:FileType>.heic</uap:FileType>
+              <uap:FileType>.heif</uap:FileType>
+              <uap:FileType>.hif</uap:FileType>
+              <uap:FileType>.avif</uap:FileType>
+              <uap:FileType>.tif</uap:FileType>
+              <uap:FileType>.tiff</uap:FileType>
+              <uap:FileType>.webp</uap:FileType>
+              <uap:FileType>.bmp</uap:FileType>
+              <uap:FileType>.gif</uap:FileType>
+              <uap:FileType>.arw</uap:FileType>
+              <uap:FileType>.cr2</uap:FileType>
+              <uap:FileType>.cr3</uap:FileType>
+              <uap:FileType>.nef</uap:FileType>
+              <uap:FileType>.nrw</uap:FileType>
+              <uap:FileType>.raf</uap:FileType>
+              <uap:FileType>.rw2</uap:FileType>
+              <uap:FileType>.orf</uap:FileType>
+              <uap:FileType>.dng</uap:FileType>
+              <uap:FileType>.pef</uap:FileType>
+              <uap:FileType>.srw</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap:FileTypeAssociation>
+        </uap:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

@@ -17,10 +17,11 @@ namespace PhotoViewer.Android.Core;
 /// <c>exported=true</c> + <c>grantUriPermissions</c> + <c>MANAGE_DOCUMENTS</c> 读写权限
 /// （同 UID 访问不受该权限限制，只有本应用与系统 DocumentsUI 能读写这棵测试树）。
 /// Release 不注册 Provider。仅验收使用，不承载产品数据，也不是 MTP/USB 设备模拟。
+/// authority 由实际 applicationId 派生，标准版与 AI 版各自独立，可同机并存。
 /// </summary>
 #if DEBUG
 [ContentProvider(
-    new[] { DebugTestDocumentsProvider.TestAuthority },
+    new[] { DebugTestDocumentsProvider.TestAuthorityPlaceholder },
     Name = "cc.xiaojh.PhotoViewer.Core.DebugTestDocumentsProvider",
     // DocumentsProvider.attachInfo 强制 exported=true + grantUriPermissions + MANAGE_DOCUMENTS 保护；
     // 同 UID 访问不受该权限限制，因此只有本应用与系统 DocumentsUI 能读写这棵测试树。
@@ -31,8 +32,14 @@ namespace PhotoViewer.Android.Core;
 #endif
 public sealed class DebugTestDocumentsProvider : DocumentsProvider
 {
-    /// <summary>固定测试 authority（Provider 属性生成 manifest 条目时使用）。</summary>
-    internal const string TestAuthority = "cc.xiaojh.PhotoViewer.debug.storage";
+    private const string TestAuthoritySuffix = ".debug.storage";
+
+    /// <summary>清单占位 authority：构建时替换成实际 ApplicationId（见 csproj 的 AndroidManifestPlaceholders）。</summary>
+    internal const string TestAuthorityPlaceholder = "${pvPackageId}" + TestAuthoritySuffix;
+
+    /// <summary>实际 authority，由应用实际包名派生；两版 authority 不同，可同机并存。</summary>
+    internal static string TestAuthority =>
+        global::Android.App.Application.Context.PackageName + TestAuthoritySuffix;
 
     internal const string WritableRoot = "writable";
     internal const string ReadonlyRoot = "readonly";
@@ -503,18 +510,24 @@ public sealed class DebugTestDocumentsProvider : DocumentsProvider
 /// 显示名要靠 <c>_display_name</c> 查」的 provider（<c>content://authority/4201</c>），
 /// 用来核对 ACTION_VIEW 入口必须在后台读真实属性，而不是拿 Uri 末段当文件名。
 /// 不是 DocumentsProvider（<c>DocumentsContract.IsDocumentUri</c> 为 false），仅 Debug 注册，
-/// 只读、只服务登记过的数字 ID，不承载产品数据。
+/// 只读、只服务登记过的数字 ID，不承载产品数据。authority 同样由实际 applicationId 派生。
 /// </summary>
 #if DEBUG
 [ContentProvider(
-    new[] { DebugTestMediaProvider.TestAuthority },
+    new[] { DebugTestMediaProvider.TestAuthorityPlaceholder },
     Name = "cc.xiaojh.PhotoViewer.Core.DebugTestMediaProvider",
     Exported = false)]
 #endif
 public sealed class DebugTestMediaProvider : ContentProvider
 {
-    /// <summary>固定测试 authority。</summary>
-    internal const string TestAuthority = "cc.xiaojh.PhotoViewer.debug.media";
+    private const string TestAuthoritySuffix = ".debug.media";
+
+    /// <summary>清单占位 authority：构建时替换成实际 ApplicationId（见 csproj 的 AndroidManifestPlaceholders）。</summary>
+    internal const string TestAuthorityPlaceholder = "${pvPackageId}" + TestAuthoritySuffix;
+
+    /// <summary>实际 authority，由应用实际包名派生；两版 authority 不同，可同机并存。</summary>
+    internal static string TestAuthority =>
+        global::Android.App.Application.Context.PackageName + TestAuthoritySuffix;
 
     private static readonly string[] DefaultColumns = ["_display_name", "_size", "date_modified"];
     private static readonly object Gate = new();

@@ -38,7 +38,7 @@ namespace PhotoViewer.Windows.Native;
 internal sealed partial class WindowsMainWindow : Window
 {
     /// <summary>窗口标题的应用名(标题格式 <c>文件夹名 - 文件名 - 产品名</c>,SHELL-02;产品名按发行版)。</summary>
-    private const string AppTitle = WindowsProductInfo.DisplayName;
+    private static readonly string AppTitle = WindowsProductInfo.DisplayName;
 
     /// <summary>任务栏缩略浮窗图标:随输出复制的 icon.ico(与 EXE 图标同源)。</summary>
     private const string WindowIconFileName = "icon.ico";

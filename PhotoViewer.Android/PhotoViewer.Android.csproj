@@ -2,10 +2,12 @@
     <PropertyGroup>
         <OutputType>Exe</OutputType>
         <TargetFramework>net10.0-android</TargetFramework>
-        <!-- 双版本显示名：标准版 PhotoViewer，AI 版 PhotoViewer AI（空格，不用横线）。
-             分发包文件名才用 PhotoViewer-AI。ApplicationId 两版一致，便于同一台设备覆盖安装并共用用户数据。 -->
-        <ApplicationTitle Condition="'$(PhotoViewerEnableDino)' == 'true'">PhotoViewer AI</ApplicationTitle>
-        <ApplicationTitle Condition="'$(PhotoViewerEnableDino)' != 'true'">PhotoViewer</ApplicationTitle>
+        <!-- 产品身份唯一来源是根 Directory.Build.props：外部只传 PhotoViewerEdition=standard|ai，
+             显示名、ApplicationId 与分发包前缀都从这里映射；DINO 只是 edition 派生的能力开关。 -->
+        <ApplicationTitle>$(PhotoViewerDisplayName)</ApplicationTitle>
+        <ApplicationId>$(PhotoViewerPackageId)</ApplicationId>
+        <!-- Debug 验收 Provider 的 authority 在 C# 里以 ${pvPackageId} 占位，由清单生成时替换成实际 ApplicationId。 -->
+        <AndroidManifestPlaceholders>pvPackageId=$(PhotoViewerPackageId)</AndroidManifestPlaceholders>
         <DefineConstants Condition="'$(PhotoViewerEnableDino)' == 'true'">$(DefineConstants);PHOTOVIEWER_DINO</DefineConstants>
         <!-- 只发 arm64-v8a：APK 不得出现 x86_64 / armeabi-v7a。-->
         <RuntimeIdentifiers>android-arm64</RuntimeIdentifiers>
@@ -13,7 +15,6 @@
         <!-- ONNX Runtime AAR 要求 minSdk >= 24（Android 7.0）；A2-M1 起必须满足此门槛 -->
         <SupportedOSPlatformVersion>24</SupportedOSPlatformVersion>
         <Nullable>enable</Nullable>
-        <ApplicationId>cc.xiaojh.PhotoViewer</ApplicationId>
         <AndroidPackageFormat>apk</AndroidPackageFormat>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <!-- 默认情况下，C# Dev Kit 等环境很难推断通过 dotnet workload 下载的隐藏 Android SDK，
@@ -132,10 +133,9 @@
     </ItemGroup>
 
     <ItemGroup>
-        <!-- 共享工程按同一 edition 还原/编译：AdditionalProperties 透传开关，
-             命令行的全局属性也照此转发，两版不会复用对方的 obj 资产。 -->
+        <!-- 共享工程按同一 edition 还原/编译：透传 edition，两版不会复用对方的 obj 资产。 -->
         <ProjectReference Include="..\PhotoViewer\PhotoViewer.csproj"
-                          AdditionalProperties="PhotoViewerEnableDino=$(PhotoViewerEnableDino)" />
+                          AdditionalProperties="PhotoViewerEdition=$(PhotoViewerEdition)" />
     </ItemGroup>
 
     <!--
@@ -206,13 +206,18 @@
 
 <!--
   标准版与 AI 版共用一套 bin/obj 会互相复用还原资产与中间文件，两版的 bin/obj 已按 edition
-  隔离（见根 Directory.Build.props）。裸构建/restore 缺少开关或给了非法值必须直接失败，
-  不能悄悄落到标准版目录；restore 与构建都必须显式带 -p:PhotoViewerEnableDino=true|false。
+  隔离（见根 Directory.Build.props）。裸构建/restore 缺少 edition 或给了非法值必须直接失败，
+  不能悄悄落到标准版目录；restore 与构建都必须显式带 -p:PhotoViewerEdition=standard|ai。
+  PhotoViewerEnableDino 由 edition 派生，不接受单独覆盖。
 -->
-<Target Name="_RequireExplicitDinoEdition"
+<Target Name="_RequireExplicitEdition"
         BeforeTargets="Restore;PrepareForBuild"
         Condition="'$(DesignTimeBuild)' != 'true'">
-    <Error Condition="'$(PhotoViewerEditionExplicit)' != 'true' Or ('$(PhotoViewerEnableDino)' != 'true' And '$(PhotoViewerEnableDino)' != 'false')"
-           Text="构建 PhotoViewer.Android 必须显式指定发行版本：-p:PhotoViewerEnableDino=false（标准版）或 -p:PhotoViewerEnableDino=true（AI 版）。运行命令见 DEV.md 的 Tasks 或 PhotoViewer.Android/publish-android-apk.sh。" />
+    <Error Condition="'$(PhotoViewerEdition)' != 'standard' And '$(PhotoViewerEdition)' != 'ai'"
+           Text="构建 PhotoViewer.Android 必须显式指定发行版本：-p:PhotoViewerEdition=standard（标准版）或 -p:PhotoViewerEdition=ai（AI 版）。运行命令见 DEV.md 的 Tasks 或 PhotoViewer.Android/publish-android-apk.sh。" />
+    <Error Condition="'$(PhotoViewerPackageId)' == '' Or '$(PhotoViewerDisplayName)' == '' Or '$(PhotoViewerDistributionName)' == ''"
+           Text="根 Directory.Build.props 未给出 $(PhotoViewerEdition) 对应的产品身份（PhotoViewerPackageId / PhotoViewerDisplayName / PhotoViewerDistributionName）。" />
+    <Error Condition="('$(PhotoViewerEdition)' == 'standard' And '$(PhotoViewerEnableDino)' != 'false') Or ('$(PhotoViewerEdition)' == 'ai' And '$(PhotoViewerEnableDino)' != 'true')"
+           Text="PhotoViewerEnableDino 由 PhotoViewerEdition 派生，不能单独覆盖；请只传 -p:PhotoViewerEdition=standard|ai。" />
 </Target>
 </Project>

@@ -1,11 +1,11 @@
 #!/bin/bash
 # 用法：bash publish.sh [--edition standard|ai|both] [--local] [版本号]
 #       bash publish.sh --staple-only [--edition standard|ai|both] [版本号]
-# --edition 默认 both；--local 只做本机 adhoc 构建 + 包扫描 + DMG 装载验证，不签名/不公证/不归档。
+# --edition 是唯一产品输入，默认 both；--local 只做本机 adhoc 构建 + 包扫描 + DMG 装载验证，不签名/不公证/不归档。
 # 版本号唯一来源是根 Directory.Build.props 的 AppVersion；位置参数只为兼容旧命令，必须与之一致。
 # 公证已通过但票据附加失败时用 --staple-only 只重试票据附加与验证。
-# 命名：DISPLAY_NAME 是产品显示名（AI 版为 "PhotoViewer AI"，含空格），决定 .app 目录名、Info.plist
-# 名称与 DMG 卷名；PACKAGE_PRODUCT 只进分发包文件名（AI 版为 PhotoViewer-AI，保留横线）。
+# 显示名、包身份（CFBundleIdentifier）与分发文件名前缀统一取根 Directory.Build.props 按 edition 派生的映射
+# （PhotoViewerDisplayName / PhotoViewerPackageId / PhotoViewerDistributionName），脚本内不另写产品判断。
 set -euo pipefail
 
 usage() {
@@ -90,6 +90,39 @@ REPORT_DIR="${REPO_ROOT}/artifacts/acceptance/mac-editions"
 LOCAL_DMG_DIR="${REPO_ROOT}/artifacts/scratch/mac-local-dmg"
 SCANNER="${REPO_ROOT}/Tools/check-mac-package.py"
 NOTARY_PROFILE="${MAC_NOTARY_PROFILE:-PhotoViewer-notary}"
+
+# 身份只消费根 Directory.Build.props 按 edition 派生的映射；用 MSBuild 求值，避免脚本复制产品判断。
+load_identity() {
+    local edition="$1"
+    local query
+    if ! query="$(dotnet msbuild "${PROJECT_PATH}" \
+        -getProperty:PhotoViewerDisplayName,PhotoViewerPackageId,PhotoViewerDistributionName,PhotoViewerProductId,PhotoViewerEnableDino \
+        -p:PhotoViewerEdition="${edition}" 2>/dev/null)"; then
+        echo "无法求值 ${PROJECT_PATH} 的 edition 身份（${edition}）。"
+        exit 1
+    fi
+    eval "$(python3 - "${query}" <<'PY'
+import json, shlex, sys
+try:
+    text = sys.argv[1]
+    props = json.loads(text[text.index("{"):])["Properties"]
+except Exception:
+    raise SystemExit(0)
+for key, name in (
+    ("PhotoViewerDisplayName", "DISPLAY_NAME"),
+    ("PhotoViewerPackageId", "PACKAGE_ID"),
+    ("PhotoViewerDistributionName", "PACKAGE_PRODUCT"),
+    ("PhotoViewerProductId", "PRODUCT_ID"),
+    ("PhotoViewerEnableDino", "DINO"),
+):
+    print(f"{name}={shlex.quote(str(props.get(key) or ''))}")
+PY
+)"
+    if [[ -z "${DISPLAY_NAME}" || -z "${PACKAGE_ID}" || -z "${PACKAGE_PRODUCT}" ]]; then
+        echo "根 Directory.Build.props 未派生 ${edition} 的产品身份（DisplayName / PackageId / DistributionName）。"
+        exit 1
+    fi
+}
 
 if [[ -z "${VERSION}" || -z "${BUILD_NUMBER}" ]]; then
     echo "未能从 ${BUILD_PROPS} 读取 AppVersion / AppBuildNumber。"
@@ -176,10 +209,12 @@ scan_app() {
     local app_path="$1"
     local edition="$2"
     local display_name="$3"
-    local report_path="$4"
+    local bundle_id="$4"
+    local report_path="$5"
     python3 "${SCANNER}" "${app_path}" \
         --edition "${edition}" \
         --product-name "${display_name}" \
+        --bundle-id "${bundle_id}" \
         --version "${VERSION}" \
         --build-number "${BUILD_NUMBER}" \
         --output "${report_path}"
@@ -190,7 +225,8 @@ verify_mounted_dmg() {
     local dmg_path="$1"
     local edition="$2"
     local display_name="$3"
-    local report_path="$4"
+    local bundle_id="$4"
+    local report_path="$5"
 
     MOUNT_POINT="$(mktemp -d "${TMPDIR:-/tmp}/pv-dmg-mount.XXXXXX")"
     hdiutil attach "${dmg_path}" -readonly -nobrowse -noautoopen \
@@ -201,7 +237,7 @@ verify_mounted_dmg() {
         cleanup_mount
         return 1
     fi
-    if ! scan_app "${mounted_app}" "${edition}" "${display_name}" "${report_path}"; then
+    if ! scan_app "${mounted_app}" "${edition}" "${display_name}" "${bundle_id}" "${report_path}"; then
         echo "DMG 内应用包扫描未通过：${report_path}"
         cleanup_mount
         return 1
@@ -217,18 +253,7 @@ verify_mounted_dmg() {
 }
 
 for EDITION in "${EDITIONS[@]}"; do
-    case "${EDITION}" in
-        ai)
-            DISPLAY_NAME="PhotoViewer AI"
-            PACKAGE_PRODUCT="PhotoViewer-AI"
-            DINO="true"
-            ;;
-        *)
-            DISPLAY_NAME="PhotoViewer"
-            PACKAGE_PRODUCT="PhotoViewer"
-            DINO="false"
-            ;;
-    esac
+    load_identity "${EDITION}"
 
     OUT_DIR="${SCRIPT_DIR}/bin/${EDITION}/Release/net10.0-macos/osx-arm64"
     APP_PATH="${OUT_DIR}/${DISPLAY_NAME}.app"
@@ -263,22 +288,21 @@ for EDITION in "${EDITIONS[@]}"; do
 
     echo ""
     if [[ "${LOCAL_ONLY}" -eq 1 ]]; then
-        echo "=== [${EDITION}] 本地 adhoc 构建 ${DISPLAY_NAME} ${VERSION}（${BUILD_NUMBER}）—— 不用于分发 ==="
+        echo "=== [${EDITION}] 本地 adhoc 构建 ${DISPLAY_NAME} ${VERSION}（${BUILD_NUMBER}，${PACKAGE_ID}）—— 不用于分发 ==="
     else
-        echo "=== [${EDITION}] ${DISPLAY_NAME} ${VERSION}（${BUILD_NUMBER}，PhotoViewerEnableDino=${DINO}）==="
+        echo "=== [${EDITION}] ${DISPLAY_NAME} ${VERSION}（${BUILD_NUMBER}，${PACKAGE_ID}，DINO=${DINO}）==="
     fi
 
     if [[ "${STAPLE_ONLY}" -eq 0 ]]; then
         echo ""
         echo "=== [${EDITION}] 还原 ==="
-        dotnet restore "${PROJECT_PATH}" -p:PhotoViewerEnableDino="${DINO}"
+        dotnet restore "${PROJECT_PATH}" -p:PhotoViewerEdition="${EDITION}"
 
         echo ""
         echo "=== [${EDITION}] 构建 ==="
         rm -rf "${APP_PATH}"
         dotnet publish "${PROJECT_PATH}" -c Release -r osx-arm64 --no-restore \
-            -p:PhotoViewerEnableDino="${DINO}" \
-            -p:ApplicationTitle="${DISPLAY_NAME}"
+            -p:PhotoViewerEdition="${EDITION}"
 
         if [[ ! -d "${APP_PATH}" ]]; then
             echo "未找到应用包：${APP_PATH}"
@@ -308,7 +332,7 @@ for EDITION in "${EDITIONS[@]}"; do
         echo ""
         echo "=== [${EDITION}] 包扫描 ==="
         mkdir -p "${REPORT_DIR}"
-        if ! scan_app "${APP_PATH}" "${EDITION}" "${DISPLAY_NAME}" "${APP_SCAN}"; then
+        if ! scan_app "${APP_PATH}" "${EDITION}" "${DISPLAY_NAME}" "${PACKAGE_ID}" "${APP_SCAN}"; then
             echo "包扫描未通过，终止发布：${APP_SCAN}"
             exit 1
         fi
@@ -423,7 +447,7 @@ print(entry.get("id", "") if isinstance(entry, dict) else "")
 
     echo ""
     echo "=== [${EDITION}] 挂载 DMG 核对实际应用包 ==="
-    verify_mounted_dmg "${DMG_PATH}" "${EDITION}" "${DISPLAY_NAME}" "${DMG_SCAN}"
+    verify_mounted_dmg "${DMG_PATH}" "${EDITION}" "${DISPLAY_NAME}" "${PACKAGE_ID}" "${DMG_SCAN}"
 
     if [[ "${LOCAL_ONLY}" -eq 0 ]]; then
         mkdir -p "${PACKAGE_DIR}"
@@ -445,7 +469,10 @@ print(entry.get("id", "") if isinstance(entry, dict) else "")
     write_report "${EVIDENCE}" \
         "mode=${MODE}" \
         "edition=${EDITION}" \
+        "productId=${PRODUCT_ID}" \
+        "packageId=${PACKAGE_ID}" \
         "productName=${DISPLAY_NAME}" \
+        "distributionName=${PACKAGE_PRODUCT}" \
         "packageProduct=${PACKAGE_PRODUCT}" \
         "version=${VERSION}" \
         "buildNumber=${BUILD_NUMBER}" \

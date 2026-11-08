@@ -75,26 +75,6 @@ internal static partial class AndroidNativeChecks
         }
     }
 
-    /// <summary>
-    /// <c>--es pv-check roundtrip</c>（验收）：AI → 标准 → AI 的跨进程 / 覆盖安装往返。
-    /// 三阶段要求隔离设置档与独立数据库在 <see cref="MainViewModel"/> 建立前生效，因此由 Shell 直接分发，
-    /// 不走 <see cref="RunStandaloneAsync"/> 的 inline 主流程（那条路径要先有首图并会写入主屏几何结果）。
-    /// </summary>
-    /// <param name="activity">宿主 Activity。</param>
-    /// <param name="main">共享主 VM。</param>
-    /// <param name="session">展示会话。</param>
-    /// <param name="root">主屏根视图。</param>
-    /// <param name="intent">启动 Intent（读取 <c>pv-check</c> / <c>pv-roundtrip</c>）。</param>
-    /// <returns>接管了 roundtrip 返回 true；调用方不再走普通 pv-check 分发。</returns>
-    internal static bool TryStartRoundtrip(Activity activity, MainViewModel main, PhotoLoadSession session,
-        AndroidNativeRootView root, Intent? intent)
-    {
-        if (!string.Equals(intent?.GetStringExtra("pv-check"), "roundtrip", StringComparison.OrdinalIgnoreCase))
-            return false;
-        StartRoundtrip(activity, main, session, root, intent?.GetStringExtra("pv-roundtrip"));
-        return true;
-    }
-
     /// <summary>等待条件成立；超时抛异常，由该步的 try/catch 记 FAIL 并继续。</summary>
     /// <param name="condition">条件。</param>
     /// <param name="label">超时说明（写进报告）。</param>

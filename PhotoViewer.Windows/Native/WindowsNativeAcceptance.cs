@@ -249,6 +249,17 @@ internal sealed partial class WindowsMainWindow
                 CreateFixture(second);
             });
 
+            // 同版二次激活必须转发到同版主实例；键按产品包 ID 派生，另一产品的键不会命中本实例。
+            RequireSmoke(
+                WindowsSingleInstance.InstanceKey == WindowsProductInfo.PackageId + WindowsSingleInstance.InstanceKeySuffix,
+                $"单实例键未按产品身份派生：{WindowsSingleInstance.InstanceKey}");
+            RequireSmoke(
+                WindowsSingleInstance.InstanceKey != WindowsSingleInstance.SiblingInstanceKey,
+                $"标准版与 AI 版共用单实例键：{WindowsSingleInstance.InstanceKey}");
+            checks.Add(
+                $"PASS single instance key: {WindowsSingleInstance.InstanceKey}"
+                + $" (product-scoped; {WindowsSingleInstance.SiblingInstanceKey} is a different product and never forwarded)");
+
             await OpenPathsAsync(new[] { folder });
             await WaitForSmokeAsync(() => _main.CurrentFile?.Name == "first.jpg", "主实例载入目录首张");
             checks.Add("PASS primary: activation folder opened, current=first.jpg");

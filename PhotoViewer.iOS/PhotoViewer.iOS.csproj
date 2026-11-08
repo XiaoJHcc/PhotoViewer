@@ -2,11 +2,11 @@
     <PropertyGroup>
         <OutputType>Exe</OutputType>
         <TargetFramework>net10.0-ios</TargetFramework>
-        <ApplicationTitle>PhotoViewer</ApplicationTitle>
-        <!-- 显示名（CFBundleName/CFBundleDisplayName、主屏名称）用空格；
-             分发包文件名仍用 PhotoViewer-AI（由 publish.sh 的 PACKAGE_PRODUCT 决定）。 -->
-        <ApplicationTitle Condition="'$(PhotoViewerEnableDino)' == 'true'">PhotoViewer AI</ApplicationTitle>
-        <DefineConstants Condition="'$(PhotoViewerEnableDino)' == 'true'">$(DefineConstants);PHOTOVIEWER_DINO</DefineConstants>
+        <!-- 身份只消费根 Directory.Build.props 的 edition 映射：显示名用空格，
+             分发包文件名用 PhotoViewer / PhotoViewer-AI，Bundle ID 用规范应用 ID。 -->
+        <ApplicationTitle>$(PhotoViewerDisplayName)</ApplicationTitle>
+        <!-- DINO 编译能力由 edition 派生：标准版不编译，AI 版内置模型与推理依赖。 -->
+        <DefineConstants Condition="'$(PhotoViewerEdition)' == 'ai'">$(DefineConstants);PHOTOVIEWER_DINO</DefineConstants>
         <SupportedOSPlatformVersion>17.0</SupportedOSPlatformVersion>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
@@ -42,13 +42,13 @@
         <ImageAsset Include="Resources\Assets.xcassets\AppIcon.appiconset\icon-1024.png" />
     </ItemGroup>
 
-    <ItemGroup Condition="'$(PhotoViewerEnableDino)' == 'true'">
+    <ItemGroup Condition="'$(PhotoViewerEdition)' == 'ai'">
         <PackageReference Include="Microsoft.ML.OnnxRuntime" />
         <BundleResource Include="../PhotoViewer/Assets/Models/*.onnx" Link="Assets/Models/%(Filename)%(Extension)" />
         <BundleResource Include="../PhotoViewer/Assets/Models/DINOv3-LICENSE.md" Link="Assets/Models/DINOv3-LICENSE.md" />
     </ItemGroup>
 
-    <ItemGroup Condition="'$(PhotoViewerEnableDino)' != 'true'">
+    <ItemGroup Condition="'$(PhotoViewerEdition)' != 'ai'">
         <Compile Remove="Native/iOSSimilarityPanel.cs" />
         <Compile Remove="Native/iOSNativeSimilarityCheck.cs" />
         <Compile Remove="Native/iOSDinoCheck.cs" />
@@ -56,7 +56,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\PhotoViewer\PhotoViewer.csproj"
-                          AdditionalProperties="PhotoViewerEnableDino=$(PhotoViewerEnableDino)" />
+                          AdditionalProperties="PhotoViewerEdition=$(PhotoViewerEdition)" />
         <Compile Include="..\PhotoViewer.Apple\**\*.cs" />
         <Compile Include="..\PhotoViewer.Shared\**\*.cs" />
         <Using Include="PhotoViewer.Shared" />
@@ -66,7 +66,7 @@
 
     <!-- .NET 10 必须提前展开静态 xcframework，否则原生链接输入不含 ORT 切片。 -->
     <Target Name="_PvExpandOnnxRuntimeNativeReference"
-            Condition="'$(PhotoViewerEnableDino)' == 'true'"
+            Condition="'$(PhotoViewerEdition)' == 'ai'"
             BeforeTargets="_ComputeLinkNativeExecutableInputs;_ComputeFrameworkFilesToPublish;_ComputeDynamicLibrariesToPublish"
             DependsOnTargets="_ExpandNativeReferences">
         <ItemGroup>
@@ -80,23 +80,40 @@
         </ItemGroup>
     </Target>
 
+    <!-- 源模板 Info.plist 只读；版本、构建号、产品名与规范 Bundle ID 写入中间副本。 -->
     <Target Name="_SyncInfoPlistVersion" BeforeTargets="_DetectAppManifest">
         <PropertyGroup>
             <_SyncedInfoPlist>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)', 'Info.plist'))</_SyncedInfoPlist>
             <_SyncedInfoPlistStaging>$(_SyncedInfoPlist).tmp</_SyncedInfoPlistStaging>
         </PropertyGroup>
         <MakeDir Directories="$(IntermediateOutputPath)" />
-        <Exec Command="/bin/cp &quot;$(MSBuildProjectDirectory)/Info.plist&quot; &quot;$(_SyncedInfoPlistStaging)&quot; &amp;&amp; /usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString $(AppVersion)' -c 'Set :CFBundleVersion $(AppBuildNumber)' -c 'Set :CFBundleDisplayName $(ApplicationTitle)' -c 'Add :CFBundleName string $(ApplicationTitle)' &quot;$(_SyncedInfoPlistStaging)&quot; &amp;&amp; { /usr/bin/cmp -s &quot;$(_SyncedInfoPlistStaging)&quot; &quot;$(_SyncedInfoPlist)&quot; || /bin/cp &quot;$(_SyncedInfoPlistStaging)&quot; &quot;$(_SyncedInfoPlist)&quot;; } &amp;&amp; /bin/rm -f &quot;$(_SyncedInfoPlistStaging)&quot;" />
+        <Exec Command="/bin/cp &quot;$(MSBuildProjectDirectory)/Info.plist&quot; &quot;$(_SyncedInfoPlistStaging)&quot; &amp;&amp; /usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString $(AppVersion)' -c 'Set :CFBundleVersion $(AppBuildNumber)' -c 'Set :CFBundleDisplayName $(ApplicationTitle)' -c 'Add :CFBundleName string $(ApplicationTitle)' -c 'Set :CFBundleIdentifier $(PhotoViewerPackageId)' &quot;$(_SyncedInfoPlistStaging)&quot; &amp;&amp; { /usr/bin/cmp -s &quot;$(_SyncedInfoPlistStaging)&quot; &quot;$(_SyncedInfoPlist)&quot; || /bin/cp &quot;$(_SyncedInfoPlistStaging)&quot; &quot;$(_SyncedInfoPlist)&quot;; } &amp;&amp; /bin/rm -f &quot;$(_SyncedInfoPlistStaging)&quot;" />
         <PropertyGroup>
             <AppBundleManifest>$(_SyncedInfoPlist)</AppBundleManifest>
         </PropertyGroup>
-        <Message Importance="high" Text="[版本同步] $(ApplicationTitle) $(AppVersion) ($(AppBuildNumber)) → $(_SyncedInfoPlist)" />
+        <Message Importance="high" Text="[版本同步] $(ApplicationTitle) $(AppVersion) ($(AppBuildNumber)) $(PhotoViewerPackageId) → $(_SyncedInfoPlist)" />
     </Target>
 
-    <Target Name="_RequireExplicitDinoEdition"
+    <!-- 从实际 .app 复核身份：增量构建遗留的旧 AppManifest 不得让包带上另一产品的 Bundle ID。 -->
+    <Target Name="_PvVerifyAppBundleIdentity" AfterTargets="Build"
+            Condition="'$(DesignTimeBuild)' != 'true'">
+        <Error Condition="'$(AppBundleDir)' == ''"
+               Text="无法确定应用包目录（AppBundleDir 为空），不能核对实际包身份。" />
+        <PropertyGroup>
+            <_PvAppBundleInfoPlist>$([System.IO.Path]::Combine('$(AppBundleDir)', 'Info.plist'))</_PvAppBundleInfoPlist>
+        </PropertyGroup>
+        <Exec Command="/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' &quot;$(_PvAppBundleInfoPlist)&quot; | /usr/bin/grep -qx '$(PhotoViewerPackageId)'"
+              ContinueOnError="true">
+            <Output TaskParameter="ExitCode" PropertyName="_PvAppBundleIdExitCode" />
+        </Exec>
+        <Error Condition="'$(_PvAppBundleIdExitCode)' != '0'"
+               Text="实际应用包 Bundle ID 与 edition 映射不一致：期望 $(PhotoViewerPackageId)（$(PhotoViewerEdition)）。增量构建可能沿用了旧 AppManifest；删除 app 内 Info.plist 与 $(IntermediateOutputPath)AppManifest.plist 后重建，或清掉 bin/$(PhotoViewerEdition) 与 obj/$(PhotoViewerEdition)。" />
+    </Target>
+
+    <Target Name="_RequireExplicitEdition"
             BeforeTargets="Restore;PrepareForBuild"
             Condition="'$(DesignTimeBuild)' != 'true'">
-        <Error Condition="'$(PhotoViewerEditionExplicit)' != 'true' Or ('$(PhotoViewerEnableDino)' != 'true' And '$(PhotoViewerEnableDino)' != 'false')"
-               Text="构建 PhotoViewer.iOS 必须显式指定发行版本：-p:PhotoViewerEnableDino=false（标准版）或 -p:PhotoViewerEnableDino=true（AI 版）。运行命令见 DEV.md 的 Tasks 或 PhotoViewer.iOS/publish.sh。" />
+        <Error Condition="'$(PhotoViewerEditionExplicit)' != 'true' Or '$(PhotoViewerPackageId)' == ''"
+               Text="构建 PhotoViewer.iOS 必须显式指定发行版本：-p:PhotoViewerEdition=standard（PhotoViewer / cc.xiaojh.PhotoViewer）或 -p:PhotoViewerEdition=ai（PhotoViewer AI / cc.xiaojh.PhotoViewer.AI）。产品身份只在根 Directory.Build.props 派生；PhotoViewerEnableDino 不再是构建输入。运行命令见 DEV.md 的 Tasks 或 PhotoViewer.iOS/publish.sh。" />
     </Target>
 </Project>

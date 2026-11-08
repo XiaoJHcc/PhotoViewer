@@ -54,6 +54,7 @@ internal sealed partial class WindowsMainWindow
         try
         {
             checks.Add(CheckEditionCapability());
+            checks.Add(CheckEditionIdentity());
 
             var folder = Path.Combine(SmokeOutputDirectory, "fixtures", "edition");
             await Task.Run(() =>
@@ -481,6 +482,29 @@ internal sealed partial class WindowsMainWindow
         return $"PASS edition capability: edition={WindowsProductInfo.EditionName} product={WindowsProductInfo.DisplayName}"
             + $" hasDino={WindowsProductInfo.HasDino} diagnostic={WindowsProductInfo.DiagnosticName}"
             + $" dinoTypes={present.Length} nativePanel={panel}";
+    }
+
+    /// <summary>产品身份:实际编译进产物的包 ID/产品键与 edition 一致，单实例键按产品分离。</summary>
+    /// <returns>验收文案。</returns>
+    private static string CheckEditionIdentity()
+    {
+        RequireSmoke(
+            WindowsProductInfo.PackageId.StartsWith("cc.xiaojh.PhotoViewer", StringComparison.Ordinal)
+                && (WindowsProductInfo.HasDino
+                    == WindowsProductInfo.PackageId.EndsWith(
+                        WindowsProductInfo.AiPackageIdSuffix, StringComparison.Ordinal)),
+            $"包 ID 与发行版本不一致: edition={WindowsProductInfo.EditionName} packageId={WindowsProductInfo.PackageId}");
+        RequireSmoke(WindowsProductInfo.ProductId == $"photoviewer.{WindowsProductInfo.EditionName}",
+            $"内部产品键与发行版本不一致: edition={WindowsProductInfo.EditionName} productId={WindowsProductInfo.ProductId}");
+        RequireSmoke(WindowsProductInfo.SiblingPackageId != WindowsProductInfo.PackageId,
+            $"标准版与 AI 版包 ID 相同: {WindowsProductInfo.PackageId}");
+        RequireSmoke(WindowsSingleInstance.InstanceKey == WindowsProductInfo.PackageId + WindowsSingleInstance.InstanceKeySuffix,
+            $"单实例键未按包 ID 派生: key={WindowsSingleInstance.InstanceKey}");
+        RequireSmoke(WindowsSingleInstance.InstanceKey != WindowsSingleInstance.SiblingInstanceKey,
+            $"单实例键跨版相同: {WindowsSingleInstance.InstanceKey}");
+        return $"PASS edition identity: packageId={WindowsProductInfo.PackageId} productId={WindowsProductInfo.ProductId}"
+            + $" distribution={WindowsProductInfo.DistributionName} instanceKey={WindowsSingleInstance.InstanceKey}"
+            + $" siblingKey={WindowsSingleInstance.SiblingInstanceKey}";
     }
 
     /// <summary>筛选条按版本实际项数构成:标准版四项、AI 版五项,且末项真实排在前一项右侧。</summary>

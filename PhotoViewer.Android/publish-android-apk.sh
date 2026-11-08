@@ -2,16 +2,16 @@
 # Mac/Linux 版 Android APK 发布脚本，等价于 publish-android-apk.ps1。
 # 用法：bash PhotoViewer.Android/publish-android-apk.sh [--edition standard|ai|both] [--local]
 #
-# 两版共用 ApplicationId（cc.xiaojh.PhotoViewer），只按显示名与 AI 能力区分：
-#   standard  PhotoViewer     无 DINO 模型 / ONNX Runtime / 许可证
-#   ai        PhotoViewer AI  内置 DINOv3 模型、ONNX Runtime 与许可证
-# 显示名（android:label）用空格；APK 文件名仍用横线（PhotoViewer-AI）。
+# 两个发行版是并列产品，同机并存、各自沙盒（包身份唯一来源：根 Directory.Build.props）：
+#   standard  PhotoViewer     cc.xiaojh.PhotoViewer      无 DINO 模型 / ONNX Runtime / 许可证
+#   ai        PhotoViewer AI  cc.xiaojh.PhotoViewer.AI   内置 DINOv3 模型、ONNX Runtime 与许可证
+# 显示名（android:label）用空格；分发包文件名用横线（PhotoViewer-AI）。
 # 只发 arm64-v8a，APK 不得含 x86_64 / armeabi-v7a。
 #
 # 正式发布写 release/packages/<PhotoViewer|PhotoViewer-AI>-<AppVersion>-android-arm64.apk；
 # --local 只做本机验证，产物落 artifacts/scratch/android-local-publish/，不写 release/。
-# --edition 默认 both。版本号与构建号唯一来源是根 Directory.Build.props。
-# 构建与还原都显式传 -p:PhotoViewerEnableDino=true|false，两版 bin/obj 按 edition 隔离。
+# --edition 默认 both。版本号、构建号与产品身份唯一来源是根 Directory.Build.props。
+# 构建与还原都显式传 -p:PhotoViewerEdition=standard|ai，两版 bin/obj 按 edition 隔离。
 # 自动选用已安装且真正具备 android workload 的 .NET SDK（仓库 global.json 不做修改）。
 set -euo pipefail
 
@@ -78,7 +78,6 @@ RELEASE_DIR="$REPO_ROOT/release/packages"
 LOCAL_DIR="$REPO_ROOT/artifacts/scratch/android-local-publish"
 REPORT_DIR="$REPO_ROOT/artifacts/acceptance/android-editions"
 SIGNING_JSON="$SCRIPT_DIR/signing.json"
-PACKAGE_ID="cc.xiaojh.PhotoViewer"
 
 fail() {
     echo "FAIL: $1" >&2
@@ -91,12 +90,31 @@ command -v python3 >/dev/null 2>&1 || fail "Android 包扫描需要 python3"
 [[ -f "$SCANNER" ]] || fail "缺少包扫描工具：$SCANNER"
 
 # ──────────────────────────────────────────────────────────────
-# 1. 读取版本号
+# 1. 读取版本号，并按 edition 读取根 props 的产品身份映射
 # ──────────────────────────────────────────────────────────────
 APP_VERSION=$(sed -n 's:.*<AppVersion>\(.*\)</AppVersion>.*:\1:p' "$REPO_ROOT/Directory.Build.props" | head -n 1)
 if [[ -z "$APP_VERSION" ]]; then
     fail "未能从 Directory.Build.props 读取 AppVersion。"
 fi
+
+# edition 的包名、显示名、分发前缀与 DINO 能力都来自同一个 PropertyGroup，脚本不另写产品判断。
+read_edition_identity() {
+    python3 - "$REPO_ROOT/Directory.Build.props" "$1" <<'PY'
+import re
+import sys
+
+path, edition = sys.argv[1], sys.argv[2]
+with open(path, encoding="utf-8-sig") as handle:
+    text = handle.read()
+for key in ("PhotoViewerPackageId", "PhotoViewerDisplayName",
+            "PhotoViewerDistributionName", "PhotoViewerEnableDino"):
+    pattern = re.compile(
+        rf"<{key}\s+Condition=\"'\$\(PhotoViewerEdition\)'\s*==\s*'"
+        rf"{re.escape(edition)}'\">([^<]+)</{key}>")
+    match = pattern.search(text)
+    print(match.group(1).strip() if match else "")
+PY
+}
 
 # ──────────────────────────────────────────────────────────────
 # 2. 定位 Android SDK
@@ -214,23 +232,6 @@ else
     echo "运行 bash PhotoViewer.Android/setup-android-signing.sh 生成证书。" >&2
 fi
 
-edition_flag() {
-    if [[ "$1" == "ai" ]]; then
-        echo "true"
-    else
-        echo "false"
-    fi
-}
-
-# 只用于 APK 文件名：显示名是 "PhotoViewer AI"，打包命名保留横线。
-edition_package_product() {
-    if [[ "$1" == "ai" ]]; then
-        echo "PhotoViewer-AI"
-    else
-        echo "PhotoViewer"
-    fi
-}
-
 echo "[发布] Android SDK: $ANDROID_SDK"
 echo "[发布] 发行版本: ${EDITIONS[*]}"
 if [[ $LOCAL_ONLY -eq 1 ]]; then
@@ -238,14 +239,21 @@ if [[ $LOCAL_ONLY -eq 1 ]]; then
 fi
 
 # ──────────────────────────────────────────────────────────────
-# 5. 逐版发布：只清当前 edition 的发布输出，共享工程 obj 交给 edition 隔离目录
+# 5. 逐版发布：身份按 edition 从根 props 读取；只清当前 edition 的发布输出
 # ──────────────────────────────────────────────────────────────
 for edition in "${EDITIONS[@]}"; do
-    flag=$(edition_flag "$edition")
-    package_product=$(edition_package_product "$edition")
+    IDENTITY=$(read_edition_identity "$edition")
+    PACKAGE_ID=$(printf '%s\n' "$IDENTITY" | sed -n '1p')
+    DISPLAY_NAME=$(printf '%s\n' "$IDENTITY" | sed -n '2p')
+    DISTRIBUTION_NAME=$(printf '%s\n' "$IDENTITY" | sed -n '3p')
+    ENABLE_DINO=$(printf '%s\n' "$IDENTITY" | sed -n '4p')
+    if [[ -z "$PACKAGE_ID" || -z "$DISPLAY_NAME" || -z "$DISTRIBUTION_NAME" \
+        || ( "$ENABLE_DINO" != "true" && "$ENABLE_DINO" != "false" ) ]]; then
+        fail "根 Directory.Build.props 未给出 ${edition} 的完整产品身份（包名/显示名/分发前缀/DINO 能力）。"
+    fi
     publish_dir="$SCRIPT_DIR/bin/$edition/Release/net10.0-android/publish"
 
-    echo "[发布] === ${edition}（包名 ${package_product}） ==="
+    echo "[发布] === ${edition}（${DISPLAY_NAME}，${PACKAGE_ID}） ==="
     rm -rf "$publish_dir"
 
     (
@@ -253,7 +261,7 @@ for edition in "${EDITIONS[@]}"; do
         dotnet publish "$ANDROID_PROJECT" \
             -c Release \
             -f net10.0-android \
-            "/p:PhotoViewerEnableDino=$flag" \
+            "/p:PhotoViewerEdition=$edition" \
             /p:AndroidPackageFormat=apk \
             "/p:AndroidSdkDirectory=$ANDROID_SDK" \
             "${SIGNING_ARGS[@]+"${SIGNING_ARGS[@]}"}"
@@ -279,13 +287,15 @@ for edition in "${EDITIONS[@]}"; do
         dest_dir="$RELEASE_DIR"
     fi
     mkdir -p "$dest_dir" "$REPORT_DIR"
-    dest_apk="$dest_dir/$package_product-$APP_VERSION-android-arm64.apk"
+    dest_apk="$dest_dir/$DISTRIBUTION_NAME-$APP_VERSION-android-arm64.apk"
     cp "$apk" "$dest_apk"
     echo "[发布] 产物：$dest_apk"
 
-    # 包扫描读实际 APK：身份/显示名/版本/ABI/模型/许可证/推理组件，失败即中断发布。
+    # 把 edition 对应的期望身份显式交给扫描器：实际 APK 与期望值都写进报告。
     python3 "$SCANNER" "$dest_apk" \
         --edition "$edition" \
+        --package-id "$PACKAGE_ID" \
+        --display-name "$DISPLAY_NAME" \
         --output "$REPORT_DIR/$edition-package.json"
 done
 

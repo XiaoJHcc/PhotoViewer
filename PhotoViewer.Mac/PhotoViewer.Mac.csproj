@@ -2,11 +2,14 @@
     <PropertyGroup>
         <TargetFramework>net10.0-macos</TargetFramework>
         <OutputType>Exe</OutputType>
-        <ApplicationTitle>PhotoViewer</ApplicationTitle>
-        <!-- 显示名（窗口标题、菜单、CFBundleName/DisplayName、.app 目录名）用空格；
-             分发包文件名仍用 PhotoViewer-AI（由 publish.sh 的 PACKAGE_PRODUCT 决定）。 -->
-        <ApplicationTitle Condition="'$(PhotoViewerEnableDino)' == 'true'">PhotoViewer AI</ApplicationTitle>
-        <PhotoViewerEnableDino Condition="'$(PhotoViewerEnableDino)' == ''">false</PhotoViewerEnableDino>
+        <!--
+          产品身份只消费根 Directory.Build.props 按 PhotoViewerEdition 派生的映射：
+          PhotoViewerDisplayName → ApplicationTitle（窗口标题、菜单、CFBundleName/DisplayName、.app 目录名），
+          PhotoViewerPackageId → 中间 Info.plist 副本的 CFBundleIdentifier，macOS 不再带 .Mac 后缀，
+          PhotoViewerDistributionName → publish.sh 的分发包文件名。
+          PhotoViewerEnableDino 只是由 edition 派生的编译能力（DINO/ORT/模型资产），不是构建入口。
+        -->
+        <ApplicationTitle>$(PhotoViewerDisplayName)</ApplicationTitle>
         <DefineConstants Condition="'$(PhotoViewerEnableDino)' == 'true'">$(DefineConstants);PHOTOVIEWER_DINO</DefineConstants>
         <!-- 最低部署版本与 SwiftUI 动态库的 arm64-apple-macosx26.0 目标保持一致。 -->
         <SupportedOSPlatformVersion>26.0</SupportedOSPlatformVersion>
@@ -33,8 +36,9 @@
     </ItemGroup>
 
     <ItemGroup>
+        <!-- edition 是唯一透传口径：共享工程的 DINO 编译能力与还原资产由 edition 派生。 -->
         <ProjectReference Include="..\PhotoViewer\PhotoViewer.csproj"
-                          AdditionalProperties="PhotoViewerEnableDino=$(PhotoViewerEnableDino)" />
+                          AdditionalProperties="PhotoViewerEdition=$(PhotoViewerEdition)" />
     </ItemGroup>
 
     <!--
@@ -110,32 +114,50 @@
     </Target>
 
     <!--
-      版本号、构建号与产品名写入 obj（随 standard/ai 隔离）内的 Info.plist 副本，
-      源 Info.plist 保持仓库原样；AppManifest 指向副本供 _DetectAppManifest 消费。
-      副本内容与上一轮相同则不改写，保留增量构建的安静输出。
+      版本号、构建号、产品名与包身份写入 obj/<edition>（随 edition 隔离）内的 Info.plist 副本，
+      仓库源 Info.plist 只作模板、不被构建改动；AppBundleManifest 指向副本供 _DetectAppManifest 消费。
+      CFBundleIdentifier 统一取 PhotoViewerPackageId（macOS 不带 .Mac 后缀）。
+      副本内容与上一轮相同则不改写，保留增量构建的安静输出；内容变化时同时丢弃已编译清单，
+      否则 SDK 会因输入清单路径未变而跳过 _CompileAppManifest，.app 里留下上一次的身份。
     -->
     <Target Name="_SyncInfoPlistVersion" BeforeTargets="_DetectAppManifest">
         <PropertyGroup>
             <_SyncedInfoPlist>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)', 'Info.plist'))</_SyncedInfoPlist>
             <_SyncedInfoPlistStaging>$(_SyncedInfoPlist).tmp</_SyncedInfoPlistStaging>
+            <_CompiledAppManifest>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(DeviceSpecificIntermediateOutputPath)', 'AppManifest.plist'))</_CompiledAppManifest>
         </PropertyGroup>
         <MakeDir Directories="$(IntermediateOutputPath)" />
-        <Exec Command="/bin/cp &quot;$(MSBuildProjectDirectory)/Info.plist&quot; &quot;$(_SyncedInfoPlistStaging)&quot; &amp;&amp; /usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString $(AppVersion)' -c 'Set :CFBundleVersion $(AppBuildNumber)' -c 'Set :CFBundleDisplayName $(ApplicationTitle)' -c 'Set :CFBundleName $(ApplicationTitle)' &quot;$(_SyncedInfoPlistStaging)&quot; &amp;&amp; { /usr/bin/cmp -s &quot;$(_SyncedInfoPlistStaging)&quot; &quot;$(_SyncedInfoPlist)&quot; || /bin/cp &quot;$(_SyncedInfoPlistStaging)&quot; &quot;$(_SyncedInfoPlist)&quot;; } &amp;&amp; /bin/rm -f &quot;$(_SyncedInfoPlistStaging)&quot;" />
+        <Copy SourceFiles="$(MSBuildProjectDirectory)/Info.plist" DestinationFiles="$(_SyncedInfoPlistStaging)" />
+        <Exec Command="/usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString $(AppVersion)' -c 'Set :CFBundleVersion $(AppBuildNumber)' -c 'Set :CFBundleIdentifier $(PhotoViewerPackageId)' -c 'Set :CFBundleDisplayName $(ApplicationTitle)' -c 'Set :CFBundleName $(ApplicationTitle)' &quot;$(_SyncedInfoPlistStaging)&quot;" />
+        <Exec Command="/usr/bin/cmp -s &quot;$(_SyncedInfoPlistStaging)&quot; &quot;$(_SyncedInfoPlist)&quot;" IgnoreExitCode="true">
+            <Output TaskParameter="ExitCode" PropertyName="_SyncedInfoPlistDiffers" />
+        </Exec>
+        <Copy Condition="'$(_SyncedInfoPlistDiffers)' != '0'" SourceFiles="$(_SyncedInfoPlistStaging)" DestinationFiles="$(_SyncedInfoPlist)" />
+        <!--
+          SDK 的 _CompileAppManifest 只以清单路径作为输入，不感知清单内容变化；
+          同步副本比已编译清单新时丢弃后者，强制按当前身份重新生成 AppManifest.plist 并回写 .app。
+        -->
+        <Exec Command="/bin/test &quot;$(_SyncedInfoPlist)&quot; -nt &quot;$(_CompiledAppManifest)&quot;" IgnoreExitCode="true">
+            <Output TaskParameter="ExitCode" PropertyName="_CompiledAppManifestStale" />
+        </Exec>
+        <Delete Condition="'$(_CompiledAppManifestStale)' == '0'" Files="$(_CompiledAppManifest)" />
+        <Delete Files="$(_SyncedInfoPlistStaging)" />
         <PropertyGroup>
             <AppBundleManifest>$(_SyncedInfoPlist)</AppBundleManifest>
         </PropertyGroup>
-        <Message Importance="high" Text="[版本同步] $(ApplicationTitle) $(AppVersion) ($(AppBuildNumber)) → $(_SyncedInfoPlist)" />
+        <Message Importance="high" Text="[版本同步] $(ApplicationTitle) $(PhotoViewerPackageId) $(AppVersion) ($(AppBuildNumber)) → $(_SyncedInfoPlist)" />
     </Target>
 
     <!--
       标准版与 AI 版共用一套 bin/obj 会互相复用还原资产与中间文件，
       两版的 obj 已按 edition 隔离（见根 Directory.Build.props）。
-      restore 与构建都必须显式带版本开关，否则共享工程会落到另一套输出目录。
+      restore 与构建都必须显式带 edition，否则共享工程会落到另一套输出目录；
+      PhotoViewerEnableDino 在根 props 中声明为本地属性，恒由 edition 覆盖，不接受单独指定。
     -->
-    <Target Name="_RequireExplicitDinoEdition"
+    <Target Name="_RequireExplicitEdition"
             BeforeTargets="Restore;PrepareForBuild"
             Condition="'$(DesignTimeBuild)' != 'true'">
-        <Error Condition="'$(PhotoViewerEditionExplicit)' != 'true' Or ('$(PhotoViewerEnableDino)' != 'true' And '$(PhotoViewerEnableDino)' != 'false')"
-               Text="构建 PhotoViewer.Mac 必须显式指定发行版本：-p:PhotoViewerEnableDino=false（标准版）或 -p:PhotoViewerEnableDino=true（AI 版）。运行命令见 DEV.md 的 Tasks 或 PhotoViewer.Mac/publish.sh。" />
+        <Error Condition="'$(PhotoViewerEdition)' != 'standard' And '$(PhotoViewerEdition)' != 'ai'"
+               Text="构建 PhotoViewer.Mac 必须显式指定发行版本：-p:PhotoViewerEdition=standard（标准版）或 -p:PhotoViewerEdition=ai（AI 版）。运行命令见 DEV.md 的 Tasks 或 PhotoViewer.Mac/publish.sh。" />
     </Target>
 </Project>

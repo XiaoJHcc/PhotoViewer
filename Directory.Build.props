@@ -1,4 +1,4 @@
-<Project>
+<Project TreatAsLocalProperty="PhotoViewerEnableDino">
   <PropertyGroup>
     <!-- 统一版本号：修改此处即可同步所有平台项目 -->
     <AppVersion>0.9.0</AppVersion>
@@ -22,20 +22,27 @@
     <Copyright>Copyright © 2024-2026 xiaojh.cc</Copyright>
   </PropertyGroup>
 
-  <!-- 必须早于 Microsoft.Common.props 隔离两版还原资产；头工程通过 ProjectReference 透传版本开关。 -->
-  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'PhotoViewer.Mac' Or '$(MSBuildProjectName)' == 'PhotoViewer.iOS'">
-    <PhotoViewerEditionExplicit Condition="'$(PhotoViewerEnableDino)' != ''">true</PhotoViewerEditionExplicit>
-    <PhotoViewerEnableDino Condition="'$(PhotoViewerEnableDino)' == ''">false</PhotoViewerEnableDino>
+  <!-- 产品身份唯一来源；平台工程只消费以下映射。 -->
+  <PropertyGroup Condition="'$(PhotoViewerEdition)' == 'standard' Or '$(PhotoViewerEdition)' == 'ai'">
+    <PhotoViewerProductId>photoviewer.$(PhotoViewerEdition)</PhotoViewerProductId>
+    <PhotoViewerPackageId Condition="'$(PhotoViewerEdition)' == 'standard'">cc.xiaojh.PhotoViewer</PhotoViewerPackageId>
+    <PhotoViewerPackageId Condition="'$(PhotoViewerEdition)' == 'ai'">cc.xiaojh.PhotoViewer.AI</PhotoViewerPackageId>
+    <PhotoViewerDisplayName Condition="'$(PhotoViewerEdition)' == 'standard'">PhotoViewer</PhotoViewerDisplayName>
+    <PhotoViewerDisplayName Condition="'$(PhotoViewerEdition)' == 'ai'">PhotoViewer AI</PhotoViewerDisplayName>
+    <PhotoViewerDistributionName Condition="'$(PhotoViewerEdition)' == 'standard'">PhotoViewer</PhotoViewerDistributionName>
+    <PhotoViewerDistributionName Condition="'$(PhotoViewerEdition)' == 'ai'">PhotoViewer-AI</PhotoViewerDistributionName>
+    <PhotoViewerEnableDino Condition="'$(PhotoViewerEdition)' == 'standard'">false</PhotoViewerEnableDino>
+    <PhotoViewerEnableDino Condition="'$(PhotoViewerEdition)' == 'ai'">true</PhotoViewerEnableDino>
   </PropertyGroup>
-  <PropertyGroup Condition="('$(MSBuildProjectName)' == 'PhotoViewer.Android' Or '$(MSBuildProjectName)' == 'PhotoViewer.Windows')">
-    <PhotoViewerEditionExplicit Condition="'$(PhotoViewerEnableDino)' != ''">true</PhotoViewerEditionExplicit>
+
+  <!-- 必须早于 Microsoft.Common.props 隔离两版还原资产；头工程通过 ProjectReference 透传 edition。 -->
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'PhotoViewer.Mac' Or '$(MSBuildProjectName)' == 'PhotoViewer.iOS' Or '$(MSBuildProjectName)' == 'PhotoViewer.Android' Or '$(MSBuildProjectName)' == 'PhotoViewer.Windows'">
+    <PhotoViewerEditionExplicit Condition="'$(PhotoViewerEdition)' != ''">true</PhotoViewerEditionExplicit>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'PhotoViewer.Mac' Or '$(MSBuildProjectName)' == 'PhotoViewer.iOS' Or ('$(MSBuildProjectName)' == 'PhotoViewer.Android' Or '$(MSBuildProjectName)' == 'PhotoViewer.Windows') Or '$(MSBuildProjectName)' == 'PhotoViewer'">
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'PhotoViewer.Mac' Or '$(MSBuildProjectName)' == 'PhotoViewer.iOS' Or '$(MSBuildProjectName)' == 'PhotoViewer.Android' Or '$(MSBuildProjectName)' == 'PhotoViewer.Windows' Or '$(MSBuildProjectName)' == 'PhotoViewer'">
     <DefaultItemExcludes>$(DefaultItemExcludes);bin/**;obj/**</DefaultItemExcludes>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(PhotoViewerEnableDino)' != '' And ('$(MSBuildProjectName)' == 'PhotoViewer.Mac' Or '$(MSBuildProjectName)' == 'PhotoViewer.iOS' Or ('$(MSBuildProjectName)' == 'PhotoViewer.Android' Or '$(MSBuildProjectName)' == 'PhotoViewer.Windows') Or '$(MSBuildProjectName)' == 'PhotoViewer')">
-    <PhotoViewerEdition Condition="'$(PhotoViewerEnableDino)' == 'true'">ai</PhotoViewerEdition>
-    <PhotoViewerEdition Condition="'$(PhotoViewerEnableDino)' != 'true'">standard</PhotoViewerEdition>
+  <PropertyGroup Condition="('$(PhotoViewerEdition)' == 'standard' Or '$(PhotoViewerEdition)' == 'ai') And ('$(MSBuildProjectName)' == 'PhotoViewer.Mac' Or '$(MSBuildProjectName)' == 'PhotoViewer.iOS' Or '$(MSBuildProjectName)' == 'PhotoViewer.Android' Or '$(MSBuildProjectName)' == 'PhotoViewer.Windows' Or '$(MSBuildProjectName)' == 'PhotoViewer')">
     <BaseOutputPath Condition="'$(BaseOutputPath)' == ''">bin/$(PhotoViewerEdition)/</BaseOutputPath>
     <BaseIntermediateOutputPath Condition="'$(BaseIntermediateOutputPath)' == ''">obj/$(PhotoViewerEdition)/</BaseIntermediateOutputPath>
   </PropertyGroup>

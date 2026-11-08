@@ -13,10 +13,10 @@ namespace PhotoViewer.Android;
 
 /// <summary>
 /// Android 原生壳 Activity：直接承载 <see cref="Native.AndroidNativeShell"/> 的根视图。
+/// 不写 Activity label：显示名只由 application label（根 props 的 PhotoViewerDisplayName）决定。
 /// </summary>
 [Activity(
     Name = "cc.xiaojh.PhotoViewer.AndroidNativeActivity",
-    Label = "PhotoViewer",
     Theme = "@style/Theme.PhotoViewer.Native",
     Icon = "@drawable/icon",
     Exported = false,

@@ -5,8 +5,8 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <LangVersion>latest</LangVersion>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-        <PhotoViewerEnableDino Condition="'$(PhotoViewerEnableDino)' == ''">true</PhotoViewerEnableDino>
-        <DefineConstants Condition="'$(PhotoViewerEnableDino)' == 'true'">$(DefineConstants);PHOTOVIEWER_DINO</DefineConstants>
+        <PhotoViewerEdition Condition="'$(PhotoViewerEdition)' == ''">ai</PhotoViewerEdition>
+        <DefineConstants Condition="'$(PhotoViewerEdition)' == 'ai'">$(DefineConstants);PHOTOVIEWER_DINO</DefineConstants>
     </PropertyGroup>
 
     <ItemGroup>
@@ -18,12 +18,12 @@
         <PackageReference Include="XmpCore" />
     </ItemGroup>
 
-    <ItemGroup Condition="'$(PhotoViewerEnableDino)' == 'true'">
+    <ItemGroup Condition="'$(PhotoViewerEdition)' == 'ai'">
         <PackageReference Include="Microsoft.ML.OnnxRuntime.Managed" />
         <PackageReference Include="MathNet.Numerics" />
     </ItemGroup>
 
-    <ItemGroup Condition="'$(PhotoViewerEnableDino)' != 'true'">
+    <ItemGroup Condition="'$(PhotoViewerEdition)' == 'standard'">
         <Compile Remove="Core/AI/DinoDiagnosticPresenter.cs" />
         <Compile Remove="Core/AI/DinoFeatureCache.cs" />
         <Compile Remove="Core/AI/DinoFeatureExtractor.cs" />

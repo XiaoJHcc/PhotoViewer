@@ -1,15 +1,16 @@
 #!/bin/bash
 # 用法：bash publish-testflight.sh --edition standard|ai [--archive-only]
-# 一次只为一个明确版本归档并上传材料：standard（无 DINO）或 ai（内置 DINO）。
-# 不传 --edition、传 both 或一次构建两个版本都直接报错退出 —— App Store Connect
-# 同一构建号只能对应一个变体，双变体必须分两次递增构建号后分别归档。
+# 一次只为一个产品归档：standard（cc.xiaojh.PhotoViewer，无 DINO）或 ai
+# （cc.xiaojh.PhotoViewer.AI，内置 DINO）。两个产品是两个独立 App Store Connect App，
+# 各自持有 Bundle ID、签名资料与构建号序列，同一构建号可以用于另一产品；只拒绝
+# 本产品已归档过的相同构建号（重复上传）和回退的构建号。
 # --archive-only：只做本机分发签名归档与校验（archive + dSYM，不上传、不导出），
 # 供本地核对签名、entitlements 与能力条件符号；不修改版本号、不创建签名资料。
 # 版本号与构建号唯一来源是根 Directory.Build.props，每次上传前递增 AppBuildNumber。
 set -euo pipefail
 
 usage() {
-    sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 EDITION=""
@@ -63,27 +64,23 @@ case "${EDITION}" in
         ;;
 esac
 
-case "${EDITION}" in
-    ai)
-        DISPLAY_NAME="PhotoViewer AI"
-        PACKAGE_PRODUCT="PhotoViewer-AI"
-        DINO="true"
-        ;;
-    *)
-        DISPLAY_NAME="PhotoViewer"
-        PACKAGE_PRODUCT="PhotoViewer"
-        DINO="false"
-        ;;
-esac
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-VERSION="$(sed -n 's:.*<AppVersion>\(.*\)</AppVersion>.*:\1:p' "${REPO_ROOT}/Directory.Build.props" | head -n 1)"
-BUILD="$(sed -n 's:.*<AppBuildNumber>\(.*\)</AppBuildNumber>.*:\1:p' "${REPO_ROOT}/Directory.Build.props" | head -n 1)"
+BUILD_PROPS="${REPO_ROOT}/Directory.Build.props"
+source "${SCRIPT_DIR}/edition-identity.sh"
+pv_load_edition_identity "${EDITION}" "${BUILD_PROPS}" \
+    || fail "无法从 ${BUILD_PROPS} 读取 ${EDITION} 版产品身份（Bundle ID / 显示名 / 分发名 / DINO 能力）。"
+DISPLAY_NAME="${PV_DISPLAY_NAME}"
+PACKAGE_PRODUCT="${PV_DISTRIBUTION_NAME}"
+PACKAGE_ID="${PV_PACKAGE_ID}"
+DINO="${PV_ENABLE_DINO}"
+VERSION="$(sed -n 's:.*<AppVersion>\(.*\)</AppVersion>.*:\1:p' "${BUILD_PROPS}" | head -n 1)"
+BUILD="$(sed -n 's:.*<AppBuildNumber>\(.*\)</AppBuildNumber>.*:\1:p' "${BUILD_PROPS}" | head -n 1)"
 OUTPUT_DIR="${REPO_ROOT}/release/testflight/${EDITION}"
-# .xcarchive 属于打包产物，文件名继续用 PhotoViewer-AI。
+# .xcarchive 属于打包产物，文件名用分发前缀 PhotoViewer / PhotoViewer-AI。
 ARCHIVE_PATH="${OUTPUT_DIR}/${PACKAGE_PRODUCT}-${VERSION}-${BUILD}.xcarchive"
 EXPORT_OPTIONS="${SCRIPT_DIR}/ExportOptions.AppStore.Local.plist"
+EXPORT_OPTIONS_SAMPLE="${SCRIPT_DIR}/ExportOptions.AppStore.Local.sample.plist"
 EXPORT_DIR="${REPO_ROOT}/artifacts/scratch/ios-testflight-export/${EDITION}-${VERSION}-${BUILD}"
 
 fail() {
@@ -112,22 +109,47 @@ trap 'exit 143' TERM
 
 [[ -n "${VERSION}" && -n "${BUILD}" ]] || fail "未能从 Directory.Build.props 读取 AppVersion / AppBuildNumber"
 if [[ "${ARCHIVE_ONLY}" -eq 0 && ! -f "${EXPORT_OPTIONS}" ]]; then
-    fail "缺少 ${EXPORT_OPTIONS}；请从同目录 .sample.plist 复制并填写本机 Team ID。"
+    fail "缺少 ${EXPORT_OPTIONS}；请从同目录 .sample.plist 复制，为两个 Bundle ID 填写描述文件并填入本机 Team ID。"
 fi
 
 mkdir -p "${OUTPUT_DIR}"
 
+# 两个产品各自独立递增构建号：同一构建号出现在另一产品是正常情况（两个 App 记录），
+# 这里只保证本产品内部单调递增，并拒绝重复上传已归档的同一构建号。
 if [[ "${ARCHIVE_ONLY}" -eq 0 ]]; then
-    if [[ "${EDITION}" == "standard" ]]; then
-        OTHER_EDITION="ai"
-    else
-        OTHER_EDITION="standard"
+    LATEST_ARCHIVE="$(find "${OUTPUT_DIR}" -maxdepth 1 -name '*.xcarchive' 2>/dev/null | sort | tail -n 1 || true)"
+    if [[ -n "${LATEST_ARCHIVE}" ]]; then
+        LATEST_BUILD="$(basename "${LATEST_ARCHIVE}" | sed -n 's/.*-\([0-9][0-9]*\)\.xcarchive$/\1/p')"
+        [[ -n "${LATEST_BUILD}" ]] \
+            || fail "无法从已有归档解析构建号：${LATEST_ARCHIVE}（命名应为 <分发前缀>-<版本>-<构建号>.xcarchive）"
+        if [[ "${BUILD}" -eq "${LATEST_BUILD}" ]]; then
+            fail "${EDITION} 版构建号 ${BUILD} 已归档：${LATEST_ARCHIVE}；同一 App 不能重复上传同一构建号，请先递增 AppBuildNumber。"
+        fi
+        if [[ "${BUILD}" -lt "${LATEST_BUILD}" ]]; then
+            fail "${EDITION} 版构建号 ${BUILD} 小于已归档的 ${LATEST_BUILD}（${LATEST_ARCHIVE}）；同一 App 的构建号必须单调递增。"
+        fi
     fi
-    PREVIOUS_SAME_BUILD="$(find "${REPO_ROOT}/release/testflight/${OTHER_EDITION}" -maxdepth 1 \
-        -name "*-${VERSION}-${BUILD}.xcarchive" 2>/dev/null | head -n 1 || true)"
-    if [[ -n "${PREVIOUS_SAME_BUILD}" ]]; then
-        fail "构建号 ${BUILD} 已用于 ${OTHER_EDITION} 版归档：${PREVIOUS_SAME_BUILD}；同一构建号不能对应两个变体，请先递增 AppBuildNumber。"
+fi
+
+# 签名资料按 edition 选：ExportOptions 的 provisioningProfiles 以 Bundle ID 为键。
+# 上传路径必须使用本机 plist 的双映射；--archive-only 在本地缺该映射时退回仓库内
+# .sample.plist 的约定名，仍然按 Bundle ID 校验并打印来源。
+PROFILE_PLIST="${EXPORT_OPTIONS}"
+PROVISION_PROFILE=""
+if [[ -f "${PROFILE_PLIST}" ]]; then
+    PROVISION_PROFILE="$(pv_require_profile_mapping "${PROFILE_PLIST}" "${PACKAGE_ID}" "${EDITION}" 2>/dev/null || true)"
+fi
+if [[ -z "${PROVISION_PROFILE}" && "${ARCHIVE_ONLY}" -eq 1 && -f "${EXPORT_OPTIONS_SAMPLE}" ]]; then
+    PROFILE_PLIST="${EXPORT_OPTIONS_SAMPLE}"
+    PROVISION_PROFILE="$(pv_require_profile_mapping "${PROFILE_PLIST}" "${PACKAGE_ID}" "${EDITION}" 2>/dev/null || true)"
+    if [[ -n "${PROVISION_PROFILE}" ]]; then
+        echo "注意：本地签名资料缺少 ${EDITION} 版映射，按仓库内 .sample.plist 的描述文件约定名归档（仅 --archive-only 允许）。"
     fi
+fi
+if [[ -z "${PROVISION_PROFILE}" ]]; then
+    echo "FAIL: ${EXPORT_OPTIONS} 的 provisioningProfiles 必须同时映射两个产品：" >&2
+    echo "      cc.xiaojh.PhotoViewer → <standard 描述文件名>，cc.xiaojh.PhotoViewer.AI → <AI 描述文件名>（见同目录 .sample.plist）。" >&2
+    exit 1
 fi
 
 STAGING_DIR="${OUTPUT_DIR}/.staging-${BUILD}-$$"
@@ -135,15 +157,16 @@ STAGING_ARCHIVE="${STAGING_DIR}/${PACKAGE_PRODUCT}-${VERSION}-${BUILD}.xcarchive
 rm -rf "${STAGING_DIR}"
 mkdir -p "${STAGING_DIR}"
 
-echo "=== ${DISPLAY_NAME} ${VERSION}（${BUILD}，PhotoViewerEnableDino=${DINO}）TestFlight 归档 ==="
+echo "=== ${DISPLAY_NAME} ${VERSION}（${BUILD}，${PACKAGE_ID}，DINO=${DINO}）TestFlight 归档 ==="
+echo "描述文件：${PROVISION_PROFILE}（来源 ${PROFILE_PLIST}）"
 dotnet publish "${SCRIPT_DIR}/PhotoViewer.iOS.csproj" \
     -c Release \
     -r ios-arm64 \
-    -p:PhotoViewerEnableDino="${DINO}" \
+    -p:PhotoViewerEdition="${EDITION}" \
     -p:ArchiveOnBuild=true \
     -p:ArchiveDir="${STAGING_ARCHIVE}" \
     -p:CodesignKey="Apple Distribution" \
-    -p:CodesignProvision="PhotoViewer iOS App Store" \
+    -p:CodesignProvision="${PROVISION_PROFILE}" \
     -p:AutomaticProvisioning=false
 
 bash "${SCRIPT_DIR}/validate-testflight-archive.sh" "${STAGING_ARCHIVE}" --edition "${EDITION}"

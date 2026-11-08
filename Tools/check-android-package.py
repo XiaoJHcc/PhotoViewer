@@ -3,14 +3,20 @@
 
 用法：
   python3 Tools/check-android-package.py <app.apk> --edition standard|ai --output <报告.json>
-        [--version 0.9.0] [--build-number 90] [--package-id cc.xiaojh.PhotoViewer]
+        [--version 0.9.0] [--build-number 90]
+        [--package-id cc.xiaojh.PhotoViewer] [--display-name PhotoViewer] [--channel direct]
   python3 Tools/check-android-package.py --self-test
 
 只做本地文件检查：不联网、不解密签名凭据、不安装到设备。
 
 身份：AndroidManifest 的 package / android:label / android:versionName /
-android:versionCode。清单是二进制 AXML，内置解析器直接读（不依赖 aapt2）；
-找到 aapt2 时另做一次 badging 交叉核对，找到 apksigner 时只读取校验结果（无需私钥）。
+android:versionCode。包名与显示名默认按 edition 从根 Directory.Build.props 读取，
+标准版与 AI 版各用自己的 applicationId；发布脚本会把同一映射显式传给扫描器。
+清单是二进制 AXML，内置解析器直接读（不依赖 aapt2）；找到 aapt2 时另做一次
+badging 交叉核对，找到 apksigner 时只读取校验结果（无需私钥）。
+
+共存：系统组件 authority 必须位于实际包名的命名空间内（`<package>.…`），
+否则另一发行版无法同机安装；Debug 验收 Provider 的 authority 由 ApplicationId 派生。
 
 ABI：只允许 arm64-v8a，出现 x86_64 / armeabi-v7a 一律失败。
 
@@ -22,9 +28,9 @@ ai：      必须包含唯一模型 dinov3_vits16.onnx（字节数与 SHA-256 �
           libassembly-store.so / libxamarin-app.so 内的名字表均算证据），
           以及 lib/arm64-v8a/libonnxruntime*.so。
 
-报告固定写入 edition / apkPath / package / expectations / identity / abis / summary /
-files / errors：package 是 APK 文件本身的字节数与 SHA-256，summary 按分类给出文件数、
-字节数与聚合 SHA-256，files 逐条给出路径、字节数与 SHA-256。
+报告固定写入 edition / productId / package / expectations / identity / components /
+abis / summary / files / errors：package 是 APK 文件本身的字节数与 SHA-256，summary
+按分类给出文件数、字节数与聚合 SHA-256，files 逐条给出路径、字节数与 SHA-256。
 检查失败时仍写报告并以 1 退出。
 """
 
@@ -42,13 +48,30 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+EDITIONS = ("standard", "ai")
+
+# 方案 §2 固定的产品身份；根 Directory.Build.props 是唯一来源，这里是读取失败时的兜底。
+CANONICAL_IDENTITY = {
+    "standard": {
+        "PhotoViewerProductId": "photoviewer.standard",
+        "PhotoViewerPackageId": "cc.xiaojh.PhotoViewer",
+        "PhotoViewerDisplayName": "PhotoViewer",
+        "PhotoViewerDistributionName": "PhotoViewer",
+        "PhotoViewerEnableDino": "false",
+    },
+    "ai": {
+        "PhotoViewerProductId": "photoviewer.ai",
+        "PhotoViewerPackageId": "cc.xiaojh.PhotoViewer.AI",
+        "PhotoViewerDisplayName": "PhotoViewer AI",
+        "PhotoViewerDistributionName": "PhotoViewer-AI",
+        "PhotoViewerEnableDino": "true",
+    },
+}
+
 MODEL_NAME = "dinov3_vits16.onnx"
 MODEL_BYTES = 86_594_677
 MODEL_SHA256 = "bcba38490ec2eded4a240751bebac198903daba7263871e8fee3aa39b03352e8"
 
-# 产品显示名（AI 版含空格，即 android:label）；APK 文件名另用 PhotoViewer-AI。
-PRODUCT_NAMES = {"standard": "PhotoViewer", "ai": "PhotoViewer AI"}
-DEFAULT_PACKAGE_ID = "cc.xiaojh.PhotoViewer"
 TARGET_ABI = "arm64-v8a"
 FORBIDDEN_ABIS = ("x86_64", "armeabi-v7a", "arm64", "x86")
 DINO_LICENSE_NAME = "dinov3-license.md"
@@ -57,6 +80,8 @@ ONNX_MANAGED = "microsoft.ml.onnxruntime.dll"
 MATHNET_MANAGED = "mathnet.numerics.dll"
 
 ATTR_LABEL = "label"
+ATTR_NAME = "name"
+ATTR_AUTHORITIES = "authorities"
 ATTR_VERSION_CODE = "versionCode"
 ATTR_VERSION_NAME = "versionName"
 
@@ -75,7 +100,9 @@ NO_INDEX = 0xFFFFFFFF
 # android.R.attr 里与本扫描相关的属性 id（name 字符串缺失时按 id 兜底）。
 ANDROID_ATTR_IDS = {
     0x01010001: ATTR_LABEL,
-    0x01010003: "name",
+    0x01010003: ATTR_NAME,
+    0x01010010: "exported",
+    0x01010018: ATTR_AUTHORITIES,
     0x0101021B: ATTR_VERSION_CODE,
     0x0101021C: ATTR_VERSION_NAME,
 }
@@ -105,19 +132,63 @@ def human(size: int) -> str:
     return f"{size} B"
 
 
+IDENTITY_PROPERTIES = (
+    "PhotoViewerProductId",
+    "PhotoViewerPackageId",
+    "PhotoViewerDisplayName",
+    "PhotoViewerDistributionName",
+    "PhotoViewerEnableDino",
+)
+
+PRODUCT_ID_PROPERTY = re.compile(r"<PhotoViewerProductId[^>]*>([^<]+)</PhotoViewerProductId>")
+
+
 def read_root_props() -> dict:
-    """读取根 Directory.Build.props 的 AppVersion / AppBuildNumber。"""
+    """读取根 Directory.Build.props 的版本号与按 edition 定义的产品身份映射。"""
     props = Path(__file__).resolve().parent.parent / "Directory.Build.props"
-    values: dict = {}
+    values: dict = {"editions": {}}
     try:
-        text = props.read_text(encoding="utf-8")
+        text = props.read_text(encoding="utf-8-sig")
     except OSError:
         return values
     for key in ("AppVersion", "AppBuildNumber"):
         match = re.search(rf"<{key}>([^<]+)</{key}>", text)
         if match:
             values[key] = match.group(1).strip()
+    product = PRODUCT_ID_PROPERTY.search(text)
+    for edition in EDITIONS:
+        per_edition: dict = {}
+        for key in IDENTITY_PROPERTIES:
+            match = re.search(
+                rf"<{key}\s+Condition=\"'\$\(PhotoViewerEdition\)'\s*==\s*'{edition}'\">([^<]+)</{key}>",
+                text,
+            )
+            if match:
+                per_edition[key] = match.group(1).strip()
+        if product and "PhotoViewerProductId" not in per_edition:
+            per_edition["PhotoViewerProductId"] = product.group(1).strip().replace(
+                "$(PhotoViewerEdition)", edition
+            )
+        values["editions"][edition] = per_edition
     return values
+
+
+_ROOT_PROPS = read_root_props()
+
+
+def edition_identity(edition: str) -> dict:
+    """edition 的产品身份：根 props 优先，读不到时用方案固定值兜底。"""
+    identity = dict(CANONICAL_IDENTITY[edition])
+    identity.update(_ROOT_PROPS.get("editions", {}).get(edition, {}))
+    return identity
+
+
+PRODUCT_IDS = {edition: edition_identity(edition)["PhotoViewerProductId"] for edition in EDITIONS}
+PACKAGE_IDS = {edition: edition_identity(edition)["PhotoViewerPackageId"] for edition in EDITIONS}
+PRODUCT_NAMES = {edition: edition_identity(edition)["PhotoViewerDisplayName"] for edition in EDITIONS}
+DISTRIBUTION_NAMES = {
+    edition: edition_identity(edition)["PhotoViewerDistributionName"] for edition in EDITIONS
+}
 
 
 # ──────────────────────────────────────────────────────────────
@@ -205,7 +276,7 @@ def parse_axml(data: bytes) -> list[dict]:
 def manifest_identity(data: bytes) -> dict:
     """解析 AndroidManifest，返回 package / label / versionName / versionCode。"""
     identity = {"source": "axml", "package": None, "label": None, "versionName": None,
-                "versionCode": None}
+                "versionCode": None, "providers": []}
     if len(data) >= 4 and struct.unpack_from("<H", data, 0)[0] == RES_XML_TYPE:
         elements = parse_axml(data)
     else:
@@ -237,6 +308,20 @@ def manifest_identity(data: bytes) -> dict:
         if seen_manifest and item["name"] == "application":
             identity["label"] = item["attributes"].get(ATTR_LABEL)
             break
+
+    # 系统组件：只取 authority 用于共存检查；多 authority 用分号分隔。
+    providers = []
+    for item in elements:
+        if item["name"] != "provider":
+            continue
+        attributes = item["attributes"]
+        authorities = str(attributes.get(ATTR_AUTHORITIES) or "")
+        providers.append({
+            "name": attributes.get(ATTR_NAME),
+            "authorities": [part for part in authorities.split(";") if part],
+            "exported": attributes.get("exported"),
+        })
+    identity["providers"] = providers
     return identity
 
 
@@ -484,6 +569,22 @@ def check_abis(abis: list[str], errors: list[str]) -> dict:
     return {"found": abis, "expected": TARGET_ABI, "unexpected": unexpected}
 
 
+def check_component_authorities(identity: dict, expectations: dict, errors: list[str]) -> dict:
+    """系统组件 authority 必须落在实际包名命名空间内，否则两版无法同机安装。"""
+    package = str(expectations["packageId"])
+    providers = identity.get("providers") or []
+    foreign = []
+    for provider in providers:
+        for authority in provider.get("authorities") or []:
+            if authority != package and not authority.startswith(package + "."):
+                foreign.append({"provider": provider.get("name"), "authority": authority})
+                errors.append(
+                    f"组件 authority 不在实际包名 {package} 的命名空间内，无法与另一发行版同机并存："
+                    f"{provider.get('name')} → {authority}"
+                )
+    return {"providers": providers, "foreignAuthorities": foreign}
+
+
 def check_standard(records: list[dict], evidence: dict, errors: list[str]) -> None:
     for record in records:
         lower = record["path"].lower()
@@ -605,6 +706,7 @@ def scan(apk: Path, expectations: dict, external_tools: bool = True) -> dict:
     records: list[dict] = []
     identity: dict = {}
     abis: dict = {}
+    components: dict = {"providers": [], "foreignAuthorities": []}
     evidence: dict = {"managedAssemblies": [], "storeBlobs": [], "nativeOnnxRuntime": []}
     model_contract = None
     aapt2: dict = {"available": False}
@@ -626,11 +728,12 @@ def scan(apk: Path, expectations: dict, external_tools: bool = True) -> dict:
                 if manifest_entry is None:
                     errors.append("APK 缺少 AndroidManifest.xml")
                     identity = {"source": None, "package": None, "label": None,
-                                "versionName": None, "versionCode": None}
+                                "versionName": None, "versionCode": None, "providers": []}
                 else:
                     identity = check_identity(
                         manifest_identity(archive.read("AndroidManifest.xml")), expectations, errors
                     )
+                components = check_component_authorities(identity, expectations, errors)
                 abis = check_abis(abi_directories(records), errors)
                 evidence = managed_evidence(archive, records, errors)
                 if expectations["edition"] == "standard":
@@ -660,11 +763,16 @@ def scan(apk: Path, expectations: dict, external_tools: bool = True) -> dict:
     summary = build_summary(records)
     report = {
         "edition": expectations["edition"],
+        "productId": expectations["productId"],
+        "platform": expectations["platform"],
+        "channel": expectations["channel"],
+        "arch": TARGET_ABI,
         "apkPath": str(apk.resolve()) if apk.exists() else str(apk),
         "apkFile": apk.name,
         "package": package,
         "expectations": expectations,
         "identity": identity,
+        "components": components,
         "abis": abis,
         "summary": summary,
         "fileCount": len(records),
@@ -720,6 +828,11 @@ def print_report(report: dict, output: Path | None) -> None:
     abis = report.get("abis") or {}
     if abis:
         print(f"ABI：{'、'.join(abis.get('found') or []) or '无'}")
+    components = report.get("components") or {}
+    providers = components.get("providers") or []
+    if providers:
+        authorities = [authority for provider in providers for authority in provider.get("authorities") or []]
+        print(f"组件：{len(providers)} 个 Provider，authority：{'、'.join(authorities) or '无'}")
     print(f"文件：{report['fileCount']}  解压字节：{report['totalBytes']}（{human(report['totalBytes'])}）")
     for category in report["summary"]["categories"]:
         print(f"  {category['category']:<20} {category['fileCount']:>5}  {human(category['bytes']):>12}")
@@ -799,14 +912,18 @@ def _end_element(name: str, string_index: dict) -> bytes:
 
 
 def build_axml(package: str, version_code: int, version_name: str, label: str,
-               utf8: bool = True) -> bytes:
+               utf8: bool = True, authorities: list[str] | None = None) -> bytes:
     strings = ["manifest", "application", "package", ATTR_VERSION_CODE, ATTR_VERSION_NAME, ATTR_LABEL]
-    if package not in strings:
-        strings.append(package)
-    if label not in strings:
-        strings.append(label)
-    if version_name not in strings:
-        strings.append(version_name)
+    if authorities:
+        strings.extend(["provider", ATTR_NAME, ATTR_AUTHORITIES])
+        provider_name = package + ".SelfTestProvider"
+        if provider_name not in strings:
+            strings.append(provider_name)
+    else:
+        provider_name = ""
+    for text in (package, label, version_name, *(authorities or [])):
+        if text not in strings:
+            strings.append(text)
     string_index = {text: index for index, text in enumerate(strings)}
     pool = _string_pool(strings, utf8)
     chunks = [
@@ -816,19 +933,27 @@ def build_axml(package: str, version_code: int, version_name: str, label: str,
             (ATTR_VERSION_NAME, TYPE_STRING, version_name),
         ], string_index),
         _start_element("application", [(ATTR_LABEL, TYPE_STRING, label)], string_index),
-        _end_element("application", string_index),
-        _end_element("manifest", string_index),
     ]
+    if authorities:
+        chunks.append(_start_element("provider", [
+            (ATTR_NAME, TYPE_STRING, provider_name),
+            (ATTR_AUTHORITIES, TYPE_STRING, ";".join(authorities)),
+        ], string_index))
+        chunks.append(_end_element("provider", string_index))
+    chunks.append(_end_element("application", string_index))
+    chunks.append(_end_element("manifest", string_index))
     body = pool + b"".join(chunks)
     return struct.pack("<HHI", RES_XML_TYPE, 8, 8 + len(body)) + body
 
 
 def make_apk(path: Path, package: str, version_code: int, version_name: str, label: str,
-             extra: dict[str, bytes] | None = None, abi: str = TARGET_ABI, utf8: bool = True) -> Path:
+             extra: dict[str, bytes] | None = None, abi: str = TARGET_ABI, utf8: bool = True,
+             authorities: list[str] | None = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("AndroidManifest.xml",
-                         build_axml(package, version_code, version_name, label, utf8=utf8))
+                         build_axml(package, version_code, version_name, label, utf8=utf8,
+                                    authorities=authorities))
         archive.writestr("classes.dex", b"dex\n035\0")
         archive.writestr(f"lib/{abi}/libmonodroid.so", b"\x7fELF")
         for name, data in (extra or {}).items():
@@ -838,34 +963,59 @@ def make_apk(path: Path, package: str, version_code: int, version_name: str, lab
 
 def self_test() -> int:
     """用合成 APK 校验扫描器的正反判定（真实包仍由发布扫描覆盖）。"""
-    version, build, package = "9.9.9", 999, DEFAULT_PACKAGE_ID
+    version, build = "9.9.9", 999
     failures: list[str] = []
     cases: list[tuple[str, dict, bool, str | None]] = []
 
-    # 自检用小模型替换固定契约；仍断言正式常量与发布文档一致。
+    # 自检用小模型替换固定契约；仍断言正式常量与根 props 的身份映射一致。
     if MODEL_BYTES != 86_594_677 or len(MODEL_SHA256) != 64:
         failures.append("模型契约常量被意外改动")
+    for edition in EDITIONS:
+        parsed = _ROOT_PROPS.get("editions", {}).get(edition, {})
+        if not parsed:
+            continue
+        for key, expected in CANONICAL_IDENTITY[edition].items():
+            actual = parsed.get(key)
+            if actual != expected:
+                failures.append(
+                    f"Directory.Build.props 的 {edition} {key} 与方案身份不符：期望 {expected}，实际 {actual}"
+                )
+    if PACKAGE_IDS["standard"] == PACKAGE_IDS["ai"]:
+        failures.append("标准版与 AI 版的包名相同，无法同机并存")
+    if PRODUCT_NAMES["ai"] != "PhotoViewer AI":
+        failures.append(f"AI 版显示名应为 PhotoViewer AI，实际 {PRODUCT_NAMES['ai']}")
+    for edition in EDITIONS:
+        if PACKAGE_IDS[edition] != CANONICAL_IDENTITY[edition]["PhotoViewerPackageId"]:
+            failures.append(f"{edition} 包名与方案身份不符：{PACKAGE_IDS[edition]}")
+
     tiny_model = b"onnx-self-test" * 64
     tiny_contract = {"name": MODEL_NAME, "bytes": len(tiny_model), "sha256": sha256_bytes(tiny_model)}
 
     def expectations(edition: str) -> dict:
         return {
             "edition": edition,
+            "productId": PRODUCT_IDS[edition],
             "productName": PRODUCT_NAMES[edition],
+            "distributionName": DISTRIBUTION_NAMES[edition],
             "version": version,
             "buildNumber": build,
-            "packageId": package,
+            "packageId": PACKAGE_IDS[edition],
+            "platform": "android",
+            "channel": "direct",
             "model": tiny_contract,
         }
 
     with tempfile.TemporaryDirectory(prefix="pv-android-scan-selftest-") as tmp:
         root = Path(tmp)
 
-        def apk(name: str, *, edition_label: str = "PhotoViewer", extra: dict[str, bytes] | None = None,
+        def apk(name: str, *, edition: str = "standard", label: str | None = None,
+                extra: dict[str, bytes] | None = None,
                 abi: str = TARGET_ABI, version_name: str = version, version_code: int = build,
-                package_id: str = package, utf8: bool = True) -> Path:
-            return make_apk(root / f"{name}/{name}.apk", package_id, version_code, version_name,
-                            edition_label, extra=extra, abi=abi, utf8=utf8)
+                package_id: str | None = None, utf8: bool = True,
+                authorities: list[str] | None = None) -> Path:
+            return make_apk(root / f"{name}/{name}.apk", package_id or PACKAGE_IDS[edition],
+                            version_code, version_name, label or PRODUCT_NAMES[edition],
+                            extra=extra, abi=abi, utf8=utf8, authorities=authorities)
 
         standard_ok = apk("standard-ok", extra={"assemblies/PhotoViewer.dll": b"MZ"})
         cases.append(("标准版合规包通过", standard_ok, "standard", True, None))
@@ -912,7 +1062,16 @@ def self_test() -> int:
         ))
         cases.append((
             "标准版误用 AI 显示名失败",
-            apk("standard-label", edition_label="PhotoViewer AI"), "standard", False, "显示名",
+            apk("standard-label", label=PRODUCT_NAMES["ai"]), "standard", False, "显示名",
+        ))
+        cases.append((
+            "标准版误用 AI 包名失败",
+            apk("standard-package-ai", package_id=PACKAGE_IDS["ai"]), "standard", False, "包名",
+        ))
+        cases.append((
+            "标准版组件 authority 在同一包名命名空间内通过",
+            apk("standard-authority", authorities=[PACKAGE_IDS["standard"] + ".debug.storage"]),
+            "standard", True, None,
         ))
         cases.append((
             "版本号不符失败",
@@ -936,7 +1095,7 @@ def self_test() -> int:
         }
         cases.append((
             "AI 版 AOT 布局合规通过",
-            apk("ai-ok-aot", edition_label="PhotoViewer AI", extra=ai_extra), "ai", True, None,
+            apk("ai-ok-aot", edition="ai", extra=ai_extra), "ai", True, None,
         ))
 
         store_extra = {
@@ -948,7 +1107,7 @@ def self_test() -> int:
         }
         cases.append((
             "AI 版 assembly store 证据通过",
-            apk("ai-ok-store", edition_label="PhotoViewer AI", extra=store_extra), "ai", True, None,
+            apk("ai-ok-store", edition="ai", extra=store_extra), "ai", True, None,
         ))
 
         debug_extra = {
@@ -960,12 +1119,12 @@ def self_test() -> int:
         }
         cases.append((
             "AI 版 Debug 每程序集布局通过",
-            apk("ai-ok-debug", edition_label="PhotoViewer AI", extra=debug_extra), "ai", True, None,
+            apk("ai-ok-debug", edition="ai", extra=debug_extra), "ai", True, None,
         ))
 
         cases.append((
             "AI 版缺模型失败",
-            apk("ai-no-model", edition_label="PhotoViewer AI", extra={
+            apk("ai-no-model", edition="ai", extra={
                 "assets/Models/DINOv3-LICENSE.md": b"license",
                 f"lib/{TARGET_ABI}/libonnxruntime.so": b"\x7fELF",
                 f"lib/{TARGET_ABI}/libaot-Microsoft.ML.OnnxRuntime.dll.so": b"\x7fELF",
@@ -974,7 +1133,7 @@ def self_test() -> int:
         ))
         cases.append((
             "AI 版模型哈希不符失败",
-            apk("ai-bad-hash", edition_label="PhotoViewer AI", extra={
+            apk("ai-bad-hash", edition="ai", extra={
                 "assets/Models/DINOv3-LICENSE.md": b"license",
                 f"assets/Models/{MODEL_NAME}": tiny_model + b"x",
                 f"lib/{TARGET_ABI}/libonnxruntime.so": b"\x7fELF",
@@ -984,7 +1143,7 @@ def self_test() -> int:
         ))
         cases.append((
             "AI 版缺许可证失败",
-            apk("ai-no-license", edition_label="PhotoViewer AI", extra={
+            apk("ai-no-license", edition="ai", extra={
                 f"assets/Models/{MODEL_NAME}": tiny_model,
                 f"lib/{TARGET_ABI}/libonnxruntime.so": b"\x7fELF",
                 f"lib/{TARGET_ABI}/libaot-Microsoft.ML.OnnxRuntime.dll.so": b"\x7fELF",
@@ -993,7 +1152,7 @@ def self_test() -> int:
         ))
         cases.append((
             "AI 版缺 ORT 原生库失败",
-            apk("ai-no-native", edition_label="PhotoViewer AI", extra={
+            apk("ai-no-native", edition="ai", extra={
                 "assets/Models/DINOv3-LICENSE.md": b"license",
                 f"assets/Models/{MODEL_NAME}": tiny_model,
                 f"lib/{TARGET_ABI}/libaot-Microsoft.ML.OnnxRuntime.dll.so": b"\x7fELF",
@@ -1002,7 +1161,7 @@ def self_test() -> int:
         ))
         cases.append((
             "AI 版缺托管 ORT 失败",
-            apk("ai-no-managed", edition_label="PhotoViewer AI", extra={
+            apk("ai-no-managed", edition="ai", extra={
                 "assets/Models/DINOv3-LICENSE.md": b"license",
                 f"assets/Models/{MODEL_NAME}": tiny_model,
                 f"lib/{TARGET_ABI}/libonnxruntime.so": b"\x7fELF",
@@ -1011,12 +1170,24 @@ def self_test() -> int:
         ))
         cases.append((
             "AI 版误用标准版显示名失败",
-            apk("ai-label", edition_label="PhotoViewer", extra=ai_extra), "ai", False, "显示名",
+            apk("ai-label", label=PRODUCT_NAMES["standard"], extra=ai_extra), "ai", False, "显示名",
+        ))
+        cases.append((
+            "AI 版误用标准版包名失败",
+            apk("ai-package-standard", package_id=PACKAGE_IDS["standard"], extra=ai_extra),
+            "ai", False, "包名",
+        ))
+        cases.append((
+            "AI 版沿用标准版组件 authority 失败",
+            apk("ai-foreign-authority", extra=ai_extra,
+                authorities=[PACKAGE_IDS["standard"] + ".debug.storage"]),
+            "ai", False, "authority",
         ))
         cases.append((
             "AI 版误带 x86_64 失败",
-            make_apk(root / "ai-x86/ai-x86.apk", package, build, version, "PhotoViewer AI",
-                     extra=ai_extra, abi="x86_64"), "ai", False, "只允许 arm64-v8a",
+            make_apk(root / "ai-x86/ai-x86.apk", PACKAGE_IDS["ai"], build, version,
+                     PRODUCT_NAMES["ai"], extra=ai_extra, abi="x86_64"),
+            "ai", False, "只允许 arm64-v8a",
         ))
 
         for label, apk_path, edition, expect_pass, needle in cases:
@@ -1034,9 +1205,14 @@ def self_test() -> int:
 
         # 报告字段完整性与文件级摘要
         report = scan(standard_ok, expectations("standard"), external_tools=False)
-        for key in ("package", "identity", "abis", "summary", "files", "errors", "passed"):
+        for key in ("productId", "platform", "channel", "package", "identity", "components",
+                    "abis", "summary", "files", "errors", "passed"):
             if key not in report:
                 failures.append(f"报告缺少字段：{key}")
+        if report["identity"].get("package") != PACKAGE_IDS["standard"]:
+            failures.append("报告身份未记录实际包名")
+        if report["components"].get("foreignAuthorities"):
+            failures.append("合规包的组件 authority 被误判为跨包")
         if not report["package"].get("sha256"):
             failures.append("报告缺少 APK 文件 SHA-256")
         if not report["summary"]["categories"]:
@@ -1060,27 +1236,40 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description="扫描 Android APK 并核对双版本发行契约")
     parser.add_argument("apk", type=Path, help="待扫描的 APK 路径")
-    parser.add_argument("--edition", required=True, choices=("standard", "ai"), help="发行版本")
+    parser.add_argument("--edition", required=True, choices=EDITIONS, help="发行版本")
     parser.add_argument("--output", required=True, type=Path, help="JSON 报告路径")
     parser.add_argument("--version", help="期望的 versionName；缺省取根 Directory.Build.props")
     parser.add_argument("--build-number", help="期望的 versionCode；缺省取根 Directory.Build.props")
-    parser.add_argument("--package-id", default=DEFAULT_PACKAGE_ID,
-                        help=f"期望的包名（默认 {DEFAULT_PACKAGE_ID}）")
+    parser.add_argument("--package-id",
+                        help="期望的包名；缺省按 edition 从根 Directory.Build.props 读取")
+    parser.add_argument("--display-name",
+                        help="期望的显示名；缺省按 edition 从根 Directory.Build.props 读取")
+    parser.add_argument("--channel", default="direct", help="发行渠道（默认 direct）")
     args = parser.parse_args(argv)
 
     props = read_root_props()
     version = args.version or props.get("AppVersion")
     build_number = args.build_number or props.get("AppBuildNumber")
+    identity = edition_identity(args.edition)
+    package_id = args.package_id or identity["PhotoViewerPackageId"]
+    display_name = args.display_name or identity["PhotoViewerDisplayName"]
     if not version or not build_number:
         print("无法确定期望的版本号/构建号：请显式传 --version 与 --build-number", file=sys.stderr)
+        return 2
+    if not package_id or not display_name:
+        print("无法确定期望的包名/显示名：请显式传 --package-id 与 --display-name", file=sys.stderr)
         return 2
 
     expectations = {
         "edition": args.edition,
-        "productName": PRODUCT_NAMES[args.edition],
+        "productId": identity["PhotoViewerProductId"],
+        "productName": display_name,
+        "distributionName": identity["PhotoViewerDistributionName"],
+        "platform": "android",
+        "channel": args.channel,
         "version": version,
         "buildNumber": build_number,
-        "packageId": args.package_id,
+        "packageId": package_id,
         "model": {"name": MODEL_NAME, "bytes": MODEL_BYTES, "sha256": MODEL_SHA256},
     }
     report = scan(args.apk, expectations)

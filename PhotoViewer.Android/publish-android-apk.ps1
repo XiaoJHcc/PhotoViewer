@@ -6,16 +6,16 @@
     用法：powershell -ExecutionPolicy Bypass -File publish-android-apk.ps1
               [-Edition standard|ai|both] [-Local] [-AndroidSdkDirectory <path>]
 
-    两版共用 ApplicationId（cc.xiaojh.PhotoViewer），只按显示名与 AI 能力区分：
-      standard  PhotoViewer     无 DINO 模型 / ONNX Runtime / 许可证
-      ai        PhotoViewer AI  内置 DINOv3 模型、ONNX Runtime 与许可证
-    显示名（android:label）用空格；APK 文件名仍用横线（PhotoViewer-AI）。
+    两个发行版是并列产品，同机并存、各自沙盒（包身份唯一来源：根 Directory.Build.props）：
+      standard  PhotoViewer     cc.xiaojh.PhotoViewer      无 DINO 模型 / ONNX Runtime / 许可证
+      ai        PhotoViewer AI  cc.xiaojh.PhotoViewer.AI   内置 DINOv3 模型、ONNX Runtime 与许可证
+    显示名（android:label）用空格；分发包文件名用横线（PhotoViewer-AI）。
     只发 arm64-v8a，APK 不得含 x86_64 / armeabi-v7a。
 
     正式发布写 release\packages\<PhotoViewer|PhotoViewer-AI>-<AppVersion>-android-arm64.apk；
     -Local 只做本机验证，产物落 artifacts\scratch\android-local-publish，不写 release。
-    -Edition 默认 both。版本号与构建号唯一来源是根 Directory.Build.props。
-    构建与还原都显式传 -p:PhotoViewerEnableDino=true|false，两版 bin/obj 按 edition 隔离；
+    -Edition 默认 both。版本号、构建号与产品身份唯一来源是根 Directory.Build.props。
+    构建与还原都显式传 -p:PhotoViewerEdition=standard|ai，两版 bin/obj 按 edition 隔离；
     只清当前 edition 的发布输出，不删共享工程 obj。
     签名凭据只进命令行参数，不打印。
 #>
@@ -39,7 +39,28 @@ $packageDirectory = Join-Path $repoRoot 'release\packages'
 $localDirectory = Join-Path $repoRoot 'artifacts\scratch\android-local-publish'
 $reportDirectory = Join-Path $repoRoot 'artifacts\acceptance\android-editions'
 $scanner = Join-Path $repoRoot 'Tools\check-android-package.py'
-$packageId = 'cc.xiaojh.PhotoViewer'
+# edition → 包名/显示名/分发前缀/DINO 能力全部来自根 Directory.Build.props，脚本不另写产品判断。
+function Get-EditionIdentity {
+    param([string]$Edition)
+
+    $properties = @{}
+    $projectXml = [xml](Get-Content $directoryBuildProps -Raw)
+    foreach ($group in $projectXml.Project.PropertyGroup) {
+        foreach ($node in $group.ChildNodes) {
+            if ($node.NodeType -ne 'Element') { continue }
+            $condition = [string]$node.GetAttribute('Condition')
+            if ($condition -and $condition -match "PhotoViewerEdition\)'\s*==\s*'$([regex]::Escape($Edition))'") {
+                $properties[$node.LocalName] = $node.InnerText.Trim()
+            }
+        }
+    }
+    return [pscustomobject]@{
+        PackageId        = $properties['PhotoViewerPackageId']
+        DisplayName      = $properties['PhotoViewerDisplayName']
+        DistributionName = $properties['PhotoViewerDistributionName']
+        EnableDino       = $properties['PhotoViewerEnableDino']
+    }
+}
 
 $editions = if ($Edition -eq 'both') { @('standard', 'ai') } else { @($Edition) }
 
@@ -206,11 +227,16 @@ try {
     }
 
     foreach ($edition in $editions) {
-        $editionFlag = if ($edition -eq 'ai') { 'true' } else { 'false' }
-        $packageProduct = if ($edition -eq 'ai') { 'PhotoViewer-AI' } else { 'PhotoViewer' }
+        $identity = Get-EditionIdentity -Edition $edition
+        if ([string]::IsNullOrWhiteSpace($identity.PackageId) -or
+            [string]::IsNullOrWhiteSpace($identity.DisplayName) -or
+            [string]::IsNullOrWhiteSpace($identity.DistributionName) -or
+            $identity.EnableDino -notin @('true', 'false')) {
+            throw "根 Directory.Build.props 未给出 ${edition} 的完整产品身份（包名/显示名/分发前缀/DINO 能力）。"
+        }
         $publishDirectory = Join-Path $PSScriptRoot "bin\$edition\$Configuration\net10.0-android\publish"
 
-        Write-Host "[发布] === ${edition}（包名 ${packageProduct}） ==="
+        Write-Host "[发布] === ${edition}（$($identity.DisplayName)，$($identity.PackageId)） ==="
 
         # 只清当前 edition 的发布输出；共享工程 obj 由 edition 隔离目录承担，不再整目录删除。
         if (Test-Path $publishDirectory) {
@@ -220,7 +246,7 @@ try {
         & $dotnetPath publish $androidProject `
             -c $Configuration `
             -f $Framework `
-            "-p:PhotoViewerEnableDino=$editionFlag" `
+            "-p:PhotoViewerEdition=$edition" `
             /p:AndroidPackageFormat=apk `
             "/p:AndroidSdkDirectory=$AndroidSdkDirectory" `
             @signingArgs
@@ -230,8 +256,8 @@ try {
         }
 
         $candidates = @(
-            (Join-Path $publishDirectory "$packageId-Signed.apk"),
-            (Join-Path $publishDirectory "$packageId.apk")
+            (Join-Path $publishDirectory "$($identity.PackageId)-Signed.apk"),
+            (Join-Path $publishDirectory "$($identity.PackageId).apk")
         )
         $apkPath = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
         if (-not $apkPath) {
@@ -249,12 +275,14 @@ try {
             New-Item -ItemType Directory -Path $reportDirectory | Out-Null
         }
 
-        $destApk = Join-Path $destinationDirectory "$packageProduct-$appVersion-android-arm64.apk"
+        $destApk = Join-Path $destinationDirectory "$($identity.DistributionName)-$appVersion-android-arm64.apk"
         Copy-Item $apkPath $destApk -Force
         Write-Host "[发布] 产物：$destApk"
 
-        # 包扫描读实际 APK：身份/显示名/版本/ABI/模型/许可证/推理组件，失败即中断发布。
-        & $pythonPath $scanner $destApk --edition $edition --output (Join-Path $reportDirectory "$edition-package.json")
+        # 把 edition 对应的期望身份显式交给扫描器：实际 APK 与期望值都写进报告。
+        & $pythonPath $scanner $destApk --edition $edition `
+            --package-id $identity.PackageId --display-name $identity.DisplayName `
+            --output (Join-Path $reportDirectory "$edition-package.json")
         if ($LASTEXITCODE -ne 0) {
             throw "${edition} 包扫描未通过，发布中止。"
         }

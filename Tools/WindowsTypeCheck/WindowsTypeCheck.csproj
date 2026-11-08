@@ -27,9 +27,9 @@
     <AppxPackage>false</AppxPackage>
     <GenerateAppxPackageOnBuild>false</GenerateAppxPackageOnBuild>
     <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
-    <PhotoViewerEnableDino Condition="'$(PhotoViewerEnableDino)' == ''">true</PhotoViewerEnableDino>
+    <PhotoViewerEdition Condition="'$(PhotoViewerEdition)' == ''">ai</PhotoViewerEdition>
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
-    <DefineConstants Condition="'$(PhotoViewerEnableDino)' == 'true'">$(DefineConstants);PHOTOVIEWER_DINO</DefineConstants>
+    <DefineConstants Condition="'$(PhotoViewerEdition)' == 'ai'">$(DefineConstants);PHOTOVIEWER_DINO</DefineConstants>
     <WinSrc>$(MSBuildThisFileDirectory)..\..\PhotoViewer.Windows\</WinSrc>
   </PropertyGroup>
 
@@ -51,12 +51,12 @@
     <PackageReference Include="WicNet" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(PhotoViewerEnableDino)' != 'true'">
+  <ItemGroup Condition="'$(PhotoViewerEdition)' == 'standard'">
     <Compile Remove="$(WinSrc)Native\WindowsSimilarityPanel.cs" />
     <PackageReference Remove="Microsoft.ML.OnnxRuntime.DirectML" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\PhotoViewer\PhotoViewer.csproj"
-                      AdditionalProperties="PhotoViewerEnableDino=$(PhotoViewerEnableDino)" />
+                      AdditionalProperties="PhotoViewerEdition=$(PhotoViewerEdition)" />
   </ItemGroup>
 </Project>

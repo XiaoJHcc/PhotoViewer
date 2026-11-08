@@ -7,7 +7,8 @@ using System.Threading.Tasks;
 namespace PhotoViewer.Windows.Native;
 
 /// <summary>
-/// 原生壳启动期诊断：把启动/未处理异常落盘到 <c>%LOCALAPPDATA%\PhotoViewer\native-startup.log</c>。
+/// 原生壳启动期诊断：把启动/未处理异常落盘到产品私有目录
+/// <c>%LOCALAPPDATA%\{PhotoViewer|PhotoViewer AI}\native-startup.log</c>。
 /// WinUI 的原生启动失败会以 stowed exception(0xC000027B)结束进程且无控制台输出，
 /// 没有这份日志就无法区分"起不来"与"起来后崩"。
 /// </summary>
@@ -17,8 +18,7 @@ internal static class NativeStartupLog
 
     /// <summary>日志文件路径。</summary>
     public static string LogPath { get; private set; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "PhotoViewer",
+        WindowsProductInfo.PrivateStateDirectory,
         "native-startup.log");
 
     /// <summary>写入一条带时间戳的阶段记录。</summary>

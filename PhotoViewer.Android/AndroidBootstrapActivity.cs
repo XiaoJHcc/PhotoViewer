@@ -8,10 +8,10 @@ namespace PhotoViewer.Android;
 /// <summary>
 /// 唯一 launcher / 外部打开入口：转发到原生壳。
 /// 自身不初始化任何 UI 框架，也不承载界面，启动 <see cref="AndroidNativeActivity"/> 后立即结束。
+/// 不写 Activity label：显示名只由 application label（根 props 的 PhotoViewerDisplayName）决定。
 /// </summary>
 [Activity(
     Name = "cc.xiaojh.PhotoViewer.AndroidBootstrapActivity",
-    Label = "PhotoViewer",
     Theme = "@style/Theme.PhotoViewer.Native",
     Icon = "@drawable/icon",
     MainLauncher = true,

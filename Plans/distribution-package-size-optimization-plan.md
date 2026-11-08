@@ -90,22 +90,21 @@ iOS 估算尚未计入 Symbols 随 ONNX 移除而同步缩小的收益，不作�
 
 ### 2.2 发布矩阵与命名
 
-新发布统一使用 `PhotoViewer`（无 DINO 标准版）和 `PhotoViewer-AI`（DINO 内置版）两个产品名，格式为 `<产品名>-<版本>-<平台后缀>.<扩展名>`；历史包不改名。
+新发布使用 `PhotoViewer`（无 DINO 标准版）和 `PhotoViewer-AI`（DINO 内置版）两个分发文件名前缀，格式为 `<前缀>-<版本>-<平台后缀>.<扩展名>`；历史包不改名。用户可见显示名分别为 `PhotoViewer` / `PhotoViewer AI`，应用 ID 分别为 `cc.xiaojh.PhotoViewer` / `cc.xiaojh.PhotoViewer.AI`。
 
-| 平台 | 平台后缀 | 标准版 | DINO 内置版 |
-|---|---|---|---|
-| Windows | `-win-x64` | `PhotoViewer-<版本>-win-x64.exe` | `PhotoViewer-AI-<版本>-win-x64.exe` |
-| macOS | `-mac-arm64` | `PhotoViewer-<版本>-mac-arm64.dmg` | `PhotoViewer-AI-<版本>-mac-arm64.dmg` |
-| Android | `-android-arm64` | `PhotoViewer-<版本>-android-arm64.apk` | `PhotoViewer-AI-<版本>-android-arm64.apk` |
-| iOS | `-ios` | `PhotoViewer-<版本>-ios.ipa` | `PhotoViewer-AI-<版本>-ios.ipa` |
+| 平台 | 平台后缀 | 主发布形态 |
+|---|---|---|
+| Windows | `-win-x64` | 两个独立签名 MSIX；便携 EXE 仅作附加形态 |
+| macOS | `-mac-arm64` | 两个独立签名、公证的 DMG，各含一个 `.app` |
+| Android | `-android-arm64` | Play 渠道为 AAB，直接分发为签名 APK |
+| iOS | `-ios` | 两个独立 App Store Connect App，经 TestFlight / App Store 分发；IPA 是归档与上传载体 |
 
-签名状态由发布验收和校验文件证明，不写进文件名。Android 固定使用 `-android-arm64`，不生成 `-android-x86_64` 产物。
+签名状态由发布验收和校验文件证明，不写进文件名。Android 固定使用 `-android-arm64`，不生成 `-android-x86_64` 产物。横线 `PhotoViewer-AI` 只用于分发文件名、Windows 程序集/EXE 名与 TestFlight `.xcarchive` 名，不作为界面显示名或应用 ID。
 
-> **命名修订（2026-11）**：上表是打包命名，继续使用横线 `PhotoViewer-AI`。用户可见的产品显示名改为 `PhotoViewer AI`（空格）：窗口标题与菜单、macOS `.app` 目录名与 DMG 卷名、`CFBundleName` / `CFBundleDisplayName`、Android `android:label`、Windows 版本资源 `ProductName`。分发包文件名、Windows 程序集/EXE 名与 TestFlight `.xcarchive` 名不变；本计划下方早期验收记录里的“显示名分别为 `PhotoViewer` / `PhotoViewer-AI`”同样以本修订为准。
-
-- 桌面和 Android 可直接提供两个下载项；同包名/同 Bundle ID 的版本按替换安装处理，不要求同机共存。
-- **iOS 发布渠道需要单独裁定**：TestFlight 可用不同 build number 分批验证两个变体；App Store 同一 Bundle ID 不能当成两个并列 App 提供选择。若必须长期并列上架，需要独立 Bundle ID、App 入口和签名资料，这属于另一项发布决策，不在首轮默认承诺内。
-- 更新渠道按变体隔离，禁止标准版自动更新成带 82.58 MiB 模型的 DINO 版，反之亦然。
+- 两个产品在四端均可并存安装，分别启动、更新和卸载；Windows 与 macOS 可同时运行。安装身份、单实例、私有状态和更新轨道全部独立。
+- iOS/iPadOS 使用两个 Bundle ID、两个 App 记录和独立签名资料；同一版本号与构建号可由两个产品分别使用，不要求跨 edition 避让。
+- 桌面共享通用设置与可复用分析数据通过显式产品族共享区实现，不依赖相同包名；移动端设置、数据库、缓存与日志保持沙盒隔离。
+- 更新渠道按产品隔离，禁止标准版自动更新成带 82.58 MiB 模型的 DINO 版，反之亦然。
 
 ## 3. 分阶段路线
 

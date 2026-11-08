@@ -4,7 +4,8 @@
 用法：
   python3 Tools/check-ios-package.py <App.app|App.ipa> --edition standard|ai
         [--output <报告.json>] [--version 0.9.0] [--build-number 90]
-        [--product-name PhotoViewer|"PhotoViewer AI"] [--bundle-id cc.xiaojh.PhotoViewer]
+        [--product-name PhotoViewer|"PhotoViewer AI"]
+        [--bundle-id cc.xiaojh.PhotoViewer|cc.xiaojh.PhotoViewer.AI]
         [--executable PhotoViewer.iOS]
   python3 Tools/check-ios-package.py --self-test
 
@@ -14,7 +15,9 @@
 
 身份：CFBundleName / CFBundleDisplayName / CFBundleShortVersionString / CFBundleVersion /
 CFBundleIdentifier / CFBundleExecutable，包目录名 PhotoViewer.iOS.app，以及主执行文件
-PhotoViewer.iOS 的 arm64 可执行 Mach-O 头。版本号与构建号缺省取根 Directory.Build.props。
+PhotoViewer.iOS 的 arm64 可执行 Mach-O 头。期望 Bundle ID、产品名、版本号与构建号缺省按
+--edition 从根 Directory.Build.props 推导（standard → cc.xiaojh.PhotoViewer，
+ai → cc.xiaojh.PhotoViewer.AI）；--bundle-id / --product-name 只用于显式覆盖。
 
 能力边界（用真实 nm / otool 检查主执行文件，不只看文件名）：
 standard：不得包含 .onnx 模型、任何文件名含 onnxruntime 的托管/原生文件、MathNet.Numerics、
@@ -30,6 +33,7 @@ files / errors，另附按分类的体积摘要。检查失败时仍写报告并
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
 import os
@@ -46,11 +50,18 @@ MODEL_NAME = "dinov3_vits16.onnx"
 MODEL_BYTES = 86_594_677
 MODEL_SHA256 = "bcba38490ec2eded4a240751bebac198903daba7263871e8fee3aa39b03352e8"
 
-# 产品显示名（AI 版含空格）；CFBundleName/DisplayName 与设备主屏名称同值。
-# 分发包文件名另用 PhotoViewer-AI，只出现在 publish.sh 的 PACKAGE_PRODUCT 与 release/packages。
-PRODUCT_NAMES = {"standard": "PhotoViewer", "ai": "PhotoViewer AI"}
+# 产品身份（显示名、Bundle ID、分发名前缀、DINO 能力）只在根 Directory.Build.props 定义；
+# 本扫描器按 --edition 读取该映射作为默认期望值，不另立一份产品判断。
+EDITIONS = ("standard", "ai")
+IDENTITY_FIELDS = (
+    "PhotoViewerProductId",
+    "PhotoViewerPackageId",
+    "PhotoViewerDisplayName",
+    "PhotoViewerDistributionName",
+    "PhotoViewerEnableDino",
+)
+IDENTITY_LINE = re.compile(r"^\s*<(PhotoViewer[A-Za-z]+)([^>]*)>([^<]*)</\1>\s*$")
 APP_BUNDLE_NAME = "PhotoViewer.iOS.app"
-DEFAULT_BUNDLE_ID = "cc.xiaojh.PhotoViewer"
 DEFAULT_EXECUTABLE = "PhotoViewer.iOS"
 DINO_LICENSE_NAME = "DINOv3-LICENSE.md"
 
@@ -106,6 +117,41 @@ def read_root_props() -> dict:
         if match:
             values[key] = match.group(1).strip()
     return values
+
+
+def read_identity_map() -> dict:
+    """读取根 Directory.Build.props 的产品身份映射：edition → 属性字典。"""
+    props = Path(__file__).resolve().parent.parent / "Directory.Build.props"
+    text = props.read_text(encoding="utf-8")
+    identities: dict = {edition: {} for edition in EDITIONS}
+    for line in text.splitlines():
+        match = IDENTITY_LINE.match(line)
+        if not match:
+            continue
+        name, attributes, value = match.groups()
+        if name not in IDENTITY_FIELDS:
+            continue
+        condition = re.search(r"Condition=\"([^\"]*)\"", attributes)
+        editions = EDITIONS if condition is None else tuple(
+            edition for edition in EDITIONS if f"== '{edition}'" in condition.group(1)
+        )
+        for edition in editions:
+            identities[edition][name] = value.replace("$(PhotoViewerEdition)", edition)
+    missing = [
+        f"{edition}/{name}"
+        for edition in EDITIONS
+        for name in IDENTITY_FIELDS
+        if not identities[edition].get(name)
+    ]
+    if missing:
+        raise ValueError(f"{props} 缺少产品身份：{'、'.join(missing)}")
+    return identities
+
+
+@functools.lru_cache(maxsize=1)
+def identity_map() -> dict:
+    """带缓存的 read_identity_map()；映射缺失时抛 ValueError，由调用方给出明确报错。"""
+    return read_identity_map()
 
 
 def _read_thin_header(handle, offset: int):
@@ -666,6 +712,7 @@ def _make_app(
     *,
     extra_files: dict[str, bytes] | None = None,
     bundle_name: str | None = None,
+    bundle_id: str | None = None,
     executable: str = DEFAULT_EXECUTABLE,
     ort_symbol: str | None = None,
     arch: str = "arm64",
@@ -673,12 +720,23 @@ def _make_app(
 ) -> Path:
     app = root / APP_BUNDLE_NAME
     app.mkdir(parents=True, exist_ok=True)
+    if bundle_id is None:
+        bundle_id = next(
+            (
+                item["PhotoViewerPackageId"]
+                for item in identity_map().values()
+                if item["PhotoViewerDisplayName"] == product
+            ),
+            None,
+        )
+        if bundle_id is None:
+            raise RuntimeError(f"自检未知产品名：{product}")
     plist = {
         "CFBundleName": bundle_name or product,
         "CFBundleDisplayName": bundle_name or product,
         "CFBundleShortVersionString": version,
         "CFBundleVersion": build,
-        "CFBundleIdentifier": DEFAULT_BUNDLE_ID,
+        "CFBundleIdentifier": bundle_id,
         "CFBundleExecutable": executable,
     }
     (app / "Info.plist").write_bytes(plistlib.dumps(plist))
@@ -709,12 +767,16 @@ def self_test() -> int:
     cases: list[tuple[str, Path, dict, bool, str | None]] = []
 
     def expectations(edition: str, model: dict | None = None, **overrides) -> dict:
+        identity = identity_map()[edition]
         base = {
             "edition": edition,
-            "productName": PRODUCT_NAMES[edition],
+            "productId": identity["PhotoViewerProductId"],
+            "packageId": identity["PhotoViewerPackageId"],
+            "productName": identity["PhotoViewerDisplayName"],
+            "distributionName": identity["PhotoViewerDistributionName"],
             "version": version,
             "buildNumber": build,
-            "bundleId": DEFAULT_BUNDLE_ID,
+            "bundleId": identity["PhotoViewerPackageId"],
             "executable": DEFAULT_EXECUTABLE,
         }
         if edition == "ai":
@@ -892,6 +954,26 @@ def self_test() -> int:
         ))
 
         cases.append((
+            "标准版误用 AI Bundle ID 失败",
+            _make_app(root / "standard-ai-id", "PhotoViewer", version, build,
+                      extra_files={"PhotoViewer.dll": b"MZ"},
+                      bundle_id=identity_map()["ai"]["PhotoViewerPackageId"]),
+            expectations("standard"),
+            False,
+            "Info.plist Bundle ID（CFBundleIdentifier）不符",
+        ))
+
+        cases.append((
+            "AI 版误用标准版 Bundle ID 失败",
+            _make_app(root / "ai-standard-id", "PhotoViewer AI", version, build,
+                      extra_files=dict(ai_files), ort_symbol="OrtGetApiBase",
+                      bundle_id=identity_map()["standard"]["PhotoViewerPackageId"]),
+            expectations("ai", model_contract),
+            False,
+            "Info.plist Bundle ID（CFBundleIdentifier）不符",
+        ))
+
+        cases.append((
             "非 arm64 主执行文件失败",
             _make_app(root / "bad-arch", "PhotoViewer", version, build, arch="x86_64"),
             expectations("standard"),
@@ -932,18 +1014,28 @@ def self_test() -> int:
 def main() -> int:
     argv = sys.argv[1:]
     if "--self-test" in argv:
-        return self_test()
+        try:
+            return self_test()
+        except (OSError, ValueError) as exc:
+            print(f"自检无法读取产品身份：{exc}", file=sys.stderr)
+            return 2
 
     parser = argparse.ArgumentParser(description="扫描 iOS .app / .ipa 并核对发行版本契约")
     parser.add_argument("target", type=Path, help="待扫描的 .app 目录或 .ipa")
-    parser.add_argument("--edition", required=True, choices=("standard", "ai"), help="发行版本")
+    parser.add_argument("--edition", required=True, choices=EDITIONS, help="发行版本")
     parser.add_argument("--output", type=Path, help="JSON 报告路径")
     parser.add_argument("--version", help="期望的 CFBundleShortVersionString；缺省取根 Directory.Build.props")
     parser.add_argument("--build-number", help="期望的 CFBundleVersion；缺省取根 Directory.Build.props")
-    parser.add_argument("--product-name", help="期望的产品名与显示名")
-    parser.add_argument("--bundle-id", default=DEFAULT_BUNDLE_ID, help=f"期望的 CFBundleIdentifier（默认 {DEFAULT_BUNDLE_ID}）")
+    parser.add_argument("--product-name", help="期望的产品名与显示名；缺省按 --edition 推导")
+    parser.add_argument("--bundle-id", help="期望的 CFBundleIdentifier；缺省按 --edition 推导")
     parser.add_argument("--executable", default=DEFAULT_EXECUTABLE, help=f"期望的 CFBundleExecutable（默认 {DEFAULT_EXECUTABLE}）")
     args = parser.parse_args(argv)
+
+    try:
+        identity = identity_map()[args.edition]
+    except (OSError, ValueError) as exc:
+        print(f"无法读取产品身份：{exc}", file=sys.stderr)
+        return 2
 
     props = read_root_props()
     version = args.version or props.get("AppVersion")
@@ -954,10 +1046,13 @@ def main() -> int:
 
     expectations = {
         "edition": args.edition,
-        "productName": args.product_name or PRODUCT_NAMES[args.edition],
+        "productId": identity["PhotoViewerProductId"],
+        "packageId": identity["PhotoViewerPackageId"],
+        "productName": args.product_name or identity["PhotoViewerDisplayName"],
+        "distributionName": identity["PhotoViewerDistributionName"],
         "version": version,
         "buildNumber": build_number,
-        "bundleId": args.bundle_id,
+        "bundleId": args.bundle_id or identity["PhotoViewerPackageId"],
         "executable": args.executable,
         "modelContract": {
             "name": MODEL_NAME,

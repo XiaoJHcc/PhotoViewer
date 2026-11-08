@@ -1,3 +1,8 @@
 // 引入本地开发者特定覆盖（Team ID 等）。`?` 表示可选，文件缺失时不报错。
 // 首次使用：把 Local.xcconfig.sample 复制为 Local.xcconfig，填入你的 Team ID。
 #include? "Local.xcconfig"
+
+// 默认按标准版取 Bundle ID，便于在 Xcode 里直接打开工程续期；
+// Tools/RefreshIosProfile/refresh.sh 会按 --product 覆盖为根 Directory.Build.props
+// 派生的标准版或 AI 版 Bundle ID（cc.xiaojh.PhotoViewer / cc.xiaojh.PhotoViewer.AI）。
+PV_BUNDLE_IDENTIFIER = cc.xiaojh.PhotoViewer

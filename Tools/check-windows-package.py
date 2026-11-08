@@ -1,15 +1,30 @@
 #!/usr/bin/env python3
-"""扫描 Windows win-x64 .NET 单文件 EXE，核对双版本发行契约并生成包内清单。
+"""扫描 Windows win-x64 MSIX 或单文件 EXE，核对产品身份与双版本发行契约。
 
 用法：
+  python Tools/check-windows-package.py <包.msix> --edition standard|ai --output <报告.json>
+        [--version 0.9.0] [--build-number 90] [--display-name "PhotoViewer AI"]
+        [--package-id cc.xiaojh.PhotoViewer.AI] [--product-id photoviewer.ai]
+        [--application-id PhotoViewerAI] [--publisher "CN=xiaojh.cc"] [--require-signature]
   python Tools/check-windows-package.py <发布.exe> --edition standard|ai --output <报告.json>
-        [--version 0.9.0] [--build-number 90] [--product-name PhotoViewer|"PhotoViewer AI"]
         [--app-assembly PhotoViewer-0.9.0-win-x64]
   python Tools/check-windows-package.py --self-test
 
-只做本地文件检查：不联网、不执行包、不签名。
+产品身份默认值与根 Directory.Build.props 的 edition 派生映射一致；发布脚本把 MSBuild 求值出的
+实际身份显式传进来，扫描器只按实际产物核对，不靠构建参数推断。只做本地文件检查：
+不联网、不执行包、不签名。
 
-单文件格式：只支持 .NET bundle v6（实测 SDK 9.0.305 / 10.0.201 与本仓 0.9.0 发布包一致）。
+MSIX：包是 OPC/ZIP。核对 Identity（Name = 规范包 ID、Publisher、四段 Version、
+ProcessorArchitecture = x64）、Properties/DisplayName、Application Id/Executable/EntryPoint、
+VisualElements 显示名与 logo 资源、文件关联名与扩展名、runFullTrust 能力，并由 Publisher
+计算 Package Family Name 与 AUMID，确认标准版与 AI 版不同。载荷侧复用 EXE 的检查：
+主程序集 PE/CLI 元数据（程序集名、版本、PhotoViewerEdition / AppBuildNumber /
+PhotoViewerPackageId / PhotoViewerProductId / PhotoViewerDisplayName）、嵌入资源、
+根目录 pvhevc.dll / resources.pri / VC++ CRT / HEIF 原生库，以及分版推理资产。
+AppxBlockMap.xml 用于交叉核对包内文件清单与未压缩长度；AppxSignature.p7x 只按存在性
+判定签名（正式分发可加 --require-signature），签名链与哈希校验留给 Windows 安装验收。
+
+单文件 EXE：只支持 .NET bundle v6（实测 SDK 9.0.305 / 10.0.201 与本仓 0.9.0 发布包一致）。
 apphost 内带 40 字节 bundle marker：[int64 头部偏移][32 字节签名 8b1202b9…b36aae]。该 32 字节
 签名取自本机 SDK 的 Microsoft.NET.HostModel.dll 与 apphost.exe 模板，并在真实发布包中核对过
 （均唯一命中，且签名前 8 字节就是 bundle 头部偏移）。布局：
@@ -27,10 +42,11 @@ apphost 内带 40 字节 bundle marker：[int64 头部偏移][32 字节签名 8b
 扫描逐一校验：长度与解压结果一致、数据不越界/不重叠、路径为安全相对路径、路径不重复，
 并计算逐文件未压缩/压缩大小与 SHA-256。
 
-身份：EXE 必须是 x64 PE32+；读取其 PE 版本资源（ProductName / FileVersion / ProductVersion /
+EXE 身份：必须是 x64 PE32+；读取其 PE 版本资源（ProductName / FileVersion / ProductVersion /
 OriginalFilename）与 deps.json 推导出的真实主程序集；再解析该程序集的 PE/CLI 元数据：
 Assembly 表（程序集名 + 版本）、ManifestResource 表（嵌入资源名、字节数、SHA-256）、
-AssemblyMetadata（PhotoViewerEdition、AppBuildNumber，缺任何一项都是硬错误）。
+AssemblyMetadata（PhotoViewerEdition、AppBuildNumber、PhotoViewerPackageId、
+PhotoViewerProductId、PhotoViewerDisplayName，缺任何一项都是硬错误）。
 EXE 文件名可任意改名（含中文与空格），不参与身份判定，只记录实际文件名。
 主程序集名只能是 PhotoViewer[-AI]-<version>-win-x64.dll。
 版本号与构建号缺省取根 Directory.Build.props，也可显式传入。
@@ -43,17 +59,17 @@ ai：      必须包含 Microsoft.ML.OnnxRuntime.dll、MathNet.Numerics.dll、on
           模型可在主程序集的 ManifestResource
           （LogicalName PhotoViewer.Windows.NativeAssets.Assets.Models.dinov3_vits16.onnx），
           也可为包内文件 Assets/Models/dinov3_vits16.onnx；两处同时出现视为重复模型。
-两版都需要：根目录唯一一份 pvhevc.dll（不得再有 NativeLibs/win-x64 副本）、根目录
-resources.pri、四个 VC++ CRT、HEIF 解码原生库与 pvhevc 许可说明，以及自包含
+两种形态都需要：根目录唯一一份 pvhevc.dll（不得再有 NativeLibs/win-x64 副本）、根目录
+resources.pri、四个 VC++ CRT、HEIF 解码原生库与 pvhevc 许可说明；EXE 另需自包含
 net10.0/win-x64 的 deps.json / runtimeconfig.json；缺少应用资源包 <主程序集>.pri 时只告警。
 两版都拒绝开发期文件混入：NativeSrc/、NativeLibs/、AGENTS.md、App.xaml、app.manifest、
 *.ps1、PortableSingleFile.targets、项目文件与源码扩展名，也拒绝重新引入 WPF/WinForms 桌面运行时。
 
-报告固定写入 edition / exePath / exe / expectations / bundle / identity / embeddedResources /
-modelContract / summary / files / errors / warnings / passed。summary 按分类给出文件数、
-未压缩字节、包内实际字节与聚合 SHA-256。检查失败时仍写报告并以 1 退出。
+报告固定写入 format / edition / expectations / identity / embeddedResources / modelContract /
+summary / files / errors / warnings / passed；EXE 另含 exePath / exe / bundle，MSIX 另含
+packagePath / package / msix。summary 按分类给出文件数、字节与聚合 SHA-256。
+检查失败时仍写报告并以 1 退出。
 """
-
 from __future__ import annotations
 
 import argparse
@@ -63,6 +79,8 @@ import re
 import struct
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
+import zipfile
 import zlib
 from pathlib import Path
 
@@ -70,6 +88,36 @@ from pathlib import Path
 PRODUCT_NAMES = {"standard": "PhotoViewer", "ai": "PhotoViewer AI"}
 # 打包命名（程序集名、EXE 文件名）仍用横线。
 PACKAGE_NAMES = {"standard": "PhotoViewer", "ai": "PhotoViewer-AI"}
+# 全平台规范包 ID（与根 Directory.Build.props 的派生映射一致；扫描默认值，可用参数覆盖）。
+PACKAGE_IDS = {"standard": "cc.xiaojh.PhotoViewer", "ai": "cc.xiaojh.PhotoViewer.AI"}
+# 内部产品键（文件关联名与数据归属的机器标识）。
+PRODUCT_IDS = {"standard": "photoviewer.standard", "ai": "photoviewer.ai"}
+# Windows Application Id：AUMID = PackageFamilyName + "!" + ApplicationId。
+APPLICATION_IDS = {"standard": "PhotoViewer", "ai": "PhotoViewerAI"}
+DEFAULT_PUBLISHER = "CN=xiaojh.cc"
+AI_PACKAGE_ID_SUFFIX = ".AI"
+
+# MSIX 结构常量。
+MSIX_MANIFEST = "AppxManifest.xml"
+MSIX_BLOCKMAP = "AppxBlockMap.xml"
+MSIX_SIGNATURE = "AppxSignature.p7x"
+MSIX_CONTENT_TYPES = "[Content_Types].xml"
+MSIX_STRUCTURAL_FILES = (MSIX_BLOCKMAP, MSIX_SIGNATURE, MSIX_CONTENT_TYPES)
+MSIX_LOGOS = (
+    "Assets/StoreLogo.png",
+    "Assets/Square150x150Logo.png",
+    "Assets/Square44x44Logo.png",
+    "Assets/Square71x71Logo.png",
+    "Assets/Wide310x150Logo.png",
+)
+MSIX_ENTRY_POINT = "Windows.FullTrustApplication"
+UAP10_NAMESPACE = "http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+# 与 WindowsFilePicker 的通用图片扩展名一致：MSIX 文件关联必须覆盖这些类型。
+FILE_ASSOCIATION_EXTENSIONS = (
+    ".jpg", ".jpeg", ".png", ".heic", ".heif", ".hif", ".avif", ".tif", ".tiff",
+    ".webp", ".bmp", ".gif", ".arw", ".cr2", ".cr3", ".nef", ".nrw", ".raf", ".rw2",
+    ".orf", ".dng", ".pef", ".srw",
+)
 
 MODEL_NAME = "dinov3_vits16.onnx"
 MODEL_BYTES = 86_582_598
@@ -160,6 +208,87 @@ def read_root_props() -> dict:
         if match:
             values[key] = match.group(1).strip()
     return values
+
+
+def read_identity_props() -> dict:
+    """读取根 Directory.Build.props 的产品身份映射（扫描器默认值的来源）。"""
+    props = Path(__file__).resolve().parent.parent / "Directory.Build.props"
+    result: dict[str, dict[str, str | None]] = {}
+    try:
+        root = ET.parse(props).getroot()
+    except (OSError, ET.ParseError):
+        return result
+    identity_group = None
+    for group in root.findall("PropertyGroup"):
+        condition = group.get("Condition") or ""
+        if "'$(PhotoViewerEdition)' == 'standard'" in condition:
+            identity_group = group
+            break
+    if identity_group is None:
+        return result
+    names = {
+        "packageId": "PhotoViewerPackageId",
+        "productId": "PhotoViewerProductId",
+        "displayName": "PhotoViewerDisplayName",
+        "distributionName": "PhotoViewerDistributionName",
+        "enableDino": "PhotoViewerEnableDino",
+    }
+    for edition in ("standard", "ai"):
+        values: dict[str, str | None] = {}
+        for key, element_name in names.items():
+            found = None
+            for element in identity_group.findall(element_name):
+                condition = element.get("Condition") or ""
+                if condition and f"'{edition}'" not in condition:
+                    continue
+                found = (element.text or "").strip().replace(
+                    "$(PhotoViewerEdition)", edition)
+                break
+            values[key] = found or None
+        result[edition] = values
+    return result
+
+
+def publisher_id(publisher: str) -> str:
+    """按 MSIX 规则把 Publisher 归约为 Package Family Name 的 13 字符发布者 ID。
+
+    取 Publisher 字符串 UTF-16LE 编码的 SHA-256 前 8 字节，右侧补一个 0 位后按
+    Crockford base32（"0123456789ABCDEFGHJKMNPQRSTVWXYZ"）从高位分 13 组编码。
+    """
+    digest = hashlib.sha256(publisher.encode("utf-16-le")).digest()[:8]
+    alphabet = "0123456789abcdefghjkmnpqrstvwxyz"
+    value = int.from_bytes(digest, "big") << 1
+    return "".join(alphabet[(value >> (5 * index)) & 0x1F] for index in range(12, -1, -1))
+
+
+def expected_sibling_package_id(package_id: str) -> str:
+    """另一产品的规范包 ID：标准版无后缀，AI 版固定 .AI。"""
+    if package_id.endswith(AI_PACKAGE_ID_SUFFIX):
+        return package_id[: -len(AI_PACKAGE_ID_SUFFIX)]
+    return package_id + AI_PACKAGE_ID_SUFFIX
+
+
+class PackageFile:
+    """MSIX 载荷文件在契约检查里的最小视图（与 bundle 条目同名接口）。"""
+
+    __slots__ = ("path", "name")
+
+    def __init__(self, path: str):
+        self.path = path
+        self.name = path.rsplit("/", 1)[-1]
+
+
+def xml_local(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def xml_children(element, name: str) -> list:
+    return [child for child in list(element) if xml_local(child.tag) == name]
+
+
+def xml_child(element, name: str):
+    matches = xml_children(element, name)
+    return matches[0] if matches else None
 
 
 def read_at(data: bytes, offset: int, size: int, label: str) -> bytes:
@@ -1273,42 +1402,46 @@ def sniff_head(head: bytes) -> dict:
     return info
 
 
-def categorize(entry: BundleEntry, head: dict) -> str:
-    name = entry.name.lower()
-    if name.endswith(".onnx"):
+def categorize_name(name: str, head: dict) -> str:
+    lowered = name.lower()
+    if lowered.endswith(".onnx"):
         return "model"
-    if "onnxruntime" in name or "microsoft.ml.onnxruntime" in name:
-        if name.endswith(".dll") and name.startswith("microsoft.ml.onnxruntime"):
+    if "onnxruntime" in lowered or "microsoft.ml.onnxruntime" in lowered:
+        if lowered.endswith(".dll") and lowered.startswith("microsoft.ml.onnxruntime"):
             return "onnx-runtime-managed"
-        if name.endswith((".dll", ".lib")):
+        if lowered.endswith((".dll", ".lib")):
             return "onnx-runtime-native"
         return "onnx-runtime-other"
-    if "directml" in name:
+    if "directml" in lowered:
         return "directml"
-    if name == MATHNET_MANAGED.lower():
+    if lowered == MATHNET_MANAGED.lower():
         return "mathnet-managed"
-    if name == PVHEVC:
+    if lowered == PVHEVC:
         return "hevc-native"
-    if name in CRT_FILES or name.startswith(("msvcp140", "vcruntime140", "concrt140")):
+    if lowered in CRT_FILES or lowered.startswith(("msvcp140", "vcruntime140", "concrt140")):
         return "crt"
-    if name in HEIF_PLUGINS or name == HEIF_NATIVE:
+    if lowered in HEIF_PLUGINS or lowered == HEIF_NATIVE:
         return "heif-native"
-    if name.endswith(".pri"):
+    if lowered.endswith(".pri"):
         return "resources-pri"
-    if name.endswith(".winmd"):
+    if lowered.endswith(".winmd"):
         return "winmd"
-    if name.endswith(".dll"):
+    if lowered.endswith(".dll"):
         if head.get("kind") == "managed":
             return "managed"
         if head.get("kind") == "native":
             return "native"
         return "dll-unknown"
-    if name.endswith((".ico", ".png", ".jpg", ".jpeg", ".svg", ".bmp")):
+    if lowered.endswith((".ico", ".png", ".jpg", ".jpeg", ".svg", ".bmp")):
         return "image-resource"
-    if name.endswith((".md", ".txt", ".json", ".xml", ".targets", ".props", ".ps1",
-                      ".c", ".h", ".cs", ".pdb")):
+    if lowered.endswith((".md", ".txt", ".json", ".xml", ".targets", ".props", ".ps1",
+                         ".c", ".h", ".cs", ".pdb")):
         return "text-metadata"
     return "other"
+
+
+def categorize(entry: BundleEntry, head: dict) -> str:
+    return categorize_name(entry.name, head)
 
 
 def looks_like_onnx_model(name: str, size: int | None, head: bytes) -> bool:
@@ -1327,16 +1460,41 @@ def looks_like_onnx_model(name: str, size: int | None, head: bytes) -> bool:
 def build_expectations(edition: str, version: str, build_number: str,
                        product_name: str | None = None,
                        app_assembly: str | None = None,
-                       model: dict | None = None) -> dict:
-    product = product_name or PRODUCT_NAMES[edition]
+                       model: dict | None = None,
+                       package_id: str | None = None,
+                       product_id: str | None = None,
+                       display_name: str | None = None,
+                       application_id: str | None = None,
+                       publisher: str | None = None) -> dict:
+    display = display_name or product_name or PRODUCT_NAMES[edition]
+    product = product_id or PRODUCT_IDS[edition]
+    package = package_id or PACKAGE_IDS[edition]
+    app_id = application_id or APPLICATION_IDS[edition]
+    sibling = expected_sibling_package_id(package)
+    owner = publisher or DEFAULT_PUBLISHER
     assembly = app_assembly or f"{PACKAGE_NAMES[edition]}-{version}-win-x64"
     return {
         "edition": edition,
-        "productName": product,
+        "productName": display,
+        "displayName": display,
         "version": version,
         "buildNumber": build_number,
         "appAssemblyName": assembly,
+        "appExecutable": f"{assembly}.exe",
         "assemblyVersion": f"{version}.0",
+        "packageId": package,
+        "productId": product,
+        "applicationId": app_id,
+        "fileAssociationName": f"{product}.image",
+        "siblingPackageId": sibling,
+        "siblingApplicationId": (APPLICATION_IDS["ai"] if app_id == APPLICATION_IDS["standard"]
+                                 else APPLICATION_IDS["standard"]),
+        "publisher": owner,
+        "packageVersion": f"{version}.0",
+        "packageFamilyName": f"{package}_{publisher_id(owner)}",
+        "aumid": f"{package}_{publisher_id(owner)}!{app_id}",
+        "siblingAumid": f"{sibling}_{publisher_id(owner)}!"
+                       f"{(APPLICATION_IDS['ai'] if app_id == APPLICATION_IDS['standard'] else APPLICATION_IDS['standard'])}",
         "model": model or {"name": MODEL_NAME, "bytes": MODEL_BYTES, "sha256": MODEL_SHA256},
         "tfmPrefix": "net10.0",
         "rid": "win-x64",
@@ -1643,6 +1801,9 @@ def check_identity(host_pe: PeImage | None, version_info: dict | None,
             "productVersion": _app_product_version(assembly_version_info),
             "editionMetadata": assembly_metadata.get("PhotoViewerEdition"),
             "buildNumberMetadata": assembly_metadata.get("AppBuildNumber"),
+            "packageIdMetadata": assembly_metadata.get("PhotoViewerPackageId"),
+            "productIdMetadata": assembly_metadata.get("PhotoViewerProductId"),
+            "displayNameMetadata": assembly_metadata.get("PhotoViewerDisplayName"),
             "assemblyMetadata": dict(sorted(assembly_metadata.items())),
         },
         "runtimeConfigJson": runtime_name,
@@ -1732,6 +1893,23 @@ def check_identity(host_pe: PeImage | None, version_info: dict | None,
         check("app.buildNumber", "主程序集构建号", str(expectations["buildNumber"]),
               str(build_metadata))
 
+    # 产品身份按实际程序集元数据核对：标准版与 AI 版的包 ID / 内部产品键 / 显示名不能互换。
+    identity_fields = (
+        ("PhotoViewerPackageId", "packageId", "app.packageId", "主程序集规范包 ID"),
+        ("PhotoViewerProductId", "productId", "app.productId", "主程序集内部产品键"),
+        ("PhotoViewerDisplayName", "displayName", "app.displayName", "主程序集产品显示名"),
+    )
+    identity_metadata_ok = True
+    for metadata_key, expectation_key, field, label in identity_fields:
+        actual = assembly_metadata.get(metadata_key)
+        if actual is None:
+            identity_metadata_ok = False
+            findings.append(
+                f"主程序集缺少 AssemblyMetadata({metadata_key})：无法确认产品身份，"
+                "发布包必须带该元数据（csproj 已声明）")
+        else:
+            check(field, label, expectations[expectation_key], actual)
+
     expected_deps = f"{expectations['appAssemblyName']}.deps.json"
     expected_runtime = f"{expectations['appAssemblyName']}.runtimeconfig.json"
     check("bundle.depsJson", "deps.json 文件名", expected_deps, deps_name)
@@ -1779,7 +1957,8 @@ def check_identity(host_pe: PeImage | None, version_info: dict | None,
             })
 
     identity["metadataVerified"] = bool(edition_metadata is not None
-                                        and build_metadata is not None)
+                                        and build_metadata is not None
+                                        and identity_metadata_ok)
     identity["verified"] = (bool(identity["checks"])
                             and all(item["ok"] for item in identity["checks"])
                             and identity["metadataVerified"])
@@ -1828,6 +2007,7 @@ def scan(exe: Path, expectations: dict) -> dict:
     findings: list[str] = []
     warnings: list[str] = []
     report: dict = {
+        "format": "exe-bundle",
         "edition": expectations["edition"],
         "exePath": str(exe),
         "exe": {},
@@ -2092,6 +2272,433 @@ def scan(exe: Path, expectations: dict) -> dict:
     return report
 
 
+def _msix_manifest_root(zf: zipfile.ZipFile, findings: list[str]):
+    try:
+        raw = zf.read(MSIX_MANIFEST)
+    except KeyError:
+        findings.append(f"MSIX 包缺少根目录 {MSIX_MANIFEST}")
+        return None
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError as exc:
+        findings.append(f"{MSIX_MANIFEST} 解析失败：{exc}")
+        return None
+    if xml_local(root.tag) != "Package":
+        findings.append(f"{MSIX_MANIFEST} 根元素不是 Package：{xml_local(root.tag)}")
+        return None
+    return root
+
+
+def _msix_identity_checks(root, expectations: dict, findings: list[str]) -> dict:
+    checks: list[dict] = []
+
+    def check(field: str, label: str, expected, actual) -> None:
+        ok = expected == actual
+        checks.append({"field": field, "label": label, "expected": expected,
+                       "actual": actual, "ok": bool(ok)})
+        if not ok:
+            findings.append(f"{label}不符：期望 {expected}，实际 {actual}")
+
+    identity: dict = {"checks": checks, "verified": False}
+    identity_el = xml_child(root, "Identity")
+    if identity_el is None:
+        findings.append("MSIX 清单缺少 Identity")
+        return identity
+
+    name = identity_el.get("Name")
+    publisher = identity_el.get("Publisher")
+    version = identity_el.get("Version")
+    architecture = identity_el.get("ProcessorArchitecture")
+    identity.update({
+        "packageId": name,
+        "publisher": publisher,
+        "version": version,
+        "architecture": architecture,
+    })
+    check("msix.identity.name", "MSIX 包身份 Identity.Name", expectations["packageId"], name)
+    if name == expectations["siblingPackageId"]:
+        findings.append(
+            f"MSIX 包身份与发行版本互换：{expectations['edition']} 包不得使用 "
+            f"{expectations['siblingPackageId']}")
+    check("msix.identity.publisher", "MSIX 签名主体 Publisher", expectations["publisher"], publisher)
+    check("msix.identity.version", "MSIX 包版本 Identity.Version",
+          expectations["packageVersion"], version)
+    if version and not re.fullmatch(r"\d+\.\d+\.\d+\.\d+", version):
+        findings.append(f"MSIX 包版本必须是四段数字：{version}")
+    check("msix.identity.architecture", "MSIX 包架构", "x64", architecture)
+
+    properties = xml_child(root, "Properties")
+    display = xml_child(properties, "DisplayName") if properties is not None else None
+    check("msix.properties.displayName", "MSIX 包显示名", expectations["displayName"],
+          (display.text or "").strip() if display is not None else None)
+
+    applications = xml_child(root, "Applications")
+    application_els = xml_children(applications, "Application") if applications is not None else []
+    if len(application_els) != 1:
+        findings.append(f"MSIX 清单必须恰好有一个 Application，实际 {len(application_els)} 个")
+        return identity
+    application = application_els[0]
+    application_id = application.get("Id")
+    executable = application.get("Executable")
+    entry_point = application.get("EntryPoint")
+    identity.update({
+        "applicationId": application_id,
+        "executable": executable,
+        "entryPoint": entry_point,
+    })
+    check("msix.application.id", "MSIX Application Id（AUMID 末段）",
+          expectations["applicationId"], application_id)
+    check("msix.application.executable", "MSIX 主可执行文件",
+          expectations["appExecutable"], executable)
+    check("msix.application.entryPoint", "MSIX 入口点", MSIX_ENTRY_POINT, entry_point)
+    for attribute in ("TrustLevel", "RuntimeBehavior"):
+        if application.get(f"{{{UAP10_NAMESPACE}}}{attribute}") is None:
+            findings.append(f"MSIX Application 缺少 uap10:{attribute}（桌面全信任包必需）")
+
+    visual = xml_child(application, "VisualElements")
+    if visual is None:
+        findings.append("MSIX Application 缺少 uap:VisualElements")
+    else:
+        visual_display = visual.get("DisplayName")
+        identity["visualDisplayName"] = visual_display
+        check("msix.visual.displayName", "MSIX 应用入口显示名",
+              expectations["displayName"], visual_display)
+        for attribute in ("Square150x150Logo", "Square44x44Logo"):
+            if not visual.get(attribute):
+                findings.append(f"MSIX VisualElements 缺少 {attribute}")
+        default_tile = xml_child(visual, "DefaultTile")
+        if default_tile is not None:
+            for attribute in ("Wide310x150Logo", "Square71x71Logo"):
+                if not default_tile.get(attribute):
+                    findings.append(f"MSIX DefaultTile 缺少 {attribute}")
+
+    extensions = xml_child(application, "Extensions")
+    extension_els = xml_children(extensions, "Extension") if extensions is not None else []
+    associations = []
+    for extension in extension_els:
+        associations.extend(xml_children(extension, "FileTypeAssociation"))
+    if len(associations) != 1:
+        findings.append(f"MSIX 必须恰好有一个文件关联，实际 {len(associations)} 个")
+    else:
+        association = associations[0]
+        association_name = association.get("Name")
+        identity["fileAssociationName"] = association_name
+        check("msix.association.name", "MSIX 文件关联名",
+              expectations["fileAssociationName"], association_name)
+        if association_name and not re.fullmatch(r"[a-z0-9.-]{1,64}", association_name):
+            findings.append(
+                f"MSIX 文件关联名必须是小写字母/数字/点/横线且不超过 64 字符：{association_name}")
+        association_display = xml_child(association, "DisplayName")
+        if association_display is not None:
+            check("msix.association.displayName", "MSIX 文件关联显示名",
+                  expectations["displayName"], (association_display.text or "").strip())
+        supported = xml_child(association, "SupportedFileTypes")
+        declared = {
+            (item.text or "").strip().lower()
+            for item in (xml_children(supported, "FileType") if supported is not None else [])
+        }
+        identity["fileTypes"] = sorted(declared)
+        missing = [extension for extension in FILE_ASSOCIATION_EXTENSIONS
+                   if extension not in declared]
+        if missing:
+            findings.append("MSIX 文件关联缺少扩展名：" + "、".join(missing))
+        extra = sorted(declared - set(FILE_ASSOCIATION_EXTENSIONS))
+        if extra:
+            findings.append("MSIX 文件关联出现未登记扩展名：" + "、".join(extra))
+
+    capabilities = xml_child(root, "Capabilities")
+    capability_names = {
+        item.get("Name") for item in (xml_children(capabilities, "Capability")
+                                      if capabilities is not None else [])
+    }
+    if "runFullTrust" not in capability_names:
+        findings.append("MSIX 桌面全信任包缺少 rescap:runFullTrust")
+
+    publisher_hash = publisher_id(publisher) if publisher else None
+    identity["publisherHash"] = publisher_hash
+    if name and publisher_hash:
+        family = f"{name}_{publisher_hash}"
+        identity["packageFamilyName"] = family
+        identity["aumid"] = f"{family}!{application_id}" if application_id else None
+        identity["siblingAumid"] = expectations["siblingAumid"]
+        if identity["aumid"] == expectations["siblingAumid"]:
+            findings.append(f"标准版与 AI 版 AUMID 相同：{identity['aumid']}")
+    identity["verified"] = bool(checks) and all(item["ok"] for item in checks)
+    return identity
+
+
+def _msix_payload(zf: zipfile.ZipFile, findings: list[str]) -> list[dict]:
+    records: list[dict] = []
+    for info in zf.infolist():
+        if info.is_dir():
+            continue
+        zip_path = info.filename
+        # APPX/OPC 的条目名可能用反斜杠；契约统一按正斜杠比较。
+        path = zip_path.replace("\\", "/")
+        problem = validate_bundle_path(path)
+        if problem:
+            findings.append(f"{path}：MSIX 条目路径不安全（{problem}）")
+        digest = hashlib.sha256()
+        head = bytearray()
+        try:
+            with zf.open(info, "r") as handle:
+                while True:
+                    chunk = handle.read(COPY_CHUNK)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                    if len(head) < 64 * 1024:
+                        head.extend(chunk[: 64 * 1024 - len(head)])
+        except (OSError, zlib.error) as exc:
+            findings.append(f"{path}：读取失败（{exc}）")
+            continue
+        record = {
+            "path": path,
+            "zipPath": zip_path,
+            "fileName": path.rsplit("/", 1)[-1],
+            "type": 0,
+            "typeName": "package",
+            "bytes": info.file_size,
+            "storedBytes": info.compress_size,
+            "compressed": info.compress_type != zipfile.ZIP_STORED,
+            "sha256": digest.hexdigest(),
+            "category": categorize_name(path.rsplit("/", 1)[-1], sniff_head(bytes(head))),
+        }
+        records.append(record)
+    return records
+
+
+def _check_msix_blockmap(zf: zipfile.ZipFile, records: list[dict],
+                         findings: list[str], warnings: list[str]) -> dict | None:
+    if MSIX_CONTENT_TYPES not in zf.namelist():
+        findings.append(f"MSIX 包缺少根目录 {MSIX_CONTENT_TYPES}")
+    if MSIX_BLOCKMAP not in zf.namelist():
+        findings.append(f"MSIX 包缺少根目录 {MSIX_BLOCKMAP}（包完整性/增量信息）")
+        return None
+    try:
+        root = ET.fromstring(zf.read(MSIX_BLOCKMAP))
+    except (ET.ParseError, KeyError) as exc:
+        findings.append(f"{MSIX_BLOCKMAP} 解析失败：{exc}")
+        return None
+    listed: dict[str, int] = {}
+    block_count = 0
+    for element in root.iter():
+        if xml_local(element.tag) != "File":
+            continue
+        name = (element.get("Name") or "").replace("\\", "/")
+        try:
+            size = int(element.get("Size") or 0)
+        except ValueError:
+            size = -1
+        listed[name] = size
+        block_count += sum(1 for child in list(element) if xml_local(child.tag) == "Block")
+    payload = {record["path"]: record["bytes"] for record in records
+               if record["path"] not in MSIX_STRUCTURAL_FILES
+               and not record["path"].startswith("AppxMetadata/")}
+    for name, size in sorted(listed.items()):
+        if name not in payload:
+            findings.append(f"{MSIX_BLOCKMAP} 列出的文件不在包内：{name}")
+        elif size != payload[name]:
+            findings.append(
+                f"{MSIX_BLOCKMAP} 记录的未压缩长度与包内不一致：{name}（{size} != {payload[name]}）")
+    for name in sorted(payload):
+        if name not in listed:
+            findings.append(f"包内文件未出现在 {MSIX_BLOCKMAP}：{name}")
+    return {"fileCount": len(listed), "blockCount": block_count}
+
+
+def _msix_app_assembly(records: list[dict], zf: zipfile.ZipFile,
+                       findings: list[str]) -> tuple[dict | None, ManagedAssembly | None,
+                                                      list[dict], bytes | None, str | None]:
+    deps = [record for record in records
+            if record["path"].lower().endswith(".deps.json") and "/" not in record["path"]]
+    if len(deps) != 1:
+        findings.append(f"MSIX 根目录 deps.json 条目数应为 1，实际 {len(deps)}")
+        return None, None, [], None, None
+    base_name = deps[0]["path"][: -len(".deps.json")]
+    candidates = [record for record in records if record["path"] == f"{base_name}.dll"]
+    if len(candidates) != 1:
+        findings.append(f"MSIX 未找到唯一的主程序集 {base_name}.dll（实际 {len(candidates)} 个）")
+        return None, None, [], None, None
+    payload = zf.read(candidates[0]["zipPath"])
+    try:
+        managed = ManagedAssembly(payload, candidates[0]["path"])
+    except ScanError as exc:
+        findings.append(f"MSIX 主程序集解析失败：{exc}")
+        return None, None, [], payload, candidates[0]["path"]
+    return (managed.assembly(), managed, managed.manifest_resources(),
+            payload, candidates[0]["path"])
+
+
+def scan_msix(msix: Path, expectations: dict, require_signature: bool = False) -> dict:
+    """扫描单个 MSIX，按实际清单与载荷核对身份、版本、架构与分版资源。"""
+    findings: list[str] = []
+    warnings: list[str] = []
+    report: dict = {
+        "format": "msix",
+        "edition": expectations["edition"],
+        "packagePath": str(msix),
+        "package": {},
+        "expectations": expectations,
+        "msix": {},
+        "identity": {},
+        "embeddedResources": [],
+        "modelContract": None,
+        "summary": {"categories": [], "aggregateSha256": None},
+        "files": [],
+        "errors": findings,
+        "warnings": warnings,
+        "passed": False,
+    }
+    if not msix.is_file():
+        findings.append(f"发布包不存在或不是普通文件：{msix}")
+        return report
+    report["packagePath"] = str(msix.resolve())
+    report["package"] = {
+        "fileName": msix.name,
+        "bytes": msix.stat().st_size,
+        "sha256": sha256_file(msix),
+    }
+    if not zipfile.is_zipfile(msix):
+        findings.append("MSIX 不是有效的 ZIP/OPC 包")
+        return report
+
+    with zipfile.ZipFile(msix) as zf:
+        broken = zf.testzip()
+        if broken is not None:
+            findings.append(f"MSIX 压缩条目损坏：{broken}")
+            return report
+
+        root = _msix_manifest_root(zf, findings)
+        identity = _msix_identity_checks(root, expectations, findings) if root is not None else {}
+        signature_present = MSIX_SIGNATURE in zf.namelist()
+        identity["signaturePresent"] = signature_present
+        identity["signed"] = signature_present
+        identity["signatureVerified"] = False
+        if not signature_present:
+            message = "MSIX 未签名（缺少 AppxSignature.p7x），只能做结构校验，不能安装或分发"
+            if require_signature:
+                findings.append(message)
+            else:
+                warnings.append(message)
+
+        records = _msix_payload(zf, findings)
+        report["files"] = [
+            {key: record[key] for key in
+             ("path", "type", "typeName", "bytes", "storedBytes", "compressed", "sha256",
+              "category")}
+            for record in records
+        ]
+        report["summary"] = build_summary(records)
+        blockmap = _check_msix_blockmap(zf, records, findings, warnings)
+
+        manifest_el = xml_child(root, "Identity") if root is not None else None
+        package_files = [PackageFile(record["path"]) for record in records]
+        check_shared_requirements(package_files, expectations, findings, warnings)
+        check_dev_payload(package_files, findings)
+
+        present_paths = {record["path"] for record in records}
+        for logo in MSIX_LOGOS:
+            if logo not in present_paths:
+                findings.append(f"MSIX 清单引用的包资源缺失：{logo}")
+        executable = identity.get("executable") if identity else None
+        if executable:
+            matches = [record for record in records if record["path"] == executable]
+            if not matches:
+                findings.append(f"MSIX 主可执行文件不在包内：{executable}")
+            else:
+                try:
+                    host_pe = PeImage(zf.read(matches[0]["zipPath"]), executable)
+                    if host_pe.machine != PE_MACHINE_X64 or not host_pe.pe32_plus:
+                        findings.append(f"MSIX 主可执行文件不是 x64 PE32+：{executable}")
+                    else:
+                        identity["executableMachine"] = hex(host_pe.machine)
+                except ScanError as exc:
+                    findings.append(f"MSIX 主可执行文件 PE 解析失败：{exc}")
+
+        assembly, managed, embedded, app_data, app_path = _msix_app_assembly(
+            records, zf, findings)
+        if managed is not None and assembly is not None:
+            metadata = managed.assembly_metadata()
+            checks = identity.setdefault("checks", []) if identity else []
+            app_info = {
+                "path": app_path,
+                "name": assembly.get("name"),
+                "assemblyVersion": assembly.get("version"),
+                "editionMetadata": metadata.get("PhotoViewerEdition"),
+                "buildNumberMetadata": metadata.get("AppBuildNumber"),
+                "packageIdMetadata": metadata.get("PhotoViewerPackageId"),
+                "productIdMetadata": metadata.get("PhotoViewerProductId"),
+                "displayNameMetadata": metadata.get("PhotoViewerDisplayName"),
+                "assemblyMetadata": dict(sorted(metadata.items())),
+                "sha256": sha256_bytes(app_data) if app_data is not None else None,
+            }
+            identity["appAssembly"] = app_info
+
+            def app_check(field: str, label: str, expected, actual) -> None:
+                ok = expected == actual
+                checks.append({"field": field, "label": label, "expected": expected,
+                               "actual": actual, "ok": bool(ok)})
+                if not ok:
+                    findings.append(f"{label}不符：期望 {expected}，实际 {actual}")
+
+            app_check("app.name", "主程序集名", expectations["appAssemblyName"], app_info["name"])
+            app_check("app.assemblyVersion", "主程序集元数据版本",
+                      expectations["assemblyVersion"], app_info["assemblyVersion"])
+            for metadata_key, expectation_key, label in (
+                ("PhotoViewerEdition", "edition", "主程序集版本标识"),
+                ("PhotoViewerPackageId", "packageId", "主程序集规范包 ID"),
+                ("PhotoViewerProductId", "productId", "主程序集内部产品键"),
+                ("PhotoViewerDisplayName", "displayName", "主程序集产品显示名"),
+                ("AppBuildNumber", "buildNumber", "主程序集构建号"),
+            ):
+                actual = metadata.get(metadata_key)
+                if actual is None:
+                    findings.append(
+                        f"主程序集缺少 AssemblyMetadata({metadata_key})：MSIX 身份无法与产品身份对应")
+                else:
+                    app_check(f"app.{expectation_key}", label,
+                              str(expectations[expectation_key]), str(actual))
+            identity["verified"] = (bool(checks) and all(item["ok"] for item in checks)
+                                    and bool(identity.get("verified")))
+        else:
+            identity["verified"] = False
+
+        report["identity"] = identity
+        report["embeddedResources"] = [
+            {"name": resource["name"], "bytes": resource["bytes"],
+             "sha256": resource["sha256"], "linked": resource["implementation"] is not None,
+             "modelLike": (resource["implementation"] is None and looks_like_onnx_model(
+                 resource["name"], resource["bytes"], resource["head"]))}
+            for resource in embedded
+        ]
+        candidates = collect_models(embedded, records)
+        if expectations["edition"] == "standard":
+            check_standard(package_files, embedded, findings)
+            satisfied = not candidates
+        else:
+            check_ai(package_files, embedded, candidates, expectations, findings)
+            contract = expectations["model"]
+            satisfied = (len(candidates) == 1
+                         and model_name_matches(candidates[0]["name"], contract["name"])
+                         and candidates[0]["bytes"] == contract["bytes"]
+                         and candidates[0]["sha256"] == contract["sha256"])
+        report["modelContract"] = {
+            "expected": expectations["model"],
+            "found": candidates,
+            "satisfied": satisfied,
+        }
+        report["msix"] = {
+            "blockMap": blockmap,
+            "identity": {key: (manifest_el.get(key) if manifest_el is not None else None)
+                         for key in ("Name", "Publisher", "Version", "ProcessorArchitecture")},
+            "signaturePresent": signature_present,
+        }
+
+    report["passed"] = not findings
+    return report
+
+
 def write_report(report: dict, output: Path) -> int:
     try:
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -2105,28 +2712,43 @@ def write_report(report: dict, output: Path) -> int:
 
 def print_report(report: dict, output: Path | None) -> None:
     print(f"edition：{report['edition']}")
-    print(f"exe：{report['exePath']}")
-    exe = report.get("exe") or {}
-    if exe:
-        print(f"文件：{exe.get('fileName')}  {human(exe.get('bytes') or 0)}  "
-              f"sha256 {exe.get('sha256')}")
-    bundle = report.get("bundle") or {}
-    if bundle:
+    print(f"格式：{report.get('format', 'exe-bundle')}")
+    if report.get("format") == "msix":
+        package = report.get("package") or {}
+        print(f"msix：{report.get('packagePath')}")
+        print(f"文件：{package.get('fileName')}  {human(package.get('bytes') or 0)}  "
+              f"sha256 {package.get('sha256')}")
+        identity = report.get("identity") or {}
         print(
-            f"bundle：bundle v{bundle.get('formatMajor')} / 条目 {bundle.get('fileCount')} / "
-            f"压缩条目 {bundle.get('compressedFileCount')} / "
-            f"未压缩 {human(bundle.get('uncompressedBytes') or 0)} / "
-            f"包内 {human(bundle.get('storedBytes') or 0)}")
-        print(
-            f"头部：{bundle.get('locator')} offset={bundle.get('headerOffset')} "
-            f"verified={bundle.get('headerVerified')} bundleId={bundle.get('bundleId')}")
+            f"身份：{identity.get('packageId')} {identity.get('version')} "
+            f"{identity.get('architecture')} / 显示名 {identity.get('visualDisplayName')} / "
+            f"AUMID {identity.get('aumid')} / 关联 {identity.get('fileAssociationName')} / "
+            f"签名 {identity.get('signed')}")
+        blockmap = (report.get("msix") or {}).get("blockMap") or {}
+        print(f"blockmap：{blockmap.get('fileCount')} 文件 / {blockmap.get('blockCount')} 块")
+    else:
+        print(f"exe：{report['exePath']}")
+        exe = report.get("exe") or {}
+        if exe:
+            print(f"文件：{exe.get('fileName')}  {human(exe.get('bytes') or 0)}  "
+                  f"sha256 {exe.get('sha256')}")
+        bundle = report.get("bundle") or {}
+        if bundle:
+            print(
+                f"bundle：bundle v{bundle.get('formatMajor')} / 条目 {bundle.get('fileCount')} / "
+                f"压缩条目 {bundle.get('compressedFileCount')} / "
+                f"未压缩 {human(bundle.get('uncompressedBytes') or 0)} / "
+                f"包内 {human(bundle.get('storedBytes') or 0)}")
+            print(
+                f"头部：{bundle.get('locator')} offset={bundle.get('headerOffset')} "
+                f"verified={bundle.get('headerVerified')} bundleId={bundle.get('bundleId')}")
     identity = report.get("identity") or {}
     app = identity.get("appAssembly") or {}
     if app:
         print(
-            f"身份：{app.get('name')} / 程序集版本 {app.get('assemblyVersion')} / "
+            f"程序集：{app.get('name')} / 程序集版本 {app.get('assemblyVersion')} / "
             f"版本标识 {app.get('editionMetadata')} / 构建号 {app.get('buildNumberMetadata')} / "
-            f"EXE 文件名 {identity.get('exeFileName')}")
+            f"包 ID {app.get('packageIdMetadata')}")
     if report.get("modelContract"):
         model = report["modelContract"]
         found = model.get("found") or []
@@ -2330,6 +2952,15 @@ def build_managed_assembly(assembly_name: str, version: str,
                            metadata: dict, resources: list[tuple[str, bytes]]) -> bytes:
     """合成托管程序集：CLI 头 + 最小元数据（Module/TypeRef/MemberRef/CustomAttribute/
     Assembly/AssemblyRef/ManifestResource）+ 嵌入资源目录。"""
+    metadata = dict(metadata)
+    edition = metadata.get("PhotoViewerEdition")
+    if edition in PACKAGE_IDS:
+        # 真实 csproj 无条件写这些身份元数据；合成包按 metadata 里的 edition 补齐，
+        # 只有用例显式给错值时才覆盖。
+        metadata.setdefault("PhotoViewerPackageId", PACKAGE_IDS[edition])
+        metadata.setdefault("PhotoViewerProductId", PRODUCT_IDS[edition])
+        metadata.setdefault("PhotoViewerDisplayName", PRODUCT_NAMES[edition])
+        metadata.setdefault("PhotoViewerDistributionName", PACKAGE_NAMES[edition])
     file_name = assembly_name + ".dll"
     numbers = [int(part) for part in version.split(".")]
     while len(numbers) < 4:
@@ -2639,6 +3270,189 @@ def ai_files(assembly_name: str, assembly: bytes, license_in_bundle: bool,
                       "data": model_file, "compress": True})
     return files
 
+
+# ---------------------------------------------------------------------------
+# 合成 MSIX（自检用；不是真实打包产物）
+# ---------------------------------------------------------------------------
+
+def build_msix_manifest(*, identity_name: str, publisher: str, package_version: str,
+                        architecture: str, display_name: str, application_id: str,
+                        executable: str, entry_point: str, file_association_name: str,
+                        file_types=FILE_ASSOCIATION_EXTENSIONS,
+                        include_application: bool = True,
+                        include_capability: bool = True) -> bytes:
+    application = ""
+    if include_application:
+        supported = "".join(f"<uap:FileType>{extension}</uap:FileType>"
+                            for extension in file_types)
+        application = f"""
+  <Applications>
+    <Application Id="{application_id}" Executable="{executable}" EntryPoint="{entry_point}"
+                 xmlns:uap10="{UAP10_NAMESPACE}" uap10:TrustLevel="mediumIL" uap10:RuntimeBehavior="packagedClassicApp">
+      <uap:VisualElements DisplayName="{display_name}" Description="{display_name}" BackgroundColor="transparent"
+                          Square150x150Logo="Assets\\Square150x150Logo.png"
+                          Square44x44Logo="Assets\\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\\Wide310x150Logo.png" Square71x71Logo="Assets\\Square71x71Logo.png" />
+        <uap:ShowNameOnTiles><uap:ShowOn Tile="square150x150Logo" /></uap:ShowNameOnTiles>
+      </uap:VisualElements>
+      <Extensions>
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap:FileTypeAssociation Name="{file_association_name}">
+            <uap:DisplayName>{display_name}</uap:DisplayName>
+            <uap:SupportedFileTypes>{supported}</uap:SupportedFileTypes>
+          </uap:FileTypeAssociation>
+        </uap:Extension>
+      </Extensions>
+    </Application>
+  </Applications>"""
+    capability = ("""
+  <Capabilities><rescap:Capability Name="runFullTrust" /></Capabilities>"""
+                  if include_capability else "")
+    manifest = f"""<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+         xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+         xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+         IgnorableNamespaces="uap rescap">
+  <Identity Name="{identity_name}" Publisher="{publisher}" Version="{package_version}" ProcessorArchitecture="{architecture}" />
+  <Properties>
+    <DisplayName>{display_name}</DisplayName>
+    <PublisherDisplayName>xiaojh.cc</PublisherDisplayName>
+    <Logo>Assets\\StoreLogo.png</Logo>
+  </Properties>
+  <Dependencies><TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.28100.0" /></Dependencies>
+  <Resources><Resource Language="zh-CN" /><Resource Language="en-US" /></Resources>{application}{capability}
+</Package>
+"""
+    return manifest.encode("utf-8")
+
+
+def msix_payload(assembly_name: str, assembly: bytes, edition: str, *,
+                 model_file: bytes | None = None, license_in_bundle: bool = True,
+                 include_ort: bool = True) -> dict[str, bytes]:
+    files = {
+        f"{assembly_name}.exe": _NATIVE_STUB,
+        f"{assembly_name}.dll": assembly,
+        f"{assembly_name}.deps.json": deps_bytes(assembly_name),
+        f"{assembly_name}.runtimeconfig.json": runtimeconfig_bytes(),
+        "pvhevc.dll": _NATIVE_STUB,
+        "pvhevc.txt": b"pvhevc build note",
+        "pvhevc-FFmpeg-LICENSE.txt": b"FFmpeg LGPL license",
+        "resources.pri": b"PRI\0fallback",
+        f"{assembly_name}.pri": b"PRI\0app",
+        "libheif.dll": _NATIVE_STUB,
+        "libde265.dll": _NATIVE_STUB,
+        "libx265.dll": _NATIVE_STUB,
+        "aom.dll": _NATIVE_STUB,
+        "msvcp140.dll": _NATIVE_STUB,
+        "msvcp140_1.dll": _NATIVE_STUB,
+        "vcruntime140.dll": _NATIVE_STUB,
+        "vcruntime140_1.dll": _NATIVE_STUB,
+        "icon.ico": b"\x00\x00\x01\x00\x01\x00",
+        "System.Private.CoreLib.dll": _MANAGED_STUB,
+        "DirectNStandard.dll": _MANAGED_STUB,
+        "Assets/StoreLogo.png": b"\x89PNG\r\n\x1a\nstore",
+        "Assets/Square150x150Logo.png": b"\x89PNG\r\n\x1a\nsquare150",
+        "Assets/Square44x44Logo.png": b"\x89PNG\r\n\x1a\nsquare44",
+        "Assets/Square71x71Logo.png": b"\x89PNG\r\n\x1a\nsquare71",
+        "Assets/Wide310x150Logo.png": b"\x89PNG\r\n\x1a\nwide",
+    }
+    if edition == "ai":
+        if include_ort:
+            files["Microsoft.ML.OnnxRuntime.dll"] = _MANAGED_STUB
+            files["MathNet.Numerics.dll"] = _MANAGED_STUB
+            files["onnxruntime.dll"] = _NATIVE_STUB
+            files["DirectML.dll"] = _NATIVE_STUB
+        if license_in_bundle:
+            files["Assets/Models/DINOv3-LICENSE.md"] = b"Meta DINOv3 License"
+        if model_file is not None:
+            files[f"Assets/Models/{MODEL_NAME}"] = model_file
+    return files
+
+
+def _msix_blockmap_xml(files: dict[str, bytes]) -> bytes:
+    lines = ['<?xml version="1.0" encoding="utf-8"?>',
+             '<BlockMap xmlns="http://schemas.microsoft.com/appx/2010/blockmap" '
+             'HashMethod="http://www.w3.org/2001/04/xmlenc#sha256">']
+    for name in sorted(files):
+        data = files[name]
+        blocks = max(1, (len(data) + (64 * 1024) - 1) // (64 * 1024))
+        windows_name = name.replace("/", "\\")
+        lines.append(f'  <File Name="{windows_name}" Size="{len(data)}" LfhSize="39">')
+        for _ in range(blocks):
+            lines.append('    <Block Hash="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" />')
+        lines.append("  </File>")
+    lines.append("</BlockMap>")
+    return "\n".join(lines).encode("utf-8")
+
+
+def make_msix(target: Path, *, edition: str, assembly_name: str,
+              display_name: str | None = None, identity_name: str | None = None,
+              application_id: str | None = None, file_association_name: str | None = None,
+              package_version: str = "9.9.9.0", version: str = "9.9.9",
+              build_number: str = "999", architecture: str = "x64",
+              publisher: str = DEFAULT_PUBLISHER,
+              executable: str | None = None, entry_point: str = MSIX_ENTRY_POINT,
+              assembly_metadata: dict | None = None,
+              resources: list[tuple[str, bytes]] | None = None,
+              extra_files: dict[str, bytes] | None = None,
+              model_file: bytes | None = None, license_in_bundle: bool = True,
+              include_ort: bool = True, signed: bool = False,
+              blockmap: bool = True, include_content_types: bool = True,
+              include_logo: bool = True, include_application: bool = True,
+              include_capability: bool = True,
+              file_types=FILE_ASSOCIATION_EXTENSIONS) -> Path:
+    metadata = {
+        "PhotoViewerEdition": edition,
+        "AppBuildNumber": build_number,
+    }
+    metadata.update(assembly_metadata or {})
+    assembly = build_managed_assembly(assembly_name, f"{version}.0", metadata,
+                                      resources or [])
+    files = msix_payload(assembly_name, assembly, edition,
+                         model_file=model_file, license_in_bundle=license_in_bundle,
+                         include_ort=include_ort)
+    if not include_logo:
+        for name in MSIX_LOGOS:
+            files.pop(name, None)
+    if extra_files:
+        files.update(extra_files)
+    display = display_name or PRODUCT_NAMES[edition]
+    manifest = build_msix_manifest(
+        identity_name=identity_name or PACKAGE_IDS[edition],
+        publisher=publisher,
+        package_version=package_version,
+        architecture=architecture,
+        display_name=display,
+        application_id=application_id or APPLICATION_IDS[edition],
+        executable=executable or f"{assembly_name}.exe",
+        entry_point=entry_point,
+        file_association_name=file_association_name or f"{PRODUCT_IDS[edition]}.image",
+        file_types=file_types,
+        include_application=include_application,
+        include_capability=include_capability,
+    )
+    payload = dict(files)
+    payload[MSIX_MANIFEST] = manifest
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as archive:
+        for name in sorted(payload):
+            archive.writestr(name.replace("/", "\\"), payload[name])
+        if include_content_types:
+            archive.writestr(
+                MSIX_CONTENT_TYPES,
+                b'<?xml version="1.0" encoding="utf-8"?>'
+                b'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                b'<Default Extension="xml" ContentType="application/xml" />'
+                b'<Default Extension="png" ContentType="image/png" />'
+                b'<Default Extension="dll" ContentType="application/octet-stream" />'
+                b"</Types>")
+        if blockmap:
+            archive.writestr(MSIX_BLOCKMAP, _msix_blockmap_xml(payload))
+        if signed:
+            archive.writestr(MSIX_SIGNATURE, b"PKCX\x03\x00\x00\x00fake-signature")
+    return target
+
+
 def _newest_real_sample() -> Path | None:
     """在仓库内查找可只读复用的真实单文件 EXE（没有就跳过真实样本断言）。"""
     root = Path(__file__).resolve().parent.parent
@@ -2718,6 +3532,7 @@ def self_test() -> int:
         return build_expectations(edition, version, build, model=model, **overrides)
 
     cases: list[tuple[str, Path, dict, bool, str | None]] = []
+    msix_case_count = 0
 
     with tempfile.TemporaryDirectory(prefix="pv-win-scan-selftest-") as tmp:
         root = Path(tmp)
@@ -3004,6 +3819,30 @@ def self_test() -> int:
         cases.append(("版本标识不符失败", wrong_edition[0], expect("standard"), False,
                       "版本标识"))
 
+        wrong_package = package("wrong-package-id", "standard",
+                                metadata={"PhotoViewerEdition": "standard",
+                                          "AppBuildNumber": build,
+                                          "PhotoViewerPackageId": PACKAGE_IDS["ai"]})
+        cases.append(("标准版程序集误用 AI 包 ID 失败", wrong_package[0],
+                      expect("standard"), False, "规范包 ID"))
+
+        ai_wrong_package_assembly = build_managed_assembly(
+            ai_name, f"{version}.0",
+            {"PhotoViewerEdition": "ai", "AppBuildNumber": build,
+             "PhotoViewerPackageId": PACKAGE_IDS["standard"]}, [])
+        ai_wrong_package = package(
+            "ai-wrong-package-id", "ai", assembly=ai_wrong_package_assembly,
+            files=ai_files(ai_name, ai_wrong_package_assembly, True, tiny_model))
+        cases.append(("AI 版程序集误用标准版包 ID 失败", ai_wrong_package[0],
+                      expect("ai"), False, "规范包 ID"))
+
+        wrong_display = package("wrong-display-name", "standard",
+                                metadata={"PhotoViewerEdition": "standard",
+                                          "AppBuildNumber": build,
+                                          "PhotoViewerDisplayName": PRODUCT_NAMES["ai"]})
+        cases.append(("标准版程序集误用 AI 显示名失败", wrong_display[0],
+                      expect("standard"), False, "产品显示名"))
+
         x86_host = package("x86-host", "standard", machine=PE_MACHINE_X86, pe32_plus=False)
         cases.append(("非 x64 宿主失败", x86_host[0], expect("standard"), False, "x64"))
 
@@ -3093,6 +3932,158 @@ def self_test() -> int:
         if not any("marker" in message for message in fallback_report["warnings"]):
             failures.append("无 marker 的包应给出 marker 缺失告警")
 
+        # ------------------------------------------------------------------
+        # MSIX：两个独立包的身份、版本、架构、AUMID 与分版资源
+        # ------------------------------------------------------------------
+        if publisher_id("CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, "
+                        "S=Washington, C=US") != "8wekyb3d8bbwe":
+            failures.append("发布者 ID 算法未复现已知 Microsoft 包族后缀 8wekyb3d8bbwe")
+
+        msix_cases: list[tuple[str, Path, dict, bool, str | None, bool]] = []
+
+        def msix_case(label: str, path: Path, edition: str, expect_pass: bool,
+                      needle: str | None = None, require_signature: bool = False,
+                      **overrides) -> None:
+            msix_cases.append((label, path, expect(edition, **overrides), expect_pass,
+                               needle, require_signature))
+
+        def msix_package(name: str, edition: str, **overrides) -> Path:
+            assembly = overrides.pop("assembly_name", standard_name if edition == "standard"
+                                     else ai_name)
+            options = {"version": version, "build_number": build}
+            options.update(overrides)
+            if edition == "ai" and options.get("model_file") is None:
+                options["model_file"] = tiny_model
+            return make_msix(root / f"msix-{name}" / f"{name}.msix", edition=edition,
+                             assembly_name=assembly, **options)
+
+        standard_msix = msix_package("standard-ok", "standard")
+        msix_case("MSIX 标准版合规包通过", standard_msix, "standard", True)
+
+        ai_msix = msix_package("ai-ok", "ai")
+        msix_case("MSIX AI 版合规包通过", ai_msix, "ai", True)
+
+        signed_msix = msix_package("ai-signed", "ai", signed=True)
+        msix_case("MSIX 已签名包通过签名门禁", signed_msix, "ai", True, require_signature=True)
+
+        msix_case("MSIX 标准版误用 AI 包 ID 失败",
+                  msix_package("standard-ai-id", "standard",
+                               identity_name=PACKAGE_IDS["ai"]),
+                  "standard", False, "Identity.Name")
+        msix_case("MSIX AI 版误用标准版包 ID 失败",
+                  msix_package("ai-standard-id", "ai",
+                               identity_name=PACKAGE_IDS["standard"]),
+                  "ai", False, "Identity.Name")
+        msix_case("MSIX 包显示名不符失败",
+                  msix_package("wrong-display", "standard", display_name="PhotoViewer AI"),
+                  "standard", False, "显示名")
+        msix_case("MSIX 包版本不符失败",
+                  msix_package("wrong-version", "standard", package_version="9.9.9.1"),
+                  "standard", False, "包版本")
+        msix_case("MSIX 包版本不是四段失败",
+                  msix_package("bad-version", "standard", package_version="9.9.9"),
+                  "standard", False, "四段")
+        msix_case("MSIX 架构不符失败",
+                  msix_package("wrong-arch", "standard", architecture="arm64"),
+                  "standard", False, "架构")
+        msix_case("MSIX Application Id 不符失败",
+                  msix_package("wrong-app-id", "standard",
+                               application_id=APPLICATION_IDS["ai"]),
+                  "standard", False, "Application Id")
+        msix_case("MSIX 文件关联名不符失败",
+                  msix_package("wrong-association", "standard",
+                               file_association_name="photoviewer.ai.image"),
+                  "standard", False, "文件关联名")
+        msix_case("MSIX 缺少包资源失败",
+                  msix_package("no-logo", "standard", include_logo=False),
+                  "standard", False, "包资源缺失")
+        msix_case("MSIX 未签名在签名门禁下失败",
+                  msix_package("unsigned", "standard"), "standard", False, "未签名",
+                  require_signature=True)
+        msix_case("MSIX 缺少 blockmap 失败",
+                  msix_package("no-blockmap", "standard", blockmap=False),
+                  "standard", False, "AppxBlockMap.xml")
+        msix_case("MSIX 主可执行文件不在包内失败",
+                  msix_package("ghost-exe", "standard", executable="Ghost.exe"),
+                  "standard", False, "主可执行文件")
+        msix_case("MSIX 标准版带模型失败",
+                  msix_package("standard-model", "standard",
+                               extra_files={f"Assets/Models/{MODEL_NAME}": tiny_model}),
+                  "standard", False, "ONNX 模型")
+        msix_case("MSIX 标准版带 ORT 失败",
+                  msix_package("standard-ort", "standard",
+                               extra_files={"Microsoft.ML.OnnxRuntime.dll": _MANAGED_STUB}),
+                  "standard", False, "ONNX Runtime")
+        msix_case("MSIX AI 版缺 ORT 失败",
+                  msix_package("ai-no-ort", "ai", include_ort=False),
+                  "ai", False, "Microsoft.ML.OnnxRuntime.dll")
+        msix_case("MSIX AI 版缺 DINO 许可证失败",
+                  msix_package("ai-no-license", "ai", license_in_bundle=False),
+                  "ai", False, "DINOv3 许可证")
+        msix_case("MSIX AI 版模型哈希不符失败",
+                  msix_package("ai-bad-model", "ai", model_file=tiny_model + b"x"),
+                  "ai", False, "模型契约不匹配")
+        msix_case("MSIX 标准版包内元数据误用 AI 身份失败",
+                  msix_package("standard-ai-metadata", "standard",
+                               assembly_metadata={"PhotoViewerEdition": "ai"}),
+                  "standard", False, "版本标识")
+
+        msix_case_count = len(msix_cases)
+        for label, path, expectations, expect_pass, needle, require_signature in msix_cases:
+            try:
+                report = scan_msix(path, expectations, require_signature=require_signature)
+            except Exception as exc:  # 自检自身崩溃也要报出来
+                failures.append(f"{label}：扫描抛出异常 {type(exc).__name__}: {exc}")
+                continue
+            passed = report["passed"]
+            if passed != expect_pass:
+                detail = "；".join(report["errors"][:3]) or "（无错误）"
+                failures.append(
+                    f"{label}：期望 {'通过' if expect_pass else '拒绝'}，"
+                    f"实际 {'通过' if passed else '拒绝'}（{detail}）")
+                continue
+            if needle and not any(needle in message for message in report["errors"]):
+                detail = "；".join(report["errors"][:4])
+                failures.append(f"{label}：错误信息未包含「{needle}」，实际：{detail}")
+                continue
+            print(f"  [{'OK' if passed else 'OK（已拒绝）'}] {label}")
+
+        standard_msix_report = scan_msix(standard_msix, expect("standard"))
+        ai_msix_report = scan_msix(ai_msix, expect("ai"))
+        if not standard_msix_report["identity"].get("packageFamilyName"):
+            failures.append("MSIX 报告缺少 Package Family Name")
+        if standard_msix_report["identity"].get("aumid") == ai_msix_report["identity"].get("aumid"):
+            failures.append("标准版与 AI 版 MSIX 报告了相同 AUMID")
+        if standard_msix_report["msix"]["blockMap"]["fileCount"] < 10:
+            failures.append("MSIX blockmap 未覆盖包内文件")
+        if not all(record["sha256"] for record in standard_msix_report["files"]):
+            failures.append("MSIX 报告存在未计算 SHA-256 的文件")
+        if not standard_msix_report["summary"]["categories"]:
+            failures.append("MSIX 报告缺少分类体积")
+        if "签名" not in "".join(standard_msix_report["warnings"]):
+            failures.append("未签名 MSIX 应给出签名缺失告警")
+
+        props = read_identity_props()
+        for edition in ("standard", "ai"):
+            expected = props.get(edition) or {}
+            # productId 在根 props 里由 edition 直接拼出，没有逐版本 Condition。
+            defaults = {
+                "packageId": PACKAGE_IDS[edition],
+                "productId": PRODUCT_IDS[edition],
+                "displayName": PRODUCT_NAMES[edition],
+                "distributionName": PACKAGE_NAMES[edition],
+            }
+            for key, value in defaults.items():
+                actual = expected.get(key)
+                if actual != value:
+                    failures.append(
+                        f"扫描器默认 {key}（{edition}）与 Directory.Build.props 不一致："
+                        f"{value} vs {actual}")
+            if expected.get("enableDino") != ("true" if edition == "ai" else "false"):
+                failures.append(
+                    f"Directory.Build.props 的 PhotoViewerEnableDino 未由 edition 派生（{edition}）")
+
+
         real_sample = _newest_real_sample()
         if real_sample is not None:
             try:
@@ -3126,7 +4117,7 @@ def self_test() -> int:
         for message in failures:
             print(f"  - {message}", file=sys.stderr)
         return 1
-    print(f"自检通过（{len(cases)} 项正反用例 + 报告字段 + 真实样本结构）")
+    print(f"自检通过（EXE {len(cases)} 项 + MSIX {msix_case_count} 项正反用例 + 报告字段 + 真实样本结构）")
     return 0
 
 
@@ -3135,14 +4126,22 @@ def main() -> int:
     if "--self-test" in argv:
         return self_test()
 
-    parser = argparse.ArgumentParser(description="扫描 Windows 单文件 EXE 并核对发行版本契约")
-    parser.add_argument("exe", type=Path, help="待扫描的单文件 EXE 路径")
+    parser = argparse.ArgumentParser(
+        description="扫描 Windows MSIX 或单文件 EXE，并核对发行版本与产品身份契约")
+    parser.add_argument("package", type=Path, help="待扫描的 .msix/.appx 或单文件 .exe")
     parser.add_argument("--edition", required=True, choices=("standard", "ai"), help="发行版本")
     parser.add_argument("--output", required=True, type=Path, help="JSON 报告路径")
     parser.add_argument("--version", help="期望的产品版本；缺省取根 Directory.Build.props")
     parser.add_argument("--build-number", help="期望的构建号；缺省取根 Directory.Build.props")
-    parser.add_argument("--product-name", help="期望的产品名（默认按版本推导）")
-    parser.add_argument("--app-assembly", help="期望的主程序集名（默认 <产品名>-<版本>-win-x64）")
+    parser.add_argument("--product-name", help="期望的产品显示名（默认按 edition 推导）")
+    parser.add_argument("--app-assembly", help="期望的主程序集名（默认 <分发名>-<版本>-win-x64）")
+    parser.add_argument("--package-id", help="期望的规范包 ID（默认按 edition 推导）")
+    parser.add_argument("--product-id", help="期望的内部产品键（默认按 edition 推导）")
+    parser.add_argument("--display-name", help="期望的产品显示名（默认按 edition 推导）")
+    parser.add_argument("--application-id", help="期望的 MSIX Application Id（AUMID 末段）")
+    parser.add_argument("--publisher", help="期望的 MSIX Publisher（默认 CN=xiaojh.cc）")
+    parser.add_argument("--require-signature", action="store_true",
+                        help="MSIX 必须带 AppxSignature.p7x（正式分发门禁）")
     args = parser.parse_args(argv)
 
     props = read_root_props()
@@ -3153,10 +4152,42 @@ def main() -> int:
               file=sys.stderr)
         return 2
 
-    expectations = build_expectations(args.edition, version, build_number,
-                                      product_name=args.product_name,
-                                      app_assembly=args.app_assembly)
-    report = scan(args.exe, expectations)
+    # 显式期望身份必须与 edition 一致，避免把另一产品的身份当作通过标准放行。
+    for option, value, key in (
+        ("--package-id", args.package_id, "packageId"),
+        ("--product-id", args.product_id, "productId"),
+        ("--application-id", args.application_id, "applicationId"),
+    ):
+        expected = {"packageId": PACKAGE_IDS, "productId": PRODUCT_IDS,
+                    "applicationId": APPLICATION_IDS}[key][args.edition]
+        if value is not None and value != expected:
+            print(f"{option} 与 edition 不符：{args.edition} 期望 {expected}，实际 {value}",
+                  file=sys.stderr)
+            return 2
+
+    expectations = build_expectations(
+        args.edition, version, build_number,
+        product_name=args.product_name,
+        app_assembly=args.app_assembly,
+        package_id=args.package_id,
+        product_id=args.product_id,
+        display_name=args.display_name,
+        application_id=args.application_id,
+        publisher=args.publisher,
+    )
+
+    suffix = args.package.suffix.lower()
+    if suffix in (".msixbundle", ".appxbundle"):
+        print("暂不支持 MSIX bundle：请分别扫描两个产品的单包 .msix。", file=sys.stderr)
+        return 2
+    if suffix in (".msix", ".appx"):
+        report = scan_msix(args.package, expectations,
+                           require_signature=args.require_signature)
+    else:
+        if args.require_signature:
+            print("--require-signature 只适用于 MSIX；EXE 形态不做 Authenticode 校验。",
+                  file=sys.stderr)
+        report = scan(args.package, expectations)
     if write_report(report, args.output):
         return 1
     print_report(report, args.output)

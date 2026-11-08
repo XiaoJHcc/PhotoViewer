@@ -10,14 +10,22 @@ namespace PhotoViewer.Windows.Native;
 
 /// <summary>
 /// 单实例注册与二次激活接线。
-/// 主实例独占一个固定键并把 <see cref="AppInstance.Activated"/> 转发来的激活参数转成同一
+/// 主实例独占一个按产品身份派生的键并把 <see cref="AppInstance.Activated"/> 转发来的激活参数转成同一
 /// <see cref="OpenRequestChannel"/> 的打开请求；二次启动在启动早期把激活转发给主实例后退出。
+/// 键以规范包 ID 为前缀，标准版与 AI 版各自独立：同版二次激活仍转发到同版主实例，跨版不会互相转发
+/// （MSIX 打包运行时键本身也按包隔离，这里的显式前缀同时覆盖便携 EXE 形态）。
 /// 只做进程内实例管理，不改注册表：非打包构建没有文件关联注册，系统"双击图片打开"需另配注册表或安装包。
 /// </summary>
 internal static class WindowsSingleInstance
 {
-    /// <summary>主实例键；同一用户下同键只允许一个实例。</summary>
-    private const string InstanceKey = "PhotoViewer.Desktop.Main";
+    /// <summary>单实例键后缀；完整键 = 产品包 ID + 后缀。</summary>
+    internal const string InstanceKeySuffix = ".Desktop.Main";
+
+    /// <summary>主实例键；同一用户下同键只允许一个实例，不同产品身份互不串用。</summary>
+    internal static string InstanceKey => WindowsProductInfo.PackageId + InstanceKeySuffix;
+
+    /// <summary>另一产品的单实例键；仅用于验收断言两边键不相同，不会注册。</summary>
+    internal static string SiblingInstanceKey => WindowsProductInfo.SiblingPackageId + InstanceKeySuffix;
 
     private static readonly object SyncRoot = new();
 

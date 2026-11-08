@@ -1,20 +1,32 @@
 ﻿[CmdletBinding()]
 param(
     [ValidateSet('standard', 'ai', 'both')][string]$Edition = 'both',
+    [ValidateSet('msix', 'portable', 'both')][string]$Form = 'both',
     [ValidateSet('Debug', 'Release')][string]$Configuration = 'Release',
     [string]$RuntimeIdentifier = 'win-x64',
     [string]$OutputDirectory = '',
     [string]$VCRedistDirectory = '',
+    [string]$PackagePublisher = '',
+    [string]$CertificatePath = '',
+    [string]$CertificatePassword = '',
+    [string]$CertificateThumbprint = '',
+    [switch]$AllowUnsigned,
     [switch]$Local,
     [switch]$KeepSymbols
 )
+
+# -Form msix 是主发布形态：每个产品一个独立 MSIX（Identity.Name 用规范包 ID，显示名分别
+# 由 PhotoViewerDisplayName 决定，AUMID/文件关联/单实例键随包身份分离）。
+# -Form portable 是附加形态：单文件 EXE 沿用同一产品身份与数据规则，不另建身份。
+# 产品显示名、包 ID、分发名与 DINO 能力都从 PhotoViewer.Windows.csproj 的 MSBuild 求值读取，
+# 脚本不再自带一套产品判断；只把 edition 作为唯一外部身份输入传进去。
 
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $OutputEncoding = [Console]::OutputEncoding
 
 if ($RuntimeIdentifier -ne 'win-x64') {
-    throw '当前 Windows 单文件发布仅验证并支持 win-x64，因为仓库中只引用了 LibHeif.Native.win-x64。'
+    throw '当前 Windows 发布仅验证并支持 win-x64，因为仓库中只引用了 LibHeif.Native.win-x64。'
 }
 
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -32,10 +44,15 @@ $requiredSdkVersion = $sdkConfig.sdk.version
 $sdkRollForward = if ($sdkConfig.sdk.rollForward) { $sdkConfig.sdk.rollForward } else { 'latestMinor' }
 $propsXml = [xml](Get-Content $directoryBuildProps -Raw -Encoding UTF8)
 $appVersionNode = $propsXml.SelectSingleNode('/Project/PropertyGroup/AppVersion')
+$buildNumberNode = $propsXml.SelectSingleNode('/Project/PropertyGroup/AppBuildNumber')
 $appVersion = if ($null -ne $appVersionNode) { $appVersionNode.InnerText.Trim() } else { '' }
+$appBuildNumber = if ($null -ne $buildNumberNode) { $buildNumberNode.InnerText.Trim() } else { '' }
 
 if ([string]::IsNullOrWhiteSpace($appVersion)) {
     throw '未能从 Directory.Build.props 读取 AppVersion。'
+}
+if ([string]::IsNullOrWhiteSpace($appBuildNumber)) {
+    throw '未能从 Directory.Build.props 读取 AppBuildNumber。'
 }
 
 function Test-SdkSatisfiesVersion {
@@ -146,6 +163,9 @@ $vcRedist = Resolve-WindowsVCRedist -Directory $VCRedistDirectory
 $VCRedistDirectory = $vcRedist.Directory
 Write-Host "[发布] VC++ CRT: $VCRedistDirectory ($($vcRedist.Version))"
 
+# MSIX Publisher 必须与签名证书主题一致；默认与根工程一致的团队标识。
+$packagePublisher = if ([string]::IsNullOrWhiteSpace($PackagePublisher)) { 'CN=xiaojh.cc' } else { $PackagePublisher }
+
 $dotnetCandidates = @(
     (Join-Path $env:ProgramFiles 'dotnet\dotnet.exe'),
     (Join-Path $env:USERPROFILE '.dotnet\dotnet.exe'),
@@ -175,50 +195,243 @@ $editions = if ($Edition -eq 'both') { @('standard', 'ai') } else { @($Edition) 
 $runId = [guid]::NewGuid().ToString('N')
 $validationBase = Join-Path $artifactsDirectory "acceptance\windows-editions\$runId"
 $validatedPackages = @()
+$runStarted = Get-Date
 
-foreach ($currentEdition in $editions) {
-    $enableDino = if ($currentEdition -eq 'ai') { 'true' } else { 'false' }
-    # 程序集名、EXE 文件名属于打包命名，继续用横线；显示名（版本资源产品名）由
-    # PhotoViewer.Windows.csproj 的 ApplicationTitle 给出 "PhotoViewer AI"（空格）。
-    $packageProduct = if ($currentEdition -eq 'ai') { 'PhotoViewer-AI' } else { 'PhotoViewer' }
-    $assemblyName = "$packageProduct-$appVersion-win-x64"
-    $exeName = "$assemblyName.exe"
-    $publishDirectory = if (-not [string]::IsNullOrWhiteSpace($OutputDirectory)) {
-        Join-Path $OutputDirectory $currentEdition
-    } elseif ($Local) {
-        Join-Path $artifactsDirectory "scratch\windows-local-publish\$currentEdition"
-    } else {
-        Join-Path $PSScriptRoot "bin\$currentEdition\$Configuration\publish-singlefile\win-x64"
+function Get-WindowsEditionIdentity {
+    param([Parameter(Mandatory = $true)][string]$CurrentEdition)
+
+    $properties = @(
+        'PhotoViewerEdition',
+        'PhotoViewerPackageId',
+        'PhotoViewerProductId',
+        'PhotoViewerDisplayName',
+        'PhotoViewerDistributionName',
+        'PhotoViewerEnableDino',
+        'PhotoViewerApplicationId',
+        'PhotoViewerPackageVersion',
+        'PhotoViewerPackagePublisher',
+        'PhotoViewerFileAssociationName'
+    )
+    $arguments = @('msbuild', $windowsProject, '-nologo', "-p:PhotoViewerEdition=$CurrentEdition")
+    foreach ($property in $properties) {
+        $arguments += "-getProperty:$property"
     }
-    $validationRoot = Join-Path $validationBase $currentEdition
-    New-Item -ItemType Directory -Path $validationRoot -Force | Out-Null
-    Write-Host "[发布] $currentEdition 输出目录: $publishDirectory"
-    if (Test-Path -LiteralPath $publishDirectory) {
-        Remove-Item -LiteralPath $publishDirectory -Recurse -Force
+    $raw = @(& $dotnetPath @arguments)
+    if ($LASTEXITCODE -ne 0) {
+        throw "MSBuild 求值产品身份失败（edition=$CurrentEdition），退出码：$LASTEXITCODE"
+    }
+    $text = ($raw -join [Environment]::NewLine)
+    $start = $text.IndexOf('{')
+    $end = $text.LastIndexOf('}')
+    if ($start -lt 0 -or $end -le $start) {
+        throw "MSBuild 未返回产品身份 JSON（edition=$CurrentEdition）：$text"
+    }
+    $values = ($text.Substring($start, $end - $start + 1) | ConvertFrom-Json).Properties
+    if ($null -eq $values -or $values.PhotoViewerEdition -ne $CurrentEdition) {
+        throw "MSBuild 返回的发行版本与请求不一致（请求 $CurrentEdition）。"
+    }
+    $expectedDino = if ($CurrentEdition -eq 'ai') { 'true' } else { 'false' }
+    if ($values.PhotoViewerEnableDino -ne $expectedDino) {
+        throw "DINO 能力必须由 edition 派生（$CurrentEdition 期望 $expectedDino，实际 $($values.PhotoViewerEnableDino)）。"
+    }
+    $suffix = if ($CurrentEdition -eq 'ai') { '.AI' } else { '' }
+    if ($values.PhotoViewerPackageId -ne ('cc.xiaojh.PhotoViewer' + $suffix)) {
+        throw "包 ID 与 edition 不符：$CurrentEdition -> $($values.PhotoViewerPackageId)"
+    }
+    [pscustomobject]@{
+        Edition = $CurrentEdition
+        PackageId = $values.PhotoViewerPackageId
+        ProductId = $values.PhotoViewerProductId
+        DisplayName = $values.PhotoViewerDisplayName
+        DistributionName = $values.PhotoViewerDistributionName
+        ApplicationId = $values.PhotoViewerApplicationId
+        PackageVersion = $values.PhotoViewerPackageVersion
+        FileAssociationName = $values.PhotoViewerFileAssociationName
+        # 分发命名规则：<分发名前缀>-<版本>-win-x64；开发构建的程序集名不承担产品身份。
+        AssemblyName = "$($values.PhotoViewerDistributionName)-$appVersion-win-x64"
+    }
+}
+
+function Invoke-PackageScan {
+    param(
+        [Parameter(Mandatory = $true)][string]$PackagePath,
+        [Parameter(Mandatory = $true)]$Identity,
+        [Parameter(Mandatory = $true)][string]$ReportPath,
+        [switch]$RequireSignature
+    )
+
+    $scanArguments = @(
+        $scanner, $PackagePath,
+        '--edition', $Identity.Edition,
+        '--output', $ReportPath,
+        '--version', $appVersion,
+        '--build-number', $appBuildNumber,
+        '--package-id', $Identity.PackageId,
+        '--product-id', $Identity.ProductId,
+        '--display-name', $Identity.DisplayName,
+        '--application-id', $Identity.ApplicationId,
+        '--app-assembly', $Identity.AssemblyName,
+        '--publisher', $packagePublisher
+    )
+    if ($RequireSignature) {
+        $scanArguments += '--require-signature'
+    }
+    & $pythonPath @scanArguments | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        throw "包扫描失败：$PackagePath（报告 $ReportPath）"
+    }
+}
+
+function Publish-WindowsMsix {
+    param(
+        [Parameter(Mandatory = $true)]$Identity,
+        [Parameter(Mandatory = $true)][string]$PublishDirectory,
+        [Parameter(Mandatory = $true)][string]$ValidationRoot
+    )
+
+    $publisher = $packagePublisher
+    $signingArguments = @()
+    $signed = $false
+    if (-not [string]::IsNullOrWhiteSpace($CertificatePath)) {
+        $signingArguments = @(
+            '-p:AppxPackageSigningEnabled=true',
+            "-p:PackageCertificateKeyFile=$CertificatePath"
+        )
+        if (-not [string]::IsNullOrWhiteSpace($CertificatePassword)) {
+            $signingArguments += "-p:PackageCertificatePassword=$CertificatePassword"
+        }
+        $signed = $true
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($CertificateThumbprint)) {
+        $signingArguments = @(
+            '-p:AppxPackageSigningEnabled=true',
+            "-p:PackageCertificateThumbprint=$CertificateThumbprint"
+        )
+        $signed = $true
+    }
+    elseif ($Local -or $AllowUnsigned) {
+        $signingArguments = @('-p:AppxPackageSigningEnabled=false')
+        Write-Warning "[发布] $($Identity.Edition) MSIX 未签名：仅用于本地结构校验，不能安装或分发。"
+    }
+    else {
+        throw "[发布] $($Identity.Edition) MSIX 必须签名：请传 -CertificatePath/-CertificatePassword 或 -CertificateThumbprint；本地验证可用 -Local 或 -AllowUnsigned 生成未签名包。"
+    }
+
+    if (Test-Path -LiteralPath $PublishDirectory) {
+        Remove-Item -LiteralPath $PublishDirectory -Recurse -Force
+    }
+    $appPackages = Join-Path $ValidationRoot 'AppPackages'
+    if (Test-Path -LiteralPath $appPackages) {
+        Remove-Item -LiteralPath $appPackages -Recurse -Force
+    }
+    Write-Host "[发布] $($Identity.Edition) MSIX 输出目录: $PublishDirectory"
+
+    & $dotnetPath publish $windowsProject `
+        -c $Configuration -r $RuntimeIdentifier --self-contained true -o $PublishDirectory `
+        "-p:PhotoViewerEdition=$($Identity.Edition)" `
+        "-p:WindowsReleaseAssemblyName=$($Identity.AssemblyName)" `
+        "-p:WindowsPackageForm=msix" `
+        "-p:PhotoViewerPackagePublisher=$publisher" `
+        "-p:WindowsVCRedistDirectory=$VCRedistDirectory" `
+        "-p:AppxPackageDir=$appPackages\" `
+        -p:Platform=x64 -p:PublishAppxPackage=true -p:AppxBundle=Never `
+        -p:PublishSingleFile=false -p:PublishTrimmed=false -p:PublishReadyToRun=false `
+        -p:DebugType=None -p:DebugSymbols=false @signingArguments | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        throw "dotnet publish（MSIX，$($Identity.Edition)）失败，退出码：$LASTEXITCODE"
+    }
+    if (-not $KeepSymbols) {
+        Get-ChildItem $PublishDirectory -Filter '*.pdb' -File -Recurse -ErrorAction SilentlyContinue | Remove-Item -Force
+    }
+
+    $searchRoots = @($appPackages, $PublishDirectory) | Where-Object { Test-Path -LiteralPath $_ }
+    $candidates = @(Get-ChildItem -Path $searchRoots -Filter '*.msix' -Recurse -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -ge $runStarted } |
+        Sort-Object LastWriteTime -Descending)
+    if ($candidates.Count -ne 1) {
+        throw "MSIX 打包未产出唯一 .msix（实际 $($candidates.Count) 个）。检查 Windows SDK makeappx 与 MSIX 打包目标是否可用：$(($candidates | ForEach-Object { $_.FullName }) -join '; ')"
+    }
+
+    $msixName = "$($Identity.DistributionName)-$appVersion-win-x64.msix"
+    $msixPath = Join-Path $ValidationRoot $msixName
+    Copy-Item -LiteralPath $candidates[0].FullName -Destination $msixPath -Force
+
+    $scanPath = Join-Path $ValidationRoot 'package.json'
+    Invoke-PackageScan -PackagePath $msixPath -Identity $Identity -ReportPath $scanPath -RequireSignature:$signed
+
+    $scan = Get-Content -LiteralPath $scanPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $manifest = [pscustomobject]@{
+        Edition = $Identity.Edition
+        Form = 'msix'
+        Local = [bool]$Local
+        PackageId = $Identity.PackageId
+        ProductId = $Identity.ProductId
+        DisplayName = $Identity.DisplayName
+        DistributionName = $Identity.DistributionName
+        ApplicationId = $Identity.ApplicationId
+        PackageVersion = $Identity.PackageVersion
+        PackageFamilyName = $scan.identity.packageFamilyName
+        Aumid = $scan.identity.aumid
+        FileName = $msixName
+        SHA256 = (Get-FileHash $msixPath -Algorithm SHA256).Hash
+        Bytes = (Get-Item $msixPath).Length
+        Signed = [bool]$scan.identity.signed
+        SignaturePresent = [bool]$scan.identity.signaturePresent
+        Publisher = $scan.identity.publisher
+        PackageScan = $scanPath
+        VCRedistDirectory = $VCRedistDirectory
+        VCRedistVersion = $vcRedist.Version.ToString()
+        InstallValidation = 'pending: two-package install/update/uninstall must be verified on Windows with sideload policy; this script does not install packages.'
+        Checks = @()
+    }
+    $manifest | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $ValidationRoot 'deployment.json') -Encoding UTF8
+    Write-Host "[发布] $($Identity.Edition) MSIX 身份校验通过：$msixPath"
+    return [pscustomobject]@{
+        Edition = $Identity.Edition
+        Form = 'msix'
+        Path = $msixPath
+        Name = $msixName
+        SHA256 = $manifest.SHA256
+        Signed = $manifest.Signed
+        PackageId = $Identity.PackageId
+        Aumid = $manifest.Aumid
+    }
+}
+
+function Publish-WindowsPortable {
+    param(
+        [Parameter(Mandatory = $true)]$Identity,
+        [Parameter(Mandatory = $true)][string]$PublishDirectory,
+        [Parameter(Mandatory = $true)][string]$ValidationRoot
+    )
+
+    $exeName = "$($Identity.AssemblyName).exe"
+    Write-Host "[发布] $($Identity.Edition) 单文件 EXE 输出目录: $PublishDirectory"
+    if (Test-Path -LiteralPath $PublishDirectory) {
+        Remove-Item -LiteralPath $PublishDirectory -Recurse -Force
     }
 
     & $dotnetPath publish $windowsProject `
-        -c $Configuration -r $RuntimeIdentifier --self-contained true -o $publishDirectory `
-        "-p:PhotoViewerEnableDino=$enableDino" `
-        "-p:WindowsReleaseAssemblyName=$assemblyName" `
+        -c $Configuration -r $RuntimeIdentifier --self-contained true -o $PublishDirectory `
+        "-p:PhotoViewerEdition=$($Identity.Edition)" `
+        "-p:WindowsReleaseAssemblyName=$($Identity.AssemblyName)" `
         "-p:WindowsVCRedistDirectory=$VCRedistDirectory" `
         -p:PublishSingleFile=true -p:IncludeAllContentForSelfExtract=true `
         -p:EnableCompressionInSingleFile=true -p:PublishTrimmed=false -p:PublishReadyToRun=false `
-        -p:DebugType=None -p:DebugSymbols=false
+        -p:DebugType=None -p:DebugSymbols=false | Out-Host
     if ($LASTEXITCODE -ne 0) {
-        throw "dotnet publish $currentEdition 失败，退出码：$LASTEXITCODE"
+        throw "dotnet publish（单文件，$($Identity.Edition)）失败，退出码：$LASTEXITCODE"
     }
     if (-not $KeepSymbols) {
-        Get-ChildItem $publishDirectory -Filter '*.pdb' -File -ErrorAction SilentlyContinue | Remove-Item -Force
+        Get-ChildItem $PublishDirectory -Filter '*.pdb' -File -ErrorAction SilentlyContinue | Remove-Item -Force
     }
-    $exePath = Join-Path $publishDirectory $exeName
-    $remainingFiles = @(Get-ChildItem $publishDirectory -Recurse -File | Where-Object { $_.Extension -ne '.pdb' })
+    $exePath = Join-Path $PublishDirectory $exeName
+    $remainingFiles = @(Get-ChildItem $PublishDirectory -Recurse -File | Where-Object { $_.Extension -ne '.pdb' })
     if ($remainingFiles.Count -ne 1 -or $remainingFiles[0].FullName -ne $exePath) {
-        throw '发布目录不是独立单 EXE，停止归档。'
+        throw '单文件发布目录不是独立单 EXE，停止归档。'
     }
-    $scanPath = Join-Path $validationRoot 'package.json'
-    & $pythonPath $scanner $exePath --edition $currentEdition --output $scanPath
-    if ($LASTEXITCODE -ne 0) { throw "单文件包扫描失败：$scanPath" }
+    $scanPath = Join-Path $ValidationRoot 'package.json'
+    Invoke-PackageScan -PackagePath $exePath -Identity $Identity -ReportPath $scanPath
 
     $validationResults = @()
     $previousExtractDirectory = $env:DOTNET_BUNDLE_EXTRACT_BASE_DIR
@@ -227,18 +440,17 @@ foreach ($currentEdition in $editions) {
             @{ Directory = 'original'; FileName = $exeName },
             @{ Directory = '改名 空格目录'; FileName = '照片 查看器.exe' }
         )) {
-            $validationDirectory = Join-Path $validationRoot $variant.Directory
+            $validationDirectory = Join-Path $ValidationRoot $variant.Directory
             New-Item -ItemType Directory -Path $validationDirectory -Force | Out-Null
             $validationExe = Join-Path $validationDirectory $variant.FileName
             Copy-Item -LiteralPath $exePath -Destination $validationExe
             $renamedScan = Join-Path $validationDirectory 'package.json'
-            & $pythonPath $scanner $validationExe --edition $currentEdition --output $renamedScan
-            if ($LASTEXITCODE -ne 0) { throw "副本包扫描失败：$renamedScan" }
+            Invoke-PackageScan -PackagePath $validationExe -Identity $Identity -ReportPath $renamedScan
             foreach ($check in @(
                 @{ Mode = 'smoke'; Report = 'checks.json' },
                 @{ Mode = 'settings'; Report = 'settings-checks.json' },
                 @{ Mode = 'tools'; Report = 'tools-checks.json' },
-                @{ Mode = 'edition'; Report = "edition-checks-$currentEdition.json" }
+                @{ Mode = 'edition'; Report = "edition-checks-$($Identity.Edition).json" }
             )) {
                 $checkOutput = "reports/$($check.Mode)"
                 $env:DOTNET_BUNDLE_EXTRACT_BASE_DIR = Join-Path $validationDirectory "bundle-cache-$($check.Mode)"
@@ -268,7 +480,7 @@ foreach ($currentEdition in $editions) {
                     Report = $reportPath
                 }
                 Remove-Item -LiteralPath $env:DOTNET_BUNDLE_EXTRACT_BASE_DIR -Recurse -Force
-                Write-Host "[发布] $currentEdition / $($variant.FileName) / $($check.Mode): $($results.Count) 项 PASS"
+                Write-Host "[发布] $($Identity.Edition) / $($variant.FileName) / $($check.Mode): $($results.Count) 项 PASS"
             }
             Remove-Item -LiteralPath $validationExe -Force
         }
@@ -279,8 +491,13 @@ foreach ($currentEdition in $editions) {
         [pscustomobject]@{ Name = $_; SHA256 = (Get-FileHash (Join-Path $VCRedistDirectory $_) -Algorithm SHA256).Hash }
     }
     $manifest = [pscustomobject]@{
-        Edition = $currentEdition
+        Edition = $Identity.Edition
+        Form = 'portable'
         Local = [bool]$Local
+        PackageId = $Identity.PackageId
+        ProductId = $Identity.ProductId
+        DisplayName = $Identity.DisplayName
+        DistributionName = $Identity.DistributionName
         FileName = $exeName
         SHA256 = (Get-FileHash $exePath -Algorithm SHA256).Hash
         Bytes = (Get-Item $exePath).Length
@@ -290,14 +507,59 @@ foreach ($currentEdition in $editions) {
         VCRedistFiles = @($crtFiles)
         Checks = $validationResults
     }
-    $manifest | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $validationRoot 'deployment.json') -Encoding UTF8
-    $validatedPackages += [pscustomobject]@{ Edition = $currentEdition; Path = $exePath; Name = $exeName; SHA256 = $manifest.SHA256 }
-    Write-Host "[发布] $currentEdition 单文件验收通过：$exePath"
+    $manifest | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $ValidationRoot 'deployment.json') -Encoding UTF8
+    Write-Host "[发布] $($Identity.Edition) 单文件验收通过：$exePath"
+    return [pscustomobject]@{
+        Edition = $Identity.Edition
+        Form = 'portable'
+        Path = $exePath
+        Name = $exeName
+        SHA256 = $manifest.SHA256
+        Signed = $false
+        PackageId = $Identity.PackageId
+        Aumid = $null
+    }
 }
 
-if ($Edition -eq 'both') {
-    $standardPackage = $validatedPackages | Where-Object { $_.Edition -eq 'standard' }
-    $aiPackage = $validatedPackages | Where-Object { $_.Edition -eq 'ai' }
+$forms = if ($Form -eq 'both') { @('msix', 'portable') } else { @($Form) }
+foreach ($currentEdition in $editions) {
+    $identity = Get-WindowsEditionIdentity -CurrentEdition $currentEdition
+    Write-Host "[发布] $currentEdition 身份: package=$($identity.PackageId) product=$($identity.ProductId) display=$($identity.DisplayName) distribution=$($identity.DistributionName) assembly=$($identity.AssemblyName)"
+    Write-Host "[发布] 构建输入: edition=$currentEdition（DINO 与所有产品映射由 edition 派生）"
+
+    foreach ($currentForm in $forms) {
+        $container = if ($currentForm -eq 'msix') { 'msix' } else { 'singlefile' }
+        if (-not [string]::IsNullOrWhiteSpace($OutputDirectory)) {
+            $editionOutput = Join-Path $OutputDirectory $currentEdition
+            $publishDirectory = if ($forms.Count -gt 1) {
+                Join-Path $editionOutput $container
+            } else {
+                $editionOutput
+            }
+        } elseif ($Local) {
+            $publishDirectory = Join-Path $artifactsDirectory "scratch\windows-local-publish\$currentEdition\$container"
+        } else {
+            $publishDirectory = Join-Path $PSScriptRoot "bin\$currentEdition\$Configuration\publish-$container\win-x64"
+        }
+        $validationRoot = if ($forms.Count -gt 1) {
+            Join-Path (Join-Path $validationBase $currentEdition) $currentForm
+        } else {
+            Join-Path $validationBase $currentEdition
+        }
+        New-Item -ItemType Directory -Path $validationRoot -Force | Out-Null
+
+        $package = if ($currentForm -eq 'msix') {
+            Publish-WindowsMsix -Identity $identity -PublishDirectory $publishDirectory -ValidationRoot $validationRoot
+        } else {
+            Publish-WindowsPortable -Identity $identity -PublishDirectory $publishDirectory -ValidationRoot $validationRoot
+        }
+        $validatedPackages += $package
+    }
+}
+
+if ($Edition -eq 'both' -and $Form -ne 'msix') {
+    $standardPackage = $validatedPackages | Where-Object { $_.Edition -eq 'standard' -and $_.Form -eq 'portable' }
+    $aiPackage = $validatedPackages | Where-Object { $_.Edition -eq 'ai' -and $_.Form -eq 'portable' }
     $roundtripOutput = Join-Path $validationBase 'roundtrip'
     $previousExtractDirectory = $env:DOTNET_BUNDLE_EXTRACT_BASE_DIR
     try {
@@ -354,4 +616,6 @@ if (-not $Local) {
     if ($LASTEXITCODE -ne 0) { throw '发布归档布局或校验清单生成失败。' }
 }
 Write-Host "[发布] 验收目录：$validationBase"
-
+if ($Form -ne 'portable') {
+    Write-Host '[发布] MSIX 双包安装 / 同时运行 / 分别更新卸载需在 Windows 上以真实旁加载策略验收；本脚本只校验包身份、版本与资源，不安装任何包。'
+}

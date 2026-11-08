@@ -31,7 +31,8 @@
 	<key>CFBundleIconFile</key>
 	<string>icon.icns</string>
 	<key>CFBundleIdentifier</key>
-	<string>cc.xiaojh.PhotoViewer.Mac</string>
+	<!-- 仅模板：构建按 PhotoViewerEdition 在 obj/<edition>/Info.plist 副本写入 PhotoViewerPackageId，本文件不直接打包。 -->
+	<string>cc.xiaojh.PhotoViewer</string>
 	<key>CFBundleName</key>
 	<string>PhotoViewer</string>
 	<key>CFBundleShortVersionString</key>

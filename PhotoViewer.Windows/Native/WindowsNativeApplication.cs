@@ -86,6 +86,9 @@ internal static class WindowsNativeApplication
 
     /// <summary>
     /// 本进程的设置文档路径：隔离运行落在验收输出目录(启动时每轮重置)，普通运行落在用户本地应用数据。
+    /// 通用设置是两版共用的产品族数据，跨进程并发与显式共享区按共享存储方案另行接入
+    /// （MSIX 打包运行时 AppData 写入由系统按包重定向，不等于产品族共享）；
+    /// 日志、界面状态与诊断文件则落在 <see cref="WindowsProductInfo.PrivateStateDirectory"/>，各版私有。
     /// </summary>
     internal static string SettingsFilePath => IsolatedMode
         ? IsolatedSettingsFilePath
@@ -155,6 +158,8 @@ internal static class WindowsNativeApplication
         NativeStartupLog.Write(
             $"edition: {WindowsProductInfo.EditionName} hasDino={WindowsProductInfo.HasDino}"
             + $" product={WindowsProductInfo.DisplayName}"
+            + $" packageId={WindowsProductInfo.PackageId} productId={WindowsProductInfo.ProductId}"
+            + $" instanceKey={WindowsSingleInstance.InstanceKey}"
             + (EditionRoundtripStage != null ? $" roundtrip={EditionRoundtripStage}" : string.Empty));
 
         WinRT.ComWrappersSupport.InitializeComWrappers();
@@ -250,12 +255,15 @@ internal static class WindowsNativeApplication
 
     internal static void InitializeMemoryBudget(IMemoryBudgetProvider provider)
     {
-        string? logPath = null;
+        // 内存事件是诊断日志，普通运行也落在产品私有目录，两版同时运行不互相追加/覆盖。
+        var logPath = IsolatedMode
+            ? Path.Combine(IsolatedOutputDirectory, "memory-events.jsonl")
+            : Path.Combine(WindowsProductInfo.PrivateStateDirectory, "memory-events.jsonl");
         if (IsolatedMode)
         {
             Directory.CreateDirectory(IsolatedOutputDirectory);
-            logPath = Path.Combine(IsolatedOutputDirectory, "memory-events.jsonl");
         }
+
         MemoryGovernor.Initialize(provider, logPath);
     }
 

@@ -4,7 +4,7 @@
 用法：
   python3 Tools/check-mac-package.py <App.app> --edition standard|ai --output <报告.json>
         [--version 0.9.0] [--build-number 90] [--product-name PhotoViewer|"PhotoViewer AI"]
-        [--bundle-id cc.xiaojh.PhotoViewer.Mac] [--executable PhotoViewer.Mac]
+        [--bundle-id cc.xiaojh.PhotoViewer|cc.xiaojh.PhotoViewer.AI] [--executable PhotoViewer.Mac]
   python3 Tools/check-mac-package.py --self-test
 
 只做本地文件检查：不挂载 DMG、不联网、不调用签名或公证工具。
@@ -12,7 +12,9 @@
 身份：包目录名、Contents/Info.plist 的 CFBundleName / CFBundleDisplayName /
 CFBundleShortVersionString / CFBundleVersion / CFBundleIdentifier / CFBundleExecutable，
 以及 Contents/MacOS/<CFBundleExecutable> 的 arm64 可执行 Mach-O 头。版本号与构建号缺省
-取根 Directory.Build.props，也可显式传入；报告保存期望值与实际值。
+取根 Directory.Build.props，也可显式传入。期望的 Bundle ID 与产品名按 edition 推导，
+并优先取根 Directory.Build.props 的 PhotoViewerPackageId / PhotoViewerDisplayName 映射；
+报告同时保存期望值与实际值。macOS 包身份不带 .Mac 后缀。
 
 standard：不得包含 .onnx、文件名含 onnxruntime（不区分大小写）、DirectML、
           Microsoft.ML.OnnxRuntime 托管 dll、MathNet.Numerics.dll 或 DINOv3 许可证。
@@ -46,7 +48,8 @@ MODEL_SHA256 = "bcba38490ec2eded4a240751bebac198903daba7263871e8fee3aa39b03352e8
 # 产品显示名（AI 版含空格）；.app 目录名与 CFBundleName/DisplayName 同值。
 # 分发包文件名另用 PhotoViewer-AI，只出现在 publish.sh 的 PACKAGE_PRODUCT 与 release/packages。
 PRODUCT_NAMES = {"standard": "PhotoViewer", "ai": "PhotoViewer AI"}
-DEFAULT_BUNDLE_ID = "cc.xiaojh.PhotoViewer.Mac"
+# 规范应用 ID（与根 Directory.Build.props 的 PhotoViewerPackageId 映射一致）；macOS 一律不带 .Mac 后缀。
+BUNDLE_IDS = {"standard": "cc.xiaojh.PhotoViewer", "ai": "cc.xiaojh.PhotoViewer.AI"}
 DEFAULT_EXECUTABLE = "PhotoViewer.Mac"
 
 AI_MANAGED_REQUIRED = ("Microsoft.ML.OnnxRuntime.dll", "MathNet.Numerics.dll")
@@ -70,6 +73,7 @@ FAT_MAGIC_64 = 0xCAFEBABF
 MH_EXECUTE = 0x2
 MH_DYLIB = 0x6
 CPU_TYPE_ARM64 = 0x0100000C
+CPU_TYPE_X86_64 = 0x01000007
 
 CORE_DYLIB_NAME = re.compile(r"^libonnxruntime(\.[0-9][^/]*)?\.dylib$", re.IGNORECASE)
 
@@ -103,6 +107,22 @@ def read_root_props() -> dict:
         match = re.search(rf"<{key}>([^<]+)</{key}>", text)
         if match:
             values[key] = match.group(1).strip()
+    return values
+
+
+def read_edition_identity(edition: str) -> dict:
+    """读取根 Directory.Build.props 按 edition 派生的显示名与包身份；缺失时返回空字典。"""
+    props = Path(__file__).resolve().parent.parent / "Directory.Build.props"
+    try:
+        text = props.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    values: dict = {}
+    for tag, key in (("PhotoViewerDisplayName", "productName"), ("PhotoViewerPackageId", "bundleId")):
+        for match in re.finditer(rf"<{tag}\b([^>]*)>([^<]+)</{tag}>", text):
+            if f"== '{edition}'" in match.group(1):
+                values[key] = match.group(2).strip()
+                break
     return values
 
 
@@ -305,6 +325,24 @@ def check_identity(app: Path, expectations: dict, errors: list[str]) -> dict:
         if not ok:
             errors.append(f"Info.plist {label}（{key}）不符：期望 {want}，实际 {actual}")
 
+    # 期望身份与实际身份单独留档，便于发布清单直接引用。
+    identity["expectations"] = {
+        "edition": expectations["edition"],
+        "productName": expected["CFBundleName"],
+        "bundleId": expected["CFBundleIdentifier"],
+        "version": expected["CFBundleShortVersionString"],
+        "buildNumber": expected["CFBundleVersion"],
+        "executable": expected["CFBundleExecutable"],
+    }
+    identity["actual"] = {
+        "productName": plist.get("CFBundleName"),
+        "bundleId": plist.get("CFBundleIdentifier"),
+        "version": plist.get("CFBundleShortVersionString"),
+        "buildNumber": plist.get("CFBundleVersion"),
+        "executable": plist.get("CFBundleExecutable"),
+    }
+    identity["bundleIdMatch"] = plist.get("CFBundleIdentifier") == expected["CFBundleIdentifier"]
+
     executable_path = app / "Contents" / "MacOS" / str(plist.get("CFBundleExecutable", ""))
     architectures = macho_architectures(executable_path) if executable_path.is_file() else []
     executable_ok = executable_path.is_file() and is_arm64_macho_executable(architectures)
@@ -477,6 +515,10 @@ def print_report(report: dict, output: Path | None) -> None:
             f"({plist.get('CFBundleVersion')}) / {plist.get('CFBundleIdentifier')} / "
             f"{plist.get('CFBundleExecutable')}"
         )
+    expected_identity = identity.get("expectations") or report.get("expectations") or {}
+    expected_bundle_id = expected_identity.get("bundleId")
+    if expected_bundle_id is not None:
+        print(f"Bundle ID：期望 {expected_bundle_id} / 实际 {plist.get('CFBundleIdentifier')}")
     print(f"文件：{report['fileCount']}  总字节：{report['totalBytes']}（{human(report['totalBytes'])}）")
     for category in report["summary"]["categories"]:
         print(f"  {category['category']:<20} {category['fileCount']:>5}  {human(category['bytes']):>12}")
@@ -490,24 +532,26 @@ def print_report(report: dict, output: Path | None) -> None:
         print("包扫描通过")
 
 
-def _write_executable(path: Path) -> None:
+def _write_executable(path: Path, cputype: int = CPU_TYPE_ARM64) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    # 小端 arm64 精简 Mach-O 头：magic / cputype / cpusubtype / filetype / ncmds / sizeofcmds / flags / reserved
-    path.write_bytes(struct.pack("<IIIIIIII", MH_MAGIC_64, CPU_TYPE_ARM64, 0, MH_EXECUTE, 0, 0, 0, 0))
+    # 小端精简 Mach-O 头：magic / cputype / cpusubtype / filetype / ncmds / sizeofcmds / flags / reserved
+    path.write_bytes(struct.pack("<IIIIIIII", MH_MAGIC_64, cputype, 0, MH_EXECUTE, 0, 0, 0, 0))
 
 
 def _make_app(root: Path, product: str, version: str, build: str, *, extra_files: dict | None = None,
-              bundle_name: str | None = None, executable: str = DEFAULT_EXECUTABLE) -> Path:
+              bundle_name: str | None = None, executable: str = DEFAULT_EXECUTABLE,
+              bundle_id: str | None = None) -> Path:
     app = root / f"{product}.app"
     contents = app / "Contents"
     (contents / "MacOS").mkdir(parents=True, exist_ok=True)
     (contents / "MonoBundle").mkdir(parents=True, exist_ok=True)
+    edition = "ai" if product == PRODUCT_NAMES["ai"] else "standard"
     plist = {
         "CFBundleName": bundle_name or product,
         "CFBundleDisplayName": bundle_name or product,
         "CFBundleShortVersionString": version,
         "CFBundleVersion": build,
-        "CFBundleIdentifier": DEFAULT_BUNDLE_ID,
+        "CFBundleIdentifier": bundle_id or BUNDLE_IDS[edition],
         "CFBundleExecutable": executable,
     }
     (contents / "Info.plist").write_bytes(plistlib.dumps(plist))
@@ -530,7 +574,7 @@ def self_test() -> int:
             "productName": PRODUCT_NAMES[edition],
             "version": version,
             "buildNumber": build,
-            "bundleId": DEFAULT_BUNDLE_ID,
+            "bundleId": BUNDLE_IDS[edition],
             "executable": DEFAULT_EXECUTABLE,
         }
         base.update(overrides)
@@ -542,6 +586,7 @@ def self_test() -> int:
 
         app = _make_app(root / "standard-ok", "PhotoViewer", version, build,
                         extra_files={"MonoBundle/PhotoViewer.dll": b"MZ"})
+        standard_ok_app = app
         cases.append(("标准版合规包通过", {"app": app, "expectations": expectations("standard")}, True, None))
 
         app = _make_app(root / "standard-leak", "PhotoViewer", version, build,
@@ -579,6 +624,21 @@ def self_test() -> int:
         cases.append(("包目录名与版本不符失败", {"app": app, "expectations": expectations("standard")}, False,
                       "应用包目录名应为 PhotoViewer.app"))
 
+        app = _make_app(root / "standard-ai-id", "PhotoViewer", version, build,
+                        bundle_id=BUNDLE_IDS["ai"])
+        cases.append(("标准版误用 AI Bundle ID 失败", {"app": app, "expectations": expectations("standard")}, False,
+                      "Info.plist Bundle ID（CFBundleIdentifier）不符"))
+
+        app = _make_app(root / "ai-standard-id", "PhotoViewer AI", version, build,
+                        bundle_id=BUNDLE_IDS["standard"])
+        cases.append(("AI 版误用标准版 Bundle ID 失败", {"app": app, "expectations": expectations("ai")}, False,
+                      "Info.plist Bundle ID（CFBundleIdentifier）不符"))
+
+        app = _make_app(root / "wrong-arch", "PhotoViewer", version, build)
+        _write_executable(app / "Contents" / "MacOS" / DEFAULT_EXECUTABLE, cputype=CPU_TYPE_X86_64)
+        cases.append(("主程序非 arm64 失败", {"app": app, "expectations": expectations("standard")}, False,
+                      "主程序不是 arm64 可执行 Mach-O"))
+
         for label, kwargs, expect_pass, needle in cases:
             report = scan(kwargs["app"], kwargs["expectations"])
             passed = report["passed"]
@@ -589,6 +649,13 @@ def self_test() -> int:
                 failures.append(f"{label}：错误信息未包含「{needle}」，实际：{detail}")
             else:
                 print(f"  [{'OK' if passed else 'OK（已拒绝）'}] {label}")
+
+        report = scan(standard_ok_app, expectations("standard"))
+        identity = report["identity"]
+        if not identity.get("bundleIdMatch") or identity.get("actual", {}).get("bundleId") != BUNDLE_IDS["standard"]:
+            failures.append("报告未记录标准版实际/期望身份")
+        else:
+            print("  [OK] 报告记录实际/期望身份")
 
     if failures:
         print("自检未通过：", file=sys.stderr)
@@ -610,12 +677,13 @@ def main() -> int:
     parser.add_argument("--output", required=True, type=Path, help="JSON 报告路径")
     parser.add_argument("--version", help="期望的 CFBundleShortVersionString；缺省取根 Directory.Build.props")
     parser.add_argument("--build-number", help="期望的 CFBundleVersion；缺省取根 Directory.Build.props")
-    parser.add_argument("--product-name", help="期望的产品名与 .app 目录名")
-    parser.add_argument("--bundle-id", default=DEFAULT_BUNDLE_ID, help=f"期望的 CFBundleIdentifier（默认 {DEFAULT_BUNDLE_ID}）")
+    parser.add_argument("--product-name", help="期望的产品名与 .app 目录名；缺省按 edition 取根 props 映射")
+    parser.add_argument("--bundle-id", help="期望的 CFBundleIdentifier；缺省按 edition 取规范应用 ID")
     parser.add_argument("--executable", default=DEFAULT_EXECUTABLE, help=f"期望的 CFBundleExecutable（默认 {DEFAULT_EXECUTABLE}）")
     args = parser.parse_args(argv)
 
     props = read_root_props()
+    identity_props = read_edition_identity(args.edition)
     version = args.version or props.get("AppVersion")
     build_number = args.build_number or props.get("AppBuildNumber")
     if not version or not build_number:
@@ -624,10 +692,10 @@ def main() -> int:
 
     expectations = {
         "edition": args.edition,
-        "productName": args.product_name or PRODUCT_NAMES[args.edition],
+        "productName": args.product_name or identity_props.get("productName") or PRODUCT_NAMES[args.edition],
         "version": version,
         "buildNumber": build_number,
-        "bundleId": args.bundle_id,
+        "bundleId": args.bundle_id or identity_props.get("bundleId") or BUNDLE_IDS[args.edition],
         "executable": args.executable,
     }
     report = scan(args.app, expectations)
