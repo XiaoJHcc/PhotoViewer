@@ -194,19 +194,17 @@ internal sealed partial class WindowsMainWindow
             };
             RequireSmoke(WindowsRawSourceCache.TryAcquire(forged) is null, "长度变化后仍命中了保留项");
 
-            var otherPath = Path.GetFullPath(Path.Combine("Fixtures", "raw", "A7C01495.ARW"));
-            if (File.Exists(otherPath))
+            // 第二份 RAW 由预检保证存在:跨文件复用必须完整断言,缺件不允许降级成 SKIP。
+            var otherPath = WindowsAcceptanceFixtures.GetFile("raw/A7C01495.ARW");
+            var other = new LocalFileRef(otherPath);
+            var beforeOther = WindowsRawSourceCache.DevelopmentCount;
+            using (var otherFull = await decoder.DecodeAsync(other, null, PixelEncoding.RgbaF16, CancellationToken.None)
+                ?? throw new InvalidOperationException("第二份 RAW 解码失败"))
             {
-                var other = new LocalFileRef(otherPath);
-                var beforeOther = WindowsRawSourceCache.DevelopmentCount;
-                using var otherFull = await decoder.DecodeAsync(other, null, PixelEncoding.RgbaF16, CancellationToken.None)
-                    ?? throw new InvalidOperationException("第二份 RAW 解码失败");
                 RequireSmoke(WindowsRawSourceCache.DevelopmentCount == beforeOther + 1, "不同文件命中了别的文件的保留项");
             }
-            else
-            {
-                checks.Add("SKIP WIC RAW reuse across files: 缺少第二份 RAW 夹具");
-            }
+
+            checks.Add("PASS WIC RAW reuse across files: the second repo RAW always re-develops and never hits the first file's retained source");
 
             // 纯闸门口径:预算未知 / 超封顶 / 可用余量不足。
             long budget = Math.Max(1L << 30, sourceBytes * 64);

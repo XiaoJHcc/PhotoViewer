@@ -36,6 +36,16 @@ dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEdition=standard
 
 专项参数追加在 `--` 后：`--pv-native-settings`、`--pv-native-tools`；各自的 `-hold` 变体保持窗口供目视。`--pv-native-activation-check` 验证单实例二次激活（本进程持键并拉起第二个进程，核对转发、定位与退出码；数据仍走隔离目录）。报告位于工作目录的 `artifacts/acceptance/native-win-acceptance/`。检查范围与工程约束见 [Windows 模块手册](PhotoViewer.Windows/AGENTS.md)。
 
+需要固定素材的验收用 `--pv-acceptance-fixtures=<Fixtures 目录绝对路径>` 显式给出，以下示例在仓库根执行（`$PWD` 只在仓库根取到该目录；从别处启动就换成素材目录的绝对路径，不要把某台机器的盘符路径写进配置）：
+
+```bash
+dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEdition=standard -- --pv-native-smoke "--pv-acceptance-fixtures=$PWD/Fixtures"
+dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEdition=standard -- --pv-native-color "--pv-acceptance-fixtures=$PWD/Fixtures"
+dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEdition=ai -- --pv-native-smoke "--pv-acceptance-fixtures=$PWD/Fixtures"
+```
+
+素材根目录是唯一输入来源：不按启动工作目录、程序目录或祖先目录搜索，也不读环境变量兜底。缺参、空值、重复、相对路径、目录不存在或该套验收所需文件缺件都在创建窗口前失败——退出码 1，隔离启动日志与 `fixture-checks.json` 记 `FAIL` 并列出缺失项。每套只要求自己用到的文件：AI 冒烟的 `jpeg-large/color-p3-large.jpg`、设置专项的色卡、色彩专项的 `jpeg/color-{srgb,p3,adobe,untagged-adobe}.jpg` + `heif/color-{srgb,p3}.heic` + 两张 `raw/*.ARW`、双版本往返的 12 张 JPEG。输入只读，与输出参数 `--pv-acceptance-output` 分离：报告、设置、数据库与检查自建的副本都写在输出目录，不落素材目录。不需要外部素材的入口（标准版冒烟、工具、发行版能力、自生成素材的检查、自选照片的压测）可以不传，显式传错仍然失败。**Check Windows Native / Check Windows Color** 四个 Task 已传 `${workspaceFolder}/Fixtures`，发布脚本传自身仓库根下的 `Fixtures/`，因此验收不依赖启动工作目录。
+
 性能与压测入口同样使用隔离设置、数据库与日志（`artifacts/acceptance/native-win-acceptance/`），不触碰用户设置与照片：
 
 ```bash
@@ -142,7 +152,7 @@ bash Tools/clean-artifacts.sh            # 预览可清理项；加 --yes 执行
 
 `check-release.py` 按双产品矩阵校验平台后缀与扩展名：`-win-x64` 主发布 `.msix`、附加/历史 `.exe`，`-mac-arm64` `.dmg`，`-android-arm64` 商店 `.aab`、直接分发/历史 `.apk`，`-ios`/`-ios-arm64` `.ipa`；历史包继续接受 `-arm64` `.dmg` 与 `-android-signed` `.apk`，`-android-x86_64` 等架构后缀直接拒绝。`release/ios-stable/` 与 `release/testflight/` 按 `standard/`、`ai/` 分目录校验（旧布局仍接受并提示迁移），每个版本目录只允许一个归档。当前版本缺 Mac 或 iOS 双版本包时给出提示，不阻断其他平台尚未迁移的归档。`clean-artifacts.sh` 会清空 `artifacts/scratch/`，删除各套件目录中的数据库、烟测设置与夹具副本，把 `release/testflight/` 收敛到各版本最新归档，并将 mac/ios/android 轮次目录收敛到最近 2 份。旧布局的顶层单归档在新 `standard/`、`ai/` 归档出现前保留最新一份（仅有的 dSYM 符号材料不会被清空），出现新变体归档后才收敛掉。
 
-校验清单可在 `release/` 内核对：`cd release && shasum -a 256 -c SHA256SUMS`。
+`--write` 生成的校验清单统一为 UTF-8、LF 换行，路径相对 `release/`，核对在 `release/` 内进行：`cd release && shasum -a 256 -c SHA256SUMS`。
 
 ## 打包发布
 

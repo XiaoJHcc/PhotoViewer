@@ -31,7 +31,7 @@ internal sealed partial class WindowsMainWindow
             Directory.CreateDirectory(directory);
             foreach (string name in new[] { "srgb", "p3", "adobe", "untagged-adobe" })
             {
-                string original = Path.GetFullPath(Path.Combine("Fixtures", "jpeg", "color-" + name + ".jpg"));
+                string original = WindowsAcceptanceFixtures.GetFile("jpeg/color-" + name + ".jpg");
                 string folder = Path.Combine(directory, name);
                 Directory.CreateDirectory(folder);
                 string path = Path.Combine(folder, "color-" + name + ".jpg");
@@ -61,8 +61,8 @@ internal sealed partial class WindowsMainWindow
                     "缩略图不是显式 sRGB: " + name);
             }
 
-            var p3Profile = ReadProfile(Path.Combine("Fixtures", "jpeg", "color-p3.jpg"));
-            var srgbProfile = ReadProfile(Path.Combine("Fixtures", "jpeg", "color-srgb.jpg"));
+            var p3Profile = ReadProfile(WindowsAcceptanceFixtures.GetFile("jpeg/color-p3.jpg"));
+            var srgbProfile = ReadProfile(WindowsAcceptanceFixtures.GetFile("jpeg/color-srgb.jpg"));
             var p3 = await Task.Run(() => WindowsDisplayTransform.FromProfile(p3Profile, "acceptance P3 monitor"));
             var srgb = await Task.Run(() => WindowsDisplayTransform.FromProfile(srgbProfile, "acceptance sRGB monitor"));
             Near(p3.MapLinear(1, 0, 0), (0.822593f, 0.0332f, 0.017085f), 0.009f, "sRGB red on P3 monitor");
@@ -85,7 +85,7 @@ internal sealed partial class WindowsMainWindow
             checks.Add("PASS WCS fallback: native 16-bit COLOR stride/range and black/midgray/white reference");
             foreach (string name in new[] { "srgb", "p3" })
             {
-                var file = new LocalFileRef(Path.GetFullPath(Path.Combine("Fixtures", "heif", "color-" + name + ".heic")));
+                var file = new LocalFileRef(WindowsAcceptanceFixtures.GetFile("heif/color-" + name + ".heic"));
                 using var fast = await decoder.DecodeAsync(file, 600, PixelEncoding.RgbaF16, CancellationToken.None)
                     ?? throw new InvalidOperationException("HEIF 主图解码失败");
                 using var fallback = await LibHeifDecoder.DecodePresentationAsync(file, 600, CancellationToken.None)
@@ -100,8 +100,8 @@ internal sealed partial class WindowsMainWindow
                 Near(gpu, Pixel(fast, 0.5, 0.175), 0.008f, "HEIF actual GPU");
                 checks.Add("PASS HEIF " + name + ": real fast/fallback F16 color agreement and GPU upload");
             }
-            string rawPath = Path.GetFullPath(Path.Combine("Fixtures", "raw", "A7C01489.ARW"));
-            RequireSmoke(File.Exists(rawPath), "RAW 验收夹具缺失");
+            // 输入素材先于硬件能力校验:缺 RAW 也必须在预检就失败,只有缺 RAW codec 才 SKIP。
+            string rawPath = WindowsAcceptanceFixtures.GetFile("raw/A7C01489.ARW");
             if (WindowsRawDecoder.IsAvailable(".arw"))
             {
                 var declaration = WindowsRawDecoder.TryGetSourceColor(rawPath)

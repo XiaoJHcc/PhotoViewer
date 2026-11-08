@@ -35,6 +35,10 @@ $globalJson = Join-Path $repoRoot 'global.json'
 $directoryBuildProps = Join-Path $repoRoot 'Directory.Build.props'
 $releaseDirectory = Join-Path $repoRoot 'release'
 $artifactsDirectory = Join-Path $repoRoot 'artifacts'
+$fixtureRoot = Join-Path $repoRoot 'Fixtures'
+if ($Form -ne 'msix' -and -not (Test-Path -LiteralPath $fixtureRoot -PathType Container)) {
+    throw "缺少验收素材目录：$fixtureRoot"
+}
 
 if (-not [string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
@@ -455,7 +459,7 @@ function Publish-WindowsPortable {
                 $checkOutput = "reports/$($check.Mode)"
                 $env:DOTNET_BUNDLE_EXTRACT_BASE_DIR = Join-Path $validationDirectory "bundle-cache-$($check.Mode)"
                 $process = Start-Process -FilePath $validationExe -WorkingDirectory $validationDirectory `
-                    -ArgumentList "--pv-native-$($check.Mode)", '--pv-native-portable', "--pv-acceptance-output=$checkOutput" -PassThru
+                    -ArgumentList "--pv-native-$($check.Mode)", '--pv-native-portable', ('--pv-acceptance-fixtures="{0}"' -f $fixtureRoot), "--pv-acceptance-output=$checkOutput" -PassThru
                 try {
                     if (-not $process.WaitForExit(300000)) {
                         $process.Kill()
@@ -568,6 +572,7 @@ if ($Edition -eq 'both' -and $Form -ne 'msix') {
             '--pv-native-edition-roundtrip=all',
             ('--pv-edition-standard-exe="{0}"' -f $standardPackage.Path),
             ('--pv-edition-ai-exe="{0}"' -f $aiPackage.Path),
+            ('--pv-acceptance-fixtures="{0}"' -f $fixtureRoot),
             ('--pv-acceptance-output="{0}"' -f $roundtripOutput)
         )
         $process = Start-Process -FilePath $aiPackage.Path -WorkingDirectory $repoRoot -ArgumentList $arguments -PassThru

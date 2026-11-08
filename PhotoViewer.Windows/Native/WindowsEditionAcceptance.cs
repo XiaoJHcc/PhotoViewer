@@ -27,8 +27,8 @@ internal sealed partial class WindowsMainWindow
     /// <summary>往返基线的共享文件名(保存在隔离输出目录)。</summary>
     private const string RoundtripStateFileName = "edition-roundtrip-state.json";
 
-    /// <summary>往返素材:仓库自带的小尺寸 JPEG,只读使用。</summary>
-    private const string RoundtripFixtureFolderName = "Fixtures/jpeg";
+    /// <summary>往返素材:仓库自带的小尺寸 JPEG 目录(相对素材根，只读使用)。</summary>
+    private const string RoundtripFixtureFolderName = "jpeg";
 
     /// <summary>往返使用的当前照片文件名(三阶段一致,保证指纹与瓦片可比)。</summary>
     private const string RoundtripCurrentFileName = "color-srgb.jpg";
@@ -237,6 +237,9 @@ internal sealed partial class WindowsMainWindow
         };
         startInfo.ArgumentList.Add($"--pv-native-edition-roundtrip={stage}");
         startInfo.ArgumentList.Add($"--pv-acceptance-output={SmokeOutputDirectory}");
+        // 素材根显式传给对端进程:对端不搜祖先,也不依赖本进程的工作目录或解包位置。
+        startInfo.ArgumentList.Add($"--pv-acceptance-fixtures={WindowsAcceptanceFixtures.RootDirectory
+            ?? throw new InvalidOperationException("往返编排缺少 --pv-acceptance-fixtures 素材根")}");
         using var process = System.Diagnostics.Process.Start(startInfo)
             ?? throw new InvalidOperationException($"无法启动 {exe}");
         if (!process.WaitForExit(600_000))
@@ -757,24 +760,10 @@ internal sealed partial class WindowsMainWindow
             "往返当前照片上屏", 40);
     }
 
-    /// <summary>解析往返素材目录(仓库 Fixtures/jpeg,只读)。</summary>
+    /// <summary>取往返素材目录(素材根下的 jpeg 目录，只读)。</summary>
     /// <returns>绝对路径。</returns>
     private static string ResolveRoundtripFixtureFolder()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory != null)
-        {
-            var candidate = Path.Combine(directory.FullName, RoundtripFixtureFolderName);
-            if (Directory.Exists(candidate))
-            {
-                return candidate;
-            }
-
-            directory = directory.Parent;
-        }
-
-        throw new InvalidOperationException($"找不到往返素材目录 {RoundtripFixtureFolderName}");
-    }
+        => WindowsAcceptanceFixtures.GetDirectory(RoundtripFixtureFolderName);
 
     /// <summary>等待设置文档真实落盘到 prepare 哨兵值。</summary>
     /// <param name="threshold">阈值哨兵。</param>

@@ -39,28 +39,28 @@
     {
       "label": "Check Windows Native (Standard)",
       "type": "shell",
-      "command": "dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEdition=standard -- --pv-native-smoke",
+      "command": "dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEdition=standard -- --pv-native-smoke \"--pv-acceptance-fixtures=${workspaceFolder}/Fixtures\"",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
       "label": "Check Windows Native (AI)",
       "type": "shell",
-      "command": "dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEdition=ai -- --pv-native-smoke",
+      "command": "dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEdition=ai -- --pv-native-smoke \"--pv-acceptance-fixtures=${workspaceFolder}/Fixtures\"",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
       "label": "Check Windows Color (Standard)",
       "type": "shell",
-      "command": "dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEdition=standard -- --pv-native-color",
+      "command": "dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEdition=standard -- --pv-native-color \"--pv-acceptance-fixtures=${workspaceFolder}/Fixtures\"",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
       "label": "Check Windows Color (AI)",
       "type": "shell",
-      "command": "dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEdition=ai -- --pv-native-color",
+      "command": "dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEdition=ai -- --pv-native-color \"--pv-acceptance-fixtures=${workspaceFolder}/Fixtures\"",
       "group": "test",
       "problemMatcher": "$msCompile"
     },

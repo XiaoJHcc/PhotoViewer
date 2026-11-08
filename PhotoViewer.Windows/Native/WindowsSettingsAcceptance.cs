@@ -26,19 +26,37 @@ namespace PhotoViewer.Windows.Native;
 internal static class WindowsSettingsAcceptance
 {
     /// <summary>运行设置窗口验收。</summary>
+    /// <param name="mainWindow">主窗口(真实打开通道与解码会话)</param>
     /// <param name="main">主视图模型</param>
     /// <param name="presenter">设置窗口展示器</param>
     /// <returns>任务</returns>
-    public static async Task RunAsync(MainViewModel main, WindowsNativeSettingsPresenter presenter)
+    public static async Task RunAsync(
+        WindowsMainWindow mainWindow,
+        MainViewModel main,
+        WindowsNativeSettingsPresenter presenter)
     {
         var checks = new List<string>();
         try
         {
             Directory.CreateDirectory(WindowsMainWindow.SmokeOutputDirectory);
-            var fixturePath = Path.GetFullPath(Path.Combine("Fixtures", "jpeg", "color-srgb.jpg"));
-            await main.FolderVM.OpenImageAsync(new PhotoViewer.Core.Storage.LocalFileRef(fixturePath));
-            await WaitAsync(() => main.CurrentFile != null
-                && PhotoViewer.Core.Image.BitmapLoader.ProxyTargetLongEdge > 0, "真实照片视口");
+            // 源素材只读:先把色卡复制进隔离目录,再走真实打开通道解码,不向 Fixtures 写任何东西。
+            var source = WindowsAcceptanceFixtures.GetFile("jpeg/color-srgb.jpg");
+            var fixtureFolder = Path.Combine(WindowsMainWindow.SmokeOutputDirectory, "fixtures", "settings");
+            Directory.CreateDirectory(fixtureFolder);
+            var fixtureName = Path.GetFileName(source);
+            var fixturePath = Path.Combine(fixtureFolder, fixtureName);
+            File.Copy(source, fixturePath, overwrite: true);
+            await mainWindow.OpenPathsAsync([fixturePath]);
+            // 元数据与视口就绪都是假绿:必须等到真实解码的展示图(非低分辨率顶替预览)且几何与当前文件对应。
+            const int fixtureWidth = 1200;
+            const int fixtureHeight = 800;
+            await WaitAsync(() => mainWindow.Session.Image is { } image && !mainWindow.Session.IsSubstitute
+                && image.SourceWidth == fixtureWidth && image.SourceHeight == fixtureHeight
+                && main.CurrentFile?.Name == fixtureName, "真实照片解码", attempts: 400);
+            var decoded = mainWindow.Session.Image!;
+            checks.Add($"PASS real photo decode: {fixtureName} source={decoded.SourceWidth}x{decoded.SourceHeight}"
+                + $" display={decoded.Width}x{decoded.Height} {decoded.Encoding} proxy={mainWindow.Session.IsProxy}"
+                + ", not a substitute preview");
             main.OpenSettingWindow();
             var window = presenter.Window ?? throw new InvalidOperationException("设置窗口未创建");
             await WaitAsync(() => window.Root.XamlRoot != null && window.Root.ActualWidth > 0, "设置窗口布局");
@@ -615,10 +633,11 @@ internal static class WindowsSettingsAcceptance
     /// <summary>轮询等待条件成立。</summary>
     /// <param name="condition">条件</param>
     /// <param name="what">失败描述</param>
+    /// <param name="attempts">轮询次数(每次 50ms)</param>
     /// <returns>任务</returns>
-    private static async Task WaitAsync(Func<bool> condition, string what)
+    private static async Task WaitAsync(Func<bool> condition, string what, int attempts = 100)
     {
-        for (var attempt = 0; attempt < 100; attempt++)
+        for (var attempt = 0; attempt < attempts; attempt++)
         {
             if (condition())
             {

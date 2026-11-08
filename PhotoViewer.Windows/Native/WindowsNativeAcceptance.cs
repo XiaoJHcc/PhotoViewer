@@ -20,6 +20,7 @@ using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
+using FocusManager = Microsoft.UI.Xaml.Input.FocusManager;
 using PhotoViewer.Core;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Database;
@@ -151,7 +152,7 @@ internal sealed partial class WindowsMainWindow
             RequireSmoke(_photo.CurrentTextureSize.Width < 3600,
                 $"代理档未上屏,主图纹理仍是 {_photo.CurrentTextureSize.Width}x{_photo.CurrentTextureSize.Height}");
 
-            RunKeyboardEntryChecks(checks);
+            await RunKeyboardEntryChecksAsync(checks);
 
             foreach (var mode in new[] { LayoutMode.Col, LayoutMode.Row })
             {
@@ -313,16 +314,47 @@ internal sealed partial class WindowsMainWindow
 
     /// <summary>
     /// 主窗键盘入口:小键盘缩放映射、重复设闸、未绑定放行、文本编辑焦点放行与 Exchange 空态。
-    /// 根元素 PreviewKeyDown 的真实事件派发无法用 WinUI 合成,这里验证同一入口
-    /// <see cref="HandleShortcutKey"/> 的判定;真实焦点路径留给 Windows 本机键盘验收。
+    /// 先建立真实前置条件(根元素焦点、无修饰键、非文本编辑焦点),再调用真实入口
+    /// <see cref="HandleShortcutKey"/>;根元素 PreviewKeyDown 的事件派发仍未合成,留给 Windows 本机键盘验收。
     /// </summary>
     /// <param name="checks">验收结果收集器</param>
-    private void RunKeyboardEntryChecks(List<string> checks)
+    /// <returns>检查完成后的任务</returns>
+    private async Task RunKeyboardEntryChecksAsync(List<string> checks)
     {
         var settings = _main.Settings;
         WindowsKeyDispatch.Route Resolve(GestureKey key, GestureModifiers modifiers, bool wasKeyDown, bool textEditingFocus = false)
             => WindowsKeyDispatch.Resolve(
                 AppGesture.FromKey(new AppKeyGesture(key, modifiers)), settings, textEditingFocus, wasKeyDown);
+
+        string FocusedElementName()
+            => _root.XamlRoot is { } focusedRoot
+                ? FocusManager.GetFocusedElement(focusedRoot)?.GetType().Name ?? "null"
+                : "no-xamlroot";
+
+        // 入口判定读的就是这些真实状态:焦点元素、实时修饰键、FromKey 译出的手势与解析结果。
+        string DescribeEntry(VirtualKey key, bool wasKeyDown)
+        {
+            var textEditingFocus = IsTextEditingFocus();
+            var gesture = WindowsInput.FromKey(key);
+            var route = WindowsKeyDispatch.Resolve(gesture, settings, textEditingFocus, wasKeyDown);
+            return $"key={key} wasKeyDown={wasKeyDown} focused={FocusedElementName()}"
+                + $" textEditingFocus={textEditingFocus} modifiers={WindowsInput.CurrentModifiers()}"
+                + $" gesture={gesture?.ToDisplayString() ?? "null"} gestureModifiers={gesture?.Key?.Modifiers.ToString() ?? "null"}"
+                + $" route=(command={route.Command ?? "null"}, consume={route.Consume}, execute={route.ShouldExecute})";
+        }
+
+        bool EntryReady()
+            => _root.XamlRoot is { } focusedRoot
+                && ReferenceEquals(FocusManager.GetFocusedElement(focusedRoot), _root)
+                && !IsTextEditingFocus()
+                && WindowsInput.CurrentModifiers() == GestureModifiers.None;
+
+        bool EnterShortcut(VirtualKey key, bool wasKeyDown, out string diagnosis)
+        {
+            diagnosis = DescribeEntry(key, wasKeyDown);
+            NativeStartupLog.Write("keyboard entry: " + diagnosis);
+            return HandleShortcutKey(key, wasKeyDown);
+        }
 
         // 小键盘 +/- 必须并入主键盘 +/- 的手势,默认 Ctrl+/- 缩放才对小键盘生效;Enter 仍按共享名 Return 映射。
         var add = WindowsInput.FromKey(VirtualKey.Add)?.Key;
@@ -347,13 +379,40 @@ internal sealed partial class WindowsMainWindow
         RequireSmoke(Resolve(GestureKey.Right, GestureModifiers.None, false, textEditingFocus: true) is { Consume: false },
             "文本编辑焦点下的按键被快捷键截获");
 
-        // 真实入口(除事件参数与焦点外):未绑定放行、绑定消费。
-        RequireSmoke(!HandleShortcutKey(VirtualKey.K, false), "主窗入口消费了未绑定按键");
+        // 真实入口读真实焦点与真实修饰键:先把焦点落回根元素(IsTabStop),连续两次状态正常才调用。
+        var focusRequested = _root.Focus(FocusState.Programmatic);
+        NativeStartupLog.Write(
+            $"keyboard entry: focus(FocusState.Programmatic)={focusRequested} focused={FocusedElementName()}"
+            + $" textEditingFocus={IsTextEditingFocus()} modifiers={WindowsInput.CurrentModifiers()}");
+        var focusTimer = Stopwatch.StartNew();
+        var readyStreak = 0;
+        while (readyStreak < 2)
+        {
+            readyStreak = EntryReady() ? readyStreak + 1 : 0;
+            if (readyStreak >= 2)
+            {
+                break;
+            }
+
+            if (focusTimer.Elapsed > TimeSpan.FromSeconds(5))
+            {
+                var timeoutDiagnosis = DescribeEntry(VirtualKey.Right, false);
+                NativeStartupLog.Write("keyboard entry: 前置条件超时 " + timeoutDiagnosis);
+                throw new InvalidOperationException(
+                    $"键盘入口前置条件未在 5s 内稳定(根元素焦点/非文本编辑焦点/无修饰键),"
+                    + $" focus(FocusState.Programmatic)={focusRequested}; {timeoutDiagnosis}");
+            }
+
+            await Task.Delay(50);
+        }
+
+        // 真实入口:未绑定放行、绑定消费。
+        RequireSmoke(!EnterShortcut(VirtualKey.K, false, out var unboundDiagnosis), "主窗入口消费了未绑定按键; " + unboundDiagnosis);
         var current = _main.CurrentFile;
         var rating = current?.Rating;
-        RequireSmoke(HandleShortcutKey(VirtualKey.Right, false), "主窗入口未消费已绑定按键");
+        RequireSmoke(EnterShortcut(VirtualKey.Right, false, out var nextDiagnosis), "主窗入口未消费已绑定按键; " + nextDiagnosis);
         RequireSmoke(ReferenceEquals(_main.CurrentFile, current), "只有一张照片时上一张/下一张不该换图");
-        RequireSmoke(HandleShortcutKey(VirtualKey.Number3, true), "评分命令的重复按键未被入口消费");
+        RequireSmoke(EnterShortcut(VirtualKey.Number3, true, out var repeatDiagnosis), "评分命令的重复按键未被入口消费; " + repeatDiagnosis);
         RequireSmoke(current?.Rating == rating, "评分命令的重复按键仍写入了星级");
 
         // Exchange 在 LastFile 为空时不动:共享实现会把 CurrentFile 置空(空态会因此回到空首屏)。
@@ -369,7 +428,7 @@ internal sealed partial class WindowsMainWindow
             _main.LastFile = lastFile;
         }
 
-        checks.Add("PASS keyboard entry: numpad +/- map to OemPlus/OemMinus (Ctrl+zoom), Enter→Return, repeat gate keeps Next and swallows rating repeat, unbound/text-edit keys pass through, Exchange no-ops without LastFile");
+        checks.Add("PASS keyboard entry: numpad +/- map to OemPlus/OemMinus (Ctrl+zoom), Enter→Return, repeat gate keeps Next and swallows rating repeat, unbound/text-edit keys pass through, Exchange no-ops without LastFile; real entry runs with root focus, no modifiers and no text-edit focus");
     }
 
     /// <summary>窗口态:最大化/还原/全屏与退出全屏的呈现器状态、标题栏按钮字形与全屏拖动区(SHELL-02)。</summary>
@@ -1518,8 +1577,9 @@ internal sealed partial class WindowsMainWindow
         {
             CreateSimilarityFixtures(batchFolder, "sim-batch", batchCount);
             Directory.CreateDirectory(midrunFolder);
+            var p3Large = WindowsAcceptanceFixtures.GetFile("jpeg-large/color-p3-large.jpg");
             for (var index = 0; index < midrunCount; index++)
-                File.Copy(Path.GetFullPath("Fixtures/jpeg-large/color-p3-large.jpg"),
+                File.Copy(p3Large,
                     Path.Combine(midrunFolder, $"sim-midrun-{index + 1:00}.jpg"), overwrite: true);
         });
 

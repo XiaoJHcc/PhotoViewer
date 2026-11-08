@@ -132,6 +132,20 @@ internal static class WindowsNativeApplication
             || args.Contains("--pv-native-color") || args.Contains("--pv-native-upload")
             || args.Contains("--pv-native-rating");
 
+        // 验收素材只认显式 --pv-acceptance-fixtures=<Fixtures 绝对路径>:参数与本轮必需素材都在创建
+        // 任何窗口、视图模型或设置库之前定下来,缺件不跳过、也不从祖先目录或工作目录兜底。
+        string? fixtureFailure;
+        try
+        {
+            WindowsAcceptanceFixtures.Initialize(args);
+            fixtureFailure = WindowsAcceptanceFixtures.Validate();
+        }
+        catch (Exception exception)
+        {
+            // 素材参数错误一律在 WinUI 启动前转成退出码 1:不留未处理异常,也不弹框。
+            fixtureFailure = exception.Message;
+        }
+
         if (IsolatedMode)
         {
             var output = args.FirstOrDefault(a => a.StartsWith("--pv-acceptance-output=", StringComparison.Ordinal));
@@ -151,6 +165,36 @@ internal static class WindowsNativeApplication
             : PerfProbeFolder != null ? "native-startup-probe.log"
             : thumbProbe ? "native-startup-thumb-probe.log"
             : "native-startup.log";
+
+        if (IsolatedMode && WindowsAcceptanceFixtures.IsInsideRoot(WindowsMainWindow.SmokeOutputDirectory))
+        {
+            Environment.ExitCode = 1;
+            Console.Error.WriteLine($"验收输出目录 {WindowsMainWindow.SmokeOutputDirectory} 与输入素材根 "
+                + $"{WindowsAcceptanceFixtures.RootDirectory} 重叠;素材根只读,不向其写日志与报告,"
+                + "请把 --pv-acceptance-output 指到素材根之外");
+            return;
+        }
+
+        if (fixtureFailure != null)
+        {
+            // 预检失败在 WinUI 启动之前结束进程:没有窗口、没有视图模型,也不会弹框或抛未处理异常。
+            Environment.ExitCode = 1;
+            if (IsolatedMode)
+            {
+                NativeStartupLog.BeginSession(args, Path.Combine(WindowsMainWindow.SmokeOutputDirectory, logName));
+            }
+
+            NativeStartupLog.InstallHooks();
+            NativeStartupLog.Write("fixture preflight FAIL: " + fixtureFailure);
+            Console.Error.WriteLine(fixtureFailure);
+            if (IsolatedMode)
+            {
+                WindowsAcceptanceFixtures.WriteReport(WindowsMainWindow.SmokeOutputDirectory, fixtureFailure);
+            }
+
+            return;
+        }
+
         NativeStartupLog.BeginSession(
             args,
             IsolatedMode ? Path.Combine(WindowsMainWindow.SmokeOutputDirectory, logName) : null);
@@ -161,6 +205,12 @@ internal static class WindowsNativeApplication
             + $" packageId={WindowsProductInfo.PackageId} productId={WindowsProductInfo.ProductId}"
             + $" instanceKey={WindowsSingleInstance.InstanceKey}"
             + (EditionRoundtripStage != null ? $" roundtrip={EditionRoundtripStage}" : string.Empty));
+        if (IsolatedMode)
+        {
+            // 预检通过:隔离日志记素材根与必需素材数量,报告留下 PASS 供后续核对输入契约。
+            NativeStartupLog.Write(WindowsAcceptanceFixtures.DescribePreflight());
+            WindowsAcceptanceFixtures.WriteReport(WindowsMainWindow.SmokeOutputDirectory, null);
+        }
 
         WinRT.ComWrappersSupport.InitializeComWrappers();
         NativeStartupLog.Write("com wrappers ready");

@@ -143,7 +143,7 @@ public partial class App : Application
 
             if (settingsCheck)
             {
-                await WindowsSettingsAcceptance.RunAsync(_main, _settingsPresenter!);
+                await WindowsSettingsAcceptance.RunAsync(_window, _main, _settingsPresenter!);
                 _window.Close();
                 return;
             }

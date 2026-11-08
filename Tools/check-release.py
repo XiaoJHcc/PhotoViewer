@@ -326,7 +326,7 @@ def main() -> int:
 
     if args.write:
         lines = [f"{sha256(package)}  packages/{package.name}" for package in packages]
-        (RELEASE / "SHA256SUMS").write_text("\n".join(lines) + "\n")
+        (RELEASE / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
         print(f"\n已写入 release/SHA256SUMS（{len(packages)} 个包）")
     else:
         print(f"\n校验通过（{len(packages)} 个包）；加 --write 重写 SHA256SUMS")

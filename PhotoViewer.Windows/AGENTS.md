@@ -87,9 +87,13 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 
 构建、运行和发布统一使用 [DEV.md](../DEV.md) 的 VS Code Tasks。直接运行可追加图片或文件夹路径。
 
+固定素材通过 `--pv-acceptance-fixtures=<Fixtures 目录绝对路径>` 显式输入，取值是 `Fixtures` 本身，不是仓库根；不搜索工作目录、程序目录或祖先目录，也没有环境变量兜底。`WindowsAcceptanceFixtures` 按入口登记必需文件，在创建窗口、视图模型与设置库前检查。缺参、空值、重复、相对路径、目录不存在或缺件均以退出码 1 失败，隔离启动日志与 `fixture-checks.json` 保留原因。AI 冒烟需大 P3 色卡，设置专项需 sRGB 色卡，色彩专项需四 JPEG、两 HEIF、两 RAW，往返需固定 12 张 JPEG；往返父进程显式传递同一素材根。无需固定素材的入口可不传，显式传错仍失败。
+
+素材只读，报告、设置、数据库及生成副本写入 `--pv-acceptance-output` 指定的隔离目录。输出目录不得在素材根内；若重叠，直接退出并通过标准错误输出原因，不向素材根或用户状态目录写报告。
+
 | 参数 | 用途 |
 |---|---|
-| `--pv-native-smoke` | 主窗口、解码/渲染、模型、评分冲突指示、交互冒烟；另含悬停与窄宽度常驻标题栏（显隐、跨度与背景、32 点布局让位、失焦保持、caption 拖动区、窗口按钮与窗口态字形）、动态窗口标题、窗口图标、菜单图标与命令提示格式、设置展示影响分流（跨两个 2 秒内存探测周期与显式诊断通知后来源浮窗锚点/开放态、评分按钮与命令按钮身份、筛选条下拉展开态均不变，真实评分显隐与快捷键子项变化仍按影响位刷新）；AI 版另用进程内预算源覆盖 Caution 起跑、提取中进入 Warning，核对真实三路落库、6000×4000 CV 尺寸、合并进度、UI dispatcher 心跳与不灌入浏览 LRU，压力日志写 `memory-events-batch.jsonl`，不改系统内存；使用隔离设置、数据库和自有素材。 |
+| `--pv-native-smoke` | 主窗口、解码/渲染、模型、评分冲突指示、交互冒烟；键盘入口先建立并核对根元素焦点与无修饰键，再调真实入口，前置条件超时写焦点与手势路由诊断，失败断言不重试；另含悬停与窄宽度常驻标题栏（显隐、跨度与背景、32 点布局让位、失焦保持、caption 拖动区、窗口按钮与窗口态字形）、动态窗口标题、窗口图标、菜单图标与命令提示格式、设置展示影响分流（跨两个 2 秒内存探测周期与显式诊断通知后来源浮窗锚点/开放态、评分按钮与命令按钮身份、筛选条下拉展开态均不变，真实评分显隐与快捷键子项变化仍按影响位刷新）；AI 版另用进程内预算源覆盖 Caution 起跑、提取中进入 Warning，核对真实三路落库、6000×4000 CV 尺寸、合并进度、UI dispatcher 心跳与不灌入浏览 LRU，压力日志写 `memory-events-batch.jsonl`，不改系统内存；使用隔离设置与数据库，输入素材取 `--pv-acceptance-fixtures`（AI 版另需 `jpeg-large/color-p3-large.jpg`）。 |
 | `--pv-native-portable` | 与 smoke 合用，只针对单文件发布解包目录：真实使用的 libheif/pvhevc（AI 版另含 ORT/DirectML）必须已加载且来自解包目录；四份分发 CRT 显式从解包目录加载并核对来源，缺件不允许系统副本顶替。普通 Debug 输出不附带 CRT，不作为 portable 验收目标。 |
 | `--pv-native-settings`、`--pv-native-tools` | 设置/工具专项；追加 `-hold` 保持窗口供目视。 |
 | `--pv-native-edition` | 当前实际版本的能力、筛选条/分析栏/诊断页构成、独立 DINO/CV 门控与 CV 只读/不写库专项；默认输出到 `artifacts/acceptance/native-win-editions/<edition>/`，报告 `edition-checks-<edition>.json`。 |
@@ -101,6 +105,6 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 | `--pv-perf-probe=<文件夹>` | 分段性能探针：HIF/ARW/JPG 各 6 张（首张预热），报告写隔离目录后退出，不进交互。 |
 | `--pv-heif-thumb-probe=<文件夹或文件>`（可重复） | HEIF 缩略图项对比探针：逐文件对比"容器 `thmb` 项"与"主图缩放"在同一请求下的尺寸、方向与平均绝对差，并校验 DINO 560 档仍走主图；报告 `heif-thumb-probe.txt`，失败退出码为 1。 |
 
-普通验收、压测与探针默认报告位于工作目录的 `artifacts/acceptance/native-win-acceptance/`；所有隔离入口可用 `--pv-acceptance-output=<目录>` 分开保存设置、数据库、启动日志和 `memory-events.jsonl`（压测日志为 `stress-flip.jsonl`，探针为 `perf-probe.txt`），验收失败退出码为 1。发布脚本 `-Edition standard|ai|both [-Form msix|portable|both] [-Local]` 扫描实际 MSIX 与便携 EXE；便携形态另对原名/中文空格路径改名 EXE 在独立空缓存下验收。报告与绑定产物 SHA-256 的 `deployment.json` 位于 `artifacts/acceptance/windows-editions/<轮次>/<edition>/`。`-Local` 只输出到 `artifacts/scratch/windows-local-publish/`，不覆盖正式归档；双 MSIX 安装、同时运行、更新与卸载需在 Windows 真实环境验收。
+普通验收、压测与探针默认报告位于工作目录的 `artifacts/acceptance/native-win-acceptance/`；所有隔离入口可用 `--pv-acceptance-output=<目录>` 分开保存设置、数据库、启动日志和 `memory-events.jsonl`（压测日志为 `stress-flip.jsonl`，探针为 `perf-probe.txt`），验收失败退出码为 1。报告目录相对启动工作目录，素材输入则与之相反且不依赖工作目录：**Check Windows Native / Check Windows Color** 四个 Task 显式传 `${workspaceFolder}/Fixtures`，发布脚本显式传自身仓库根下的 `Fixtures/`。发布脚本 `-Edition standard|ai|both [-Form msix|portable|both] [-Local]` 扫描实际 MSIX 与便携 EXE；便携形态另对原名/中文空格路径改名 EXE 在独立空缓存下验收。报告与绑定产物 SHA-256 的 `deployment.json` 位于 `artifacts/acceptance/windows-editions/<轮次>/<edition>/`。`-Local` 只输出到 `artifacts/scratch/windows-local-publish/`，不覆盖正式归档；双 MSIX 安装、同时运行、更新与卸载需在 Windows 真实环境验收。
 
 截图与窗口几何测量工具自身必须启用 Per-Monitor-V2；仅移动光标不能代替真实指针事件。自动化结果不能替代真实硬件、色彩或干净系统验收，具体状态只在 `Plans/` 与 `Design/status.md` 记录。
