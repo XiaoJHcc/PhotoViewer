@@ -26,7 +26,7 @@
 | **Check Windows Native (Standard / AI)** | 构建并运行对应版本的隔离冒烟，结束后自动关闭；失败退出码为 1。 |
 | **Check Windows Color (Standard / AI)** | 构建并运行对应版本的隔离色彩专项（真实 JPEG/HEIF/RAW、显示器 ICC、GPU 输出切换），报告 `color-checks.json`；不改系统显示配置，真屏/跨屏结论另验。 |
 
-两个版本各自使用 `PhotoViewer.Windows/bin/<standard|ai>/` 与 `obj/<standard|ai>/`，共享工程 `PhotoViewer/` 同样按版本隔离。命令行构建、restore、运行与发布都必须显式传 `-p:PhotoViewerEnableDino=false|true`，缺失或非法值直接报错；Tasks 已带参数。两版只支持 `win-x64`，共用用户设置、数据库与单实例身份，显示名分别为 `PhotoViewer` / `PhotoViewer-AI`。
+两个版本各自使用 `PhotoViewer.Windows/bin/<standard|ai>/` 与 `obj/<standard|ai>/`，共享工程 `PhotoViewer/` 同样按版本隔离。命令行构建、restore、运行与发布都必须显式传 `-p:PhotoViewerEnableDino=false|true`，缺失或非法值直接报错；Tasks 已带参数。两版只支持 `win-x64`，共用用户设置、数据库与单实例身份，显示名分别为 `PhotoViewer` / `PhotoViewer AI`（空格；分发包文件名仍用 `PhotoViewer-AI`）。
 
 从仓库根直接打开图片或文件夹：
 
@@ -55,7 +55,7 @@ dotnet build PhotoViewer.Windows -c Release -p:PhotoViewerEnableDino=false
 | **Debug Android (Standard / AI)** | 构建、安装、启动对应版本，并打开 Logcat。 |
 | **Install Android (Standard / AI)** | 仅安装已有对应版本构建。 |
 
-两个版本各自使用 `PhotoViewer.Android/bin/<standard|ai>/` 与 `obj/<standard|ai>/`，共享工程 `PhotoViewer/` 同样按版本隔离；命令行构建、运行与发布都必须显式传 `-p:PhotoViewerEnableDino=false|true`，缺失或传入非法值时报错。两版保持同一 ApplicationId `cc.xiaojh.PhotoViewer`，显示名分别为 `PhotoViewer` / `PhotoViewer-AI`，只构建 `android-arm64`。
+两个版本各自使用 `PhotoViewer.Android/bin/<standard|ai>/` 与 `obj/<standard|ai>/`，共享工程 `PhotoViewer/` 同样按版本隔离；命令行构建、运行与发布都必须显式传 `-p:PhotoViewerEnableDino=false|true`，缺失或传入非法值时报错。两版保持同一 ApplicationId `cc.xiaojh.PhotoViewer`，显示名分别为 `PhotoViewer` / `PhotoViewer AI`（空格；APK 文件名仍用 `PhotoViewer-AI`），只构建 `android-arm64`。
 
 原生验收夹具先推到 `/data/local/tmp`，再用 `run-as cc.xiaojh.PhotoViewer` 复制到应用的 `files/pv-fixtures`。启动示例：
 
@@ -71,7 +71,7 @@ adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity --es pv-op
 |---|---|
 | **Debug Mac** | 构建、签名并启动标准版 `PhotoViewer.app`（不含 DINO/ONNX）。 |
 | **Run Mac** | 启动已有标准版构建，不重新编译。 |
-| **Debug Mac AI** | 构建、签名并启动 `PhotoViewer-AI.app`，内置 DINO 模型与 ONNX Runtime。 |
+| **Debug Mac AI** | 构建、签名并启动 `PhotoViewer AI.app`，内置 DINO 模型与 ONNX Runtime。 |
 | **Run Mac AI** | 启动已有 AI 版构建，不重新编译。 |
 
 两个版本各自使用 `PhotoViewer.Mac/bin/<standard|ai>/` 与 `obj/<standard|ai>/`，共享工程 `PhotoViewer/` 同样按版本隔离 `bin/obj`，两版不复用还原资产与中间文件。命令行构建、运行与发布都必须显式传 `-p:PhotoViewerEnableDino=false|true`，缺失时构建直接报错，不走默认目录；上面的 Tasks 已带该参数。构建只改写 `obj/<edition>/…/Info.plist` 副本，仓库内的 `PhotoViewer.Mac/Info.plist` 保持原样。
@@ -98,7 +98,7 @@ adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity --es pv-op
 | **Install iOS Stable (Standard / AI, Release)** | 安装 `release/ios-stable/<standard\|ai>/` 中归档的稳定应用。 |
 | **Refresh iOS Profile** | 通过 Xcode 续期免费 Apple ID 的开发预配文件。 |
 
-两个版本各自使用 `PhotoViewer.iOS/bin/<standard|ai>/` 与 `obj/<standard|ai>/`，共享工程 `PhotoViewer/` 同样按版本隔离；命令行构建、运行与发布都必须显式传 `-p:PhotoViewerEnableDino=false|true`，缺失时构建直接报错，不走默认目录。上面的 Tasks 已带该参数。`.app` 目录名与主执行文件在两端固定为 `PhotoViewer.iOS.app` / `PhotoViewer.iOS`，`CFBundleName` / `CFBundleDisplayName` 随变体为 `PhotoViewer` 或 `PhotoViewer-AI`，Bundle ID 保持 `cc.xiaojh.PhotoViewer`。
+两个版本各自使用 `PhotoViewer.iOS/bin/<standard|ai>/` 与 `obj/<standard|ai>/`，共享工程 `PhotoViewer/` 同样按版本隔离；命令行构建、运行与发布都必须显式传 `-p:PhotoViewerEnableDino=false|true`，缺失时构建直接报错，不走默认目录。上面的 Tasks 已带该参数。`.app` 目录名与主执行文件在两端固定为 `PhotoViewer.iOS.app` / `PhotoViewer.iOS`，`CFBundleName` / `CFBundleDisplayName` 随变体为 `PhotoViewer` 或 `PhotoViewer AI`（空格；IPA 文件名仍用 `PhotoViewer-AI`），Bundle ID 保持 `cc.xiaojh.PhotoViewer`。
 
 设备选项在 `.vscode/tasks.json` 的 `inputs[iosDevice]` 中维护。首次真机运行须在系统设置中信任开发者证书。启动参数、程序化验收与素材要求见 [iOS 模块手册](PhotoViewer.iOS/AGENTS.md)。
 
@@ -145,6 +145,8 @@ bash Tools/clean-artifacts.sh            # 预览可清理项；加 --yes 执行
 
 版本号由根目录 `Directory.Build.props` 的 `AppVersion` / `AppBuildNumber` 统一控制，发布脚本不另行改版本；分发包位于 `release/packages/`，打包过程产物位于 `release/ios-stable/` 与 `release/testflight/`。
 
+**产品名与打包命名**：用户可见的产品名标准版是 `PhotoViewer`、AI 版是 `PhotoViewer AI`（空格），用于窗口标题与菜单、macOS `.app` 目录名与 DMG 卷名、`CFBundleName` / `CFBundleDisplayName`、Android `android:label`、Windows 版本资源 `ProductName`；横线只出现在打包命名上——`release/packages/<PhotoViewer|PhotoViewer-AI>-<版本>-<平台后缀>`、Windows 程序集/EXE 名、TestFlight `.xcarchive` 名。`PhotoViewer-AI` 不得作为显示名重新出现在界面或包身份里。
+
 Mac 采用 Developer ID 公证直发，不进入 Mac App Store。首次发布前在 Xcode 的 **Settings → Accounts → Manage Certificates** 创建带本机私钥的 **Developer ID Application** 证书，再把 App 专用密码存入本机钥匙串：
 
 ```bash
@@ -178,7 +180,7 @@ python3 Tools/check-mac-package.py --self-test    # 正反判定自检
 | **Upload iOS TestFlight (Standard) / (AI)** | 一次只为明确的一个变体归档；`release/testflight/<standard\|ai>/` 各自保留最新归档。归档后自动执行检查，再按 `ExportOptions` 的 `destination=upload` 上传 App Store Connect。 |
 | **Archive iOS TestFlight (Local Only, Standard / AI)** | 分发签名归档 + 本地校验（archive + dSYM），不导出、不上传，供核对签名、entitlements 与能力条件符号。 |
 | **Validate iOS TestFlight Archive (Standard / AI)** | 检查归档版本号、Bundle ID、分发签名、entitlements、dSYM 与图标，并按变体核对符号：standard 不得有 ONNX Runtime 符号，ai 必须有 `_OrtGetApiBase`；不上传。 |
-| **Check iOS TestFlight Device (Standard / AI)** | 核对设备版本（`--edition` 还会核对显示名 `PhotoViewer` / `PhotoViewer-AI`），连续 5 次冷启动并确认进程存活、无新增崩溃报告。 |
+| **Check iOS TestFlight Device (Standard / AI)** | 核对设备版本（`--edition` 还会核对显示名 `PhotoViewer` / `PhotoViewer AI`），连续 5 次冷启动并确认进程存活、无新增崩溃报告。 |
 | **Scan iOS Package (Self-Test)** | `Tools/check-ios-package.py --self-test`，用真实 clang 合成包并走真实 `nm` / `otool` 核对正反判定。 |
 
 每次上传 iOS 构建前递增 `AppBuildNumber`，即使 `AppVersion` 不变也不复用构建号；同一构建号只能对应一个变体，标准版与 AI 版必须分两次归档、分别递增构建号。TestFlight 上传复用 Xcode 中已登录的开发者账号，不改变 Release 真机安装所用的开发签名。iOS Release 通过 `MtouchNoSymbolStrip=true` 保留 Mono AOT 启动符号，不能为缩减体积重新开启符号剥离。首次上传前复制 `PhotoViewer.iOS/ExportOptions.AppStore.Local.sample.plist` 为同目录 `ExportOptions.AppStore.Local.plist` 并填写本机 Team ID；该文件已忽略，不提交。

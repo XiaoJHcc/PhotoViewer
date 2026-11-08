@@ -4,7 +4,8 @@
 #
 # 两版共用 ApplicationId（cc.xiaojh.PhotoViewer），只按显示名与 AI 能力区分：
 #   standard  PhotoViewer     无 DINO 模型 / ONNX Runtime / 许可证
-#   ai        PhotoViewer-AI  内置 DINOv3 模型、ONNX Runtime 与许可证
+#   ai        PhotoViewer AI  内置 DINOv3 模型、ONNX Runtime 与许可证
+# 显示名（android:label）用空格；APK 文件名仍用横线（PhotoViewer-AI）。
 # 只发 arm64-v8a，APK 不得含 x86_64 / armeabi-v7a。
 #
 # 正式发布写 release/packages/<PhotoViewer|PhotoViewer-AI>-<AppVersion>-android-arm64.apk；
@@ -221,7 +222,8 @@ edition_flag() {
     fi
 }
 
-edition_product() {
+# 只用于 APK 文件名：显示名是 "PhotoViewer AI"，打包命名保留横线。
+edition_package_product() {
     if [[ "$1" == "ai" ]]; then
         echo "PhotoViewer-AI"
     else
@@ -240,10 +242,10 @@ fi
 # ──────────────────────────────────────────────────────────────
 for edition in "${EDITIONS[@]}"; do
     flag=$(edition_flag "$edition")
-    product=$(edition_product "$edition")
+    package_product=$(edition_package_product "$edition")
     publish_dir="$SCRIPT_DIR/bin/$edition/Release/net10.0-android/publish"
 
-    echo "[发布] === ${edition}（${product}） ==="
+    echo "[发布] === ${edition}（包名 ${package_product}） ==="
     rm -rf "$publish_dir"
 
     (
@@ -277,7 +279,7 @@ for edition in "${EDITIONS[@]}"; do
         dest_dir="$RELEASE_DIR"
     fi
     mkdir -p "$dest_dir" "$REPORT_DIR"
-    dest_apk="$dest_dir/$product-$APP_VERSION-android-arm64.apk"
+    dest_apk="$dest_dir/$package_product-$APP_VERSION-android-arm64.apk"
     cp "$apk" "$dest_apk"
     echo "[发布] 产物：$dest_apk"
 

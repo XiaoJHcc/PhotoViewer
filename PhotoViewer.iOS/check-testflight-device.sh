@@ -1,7 +1,7 @@
 #!/bin/bash
 # 用法：bash check-testflight-device.sh [设备名或UDID] [冷启动次数] [--edition standard|ai]
 # 核对设备上已安装构建的版本号/构建号，可选用 --edition 同时核对显示名
-# （PhotoViewer / PhotoViewer-AI），随后连续冷启动若干次并确认进程存活、
+# （PhotoViewer / PhotoViewer AI），随后连续冷启动若干次并确认进程存活、
 # 没有新增崩溃报告。设备需先通过 TestFlight 或本地直装安装当前构建。
 set -euo pipefail
 
@@ -53,7 +53,7 @@ done
 case "${EDITION}" in
     "")          EXPECTED_DISPLAY="" ;;
     standard)    EXPECTED_DISPLAY="PhotoViewer" ;;
-    ai)          EXPECTED_DISPLAY="PhotoViewer-AI" ;;
+    ai)          EXPECTED_DISPLAY="PhotoViewer AI" ;;
     *)
         echo "--edition 只接受 standard 或 ai：${EDITION}" >&2
         exit 1
@@ -116,4 +116,4 @@ if [[ "${CRASHES_AFTER}" != "${CRASHES_BEFORE}" ]]; then
     exit 1
 fi
 
-echo "PASS: ${DEVICE} 上 ${EXPECTED_DISPLAY:-PhotoViewer/PhotoViewer-AI} ${VERSION} (${BUILD}) 连续 ${LAUNCH_COUNT} 次冷启动存活，未新增崩溃报告"
+echo "PASS: ${DEVICE} 上 ${EXPECTED_DISPLAY:-PhotoViewer/PhotoViewer AI} ${VERSION} (${BUILD}) 连续 ${LAUNCH_COUNT} 次冷启动存活，未新增崩溃报告"

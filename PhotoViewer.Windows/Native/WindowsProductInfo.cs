@@ -2,7 +2,8 @@ namespace PhotoViewer.Windows.Native;
 
 /// <summary>
 /// 发行版本事实(编译期常量,不是运行时设置,EDITION-01)：
-/// 标准版 <c>PhotoViewer</c> 不含 DINO,AI 版 <c>PhotoViewer-AI</c> 内置完整 DINO。
+/// 标准版 <c>PhotoViewer</c> 不含 DINO,AI 版 <c>PhotoViewer AI</c> 内置完整 DINO
+/// (显示名用空格,分发包文件名才用 <c>PhotoViewer-AI</c>)。
 /// 两个版本共用同一份用户设置、照片数据库与单实例身份(<see cref="WindowsSingleInstance"/> 的键不变),
 /// 只有显示名、诊断工具页名与相关入口按版本收敛。
 /// </summary>
@@ -10,7 +11,7 @@ internal static class WindowsProductInfo
 {
 #if PHOTOVIEWER_DINO
     /// <summary>窗口标题与产品名(与 macOS / Android / iOS 同口径)。</summary>
-    internal const string DisplayName = "PhotoViewer-AI";
+    internal const string DisplayName = "PhotoViewer AI";
 
     /// <summary>诊断工具页名与直达菜单名。</summary>
     internal const string DiagnosticName = "DINO 诊断";

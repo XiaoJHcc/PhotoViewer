@@ -946,7 +946,7 @@ public sealed class MacMainWindow : IDisposable
             _observedFile = _main.CurrentFile;
             if (_observedFile != null) _observedFile.PropertyChanged += OnCurrentFileChanged;
             Session.SetFile(_main.CurrentFile?.File);
-            SetWindowTitle(_main.CurrentFile?.Name ?? "PhotoViewer");
+            SetWindowTitle(_main.CurrentFile?.Name ?? MacProductInfo.DisplayName);
             HideDetailHighlight();
             BuildControls();
             UpdateMenuChecks();

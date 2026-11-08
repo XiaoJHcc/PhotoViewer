@@ -8,7 +8,8 @@
 
     两版共用 ApplicationId（cc.xiaojh.PhotoViewer），只按显示名与 AI 能力区分：
       standard  PhotoViewer     无 DINO 模型 / ONNX Runtime / 许可证
-      ai        PhotoViewer-AI  内置 DINOv3 模型、ONNX Runtime 与许可证
+      ai        PhotoViewer AI  内置 DINOv3 模型、ONNX Runtime 与许可证
+    显示名（android:label）用空格；APK 文件名仍用横线（PhotoViewer-AI）。
     只发 arm64-v8a，APK 不得含 x86_64 / armeabi-v7a。
 
     正式发布写 release\packages\<PhotoViewer|PhotoViewer-AI>-<AppVersion>-android-arm64.apk；
@@ -206,10 +207,10 @@ try {
 
     foreach ($edition in $editions) {
         $editionFlag = if ($edition -eq 'ai') { 'true' } else { 'false' }
-        $productName = if ($edition -eq 'ai') { 'PhotoViewer-AI' } else { 'PhotoViewer' }
+        $packageProduct = if ($edition -eq 'ai') { 'PhotoViewer-AI' } else { 'PhotoViewer' }
         $publishDirectory = Join-Path $PSScriptRoot "bin\$edition\$Configuration\net10.0-android\publish"
 
-        Write-Host "[发布] === ${edition}（${productName}） ==="
+        Write-Host "[发布] === ${edition}（包名 ${packageProduct}） ==="
 
         # 只清当前 edition 的发布输出；共享工程 obj 由 edition 隔离目录承担，不再整目录删除。
         if (Test-Path $publishDirectory) {
@@ -248,7 +249,7 @@ try {
             New-Item -ItemType Directory -Path $reportDirectory | Out-Null
         }
 
-        $destApk = Join-Path $destinationDirectory "$productName-$appVersion-android-arm64.apk"
+        $destApk = Join-Path $destinationDirectory "$packageProduct-$appVersion-android-arm64.apk"
         Copy-Item $apkPath $destApk -Force
         Write-Host "[发布] 产物：$destApk"
 

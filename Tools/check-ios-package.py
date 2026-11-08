@@ -4,7 +4,7 @@
 用法：
   python3 Tools/check-ios-package.py <App.app|App.ipa> --edition standard|ai
         [--output <报告.json>] [--version 0.9.0] [--build-number 90]
-        [--product-name PhotoViewer|PhotoViewer-AI] [--bundle-id cc.xiaojh.PhotoViewer]
+        [--product-name PhotoViewer|"PhotoViewer AI"] [--bundle-id cc.xiaojh.PhotoViewer]
         [--executable PhotoViewer.iOS]
   python3 Tools/check-ios-package.py --self-test
 
@@ -46,7 +46,9 @@ MODEL_NAME = "dinov3_vits16.onnx"
 MODEL_BYTES = 86_594_677
 MODEL_SHA256 = "bcba38490ec2eded4a240751bebac198903daba7263871e8fee3aa39b03352e8"
 
-PRODUCT_NAMES = {"standard": "PhotoViewer", "ai": "PhotoViewer-AI"}
+# 产品显示名（AI 版含空格）；CFBundleName/DisplayName 与设备主屏名称同值。
+# 分发包文件名另用 PhotoViewer-AI，只出现在 publish.sh 的 PACKAGE_PRODUCT 与 release/packages。
+PRODUCT_NAMES = {"standard": "PhotoViewer", "ai": "PhotoViewer AI"}
 APP_BUNDLE_NAME = "PhotoViewer.iOS.app"
 DEFAULT_BUNDLE_ID = "cc.xiaojh.PhotoViewer"
 DEFAULT_EXECUTABLE = "PhotoViewer.iOS"
@@ -808,7 +810,7 @@ def self_test() -> int:
 
         cases.append((
             "AI 版合规包通过（含静态符号）",
-            _make_app(root / "ai-ok", "PhotoViewer-AI", version, build,
+            _make_app(root / "ai-ok", "PhotoViewer AI", version, build,
                       extra_files=dict(ai_files), ort_symbol="OrtGetApiBase"),
             expectations("ai", model_contract),
             True,
@@ -817,7 +819,7 @@ def self_test() -> int:
 
         cases.append((
             "AI 版只有同名文件、主执行文件无 ORT 符号失败",
-            _make_app(root / "ai-filename-only", "PhotoViewer-AI", version, build,
+            _make_app(root / "ai-filename-only", "PhotoViewer AI", version, build,
                       extra_files=dict(ai_files)),
             expectations("ai", model_contract),
             False,
@@ -826,7 +828,7 @@ def self_test() -> int:
 
         cases.append((
             "AI 版主执行文件只有未定义 ORT 导入失败",
-            _make_app(root / "ai-undefined-ort", "PhotoViewer-AI", version, build,
+            _make_app(root / "ai-undefined-ort", "PhotoViewer AI", version, build,
                       extra_files=dict(ai_files), ort_symbol="OrtGetApiBase", undefined_ort=True),
             expectations("ai", model_contract),
             False,
@@ -835,7 +837,7 @@ def self_test() -> int:
 
         cases.append((
             "AI 版缺少许可证失败",
-            _make_app(root / "ai-no-license", "PhotoViewer-AI", version, build,
+            _make_app(root / "ai-no-license", "PhotoViewer AI", version, build,
                       extra_files={key: value for key, value in ai_files.items() if "LICENSE" not in key},
                       ort_symbol="OrtGetApiBase"),
             expectations("ai", model_contract),
@@ -845,7 +847,7 @@ def self_test() -> int:
 
         cases.append((
             "AI 版模型字节数不符失败",
-            _make_app(root / "ai-bad-model", "PhotoViewer-AI", version, build,
+            _make_app(root / "ai-bad-model", "PhotoViewer AI", version, build,
                       extra_files={**ai_files, "Assets/Models/" + MODEL_NAME: b"wrong"},
                       ort_symbol="OrtGetApiBase"),
             expectations("ai", model_contract),
@@ -855,7 +857,7 @@ def self_test() -> int:
 
         cases.append((
             "AI 版缺少托管 ORT 失败",
-            _make_app(root / "ai-no-managed", "PhotoViewer-AI", version, build,
+            _make_app(root / "ai-no-managed", "PhotoViewer AI", version, build,
                       extra_files={key: value for key, value in ai_files.items()
                                    if key != "Microsoft.ML.OnnxRuntime.dll"},
                       ort_symbol="OrtGetApiBase"),
@@ -883,7 +885,7 @@ def self_test() -> int:
         cases.append((
             "标准版误带 AI 产品名失败",
             _make_app(root / "bad-product", "PhotoViewer", version, build,
-                      bundle_name="PhotoViewer-AI"),
+                      bundle_name="PhotoViewer AI"),
             expectations("standard"),
             False,
             "Info.plist 产品名（CFBundleName）不符",

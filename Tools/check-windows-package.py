@@ -3,7 +3,7 @@
 
 用法：
   python Tools/check-windows-package.py <发布.exe> --edition standard|ai --output <报告.json>
-        [--version 0.9.0] [--build-number 90] [--product-name PhotoViewer|PhotoViewer-AI]
+        [--version 0.9.0] [--build-number 90] [--product-name PhotoViewer|"PhotoViewer AI"]
         [--app-assembly PhotoViewer-0.9.0-win-x64]
   python Tools/check-windows-package.py --self-test
 
@@ -66,7 +66,10 @@ import tempfile
 import zlib
 from pathlib import Path
 
-PRODUCT_NAMES = {"standard": "PhotoViewer", "ai": "PhotoViewer-AI"}
+# 产品显示名（AI 版含空格）：EXE 版本资源 ProductName / FileDescription 与窗口标题同值。
+PRODUCT_NAMES = {"standard": "PhotoViewer", "ai": "PhotoViewer AI"}
+# 打包命名（程序集名、EXE 文件名）仍用横线。
+PACKAGE_NAMES = {"standard": "PhotoViewer", "ai": "PhotoViewer-AI"}
 
 MODEL_NAME = "dinov3_vits16.onnx"
 MODEL_BYTES = 86_582_598
@@ -1326,7 +1329,7 @@ def build_expectations(edition: str, version: str, build_number: str,
                        app_assembly: str | None = None,
                        model: dict | None = None) -> dict:
     product = product_name or PRODUCT_NAMES[edition]
-    assembly = app_assembly or f"{product}-{version}-win-x64"
+    assembly = app_assembly or f"{PACKAGE_NAMES[edition]}-{version}-win-x64"
     return {
         "edition": edition,
         "productName": product,
@@ -2537,7 +2540,7 @@ def make_exe(target: Path, *, edition: str, version: str, build_number: str,
              host_original: str | None = None) -> tuple[Path, dict]:
     """构造一条完整合成包；返回 (路径, 布局信息)。"""
     product = product_name or PRODUCT_NAMES[edition]
-    assembly_name = app_assembly or f"{product}-{version}-win-x64"
+    assembly_name = app_assembly or f"{PACKAGE_NAMES[edition]}-{version}-win-x64"
     assembly_version = f"{version}.0"
     meta = {"PhotoViewerEdition": edition, "AppBuildNumber": str(build_number)}
     if metadata is not None:
@@ -2979,7 +2982,7 @@ def self_test() -> int:
             "缺少 VC++ CRT 失败", package("no-crt", "standard", files=no_crt_files)[0],
             expect("standard"), False, "vcruntime140_1.dll"))
 
-        wrong_product = package("wrong-product", "standard", host_product="PhotoViewer-AI")
+        wrong_product = package("wrong-product", "standard", host_product="PhotoViewer AI")
         cases.append(("EXE 产品名不符失败", wrong_product[0], expect("standard"), False,
                       "产品名"))
 

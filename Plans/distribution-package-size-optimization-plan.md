@@ -101,6 +101,8 @@ iOS 估算尚未计入 Symbols 随 ONNX 移除而同步缩小的收益，不作�
 
 签名状态由发布验收和校验文件证明，不写进文件名。Android 固定使用 `-android-arm64`，不生成 `-android-x86_64` 产物。
 
+> **命名修订（2026-11）**：上表是打包命名，继续使用横线 `PhotoViewer-AI`。用户可见的产品显示名改为 `PhotoViewer AI`（空格）：窗口标题与菜单、macOS `.app` 目录名与 DMG 卷名、`CFBundleName` / `CFBundleDisplayName`、Android `android:label`、Windows 版本资源 `ProductName`。分发包文件名、Windows 程序集/EXE 名与 TestFlight `.xcarchive` 名不变；本计划下方早期验收记录里的“显示名分别为 `PhotoViewer` / `PhotoViewer-AI`”同样以本修订为准。
+
 - 桌面和 Android 可直接提供两个下载项；同包名/同 Bundle ID 的版本按替换安装处理，不要求同机共存。
 - **iOS 发布渠道需要单独裁定**：TestFlight 可用不同 build number 分批验证两个变体；App Store 同一 Bundle ID 不能当成两个并列 App 提供选择。若必须长期并列上架，需要独立 Bundle ID、App 入口和签名资料，这属于另一项发布决策，不在首轮默认承诺内。
 - 更新渠道按变体隔离，禁止标准版自动更新成带 82.58 MiB 模型的 DINO 版，反之亦然。

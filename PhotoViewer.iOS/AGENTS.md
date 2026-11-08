@@ -4,7 +4,7 @@ Debug 与 Release 都只启动 **UIKit 原生壳**（不创建旧壳对象）；
 
 **工具链**：Xcode 27.1 + .NET SDK 10.0.402 + ios workload 27.0.10722；该 workload 的精确 Xcode 校验不认 27.1，两个 Apple head 的 csproj 设 `ValidateXcodeVersion=false`，见 [DEV.md](../DEV.md) iOS 节。**主屏分区按 iPad 调校**：iPhone 竖屏走列布局（文件栏 116 点 + 主图），未做 iPhone 专用适配。**排障**：iPhone 的 USB-C 数据链路对 USB 3.0 线缆存在枚举失败，优先怀疑线材（换 USB 2.0 线）。
 
-**发行版本**：构建、运行与发布必须显式传 `PhotoViewerEnableDino=false|true`；缺失或非法值直接报错。标准版 `PhotoViewer` 不编译相似聚类、DINO 提取及 ONNX 托管/静态原生依赖，保留 CV 分析、三瓦片「CV 诊断」与独立「即时计算 CV」；AI 版 `PhotoViewer-AI` 内置固定模型和 DINOv3 License，并提供独立「即时计算 DINO / CV」。下文 DINO、相似聚类及五瓦片诊断均指 AI 版。两版使用同一 Bundle ID `cc.xiaojh.PhotoViewer` 和执行文件 `PhotoViewer.iOS`，应用目录仍为 `PhotoViewer.iOS.app`，替换安装保留设置与数据库，不提供同机共存或产品内切换。App Store 并列上架身份未裁定，不改 Bundle ID 或签名资料。头工程及共享工程的 `bin/<standard|ai>/`、`obj/<standard|ai>/` 隔离；构建从源模板生成中间目录 `Info.plist`（版本、构建号、产品名），不改写仓库模板。发行能力与数据边界见 [EDITION](../Design/spec/editions.md)，开发和发布入口见 [DEV.md](../DEV.md)。
+**发行版本**：构建、运行与发布必须显式传 `PhotoViewerEnableDino=false|true`；缺失或非法值直接报错。标准版 `PhotoViewer` 不编译相似聚类、DINO 提取及 ONNX 托管/静态原生依赖，保留 CV 分析、三瓦片「CV 诊断」与独立「即时计算 CV」；AI 版 `PhotoViewer AI`（显示名空格，包名 `PhotoViewer-AI`）内置固定模型和 DINOv3 License，并提供独立「即时计算 DINO / CV」。下文 DINO、相似聚类及五瓦片诊断均指 AI 版。两版使用同一 Bundle ID `cc.xiaojh.PhotoViewer` 和执行文件 `PhotoViewer.iOS`，应用目录仍为 `PhotoViewer.iOS.app`，替换安装保留设置与数据库，不提供同机共存或产品内切换。App Store 并列上架身份未裁定，不改 Bundle ID 或签名资料。头工程及共享工程的 `bin/<standard|ai>/`、`obj/<standard|ai>/` 隔离；构建从源模板生成中间目录 `Info.plist`（版本、构建号、产品名），不改写仓库模板。发行能力与数据边界见 [EDITION](../Design/spec/editions.md)，开发和发布入口见 [DEV.md](../DEV.md)。
 
 **启动参数来源**：iOS 不填充托管 `Main(string[] args)`（实测为空数组），一律读 `NSProcessInfo.ProcessInfo.Arguments`（`simctl launch <udid> <bundleId> <args…>` 会传入）。
 

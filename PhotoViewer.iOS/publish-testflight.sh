@@ -65,11 +65,13 @@ esac
 
 case "${EDITION}" in
     ai)
-        PRODUCT_NAME="PhotoViewer-AI"
+        DISPLAY_NAME="PhotoViewer AI"
+        PACKAGE_PRODUCT="PhotoViewer-AI"
         DINO="true"
         ;;
     *)
-        PRODUCT_NAME="PhotoViewer"
+        DISPLAY_NAME="PhotoViewer"
+        PACKAGE_PRODUCT="PhotoViewer"
         DINO="false"
         ;;
 esac
@@ -79,7 +81,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VERSION="$(sed -n 's:.*<AppVersion>\(.*\)</AppVersion>.*:\1:p' "${REPO_ROOT}/Directory.Build.props" | head -n 1)"
 BUILD="$(sed -n 's:.*<AppBuildNumber>\(.*\)</AppBuildNumber>.*:\1:p' "${REPO_ROOT}/Directory.Build.props" | head -n 1)"
 OUTPUT_DIR="${REPO_ROOT}/release/testflight/${EDITION}"
-ARCHIVE_PATH="${OUTPUT_DIR}/${PRODUCT_NAME}-${VERSION}-${BUILD}.xcarchive"
+# .xcarchive 属于打包产物，文件名继续用 PhotoViewer-AI。
+ARCHIVE_PATH="${OUTPUT_DIR}/${PACKAGE_PRODUCT}-${VERSION}-${BUILD}.xcarchive"
 EXPORT_OPTIONS="${SCRIPT_DIR}/ExportOptions.AppStore.Local.plist"
 EXPORT_DIR="${REPO_ROOT}/artifacts/scratch/ios-testflight-export/${EDITION}-${VERSION}-${BUILD}"
 
@@ -128,11 +131,11 @@ if [[ "${ARCHIVE_ONLY}" -eq 0 ]]; then
 fi
 
 STAGING_DIR="${OUTPUT_DIR}/.staging-${BUILD}-$$"
-STAGING_ARCHIVE="${STAGING_DIR}/${PRODUCT_NAME}-${VERSION}-${BUILD}.xcarchive"
+STAGING_ARCHIVE="${STAGING_DIR}/${PACKAGE_PRODUCT}-${VERSION}-${BUILD}.xcarchive"
 rm -rf "${STAGING_DIR}"
 mkdir -p "${STAGING_DIR}"
 
-echo "=== ${PRODUCT_NAME} ${VERSION}（${BUILD}，PhotoViewerEnableDino=${DINO}）TestFlight 归档 ==="
+echo "=== ${DISPLAY_NAME} ${VERSION}（${BUILD}，PhotoViewerEnableDino=${DINO}）TestFlight 归档 ==="
 dotnet publish "${SCRIPT_DIR}/PhotoViewer.iOS.csproj" \
     -c Release \
     -r ios-arm64 \

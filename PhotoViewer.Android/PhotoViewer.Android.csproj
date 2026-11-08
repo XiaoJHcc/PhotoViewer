@@ -2,9 +2,9 @@
     <PropertyGroup>
         <OutputType>Exe</OutputType>
         <TargetFramework>net10.0-android</TargetFramework>
-        <!-- 双版本显示名：标准版 PhotoViewer，AI 版 PhotoViewer-AI。ApplicationId 两版一致，
-             便于同一台设备覆盖安装并共用用户数据。 -->
-        <ApplicationTitle Condition="'$(PhotoViewerEnableDino)' == 'true'">PhotoViewer-AI</ApplicationTitle>
+        <!-- 双版本显示名：标准版 PhotoViewer，AI 版 PhotoViewer AI（空格，不用横线）。
+             分发包文件名才用 PhotoViewer-AI。ApplicationId 两版一致，便于同一台设备覆盖安装并共用用户数据。 -->
+        <ApplicationTitle Condition="'$(PhotoViewerEnableDino)' == 'true'">PhotoViewer AI</ApplicationTitle>
         <ApplicationTitle Condition="'$(PhotoViewerEnableDino)' != 'true'">PhotoViewer</ApplicationTitle>
         <DefineConstants Condition="'$(PhotoViewerEnableDino)' == 'true'">$(DefineConstants);PHOTOVIEWER_DINO</DefineConstants>
         <!-- 只发 arm64-v8a：APK 不得出现 x86_64 / armeabi-v7a。-->

@@ -3,7 +3,9 @@
         <TargetFramework>net10.0-macos</TargetFramework>
         <OutputType>Exe</OutputType>
         <ApplicationTitle>PhotoViewer</ApplicationTitle>
-        <ApplicationTitle Condition="'$(PhotoViewerEnableDino)' == 'true'">PhotoViewer-AI</ApplicationTitle>
+        <!-- 显示名（窗口标题、菜单、CFBundleName/DisplayName、.app 目录名）用空格；
+             分发包文件名仍用 PhotoViewer-AI（由 publish.sh 的 PACKAGE_PRODUCT 决定）。 -->
+        <ApplicationTitle Condition="'$(PhotoViewerEnableDino)' == 'true'">PhotoViewer AI</ApplicationTitle>
         <PhotoViewerEnableDino Condition="'$(PhotoViewerEnableDino)' == ''">false</PhotoViewerEnableDino>
         <DefineConstants Condition="'$(PhotoViewerEnableDino)' == 'true'">$(DefineConstants);PHOTOVIEWER_DINO</DefineConstants>
         <!-- 最低部署版本与 SwiftUI 动态库的 arm64-apple-macosx26.0 目标保持一致。 -->

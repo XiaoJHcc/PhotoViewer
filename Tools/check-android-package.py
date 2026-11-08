@@ -46,7 +46,8 @@ MODEL_NAME = "dinov3_vits16.onnx"
 MODEL_BYTES = 86_594_677
 MODEL_SHA256 = "bcba38490ec2eded4a240751bebac198903daba7263871e8fee3aa39b03352e8"
 
-PRODUCT_NAMES = {"standard": "PhotoViewer", "ai": "PhotoViewer-AI"}
+# 产品显示名（AI 版含空格，即 android:label）；APK 文件名另用 PhotoViewer-AI。
+PRODUCT_NAMES = {"standard": "PhotoViewer", "ai": "PhotoViewer AI"}
 DEFAULT_PACKAGE_ID = "cc.xiaojh.PhotoViewer"
 TARGET_ABI = "arm64-v8a"
 FORBIDDEN_ABIS = ("x86_64", "armeabi-v7a", "arm64", "x86")
@@ -911,7 +912,7 @@ def self_test() -> int:
         ))
         cases.append((
             "标准版误用 AI 显示名失败",
-            apk("standard-label", edition_label="PhotoViewer-AI"), "standard", False, "显示名",
+            apk("standard-label", edition_label="PhotoViewer AI"), "standard", False, "显示名",
         ))
         cases.append((
             "版本号不符失败",
@@ -935,7 +936,7 @@ def self_test() -> int:
         }
         cases.append((
             "AI 版 AOT 布局合规通过",
-            apk("ai-ok-aot", edition_label="PhotoViewer-AI", extra=ai_extra), "ai", True, None,
+            apk("ai-ok-aot", edition_label="PhotoViewer AI", extra=ai_extra), "ai", True, None,
         ))
 
         store_extra = {
@@ -947,7 +948,7 @@ def self_test() -> int:
         }
         cases.append((
             "AI 版 assembly store 证据通过",
-            apk("ai-ok-store", edition_label="PhotoViewer-AI", extra=store_extra), "ai", True, None,
+            apk("ai-ok-store", edition_label="PhotoViewer AI", extra=store_extra), "ai", True, None,
         ))
 
         debug_extra = {
@@ -959,12 +960,12 @@ def self_test() -> int:
         }
         cases.append((
             "AI 版 Debug 每程序集布局通过",
-            apk("ai-ok-debug", edition_label="PhotoViewer-AI", extra=debug_extra), "ai", True, None,
+            apk("ai-ok-debug", edition_label="PhotoViewer AI", extra=debug_extra), "ai", True, None,
         ))
 
         cases.append((
             "AI 版缺模型失败",
-            apk("ai-no-model", edition_label="PhotoViewer-AI", extra={
+            apk("ai-no-model", edition_label="PhotoViewer AI", extra={
                 "assets/Models/DINOv3-LICENSE.md": b"license",
                 f"lib/{TARGET_ABI}/libonnxruntime.so": b"\x7fELF",
                 f"lib/{TARGET_ABI}/libaot-Microsoft.ML.OnnxRuntime.dll.so": b"\x7fELF",
@@ -973,7 +974,7 @@ def self_test() -> int:
         ))
         cases.append((
             "AI 版模型哈希不符失败",
-            apk("ai-bad-hash", edition_label="PhotoViewer-AI", extra={
+            apk("ai-bad-hash", edition_label="PhotoViewer AI", extra={
                 "assets/Models/DINOv3-LICENSE.md": b"license",
                 f"assets/Models/{MODEL_NAME}": tiny_model + b"x",
                 f"lib/{TARGET_ABI}/libonnxruntime.so": b"\x7fELF",
@@ -983,7 +984,7 @@ def self_test() -> int:
         ))
         cases.append((
             "AI 版缺许可证失败",
-            apk("ai-no-license", edition_label="PhotoViewer-AI", extra={
+            apk("ai-no-license", edition_label="PhotoViewer AI", extra={
                 f"assets/Models/{MODEL_NAME}": tiny_model,
                 f"lib/{TARGET_ABI}/libonnxruntime.so": b"\x7fELF",
                 f"lib/{TARGET_ABI}/libaot-Microsoft.ML.OnnxRuntime.dll.so": b"\x7fELF",
@@ -992,7 +993,7 @@ def self_test() -> int:
         ))
         cases.append((
             "AI 版缺 ORT 原生库失败",
-            apk("ai-no-native", edition_label="PhotoViewer-AI", extra={
+            apk("ai-no-native", edition_label="PhotoViewer AI", extra={
                 "assets/Models/DINOv3-LICENSE.md": b"license",
                 f"assets/Models/{MODEL_NAME}": tiny_model,
                 f"lib/{TARGET_ABI}/libaot-Microsoft.ML.OnnxRuntime.dll.so": b"\x7fELF",
@@ -1001,7 +1002,7 @@ def self_test() -> int:
         ))
         cases.append((
             "AI 版缺托管 ORT 失败",
-            apk("ai-no-managed", edition_label="PhotoViewer-AI", extra={
+            apk("ai-no-managed", edition_label="PhotoViewer AI", extra={
                 "assets/Models/DINOv3-LICENSE.md": b"license",
                 f"assets/Models/{MODEL_NAME}": tiny_model,
                 f"lib/{TARGET_ABI}/libonnxruntime.so": b"\x7fELF",
@@ -1014,7 +1015,7 @@ def self_test() -> int:
         ))
         cases.append((
             "AI 版误带 x86_64 失败",
-            make_apk(root / "ai-x86/ai-x86.apk", package, build, version, "PhotoViewer-AI",
+            make_apk(root / "ai-x86/ai-x86.apk", package, build, version, "PhotoViewer AI",
                      extra=ai_extra, abi="x86_64"), "ai", False, "只允许 arm64-v8a",
         ))
 

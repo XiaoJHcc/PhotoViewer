@@ -2,7 +2,7 @@
 
 Debug 与 Release 均只启动原生壳，无旧壳入口。壳内容：原生主图（`SurfaceView` + EGL14/GLES，8 位 P3/sRGB）、主屏布局（文件栏/胶片栏/控制栏/导航图/insets）、SAF 存储、硬件键盘/滚轮/长按菜单/返回、半屏设置（五分类 + 关闭回写）。实现与验收状态见 [Design/status.md](../Design/status.md)，计划、验收矩阵与色域结论见 [Plans/native-rebuild-phase-android.md](../Plans/native-rebuild-phase-android.md)。
 
-**发行版本**：构建、运行与发布必须显式传 `PhotoViewerEnableDino=false|true`；缺失或非法值直接报错。标准版 `PhotoViewer` 不编译相似面板、DINO 诊断及 ONNX 托管/原生依赖，保留 CV 分析、三瓦片「CV 诊断」与独立「即时计算 CV」；AI 版 `PhotoViewer-AI` 内置固定模型和 DINOv3 License，并提供独立「即时计算 DINO / CV」。下文 DINO、相似聚类及五瓦片诊断均指 AI 版。两版使用同一 ApplicationId `cc.xiaojh.PhotoViewer`，替换安装保留设置与数据库，不提供同机共存或产品内切换。头工程及共享工程的 `bin/<standard|ai>/`、`obj/<standard|ai>/` 隔离；只构建 arm64-v8a，清单从源模板生成中间目录副本并写入版本显示名，不改写仓库模板。发行能力与数据边界见 [EDITION](../Design/spec/editions.md)，开发和发布入口见 [DEV.md](../DEV.md)。
+**发行版本**：构建、运行与发布必须显式传 `PhotoViewerEnableDino=false|true`；缺失或非法值直接报错。标准版 `PhotoViewer` 不编译相似面板、DINO 诊断及 ONNX 托管/原生依赖，保留 CV 分析、三瓦片「CV 诊断」与独立「即时计算 CV」；AI 版 `PhotoViewer AI`（显示名空格，APK 包名 `PhotoViewer-AI`）内置固定模型和 DINOv3 License，并提供独立「即时计算 DINO / CV」。下文 DINO、相似聚类及五瓦片诊断均指 AI 版。两版使用同一 ApplicationId `cc.xiaojh.PhotoViewer`，替换安装保留设置与数据库，不提供同机共存或产品内切换。头工程及共享工程的 `bin/<standard|ai>/`、`obj/<standard|ai>/` 隔离；只构建 arm64-v8a，清单从源模板生成中间目录副本并写入版本显示名，不改写仓库模板。发行能力与数据边界见 [EDITION](../Design/spec/editions.md)，开发和发布入口见 [DEV.md](../DEV.md)。
 
 ## 启动与主屏
 

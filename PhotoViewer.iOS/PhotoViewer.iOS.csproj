@@ -3,7 +3,9 @@
         <OutputType>Exe</OutputType>
         <TargetFramework>net10.0-ios</TargetFramework>
         <ApplicationTitle>PhotoViewer</ApplicationTitle>
-        <ApplicationTitle Condition="'$(PhotoViewerEnableDino)' == 'true'">PhotoViewer-AI</ApplicationTitle>
+        <!-- 显示名（CFBundleName/CFBundleDisplayName、主屏名称）用空格；
+             分发包文件名仍用 PhotoViewer-AI（由 publish.sh 的 PACKAGE_PRODUCT 决定）。 -->
+        <ApplicationTitle Condition="'$(PhotoViewerEnableDino)' == 'true'">PhotoViewer AI</ApplicationTitle>
         <DefineConstants Condition="'$(PhotoViewerEnableDino)' == 'true'">$(DefineConstants);PHOTOVIEWER_DINO</DefineConstants>
         <SupportedOSPlatformVersion>17.0</SupportedOSPlatformVersion>
         <ImplicitUsings>enable</ImplicitUsings>

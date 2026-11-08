@@ -4,6 +4,8 @@
 # --edition 默认 both；--local 只做本机 adhoc 构建 + 包扫描 + DMG 装载验证，不签名/不公证/不归档。
 # 版本号唯一来源是根 Directory.Build.props 的 AppVersion；位置参数只为兼容旧命令，必须与之一致。
 # 公证已通过但票据附加失败时用 --staple-only 只重试票据附加与验证。
+# 命名：DISPLAY_NAME 是产品显示名（AI 版为 "PhotoViewer AI"，含空格），决定 .app 目录名、Info.plist
+# 名称与 DMG 卷名；PACKAGE_PRODUCT 只进分发包文件名（AI 版为 PhotoViewer-AI，保留横线）。
 set -euo pipefail
 
 usage() {
@@ -173,11 +175,11 @@ PY
 scan_app() {
     local app_path="$1"
     local edition="$2"
-    local product_name="$3"
+    local display_name="$3"
     local report_path="$4"
     python3 "${SCANNER}" "${app_path}" \
         --edition "${edition}" \
-        --product-name "${product_name}" \
+        --product-name "${display_name}" \
         --version "${VERSION}" \
         --build-number "${BUILD_NUMBER}" \
         --output "${report_path}"
@@ -187,19 +189,19 @@ scan_app() {
 verify_mounted_dmg() {
     local dmg_path="$1"
     local edition="$2"
-    local product_name="$3"
+    local display_name="$3"
     local report_path="$4"
 
     MOUNT_POINT="$(mktemp -d "${TMPDIR:-/tmp}/pv-dmg-mount.XXXXXX")"
     hdiutil attach "${dmg_path}" -readonly -nobrowse -noautoopen \
         -mountpoint "${MOUNT_POINT}" -quiet
-    local mounted_app="${MOUNT_POINT}/${product_name}.app"
+    local mounted_app="${MOUNT_POINT}/${display_name}.app"
     if [[ ! -d "${mounted_app}" ]]; then
-        echo "DMG 内未找到 ${product_name}.app：${mounted_app}"
+        echo "DMG 内未找到 ${display_name}.app：${mounted_app}"
         cleanup_mount
         return 1
     fi
-    if ! scan_app "${mounted_app}" "${edition}" "${product_name}" "${report_path}"; then
+    if ! scan_app "${mounted_app}" "${edition}" "${display_name}" "${report_path}"; then
         echo "DMG 内应用包扫描未通过：${report_path}"
         cleanup_mount
         return 1
@@ -217,28 +219,30 @@ verify_mounted_dmg() {
 for EDITION in "${EDITIONS[@]}"; do
     case "${EDITION}" in
         ai)
-            PRODUCT_NAME="PhotoViewer-AI"
+            DISPLAY_NAME="PhotoViewer AI"
+            PACKAGE_PRODUCT="PhotoViewer-AI"
             DINO="true"
             ;;
         *)
-            PRODUCT_NAME="PhotoViewer"
+            DISPLAY_NAME="PhotoViewer"
+            PACKAGE_PRODUCT="PhotoViewer"
             DINO="false"
             ;;
     esac
 
     OUT_DIR="${SCRIPT_DIR}/bin/${EDITION}/Release/net10.0-macos/osx-arm64"
-    APP_PATH="${OUT_DIR}/${PRODUCT_NAME}.app"
+    APP_PATH="${OUT_DIR}/${DISPLAY_NAME}.app"
     DIST_DIR="${SCRIPT_DIR}/bin/${EDITION}/Release/dist"
     STAGING="${DIST_DIR}/_staging"
     if [[ "${LOCAL_ONLY}" -eq 1 ]]; then
-        PACKAGE_NAME="${PRODUCT_NAME}-${VERSION}-mac-arm64-adhoc.dmg"
+        PACKAGE_NAME="${PACKAGE_PRODUCT}-${VERSION}-mac-arm64-adhoc.dmg"
         DMG_DIR="${LOCAL_DMG_DIR}"
         MODE="local-adhoc"
         APP_SCAN="${REPORT_DIR}/${EDITION}-local-package.json"
         DMG_SCAN="${REPORT_DIR}/${EDITION}-local-dmg-package.json"
         EVIDENCE="${REPORT_DIR}/${EDITION}-local-publish.json"
     else
-        PACKAGE_NAME="${PRODUCT_NAME}-${VERSION}-mac-arm64.dmg"
+        PACKAGE_NAME="${PACKAGE_PRODUCT}-${VERSION}-mac-arm64.dmg"
         DMG_DIR="${DIST_DIR}"
         if [[ "${STAPLE_ONLY}" -eq 1 ]]; then
             MODE="staple-only"
@@ -259,9 +263,9 @@ for EDITION in "${EDITIONS[@]}"; do
 
     echo ""
     if [[ "${LOCAL_ONLY}" -eq 1 ]]; then
-        echo "=== [${EDITION}] 本地 adhoc 构建 ${PRODUCT_NAME} ${VERSION}（${BUILD_NUMBER}）—— 不用于分发 ==="
+        echo "=== [${EDITION}] 本地 adhoc 构建 ${DISPLAY_NAME} ${VERSION}（${BUILD_NUMBER}）—— 不用于分发 ==="
     else
-        echo "=== [${EDITION}] ${PRODUCT_NAME} ${VERSION}（${BUILD_NUMBER}，PhotoViewerEnableDino=${DINO}）==="
+        echo "=== [${EDITION}] ${DISPLAY_NAME} ${VERSION}（${BUILD_NUMBER}，PhotoViewerEnableDino=${DINO}）==="
     fi
 
     if [[ "${STAPLE_ONLY}" -eq 0 ]]; then
@@ -274,7 +278,7 @@ for EDITION in "${EDITIONS[@]}"; do
         rm -rf "${APP_PATH}"
         dotnet publish "${PROJECT_PATH}" -c Release -r osx-arm64 --no-restore \
             -p:PhotoViewerEnableDino="${DINO}" \
-            -p:ApplicationTitle="${PRODUCT_NAME}"
+            -p:ApplicationTitle="${DISPLAY_NAME}"
 
         if [[ ! -d "${APP_PATH}" ]]; then
             echo "未找到应用包：${APP_PATH}"
@@ -304,7 +308,7 @@ for EDITION in "${EDITIONS[@]}"; do
         echo ""
         echo "=== [${EDITION}] 包扫描 ==="
         mkdir -p "${REPORT_DIR}"
-        if ! scan_app "${APP_PATH}" "${EDITION}" "${PRODUCT_NAME}" "${APP_SCAN}"; then
+        if ! scan_app "${APP_PATH}" "${EDITION}" "${DISPLAY_NAME}" "${APP_SCAN}"; then
             echo "包扫描未通过，终止发布：${APP_SCAN}"
             exit 1
         fi
@@ -317,7 +321,7 @@ for EDITION in "${EDITIONS[@]}"; do
         ln -s /Applications "${STAGING}/Applications"
 
         hdiutil create \
-            -volname "${PRODUCT_NAME}" \
+            -volname "${DISPLAY_NAME}" \
             -srcfolder "${STAGING}" \
             -ov -format UDZO \
             -imagekey zlib-level=9 \
@@ -419,7 +423,7 @@ print(entry.get("id", "") if isinstance(entry, dict) else "")
 
     echo ""
     echo "=== [${EDITION}] 挂载 DMG 核对实际应用包 ==="
-    verify_mounted_dmg "${DMG_PATH}" "${EDITION}" "${PRODUCT_NAME}" "${DMG_SCAN}"
+    verify_mounted_dmg "${DMG_PATH}" "${EDITION}" "${DISPLAY_NAME}" "${DMG_SCAN}"
 
     if [[ "${LOCAL_ONLY}" -eq 0 ]]; then
         mkdir -p "${PACKAGE_DIR}"
@@ -441,7 +445,8 @@ print(entry.get("id", "") if isinstance(entry, dict) else "")
     write_report "${EVIDENCE}" \
         "mode=${MODE}" \
         "edition=${EDITION}" \
-        "productName=${PRODUCT_NAME}" \
+        "productName=${DISPLAY_NAME}" \
+        "packageProduct=${PACKAGE_PRODUCT}" \
         "version=${VERSION}" \
         "buildNumber=${BUILD_NUMBER}" \
         "versionSource=Directory.Build.props" \

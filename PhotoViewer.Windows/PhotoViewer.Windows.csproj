@@ -5,7 +5,9 @@
         <OutputType>WinExe</OutputType>
         <RootNamespace>PhotoViewer.Windows</RootNamespace>
         <ApplicationTitle>PhotoViewer</ApplicationTitle>
-        <ApplicationTitle Condition="'$(PhotoViewerEnableDino)' == 'true'">PhotoViewer-AI</ApplicationTitle>
+        <!-- 显示名（窗口标题末段、版本资源 ProductName、任务栏名称）用空格；
+             分发包文件名与程序集名仍用 PhotoViewer-AI（由发布脚本决定）。 -->
+        <ApplicationTitle Condition="'$(PhotoViewerEnableDino)' == 'true'">PhotoViewer AI</ApplicationTitle>
         <Product>$(ApplicationTitle)</Product>
         <AssemblyTitle>$(ApplicationTitle)</AssemblyTitle>
         <AssemblyName Condition="'$(WindowsReleaseAssemblyName)' != ''">$(WindowsReleaseAssemblyName)</AssemblyName>

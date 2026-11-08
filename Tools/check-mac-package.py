@@ -3,7 +3,7 @@
 
 用法：
   python3 Tools/check-mac-package.py <App.app> --edition standard|ai --output <报告.json>
-        [--version 0.9.0] [--build-number 90] [--product-name PhotoViewer|PhotoViewer-AI]
+        [--version 0.9.0] [--build-number 90] [--product-name PhotoViewer|"PhotoViewer AI"]
         [--bundle-id cc.xiaojh.PhotoViewer.Mac] [--executable PhotoViewer.Mac]
   python3 Tools/check-mac-package.py --self-test
 
@@ -43,7 +43,9 @@ MODEL_NAME = "dinov3_vits16.onnx"
 MODEL_BYTES = 86_594_677
 MODEL_SHA256 = "bcba38490ec2eded4a240751bebac198903daba7263871e8fee3aa39b03352e8"
 
-PRODUCT_NAMES = {"standard": "PhotoViewer", "ai": "PhotoViewer-AI"}
+# 产品显示名（AI 版含空格）；.app 目录名与 CFBundleName/DisplayName 同值。
+# 分发包文件名另用 PhotoViewer-AI，只出现在 publish.sh 的 PACKAGE_PRODUCT 与 release/packages。
+PRODUCT_NAMES = {"standard": "PhotoViewer", "ai": "PhotoViewer AI"}
 DEFAULT_BUNDLE_ID = "cc.xiaojh.PhotoViewer.Mac"
 DEFAULT_EXECUTABLE = "PhotoViewer.Mac"
 
@@ -557,7 +559,7 @@ def self_test() -> int:
         cases.append(("标准版残留 DINO 许可证失败", {"app": app, "expectations": expectations("standard")}, False,
                       "标准版不得包含 DINO 模型许可证"))
 
-        app = _make_app(root / "ai-no-managed", "PhotoViewer-AI", version, build)
+        app = _make_app(root / "ai-no-managed", "PhotoViewer AI", version, build)
         cases.append(("AI 版缺少托管 ORT 失败", {"app": app, "expectations": expectations("ai")}, False,
                       "AI 版应恰好包含一份托管推理组件 Microsoft.ML.OnnxRuntime.dll"))
 
@@ -569,11 +571,11 @@ def self_test() -> int:
         cases.append(("构建号不符失败", {"app": app, "expectations": expectations("standard")}, False,
                       "Info.plist 构建号（CFBundleVersion）不符"))
 
-        app = _make_app(root / "bad-product", "PhotoViewer", version, build, bundle_name="PhotoViewer-AI")
+        app = _make_app(root / "bad-product", "PhotoViewer", version, build, bundle_name="PhotoViewer AI")
         cases.append(("标准版误带 AI 产品名失败", {"app": app, "expectations": expectations("standard")}, False,
                       "Info.plist 产品名（CFBundleName）不符"))
 
-        app = _make_app(root / "wrong-dir", "PhotoViewer-AI", version, build)
+        app = _make_app(root / "wrong-dir", "PhotoViewer AI", version, build)
         cases.append(("包目录名与版本不符失败", {"app": app, "expectations": expectations("standard")}, False,
                       "应用包目录名应为 PhotoViewer.app"))
 

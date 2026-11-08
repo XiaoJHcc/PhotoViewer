@@ -178,8 +178,10 @@ $validatedPackages = @()
 
 foreach ($currentEdition in $editions) {
     $enableDino = if ($currentEdition -eq 'ai') { 'true' } else { 'false' }
-    $productName = if ($currentEdition -eq 'ai') { 'PhotoViewer-AI' } else { 'PhotoViewer' }
-    $assemblyName = "$productName-$appVersion-win-x64"
+    # 程序集名、EXE 文件名属于打包命名，继续用横线；显示名（版本资源产品名）由
+    # PhotoViewer.Windows.csproj 的 ApplicationTitle 给出 "PhotoViewer AI"（空格）。
+    $packageProduct = if ($currentEdition -eq 'ai') { 'PhotoViewer-AI' } else { 'PhotoViewer' }
+    $assemblyName = "$packageProduct-$appVersion-win-x64"
     $exeName = "$assemblyName.exe"
     $publishDirectory = if (-not [string]::IsNullOrWhiteSpace($OutputDirectory)) {
         Join-Path $OutputDirectory $currentEdition

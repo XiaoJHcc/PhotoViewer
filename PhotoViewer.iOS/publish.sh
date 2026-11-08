@@ -158,7 +158,7 @@ verify_and_scan_ipa() {
     local ipa="$1"
     local built_app="$2"
     local edition="$3"
-    local product="$4"
+    local display_name="$4"
     local report="$5"
     local work
     WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pv-ipa-verify.XXXXXX")"
@@ -175,7 +175,7 @@ verify_and_scan_ipa() {
         || fail "本地直装 IPA 内应用签名校验失败：${app}"
     python3 "${SCANNER}" "${app}" \
         --edition "${edition}" \
-        --product-name "${product}" \
+        --product-name "${display_name}" \
         --version "${VERSION}" \
         --build-number "${BUILD_NUMBER}" \
         --output "${report}"
@@ -185,11 +185,13 @@ verify_and_scan_ipa() {
 for EDITION in "${EDITIONS[@]}"; do
     case "${EDITION}" in
         ai)
-            PRODUCT_NAME="PhotoViewer-AI"
+            DISPLAY_NAME="PhotoViewer AI"
+            PACKAGE_PRODUCT="PhotoViewer-AI"
             DINO="true"
             ;;
         *)
-            PRODUCT_NAME="PhotoViewer"
+            DISPLAY_NAME="PhotoViewer"
+            PACKAGE_PRODUCT="PhotoViewer"
             DINO="false"
             ;;
     esac
@@ -206,13 +208,13 @@ for EDITION in "${EDITIONS[@]}"; do
         EVIDENCE="${REPORT_DIR}/${EDITION}-publish.json"
     fi
     STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    PACKAGE_NAME="${PRODUCT_NAME}-${VERSION}-ios.ipa"
+    PACKAGE_NAME="${PACKAGE_PRODUCT}-${VERSION}-ios.ipa"
 
     echo ""
     if [[ "${LOCAL_ONLY}" -eq 1 ]]; then
-        echo "=== [${EDITION}] 本地验证构建 ${PRODUCT_NAME} ${VERSION}（${BUILD_NUMBER}，PhotoViewerEnableDino=${DINO}）—— 不写入 release ==="
+        echo "=== [${EDITION}] 本地验证构建 ${DISPLAY_NAME} ${VERSION}（${BUILD_NUMBER}，PhotoViewerEnableDino=${DINO}）—— 不写入 release ==="
     else
-        echo "=== [${EDITION}] ${PRODUCT_NAME} ${VERSION}（${BUILD_NUMBER}，PhotoViewerEnableDino=${DINO}）==="
+        echo "=== [${EDITION}] ${DISPLAY_NAME} ${VERSION}（${BUILD_NUMBER}，PhotoViewerEnableDino=${DINO}）==="
     fi
 
     echo ""
@@ -237,7 +239,7 @@ for EDITION in "${EDITIONS[@]}"; do
     mkdir -p "${REPORT_DIR}"
     python3 "${SCANNER}" "${APP_PATH}" \
         --edition "${EDITION}" \
-        --product-name "${PRODUCT_NAME}" \
+        --product-name "${DISPLAY_NAME}" \
         --version "${VERSION}" \
         --build-number "${BUILD_NUMBER}" \
         --output "${APP_SCAN}"
@@ -277,7 +279,7 @@ for EDITION in "${EDITIONS[@]}"; do
         echo "dSYM：${DSYM_SKIA}"
     fi
 
-    verify_and_scan_ipa "${RAW_IPA}" "${APP_PATH}" "${EDITION}" "${PRODUCT_NAME}" "${IPA_SCAN}"
+    verify_and_scan_ipa "${RAW_IPA}" "${APP_PATH}" "${EDITION}" "${DISPLAY_NAME}" "${IPA_SCAN}"
 
     IPA_SIZE="$(stat -f%z "${RAW_IPA}")"
 
@@ -304,7 +306,8 @@ for EDITION in "${EDITIONS[@]}"; do
     write_evidence "${EVIDENCE}" \
         "mode=${MODE}" \
         "edition=${EDITION}" \
-        "productName=${PRODUCT_NAME}" \
+        "productName=${DISPLAY_NAME}" \
+        "packageProduct=${PACKAGE_PRODUCT}" \
         "photoViewerEnableDino=${DINO}" \
         "version=${VERSION}" \
         "buildNumber=${BUILD_NUMBER}" \
