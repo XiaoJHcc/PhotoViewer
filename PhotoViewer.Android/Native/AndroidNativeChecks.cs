@@ -152,6 +152,9 @@ internal static partial class AndroidNativeChecks
         Check("控制栏三分组", root.ControlBar.GroupCount == 3, $"{root.ControlBar.GroupCount}");
         Check("控制栏命令含 Next/Fit", root.ControlBar.Commands.Contains("Next") && root.ControlBar.Commands.Contains("Fit"),
             string.Join(",", root.ControlBar.Commands));
+        Check("控制栏雾天增强显示对比度半圆",
+            root.ControlBar.CommandIconForChecks("ToggleEnhance") == AndroidUiTheme.IconGlyph(DesignTokens.IconCommandToggleEnhance),
+            $"icon={DescribeGlyph(root.ControlBar.CommandIconForChecks("ToggleEnhance") ?? string.Empty)} token={DesignTokens.IconCommandToggleEnhance}");
 
         // Fit ↔ 物理 100% 往返（大素材才具备向上空间；小素材按契约夹回适应态也算通过）。
         bool canZoom = session.Image!.SourceWidth > 0 && root.Photo.Viewport.FitScale < 1 / density - 1e-9;

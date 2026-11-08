@@ -21,6 +21,7 @@ internal static partial class AndroidNativeChecks
         var root = _root!;
         var main = _main!;
         var activity = _activity!;
+        var nativeActivity = (AndroidNativeActivity)activity;
         await WaitForScreenAsync();
         string folder = EnsureLayoutFolder(activity);
         await OpenFolderAndWaitAsync(folder);
@@ -47,11 +48,15 @@ internal static partial class AndroidNativeChecks
                 main.IsScreenLandscape && main.IsRowLayout == expectedLandscapeRow,
                 $"landscape={main.IsScreenLandscape} row={main.IsRowLayout} expectedRow={expectedLandscapeRow} "
                 + $"mode={main.Settings.LayoutMode} px={root.Width}x{root.Height}");
+            Check("layout 横屏隐藏系统状态栏", !nativeActivity.IsStatusBarVisibleForChecks(),
+                $"statusVisible={nativeActivity.IsStatusBarVisibleForChecks()} safe={root.SafeInsets}");
             CheckGeometry(root, main, density, "横屏");
 
             activity.RequestedOrientation = global::Android.Content.PM.ScreenOrientation.Portrait;
             await WaitAsync(() => root.Height > root.Width, "竖屏布局", 8000);
             await Task.Delay(500);
+            Check("layout 回竖屏恢复系统状态栏", nativeActivity.IsStatusBarVisibleForChecks(),
+                $"statusVisible={nativeActivity.IsStatusBarVisibleForChecks()} safe={root.SafeInsets}");
             bool expectedPortraitRow = ExpectedRowLayout(main, landscape: false);
             Check("layout 竖屏方向与布局模式",
                 !main.IsScreenLandscape && main.IsRowLayout == expectedPortraitRow,
@@ -136,6 +141,12 @@ internal static partial class AndroidNativeChecks
         Check($"{phase} 筛选条在文件栏内容区", filterInside,
             $"sort={filter.SortFrame} tail={filterTail} toggle={AndroidFilterBar.ShowsSimilarityToggle} content={content} "
             + $"required={filter.RequiredWidthDp:0.#} scroll={filterScrolls} horizontal={filter.Horizontal}");
+        bool filterCentered = !layoutRow || filterScrolls
+            || Near((filter.SortFrame.X + filterTail.MaxX) / 2, content.Width / 2);
+        Check($"{phase} 行布局筛选整组居中", filterCentered,
+            $"center={(filter.SortFrame.X + filterTail.MaxX) / 2:0.#} expected={content.Width / 2:0.#} scroll={filterScrolls}");
+        Check($"{phase} 筛选首项仅保留普通顶部边距", Near(filter.SortFrame.Y, MainScreenLayout.FilterMargin),
+            $"top={filter.SortFrame.Y:0.#} expected={MainScreenLayout.FilterMargin:0.#}");
 
         var nodes = root.ControlBar.NodesForChecks();
         var rootLocation = new int[2];

@@ -84,8 +84,8 @@ public static class MainScreenLayout
     public static double ControlBarMainLength(double measuredMain) => measuredMain + Divider;
 
     /// <summary>
-    /// 筛选条五个控件的位置：行布局默认整组横向居中（macOS 隐藏标题栏的交通灯让位），
-    /// <paramref name="alignLeading"/> 时从内容前导边（外边距 10）起排（iPad：没有交通灯，不留左侧空带）；
+    /// 筛选条五个控件的位置：行布局默认整组横向居中；自然宽度超出可用区时，
+    /// 调用方可用 <paramref name="alignLeading"/> 从内容前导边（外边距 10）起排并交给滚动宿主；
     /// 列布局固定在 116 栏内纵向排列。计数与 toggle 与控件垂直居中。
     /// </summary>
     /// <param name="horizontal">是否行布局。</param>

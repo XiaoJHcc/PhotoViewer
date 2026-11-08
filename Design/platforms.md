@@ -92,7 +92,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - **SHELL-02@win**：自绘最大化按钮不提供系统贴靠布局浮层。材质为 WinUI 应用内亚克力主题画刷 `AcrylicInAppFillColorDefaultBrush`（深色）；窗口按钮悬停/按下底色取 `SubtleFillColorSecondaryBrush` / `SubtleFillColorTertiaryBrush`，Segoe Fluent 字形：最大化 `E922` ↔ 还原 `E923`、全屏 `E740` ↔ 退出全屏 `E73F`、最小化 `E921`、关闭 `E8BB`。WinUI 3 的 `SwapChainPanel` 不支持 `AcrylicBrush` 背板取样（XAML 亚克力在主图上只剩 `FallbackColor` 纯色），标题栏与主图视口重叠的区段由 `WindowsPhotoView.SetTitleBarBackdrop` 在交换链内按同一配方绘制：高斯模糊（标准差 `shell.titlebar.backdrop.blurAmount`）→ 亮度混合 → 颜色混合（参数取该画刷运行时的 `TintColor` / `TintOpacity` / `TintLuminosityOpacity`，均在 sRGB 编码值上）→ WinUI 随包噪点纹理 2%；XAML 背景只铺其余区段。主图视口外的模糊按 `FallbackColor` 补足，与 XAML 段相接的两侧各在 2 倍模糊标准差内渐变到"背板全为 `FallbackColor`"时的值。窄宽度常驻栏不与主图重叠，不启用交换链背板。
   - **SHELL-02@mac**：材质为 `NSVisualEffectView`（`Titlebar` 材质、窗口内混合、深色外观），标题文字 `titleBarFont`。
   - iOS：根控制器隐藏状态栏（`PrefersStatusBarHidden`），窗口级入口由主图长按菜单承担。
-  - Android：`Theme.PhotoViewer.Native` 固定深色、edge-to-edge + insets，无标题栏双击语义。
+  - Android：`Theme.PhotoViewer.Native` 固定深色、edge-to-edge + insets，无标题栏双击语义；横屏资源主题从启动画面起隐藏状态栏，`AndroidSystemBars` 在 Bootstrap 与原生 Activity 中按方向隐藏/恢复，根视图继续按真实 insets 排布。
   - **SHELL-02@ios / @android**：无窗口装饰与标题栏双击语义，属平台差异。
 - **SHELL-03**：全屏与尺寸。macOS `MacMainWindow` 的 `IsFullScreen` / `DidEnterFullScreen` / `SaveFullscreen`，Windows `OverlappedPresenter` 四态，iOS/Android 无应用内全屏入口。
   - **SHELL-03@ios / @android**：不提供应用内全屏入口。
@@ -117,7 +117,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
 - **FILTER-06、FILTER-09**：开关状态 `PhotoViewer/ViewModels/Settings/SettingsViewModel.cs` 的 `SimilarityPanelExpanded`（经 `IViewStateStore` 跨会话保留，不进入设置文档）；可见性 `SimilarityPanelViewModel.IsPanelVisible`。
 - **FILTER-07**：共享 `MainScreenLayout.FilterBarFrames` / `FilterBarMainLength`。
   - **FILTER-07@win**：筛选条自带 `StackPanel` + 外边距 10，不消费共享 `FilterBarFrames`；几何值与令牌一致。
-  - **FILTER-07@android**：手机行布局 `alignLeading`，从安全区前导边 + 10 起排；iPad 与四端一致，五项整组在安全内容区内居中，不设前导对齐差异。窄于紧凑宽度所需时筛选条横向滚动，控件宽度不压缩。
+  - **FILTER-07@android**：手机窄屏使用紧凑控件宽；容纳时与 iPad 一样按版本实际项数整组居中，只有自然宽度超出安全内容区时才从前导 10 起排并横向滚动，控件宽度不压缩。列布局首控件只保留普通 `filter.margin`（10），不使用 macOS 的 42 点标题栏让位。
 - **FILTER-08**：菜单交互。macOS/iOS 用系统菜单；Windows 原生 `ComboBox`；Android 自绘菜单（行高约 40）。
   - **FILTER-08@ios / @android**：触控下拉可点区 90×32，低于 44 点建议。
 - **FILTER-07@web / FILTER-08@web**：无交通灯，列布局首控件从 `filter.margin` 起排；浏览器无原生下拉弹层，三个下拉按 FILTER-08 自绘外观（旧壳 Avalonia Fluent 深色），菜单与 MENU-03 共用同一自绘弹层组件。

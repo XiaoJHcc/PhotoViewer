@@ -255,6 +255,18 @@ internal static class AndroidUiTheme
         canvas.DrawText(clipped, centerX, baseline, paint);
     }
 
+    /// <summary>按字形实际墨迹边界居中，避免字体上下留白把图标视觉中心推离按钮中心。</summary>
+    internal static void DrawGlyphCentered(Canvas canvas, string glyph, Paint paint, float centerX, float centerY)
+    {
+        if (string.IsNullOrEmpty(glyph)) return;
+        using var bounds = new Rect();
+        var alignment = paint.TextAlign;
+        paint.TextAlign = global::Android.Graphics.Paint.Align.Left;
+        paint.GetTextBounds(glyph, 0, glyph.Length, bounds);
+        canvas.DrawText(glyph, centerX - bounds.ExactCenterX(), centerY - bounds.ExactCenterY(), paint);
+        paint.TextAlign = alignment;
+    }
+
     /// <summary>绘制带圆角的控件底与描边。</summary>
     /// <param name="canvas">画布。</param>
     /// <param name="rect">矩形（px）。</param>

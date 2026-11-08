@@ -35,6 +35,7 @@ public sealed class AndroidBootstrapActivity : Activity
     protected override void OnCreate(Bundle? savedInstanceState)
     {
         base.OnCreate(savedInstanceState);
+        AndroidSystemBars.Apply(this);
         Dispatch(Intent);
     }
 

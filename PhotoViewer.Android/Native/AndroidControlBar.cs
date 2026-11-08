@@ -60,6 +60,14 @@ internal sealed class AndroidControlBar : View
             return commands;
         }
     }
+    /// <summary>指定命令当前实际绘制的图标字形（验收读取）。</summary>
+    internal string? CommandIconForChecks(string command)
+    {
+        foreach (var group in _groups)
+            foreach (var child in group.Children)
+                if (child.Command == command) return child.Icon;
+        return null;
+    }
     /// <summary>EXIF 分组是否存在。</summary>
     internal bool HasExifGroup => _groups.Exists(group => group.Kind == ControlBarGroupKind.Exif);
     /// <summary>评分分组是否存在。</summary>
@@ -347,9 +355,7 @@ internal sealed class AndroidControlBar : View
             {
                 _starConflict.Alpha = alpha;
                 string glyph = AndroidUiTheme.IconGlyph(DesignTokens.IconWarning);
-                using var bounds = new Rect();
-                _starConflict.GetTextBounds(glyph, 0, glyph.Length, bounds);
-                canvas.DrawText(glyph, cx, cy - bounds.ExactCenterY(), _starConflict);
+                AndroidUiTheme.DrawGlyphCentered(canvas, glyph, _starConflict, cx, cy);
                 return;
             }
             float arm = 4.5f * density;
@@ -385,27 +391,24 @@ internal sealed class AndroidControlBar : View
                 if (regular != null) _iconPaint.SetTypeface(regular);
                 _iconPaint.Color = foreground;
                 _iconPaint.Alpha = alpha;
-                canvas.DrawText(AndroidUiTheme.IconGlyph(DesignTokens.IconClear), cx,
-                    cy + _iconPaint.TextSize * .36f, _iconPaint);
+                AndroidUiTheme.DrawGlyphCentered(canvas, AndroidUiTheme.IconGlyph(DesignTokens.IconClear), _iconPaint, cx, cy);
                 return;
             }
             var solid = AndroidUiTheme.IconSolidTypeface(Context!);
             if (solid != null) _solidIconPaint.SetTypeface(solid);
             _solidIconPaint.Color = foreground;
             _solidIconPaint.Alpha = alpha;
-            canvas.DrawText(AndroidUiTheme.IconGlyph(DesignTokens.IconStarFilled), cx,
-                cy + _solidIconPaint.TextSize * .36f, _solidIconPaint);
+            AndroidUiTheme.DrawGlyphCentered(canvas, AndroidUiTheme.IconGlyph(DesignTokens.IconStarFilled), _solidIconPaint, cx, cy);
             // 数字叠在星形中心，颜色取按钮底色；命中区域仍是整颗按钮，数字不单独拦截点击。
             _numberPaint.Alpha = alpha;
-            AndroidUiTheme.DrawCentered(canvas, child.Number, _numberPaint, cx,
-                cy + _numberPaint.TextSize * .36f, rect.Width());
+            AndroidUiTheme.DrawGlyphCentered(canvas, child.Number, _numberPaint, cx, cy);
             return;
         }
         var typeface = AndroidUiTheme.IconTypeface(Context!);
         if (typeface != null) _iconPaint.SetTypeface(typeface);
         _iconPaint.Color = foreground;
-        _iconPaint.Alpha = 255;
-        canvas.DrawText(child.Icon ?? "?", rect.CenterX(), rect.CenterY() + _iconPaint.TextSize * .36f, _iconPaint);
+        _iconPaint.Alpha = alpha;
+        AndroidUiTheme.DrawGlyphCentered(canvas, child.Icon ?? "?", _iconPaint, cx, cy);
     }
 
     /// <summary>点按命中：EXIF 块开工具、评分写回、命令走共享命令表。</summary>

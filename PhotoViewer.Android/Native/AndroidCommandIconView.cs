@@ -115,8 +115,6 @@ internal sealed class AndroidCommandIconView : View
 
     private void DrawCentered(Canvas canvas, Paint paint, string text)
     {
-        var metrics = paint.GetFontMetrics()!;
-        float baseline = Height / 2f - (metrics.Ascent + metrics.Descent) / 2f;
-        canvas.DrawText(text, Width / 2f, baseline, paint);
+        AndroidUiTheme.DrawGlyphCentered(canvas, text, paint, Width / 2f, Height / 2f);
     }
 }

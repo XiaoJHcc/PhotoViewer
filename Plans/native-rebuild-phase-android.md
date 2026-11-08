@@ -87,7 +87,7 @@
 - **不新增**手机专属布局模式；若作者后续认为"胶片栏应在下方"，作为平台差异单独立项。
 - **insets**：`WindowCompat.setDecorFitsSystemWindows(window, false)` + `OnApplyWindowInsetsListener` 吃 `systemBars()` 与 `displayCutout()`；栏位背景铺到屏幕边缘、内容收进安全区（与 iPad 同口径）。Android 15（API 35）强制 edge-to-edge，此路径是必做项。
 - **刘海**：`displayCutout` 的 left/right 在横屏时计入内容内边距。
-- **筛选条行布局左对齐**：共享 `MainScreenLayout.FilterBarFrames` 默认给 macOS 交通灯居中；Android 行布局显式 `alignLeading: true`（与 iPad 同口径，左上不留空带）。
+- **筛选条行布局居中**：与 iPad 同口径，按版本实际项数在安全内容区内整组居中；仅自然宽度超出时才用 `alignLeading: true` 从普通 10dp 前导边距起排并滚动。列布局首控件同样只留普通 10dp 顶边距，macOS 的 42dp 标题栏让位不适用于 Android。
 
 ### 1.8 设置：半屏 Bottom Sheet
 
@@ -172,7 +172,7 @@
 - **状态**：**已完成（2026-10-18，模拟器目视/日志）**；八方向全量、色卡线性值、双击精确物理 100%、代理→Full 变换保持的自动断言随 A6 补。
 
 ### A3 主屏布局
-- `AndroidMainScreenLayout` 在共享 `MainScreenLayout.Partition` 上叠加真实系统栏/刘海 insets：栏位背景铺到屏幕边缘、内容收在安全区、主图满幅；行/列/自动只看窗口方向，隐藏栏位把空间还给主图；筛选条行布局 `alignLeading: true`。
+- `AndroidMainScreenLayout` 在共享 `MainScreenLayout.Partition` 上叠加真实系统栏/刘海 insets：栏位背景铺到屏幕边缘、内容收在安全区、主图满幅；行/列/自动只看窗口方向，隐藏栏位把空间还给主图；筛选条行布局容纳时整组居中，自然宽度溢出时才 `alignLeading: true` 并滚动。
 - 胶片栏 `RecyclerView` + 自绘卡片（96×144 外框 / 90×138 占位 / 80 方形 / 星级 / 抖动徽标 / 第二行；当前项蓝框、Full 缓存细边、占位/加载态）；350ms 三次缓出定位、用户触摸接管、减少动态效果直达；可见范围上报共享缩略图调度器；点选不居中。
 - 筛选条：自绘 90×32 下拉 ×3 + 计数 + 相似聚类 toggle 位置（toggle 在 A5 前隐藏）；点按弹原生 `PopupMenu` 写回共享 VM。
 - 控制栏：共享 `ControlBarLayout` 的分组/换行/居中；EXIF 块、评分、命令三组自绘；命令显隐/顺序来自共享设置；A5 前隐藏「分析栏」命令。

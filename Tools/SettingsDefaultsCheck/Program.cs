@@ -133,6 +133,7 @@ internal static class Program
         problems += Require(settings.VisibleCenterPreloadCount == 4, "已保存列表滚动预载被改写");
         problems += Require(settings.Hotkeys[0].Name == "雾天增强", "快捷键名称未按 Command 取当前命令目录");
         problems += Require(settings.Hotkeys[0].Tooltip == "雾天增强", "快捷键提示未按 Command 取当前命令目录");
+        problems += Require(settings.Hotkeys[0].DisplaySymbol == "\uf406", "雾天增强图标未按命令目录恢复为对比度半圆");
 
         var json = SettingsDocumentCodec.Serialize(settings.CreateSnapshot());
         problems += Require(!json.Contains("displayName", StringComparison.OrdinalIgnoreCase), "文件格式显示名仍被持久化");

@@ -16,7 +16,7 @@ namespace PhotoViewer.Android.Native;
 /// <summary>
 /// Android 文件栏筛选条（A3，[FILTER-01]）：排序 / 升降序 / 星级筛选三个自绘下拉控件 +
 /// 计数文本 + 相似聚类 toggle。几何全部取共享 <see cref="MainScreenLayout.FilterBarFrames"/>
-/// （90×32、间距 5、外边距 10；行布局从安全区前导边起排），点按弹出 PopupWindow 写回共享筛选状态。
+/// （90×32、间距 5、外边距 10；行布局容纳时整组居中，溢出时才前导起排并滚动），点按弹出 PopupWindow 写回共享筛选状态。
 /// </summary>
 internal sealed class AndroidFilterBar : View
 {
@@ -57,10 +57,18 @@ internal sealed class AndroidFilterBar : View
     /// <summary>当前是否行布局。</summary>
     internal bool Horizontal => _horizontal;
     /// <summary>行布局下五个控件不压缩时的自然宽度（dp）；窄屏由滚动宿主承载。</summary>
-    internal double RequiredWidthDp => _horizontal
-        ? Math.Max(ShowsSimilarityToggle ? _frames.Toggle.MaxX : _frames.Count.MaxX, _frames.Rating.MaxX)
-            + MainScreenLayout.FilterMargin
-        : _contentWidth;
+    internal double RequiredWidthDp
+    {
+        get
+        {
+            if (!_horizontal) return _contentWidth;
+            double controlWidth = _compact ? DesignTokens.FilterCompactControlWidth : MainScreenLayout.FilterControlWidth;
+            double toggleWidth = _compact ? DesignTokens.FilterCompactToggleWidth : MainScreenLayout.FilterControlWidth;
+            double content = controlWidth * 3 + MainScreenLayout.FilterGap * 3 + _countWidth;
+            content += ShowsSimilarityToggle ? MainScreenLayout.FilterGap + toggleWidth : 0;
+            return content + MainScreenLayout.FilterMargin * 2;
+        }
+    }
     /// <summary>当前是否有下拉在显示（验收读取，浮层锚点协调也用它）。</summary>
     internal bool IsDropdownOpen => _dropdown?.IsShowing == true;
     /// <summary>当前下拉的 <see cref="PopupWindow"/> 实例（验收比对跨周期是不是同一个）。</summary>
@@ -115,7 +123,7 @@ internal sealed class AndroidFilterBar : View
         _compact = horizontal && _contentWidth < 600;
         Refresh();
         var frames = MainScreenLayout.FilterBarFrames(horizontal, _contentWidth, leadingInset, _countWidth,
-            ShowsSimilarityToggle, alignLeading: true,
+            ShowsSimilarityToggle, alignLeading: horizontal && RequiredWidthDp > _contentWidth + .5,
             controlWidth: _compact ? DesignTokens.FilterCompactControlWidth : MainScreenLayout.FilterControlWidth,
             toggleWidth: _compact ? DesignTokens.FilterCompactToggleWidth : MainScreenLayout.FilterControlWidth);
         if (SameFrames(frames, _frames)) return;

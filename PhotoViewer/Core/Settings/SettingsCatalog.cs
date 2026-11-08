@@ -79,7 +79,7 @@ public static class SettingsCatalog
         new("ZoomOutScale", "缩小（比例）", "\uf94e", "缩小", false,
             Mouse(MouseAction.WheelDown, GestureModifiers.Control)),
         new("ToggleAnalysisView", "分析栏展开/收纳", "\ufad2", "分析栏", false),
-        new("ToggleEnhance", "雾天增强", "", "雾天增强", true,
+        new("ToggleEnhance", "雾天增强", "\uf406", "雾天增强", true,
             Key(GestureKey.E)),
         new("SetRating0", "评分 0 星", "\uf4f4", "0 星", false,
             Key(GestureKey.OemTilde),

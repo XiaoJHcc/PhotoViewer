@@ -39,6 +39,7 @@ public sealed class AndroidNativeActivity : AppCompatActivity
             Window!.ColorMode = ActivityColorMode.WideColorGamut;
         var root = Native.AndroidNativeShell.CreateRootView(this, Intent);
         SetContentView(root);
+        ApplySystemBarVisibility();
         OnBackPressedDispatcher.AddCallback(this, new NativeBackCallback(this));
         if (Intent?.GetBooleanExtra("pv-settings", false) == true)
         {
@@ -46,6 +47,25 @@ public sealed class AndroidNativeActivity : AppCompatActivity
         }
         Console.WriteLine("[Native] AndroidNativeActivity 就绪");
     }
+
+    /// <summary>横屏隐藏状态栏，竖屏恢复；配置变化不重建 Activity，因此在这里同步系统栏。</summary>
+    public override void OnConfigurationChanged(global::Android.Content.Res.Configuration newConfig)
+    {
+        base.OnConfigurationChanged(newConfig);
+        ApplySystemBarVisibility();
+    }
+
+    /// <summary>系统界面或对话框返回后重新应用当前方向的状态栏可见性。</summary>
+    public override void OnWindowFocusChanged(bool hasFocus)
+    {
+        base.OnWindowFocusChanged(hasFocus);
+        if (hasFocus) ApplySystemBarVisibility();
+    }
+
+    /// <summary>当前系统状态栏是否可见（layout 验收读取）。</summary>
+    internal bool IsStatusBarVisibleForChecks() => AndroidSystemBars.IsStatusBarVisible(this);
+
+    private void ApplySystemBarVisibility() => AndroidSystemBars.Apply(this);
 
     /// <summary>
     /// Activity 可见（进入前台）：恢复后台预取，并按存活预取器重新计划邻居与当前图 Full 预热。

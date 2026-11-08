@@ -313,7 +313,7 @@ public static class DesignTokens
     public const double FilterCountHeight = 17.0;
     /// <summary>filter.gap（pt） FILTER-01：筛选条控件之间的间距。</summary>
     public const double FilterGap = 5.0;
-    /// <summary>filter.margin（pt） FILTER-01：筛选条四周外边距（列布局为尾部外边距；行布局整组居中的最小边距，Android 前导对齐时为起点）。</summary>
+    /// <summary>filter.margin（pt） FILTER-01：筛选条四周外边距（列布局为尾部外边距；行布局整组居中的最小边距，Android 仅自然宽度溢出时作为滚动文档前导起点）。</summary>
     public const double FilterMargin = 10.0;
     /// <summary>filter.toggle.cornerRadius（pt） FILTER-01：相似聚类 toggle 自绘药丸圆角。</summary>
     public const double FilterToggleCornerRadius = 6.0;
@@ -541,7 +541,7 @@ public static class DesignTokens
     public const double ShellDividerThickness = 1.0;
     /// <summary>shell.filebar.content.width（pt） SHELL-01：文件栏内容宽（筛选条与胶片栏共用，分隔线另计 1）。</summary>
     public const double ShellFilebarContentWidth = 116.0;
-    /// <summary>shell.filter.leadingInset（pt） SHELL-02：macOS 列布局筛选条首控件顶边让位 = shell.titlebar.height + filter.margin（避开标题栏与交通灯）；iOS/Android 使用真实安全区。行布局整组居中，Android 保留从内容前导边 + filter.margin 起排的平台差异。</summary>
+    /// <summary>shell.filter.leadingInset（pt） SHELL-02：仅 macOS 列布局筛选条首控件顶边让位 = shell.titlebar.height + filter.margin（避开标题栏与交通灯）；iOS/Android 使用真实安全区与普通 filter.margin。行布局整组居中，Android 仅在自然宽度溢出时前导起排并滚动。</summary>
     public const double ShellFilterLeadingInset = 42.0;
     /// <summary>shell.titlebar.backdrop.blurAmount（pt） SHELL-02：Windows 主图渲染器在标题栏下绘制亚克力时的高斯模糊标准差（与 WinUI AcrylicBrush 的 BlurAmount 同值，按物理倍率换算到像素）。</summary>
     public const double ShellTitlebarBackdropBlurAmount = 30.0;
