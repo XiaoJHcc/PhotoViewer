@@ -182,6 +182,11 @@ public class MainViewModel : ViewModelBase, IDisposable
         lock (_ratingRefreshLock) _ratingRefreshVersions.Clear();
         PhotoViewer.Core.AI.ShakeFlagService.RecheckRequested -= _recheckShakeFlags;
         OpenCoordinator.Dispose();
+#if PHOTOVIEWER_DINO
+        // 相似面板先取消自己的在途统计/计算与提取,再让文件源释放会话;
+        // 提取自己的存储访问租约由后台任务在收尾时归还,UI 线程不等它结束。
+        FileVM.SimilarityPanel.Dispose();
+#endif
         FolderVM.Dispose();
         RatingSources.Dispose();
         Settings.Dispose();

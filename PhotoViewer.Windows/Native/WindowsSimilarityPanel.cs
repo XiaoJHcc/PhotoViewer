@@ -61,8 +61,8 @@ internal sealed class WindowsSimilarityPanel : Grid
         _rate = rate;
         _showSources = showSources;
 
-        _emptyActions = new SimilarityActionView(StartIndexing);
-        _dockedActions = new SimilarityActionView(StartIndexing);
+        _emptyActions = new SimilarityActionView(StartIndexing, showUnindexedCount: false);
+        _dockedActions = new SimilarityActionView(StartIndexing, showUnindexedCount: true);
 
         _unindexedPlaceholder = Placeholder("尚未提取特征");
         _fullPlaceholder = Placeholder("无相似照片");
@@ -378,7 +378,8 @@ internal sealed class WindowsSimilarityPanel : Grid
 
     /// <summary>
     /// 动作区(未提取张数 + "提取全部/补齐全部"按钮,提取中原地换成进度条)。
-    /// 空态与有列表两处各用一个实例(旧壳同样是两份控件)。
+    /// 空态与有列表两处各用一个实例(旧壳同样是两份控件):空态不重复显示「N 张未提取」(SIM-02),
+    /// 列表态停靠区才显示计数。
     /// </summary>
     private sealed class SimilarityActionView : StackPanel
     {
@@ -388,13 +389,18 @@ internal sealed class WindowsSimilarityPanel : Grid
         private readonly Border _progressFill;
         private readonly TextBlock _progressText;
         private readonly Grid _progressHost;
+        private readonly bool _showUnindexedCount;
 
         /// <summary>
         /// 创建动作区。
         /// </summary>
         /// <param name="start">开始提取回调</param>
-        public SimilarityActionView(Action start)
+        /// <param name="showUnindexedCount">
+        /// 是否显示「N 张未提取」:列表态停靠区显示,空态不重复计数(SIM-02)。
+        /// </param>
+        public SimilarityActionView(Action start, bool showUnindexedCount)
         {
+            _showUnindexedCount = showUnindexedCount;
             Spacing = WindowsLayout.SimilarityActionSpacing;
             HorizontalAlignment = HorizontalAlignment.Center;
             _caption = new TextBlock
@@ -475,12 +481,22 @@ internal sealed class WindowsSimilarityPanel : Grid
         public void Refresh(SimilarityPanelViewModel panel)
         {
             _caption.Text = $"{panel.UnindexedCount} 张未提取";
-            _caption.Visibility = panel.HasUnindexed ? Visibility.Visible : Visibility.Collapsed;
+            _caption.Visibility = _showUnindexedCount && panel.HasUnindexed
+                ? Visibility.Visible
+                : Visibility.Collapsed;
             _button.Content = panel.ActionButtonText;
             _button.Visibility = panel.ShowActionButton ? Visibility.Visible : Visibility.Collapsed;
             _progressHost.Visibility = panel.IsStateIndexing ? Visibility.Visible : Visibility.Collapsed;
-            double total = Math.Max(1, panel.IndexTotal);
-            double fraction = panel.IsIndexTotalUnknown ? 1 : Math.Clamp(panel.IndexProgress / total, 0, 1);
+
+            // 总数未知(本轮分组还没统计出来)走不定态:整条填满 + 短文本,不显示 0 / 0。
+            if (panel.IsIndexTotalUnknown)
+            {
+                _progressFill.Width = Math.Max(0, WindowsLayout.SimilarityActionWidth - 2);
+                _progressText.Text = "提取中…";
+                return;
+            }
+
+            double fraction = Math.Clamp(panel.IndexProgress / (double)Math.Max(1, panel.IndexTotal), 0, 1);
             _progressFill.Width = Math.Max(0, (WindowsLayout.SimilarityActionWidth - 2) * fraction);
             _progressText.Text = $"{panel.IndexProgress} / {panel.IndexTotal}";
         }

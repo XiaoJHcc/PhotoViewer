@@ -9,7 +9,9 @@ namespace CoreContractCheck;
 /// 非 P0 并发准入的检查与记账必须原子提交（不越级别预留上限）、被拒申请不涨在途预留、许可归还归零、
 /// P0 始终豁免但记账、Warning/Critical 优先级矩阵一致；
 /// 池在持续压力下 Trim 之后不得被后续归还重新填满，恢复 Normal 后可正常池化。
-/// 用例只注入替身预算源驱动真实状态机与真实级联修剪，结束时把预算源、压力级别与池设置复原。
+/// 批量分析的显式意图路径（Caution/Warning 按实测字节放行、Critical 仍拒、可用量 0 走数值判据、
+/// 作用域拒因隔离、取消代际、CPU 调度器通道互斥）按真实调用覆盖，不做真实解码、不持分析图租约。
+/// 用例只注入替身预算源驱动真实状态机与真实级联修剪，结束时把预算源、压力级别、池设置与应用活跃闸复原。
 /// </summary>
 internal static class MemoryAdmissionChecks
 {
@@ -45,6 +47,9 @@ internal static class MemoryAdmissionChecks
             RunConcurrentAdmissionChecks(c, provider);
             RunBufferPoolChecks(c, provider);
             RunCacheCapacityChecks(c, provider);
+            RunBatchAnalysisAdmissionChecks(c, provider);
+            RunBatchAnalysisFlowChecks(c, provider);
+            RunAnalysisSchedulerChecks(c);
         }
         finally
         {
@@ -428,6 +433,336 @@ internal static class MemoryAdmissionChecks
             BitmapLoader.AutomaticCacheLimit = previousAutomatic;
             DriveToLevel(provider, PressureLevel.Critical);     // 清空池,与本节其他用例收尾一致
         }
+    }
+
+    // ---- 批量分析上下文与显式分析准入口 ----
+
+    /// <summary>分析批次的工作集申请量（实测字节口径，非 P0）。</summary>
+    private const long AnalysisRequest = 4 * Mib;
+
+    /// <summary>取走本执行流作用域上记录的准入拒因（没有则 null）；与取图入口同一语义，取出即清空。</summary>
+    private static AnalysisMemoryException? TakeRefusal()
+    {
+        try
+        {
+            BatchAnalysisContext.ThrowIfAdmissionRefused();
+            return null;
+        }
+        catch (AnalysisMemoryException refusal)
+        {
+            return refusal;
+        }
+    }
+
+    /// <summary>等在途预留归零（短超时：宁可跳过本节，也不挂住工具）。</summary>
+    private static long DrainReserved()
+    {
+        SpinWait.SpinUntil(() => MemoryGovernor.ReservedBytes == 0, TimeSpan.FromSeconds(2));
+        return MemoryGovernor.ReservedBytes;
+    }
+
+    /// <summary>
+    /// 显式分析意图（<see cref="BatchAnalysisContext.IsActive"/>）的准入口真实调用回归：
+    /// Caution/Warning 下 P3 分析申请按实测字节获批、同级别作用域外的普通 P3 仍被拒、Critical 仍拒、
+    /// 可用量 0 走数值判据（不靠刷新级别）、许可归还在途预留回基线。
+    /// 全节只走公开 API，不做真实解码，也不持分析图租约（否则第二条 root 会无限等）。
+    /// </summary>
+    private static void RunBatchAnalysisAdmissionChecks(Checks c, FakeBudgetProvider provider)
+    {
+        c.Section("批量分析上下文与显式分析准入口");
+
+        long baseline = DrainReserved();
+        if (baseline != 0)
+        {
+            c.Skip("批量分析准入口契约", $"在途预留 {baseline} 字节未归零，跳过以免在污染的账本上断言");
+            return;
+        }
+
+        // 作用域外（无分析意图）：Warning 起普通 P3 仍按压力级别拒绝
+        DriveToLevel(provider, PressureLevel.Warning);
+        bool outsideGranted = MemoryGovernor.TryAcquire(AnalysisRequest, DecodePriority.P3_Background, out _);
+        c.True("Warning 下作用域外普通 P3 仍被拒", !outsideGranted);
+        c.Equal("作用域外被拒不涨在途预留", baseline, MemoryGovernor.ReservedBytes);
+
+        // 作用域内：Caution/Warning 不按级别拒绝，改按实测预算/可用量/在途判据
+        foreach (var level in new[] { PressureLevel.Caution, PressureLevel.Warning })
+        {
+            DriveToLevel(provider, level);
+            using var scope = BatchAnalysisContext.Enter();
+            c.True($"{level} 下作用域内声明为分析批次", BatchAnalysisContext.IsActive);
+
+            bool granted = MemoryGovernor.TryAcquire(AnalysisRequest, DecodePriority.P3_Background, out var permit);
+            c.True($"{level} 下作用域内 P3 分析申请按实测字节获批", granted && permit != null);
+            c.Equal($"{level} 下获批即时计入在途预留", baseline + AnalysisRequest, MemoryGovernor.ReservedBytes);
+
+            permit?.Dispose();
+            c.Equal($"{level} 下许可归还在途预留回基线", baseline, MemoryGovernor.ReservedBytes);
+            c.True($"{level} 下获批不记准入拒因", TakeRefusal() == null);
+        }
+
+        c.True("退出作用域后不再处于分析批次", !BatchAnalysisContext.IsActive);
+
+        // Critical：分析意图也不放行（只保留 P0 豁免）
+        DriveToLevel(provider, PressureLevel.Critical);
+        using (var criticalScope = BatchAnalysisContext.Enter())
+        {
+            bool granted = MemoryGovernor.TryAcquire(AnalysisRequest, DecodePriority.P3_Background, out var permit);
+            permit?.Dispose();
+            var refusal = TakeRefusal();
+            string reason = refusal?.Reason ?? string.Empty;
+            c.True("Critical 下作用域内分析申请仍被拒", !granted);
+            c.True("Critical 拒绝原因指向严重不足", reason.Contains("严重"), refusal == null ? "未记录拒绝原因" : "原因=" + reason);
+            c.Equal("Critical 被拒不涨在途预留", baseline, MemoryGovernor.ReservedBytes);
+        }
+
+        // 可用量 0：只改读数、不跑探测（级别留在 Caution），拒绝必须来自数值判据
+        DriveToLevel(provider, PressureLevel.Caution);
+        var levelBefore = MemoryGovernor.CurrentLevel;
+        provider.AvailableBytes = 0;
+        using (var emptyScope = BatchAnalysisContext.Enter())
+        {
+            bool granted = MemoryGovernor.TryAcquire(AnalysisRequest, DecodePriority.P3_Background, out var permit);
+            permit?.Dispose();
+            var refusal = TakeRefusal();
+            string reason = refusal?.Reason ?? string.Empty;
+            c.True("可用量 0 时分析申请被拒", !granted);
+            c.True("可用量 0 的拒绝来自可用量判据（不是 Critical 级别）",
+                reason.Contains("可用内存不足") && !reason.Contains("严重"),
+                refusal == null ? "未记录拒绝原因" : "原因=" + reason);
+            c.Equal("可用量 0 被拒不涨在途预留", baseline, MemoryGovernor.ReservedBytes);
+        }
+        c.Equal("可用量 0 不改压力级别（拒绝不靠刷新级别）", levelBefore, MemoryGovernor.CurrentLevel);
+        provider.AvailableBytes = long.MaxValue;
+
+        // 回到 Normal：作用域外普通 P3 恢复获批，只在级别/数值判据上被拒过
+        DriveToLevel(provider, PressureLevel.Normal);
+        bool normalGranted = MemoryGovernor.TryAcquire(AnalysisRequest, DecodePriority.P3_Background, out var normalPermit);
+        normalPermit?.Dispose();
+        c.True("Normal 下作用域外普通 P3 获批", normalGranted);
+        c.Equal("作用域外许可归还后在途预留归零", baseline, MemoryGovernor.ReservedBytes);
+    }
+
+    /// <summary>
+    /// 作用域隔离与取消契约的真实调用回归：拒因只记在本操作作用域上（嵌套内层不继承外层、外层不被内层覆盖、
+    /// 并发执行流互不可见）；作用域令牌链在调用方与外层作用域上；应用代际进后台即取消，回前台换新代际且不复活旧令牌。
+    /// </summary>
+    private static void RunBatchAnalysisFlowChecks(Checks c, FakeBudgetProvider provider)
+    {
+        c.Section("批量分析作用域隔离与取消契约");
+
+        long baseline = DrainReserved();
+
+        // 嵌套作用域：拒因归属各自一层
+        DriveToLevel(provider, PressureLevel.Caution);
+        provider.AvailableBytes = 0;    // 只改读数：作用域内的申请都在数值判据上被拒
+        try
+        {
+            using (var outerScope = BatchAnalysisContext.Enter())
+            {
+                MemoryGovernor.TryAcquire(AnalysisRequest, DecodePriority.P3_Background, out _);
+                using (var innerScope = BatchAnalysisContext.Enter())
+                {
+                    c.True("嵌套内层作用域不继承外层拒因", TakeRefusal() == null);
+                    MemoryGovernor.TryAcquire(AnalysisRequest, DecodePriority.P3_Background, out _);
+                    var innerRefusal = TakeRefusal();
+                    c.True("嵌套内层作用域记录自己的拒因",
+                        innerRefusal != null && innerRefusal.Bytes == AnalysisRequest,
+                        innerRefusal == null ? "内层未记录拒因" : "字节数 " + innerRefusal.Bytes);
+                }
+
+                var outerRefusal = TakeRefusal();
+                c.True("外层拒因在内层退出后仍归属外层",
+                    outerRefusal != null && outerRefusal.Bytes == AnalysisRequest,
+                    outerRefusal == null ? "外层拒因被内层覆盖或清除" : "字节数 " + outerRefusal.Bytes);
+            }
+        }
+        finally
+        {
+            provider.AvailableBytes = long.MaxValue;
+        }
+
+        c.True("嵌套作用域全部退出后不在分析批次内", !BatchAnalysisContext.IsActive);
+
+        // 并发执行流（两条并行 stage）：一条记录拒绝、一条正常获批，拒因互不可见
+        DriveToLevel(provider, PressureLevel.Caution);
+        long oversized = (long)(Budget * 0.75);     // 超过 min(预算 50%, 可用 50%) 上限 → 与可用读数无关地必拒
+        bool refusedFlowRefused = false;
+        bool refusedFlowReasoned = false;
+        bool grantedFlowGranted = false;
+        bool grantedFlowClean = false;
+
+        using (var start = new Barrier(2))
+        {
+            var refusedFlow = Task.Run(() =>
+            {
+                using var scope = BatchAnalysisContext.Enter();
+                start.SignalAndWait(TimeSpan.FromSeconds(10));
+                bool granted = MemoryGovernor.TryAcquire(oversized, DecodePriority.P3_Background, out var permit);
+                permit?.Dispose();
+                refusedFlowRefused = !granted;
+                refusedFlowReasoned = TakeRefusal()?.Bytes == oversized;
+            });
+
+            var grantedFlow = Task.Run(() =>
+            {
+                using var scope = BatchAnalysisContext.Enter();
+                start.SignalAndWait(TimeSpan.FromSeconds(10));
+                bool granted = MemoryGovernor.TryAcquire(AnalysisRequest, DecodePriority.P3_Background, out var permit);
+                permit?.Dispose();
+                grantedFlowGranted = granted;
+                grantedFlowClean = TakeRefusal() == null;
+            });
+
+            bool completed;
+            string detail = string.Empty;
+            try
+            {
+                completed = Task.WaitAll(new[] { refusedFlow, grantedFlow }, TimeSpan.FromSeconds(10));
+            }
+            catch (AggregateException failure)
+            {
+                completed = false;
+                detail = failure.InnerException?.Message ?? failure.Message;
+            }
+
+            c.True("并发分析作用域用例按时收尾", completed, detail.Length > 0 ? detail : "10s 内未收尾");
+        }
+
+        c.True("超上限的分析申请被拒并记在自己的作用域上", refusedFlowRefused && refusedFlowReasoned);
+        c.True("另一条并发执行流不受其拒因影响（正常获批且无拒因）", grantedFlowGranted && grantedFlowClean);
+        c.Equal("并发作用域许可归还后在途预留回基线", baseline, MemoryGovernor.ReservedBytes);
+
+        // 取消令牌：调用方令牌链到外层作用域，外层链到内层；退出作用域后回到未激活
+        c.True("进入作用域前不存在批次令牌", !BatchAnalysisContext.CancellationToken().CanBeCanceled);
+        using (var caller = new CancellationTokenSource())
+        {
+            using (var outer = BatchAnalysisContext.Enter(caller.Token))
+            {
+                c.True("作用域令牌链在调用方令牌上（未取消时可用）",
+                    !BatchAnalysisContext.CancellationToken().IsCancellationRequested);
+                using (var inner = BatchAnalysisContext.Enter())
+                {
+                    caller.Cancel();
+                    c.True("调用方取消后内层作用域令牌同步取消",
+                        BatchAnalysisContext.CancellationToken().IsCancellationRequested);
+                }
+
+                c.True("调用方取消后外层作用域令牌同步取消",
+                    BatchAnalysisContext.CancellationToken().IsCancellationRequested);
+            }
+        }
+        c.True("退出全部作用域后批次令牌回到未激活",
+            !BatchAnalysisContext.CancellationToken().CanBeCanceled);
+
+        // 应用活跃闸：进后台取消当前代际，回前台换新代际；已取消的批次不因回前台复活
+        var activeGeneration = BatchAnalysisContext.ApplicationToken;
+        c.True("默认在前台且当前代际未取消",
+            BatchAnalysisContext.IsApplicationActive && !activeGeneration.IsCancellationRequested);
+        try
+        {
+            BatchAnalysisContext.SetApplicationActive(false);
+            c.True("进后台立即报告为非活跃并取消当前代际",
+                !BatchAnalysisContext.IsApplicationActive && activeGeneration.IsCancellationRequested);
+
+            using (var backgroundScope = BatchAnalysisContext.Enter())
+                c.True("后台期间进入的作用域继承已取消的代际令牌",
+                    BatchAnalysisContext.CancellationToken().IsCancellationRequested);
+        }
+        finally
+        {
+            BatchAnalysisContext.SetApplicationActive(true);
+        }
+
+        c.True("回前台换新代际且未取消",
+            BatchAnalysisContext.IsApplicationActive
+            && !BatchAnalysisContext.ApplicationToken.IsCancellationRequested
+            && BatchAnalysisContext.ApplicationToken != activeGeneration);
+        c.True("回前台不复活已取消的旧代际令牌", activeGeneration.IsCancellationRequested);
+        using (var foregroundScope = BatchAnalysisContext.Enter())
+            c.True("回前台后的新作用域令牌可用", !BatchAnalysisContext.CancellationToken().IsCancellationRequested);
+
+        DriveToLevel(provider, PressureLevel.Normal);
+    }
+
+    /// <summary>
+    /// 分析 CPU 调度器的通道互斥回归：独占通道（native 推理）占用期间并发通道一个都不开跑，
+    /// 独占任务之间也不重叠。用短 Task 加信号量验证，不做 CPU 重负载，全部等待都有短超时。
+    /// </summary>
+    private static void RunAnalysisSchedulerChecks(Checks c)
+    {
+        c.Section("分析 CPU 调度器通道互斥");
+
+        var exclusiveEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseExclusive = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        int concurrentRuns = 0;
+
+        // 独占通道占住执行槽直到测试放行（同步等待才在槽内，异步让出即释放槽）
+        var exclusive = Task.Factory.StartNew(
+            () =>
+            {
+                exclusiveEntered.TrySetResult(true);
+                releaseExclusive.Task.Wait(TimeSpan.FromSeconds(10));
+            },
+            CancellationToken.None,
+            TaskCreationOptions.None,
+            BatchAnalysisContext.CpuExclusiveScheduler);
+
+        Task[] concurrent = Array.Empty<Task>();
+        try
+        {
+            bool entered = exclusiveEntered.Task.Wait(TimeSpan.FromSeconds(10));
+            c.True("独占通道任务按时开始", entered, "10s 内独占任务未开始");
+
+            if (entered)
+            {
+                concurrent = new[]
+                {
+                    Task.Factory.StartNew(() => { Interlocked.Increment(ref concurrentRuns); }, CancellationToken.None,
+                        TaskCreationOptions.None, BatchAnalysisContext.CpuScheduler),
+                    Task.Factory.StartNew(() => { Interlocked.Increment(ref concurrentRuns); }, CancellationToken.None,
+                        TaskCreationOptions.None, BatchAnalysisContext.CpuScheduler),
+                };
+
+                // 独占通道持槽期间的观察窗（短睡眠，非负载压测）
+                Thread.Sleep(200);
+                c.Equal("独占通道运行期间并发通道未开跑", 0, Volatile.Read(ref concurrentRuns));
+            }
+
+            releaseExclusive.TrySetResult(true);
+
+            if (concurrent.Length > 0)
+            {
+                bool ran = Task.WaitAll(concurrent, TimeSpan.FromSeconds(10));
+                c.True("独占通道释放后并发通道任务全部执行",
+                    ran && Volatile.Read(ref concurrentRuns) == concurrent.Length,
+                    $"已完成 {Volatile.Read(ref concurrentRuns)}/{concurrent.Length}");
+            }
+
+            c.True("独占通道任务按时收尾", exclusive.Wait(TimeSpan.FromSeconds(10)), "10s 内独占任务未收尾");
+        }
+        finally
+        {
+            releaseExclusive.TrySetResult(true);
+        }
+
+        // 独占任务之间互不重叠
+        int exclusiveActive = 0;
+        int overlap = 0;
+        Task ExclusiveProbe() => Task.Factory.StartNew(
+            () =>
+            {
+                if (Interlocked.Increment(ref exclusiveActive) != 1) Interlocked.Increment(ref overlap);
+                Thread.Sleep(100);
+                Interlocked.Decrement(ref exclusiveActive);
+            },
+            CancellationToken.None,
+            TaskCreationOptions.None,
+            BatchAnalysisContext.CpuExclusiveScheduler);
+
+        var probes = new[] { ExclusiveProbe(), ExclusiveProbe() };
+        bool probesRan = Task.WaitAll(probes, TimeSpan.FromSeconds(15));
+        c.True("独占通道任务之间不重叠", probesRan && Volatile.Read(ref overlap) == 0,
+            probesRan ? $"观测到 {overlap} 次重叠" : "独占探测任务未按时收尾");
     }
 
     // ---- 替身预算源与级别驱动 ----

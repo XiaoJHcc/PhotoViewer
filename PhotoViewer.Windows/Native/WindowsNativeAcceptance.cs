@@ -26,6 +26,7 @@ using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Input;
+using PhotoViewer.Core.Memory;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.Core.Storage;
@@ -1490,36 +1491,212 @@ internal sealed partial class WindowsMainWindow
         await Task.Delay(200);
         _root.UpdateLayout();
 
-        _main.FileVM.FilterBar.IsSimilarityPanelOpen = true;
-        await Task.Delay(200);
-        RequireSmoke(_similarity.Visibility == Visibility.Visible, "打开相似聚类开关后面板未显示");
-        RequireSmoke(_similarity.EmptyVisible && !_similarity.ListVisible, "未提取素材应显示空态占位");
-        RequireSmoke(_similarity.ActionButtonText.Length > 0, "空态没有提取按钮文案");
+        var panel = _main.FileVM.SimilarityPanel;
+        var batchFolder = Path.Combine(SmokeOutputDirectory, "fixtures", "similarity-batch");
+        var midrunFolder = Path.Combine(SmokeOutputDirectory, "fixtures", "similarity-midrun");
+        const int batchCount = 3;
+        const int midrunCount = 8;
+        // 两轮使用不同文件名的自有素材，短边均满足 DINO 的 560 像素输入要求。
+        await Task.Run(() =>
+        {
+            CreateSimilarityFixtures(batchFolder, "sim-batch", batchCount);
+            Directory.CreateDirectory(midrunFolder);
+            for (var index = 0; index < midrunCount; index++)
+                File.Copy(Path.GetFullPath("Fixtures/jpeg-large/color-p3-large.jpg"),
+                    Path.Combine(midrunFolder, $"sim-midrun-{index + 1:00}.jpg"), overwrite: true);
+        });
 
-        // 触发"提取全部":12 张 480×320 素材跑 DINO+CV,产物写隔离库
-        _main.FileVM.SimilarityPanel.StartIndexingCommand();
-        await WaitForSmokeAsync(() => !_main.FileVM.SimilarityPanel.IsStateIndexing
-            && _main.FileVM.SimilarityPanel.IndexProgress > 0, "批量特征提取完成", 180);
-        await Task.Delay(300);
-        _root.UpdateLayout();
+        // 真实预算源只包一层:预算/占用/系统内存如实委托,可用量裁到预算的固定比例,让真实状态机进入目标级别。
+        var realProvider = WindowsNativeApplication.MemoryBudgetProvider;
+        var pressure = new SuiteBudgetProvider(realProvider);
+        var prefetchActive = BitmapPrefetcher.IsApplicationActive;
+        BitmapPrefetcher.SetApplicationActive(false);
+        try
+        {
+            _main.FileVM.FilterBar.IsSimilarityPanelOpen = true;
+            await WaitForSmokeAsync(() => _similarity.Visibility == Visibility.Visible, "打开相似聚类开关后面板未显示");
 
-        // 提取完成后,当前照片应能算出相似项(纯色棋盘彼此相似)
-        await WaitForSmokeAsync(() => _main.FileVM.SimilarityPanel.SimilarItems.Count > 0, "相似聚类结果", 60);
-        RequireSmoke(_similarity.ListVisible && _similarity.ItemCount > 0, "相似列表未显示");
+            // 首轮:未提取统计必须自己稳定下来,再按真实可见文本块核对空态(SIM-02)。
+            await OpenFolderForSmokeAsync(batchFolder);
+            await WaitForSmokeAsync(() => _main.FolderVM.AllFiles.Count == batchCount, "相似素材载入", 30);
+            await WaitForStableUnindexedCountAsync(batchCount, "初始未提取统计");
+            await WaitForSmokeAsync(() => _similarity.Visibility == Visibility.Visible, "相似素材载入后面板仍可见");
+            await WaitForSmokeAsync(() => _similarity.EmptyVisible && !_similarity.ListVisible, "未提取素材的空态占位", 20);
+            RequireSmoke(_similarity.ActionButtonText == "提取全部",
+                $"空态按钮文案不是提取全部: {_similarity.ActionButtonText}");
+            await Task.Delay(250);
+            _root.UpdateLayout();
+            var emptyTexts = VisibleTexts(_similarity, _similarity);
+            RequireSmoke(emptyTexts.Count(text => text == "尚未提取特征") == 1,
+                $"空态「尚未提取特征」不是恰好一处: {string.Join(" | ", emptyTexts)}");
+            RequireSmoke(emptyTexts.All(text => !text.Contains("张未提取")),
+                $"空态重复显示了未提取张数: {string.Join(" | ", emptyTexts)}");
+            RequireSmoke(emptyTexts.Count(text => text == "提取全部") == 1,
+                $"空态提取按钮不是恰好一处: {string.Join(" | ", emptyTexts)}");
 
-        // 点选第一个相似项:切主图但保留锚点(相似列表不重排)
-        var first = _main.FileVM.SimilarityPanel.SimilarItems.FirstOrDefault(item => !ReferenceEquals(item.File, _main.CurrentFile));
-        RequireSmoke(first != null, "没有可点选的相似项");
-        var listBefore = _main.FileVM.SimilarityPanel.SimilarItems;
-        _main.FileVM.SimilarityPanel.SelectItemCommand(first!);
-        await Task.Delay(300);
-        RequireSmoke(ReferenceEquals(_main.CurrentFile, first!.File), "点选相似项未切主图");
-        RequireSmoke(ReferenceEquals(listBefore, _main.FileVM.SimilarityPanel.SimilarItems), "点选相似项触发了相似列表重排");
+            // 从 Caution 起跑真实的「提取全部」:可用量裁到预算 30%(不改系统、不实际分配这些字节)。
+            pressure.AvailablePermille = 300;
+            MemoryGovernor.Initialize(pressure, BatchPressureLogPath);
+            var pressureStart = PressureText(pressure);
+            RequireSmoke(MemoryGovernor.CurrentLevel is PressureLevel.Caution or PressureLevel.Warning,
+                $"pressureStart 不在 Caution/Warning,真机余量不足安全边界时不伪造内存状态: {pressureStart}");
 
-        _main.FileVM.FilterBar.IsSimilarityPanelOpen = false;
-        await Task.Delay(150);
-        RequireSmoke(_similarity.Visibility == Visibility.Collapsed, "关闭相似聚类开关后面板仍在");
-        checks.Add("PASS similarity panel: toggle → empty state → extract all → scored list → select switches main image without re-anchoring");
+            var fullsBefore = FullCacheEntries(_main.FolderVM.AllFiles);
+            var startPump = PumpUiHeartbeatUntilAsync(
+                () => !panel.IsStateIndexing && panel.IndexProgress > 0, "Caution 下批量特征提取完成", 240);
+            panel.StartIndexingCommand();
+            var startHeartbeat = await startPump;
+            await Task.Delay(200);
+            _root.UpdateLayout();
+
+            RequireSmoke(string.IsNullOrEmpty(panel.IndexError), $"Caution 下提取报错: {panel.IndexError}");
+            RequireSmoke(panel.UnindexedCount == 0, $"提取完成后仍有 {panel.UnindexedCount} 组未提取");
+            RequireSmoke(panel.IndexTotal == batchCount && panel.IndexProgress == batchCount,
+                $"提取进度不是真实组数: {panel.IndexProgress}/{panel.IndexTotal}, 期望 {batchCount} 组");
+            RequireSmoke(MemoryGovernor.CurrentLevel is PressureLevel.Caution or PressureLevel.Warning,
+                $"提取期间压力级别偏离 Caution/Warning: {PressureText(pressure)}");
+            RequireHeartbeat("Caution 提取", startHeartbeat);
+
+            // 每个指纹组都必须真的三路齐备:真查库,不看进度字段。
+            var batchGroups = await FolderFeatureIndexer.GroupByFingerprintAsync(_main.FolderVM.AllFiles);
+            RequireSmoke(batchGroups.Count == batchCount, $"套件素材分组 {batchGroups.Count} 与素材数 {batchCount} 不符");
+            foreach (var group in batchGroups)
+            {
+                RequireSmoke(!string.IsNullOrEmpty(group.Fingerprint), $"套件素材没有指纹: {group.Representative.Name}");
+                var missing = await FolderFeatureIndexer.EvaluateMissingPartsAsync(group.Fingerprint);
+                RequireSmoke(!missing.AnyMissing,
+                    $"组 {group.Representative.Name} 三路不齐: cls={missing.NeedCls} patches={missing.NeedPatches} cv={missing.NeedCv}");
+            }
+
+            // 分析取图不得把整批全图灌进浏览 LRU(只允许本来就为展示而驻留的那些)。
+            var fullsAfter = FullCacheEntries(_main.FolderVM.AllFiles);
+            var leaked = fullsAfter.Except(fullsBefore, StringComparer.OrdinalIgnoreCase).ToList();
+            RequireSmoke(leaked.Count == 0, $"批量提取把 {leaked.Count} 张全图灌进了浏览 LRU: {string.Join(",", leaked)}");
+            checks.Add($"PASS similarity panel pressure start: pressureStart={pressureStart}; unextracted stats settled at {batchCount} groups; empty state shows 尚未提取特征 once with no repeated 张未提取 ({string.Join("/", emptyTexts)}); extract-all finished without error at {panel.IndexProgress}/{panel.IndexTotal}; {DescribeHeartbeat(startHeartbeat)}; every fingerprint group re-verified through real EvaluateMissingParts (CLS+patch+CV); browse LRU full kept {fullsBefore.Count}→{fullsAfter.Count}");
+
+            // 提取完成后,当前照片应能算出相似项(同构图棋盘彼此相似)
+            await WaitForSmokeAsync(() => panel.SimilarItems.Count > 0, "相似聚类结果", 60);
+            RequireSmoke(_similarity.ListVisible && _similarity.ItemCount > 0, "相似列表未显示");
+
+            // 点选第一个相似项:切主图但保留锚点(相似列表不重排)
+            var first = panel.SimilarItems.FirstOrDefault(item => !ReferenceEquals(item.File, _main.CurrentFile));
+            RequireSmoke(first != null, "没有可点选的相似项");
+            var listBefore = panel.SimilarItems;
+            panel.SelectItemCommand(first!);
+            await Task.Delay(300);
+            RequireSmoke(ReferenceEquals(_main.CurrentFile, first!.File), "点选相似项未切主图");
+            RequireSmoke(ReferenceEquals(listBefore, panel.SimilarItems), "点选相似项触发了相似列表重排");
+
+            // 中途加压使用 8 份 6000×4000 P3 夹具副本，覆盖全幅分析工作集与短命解码。
+            // 从真实余量(Normal)起跑,首个组完成时把可用量压到预算 20%(Warning),流水线必须继续推进到完成。
+            pressure.AvailablePermille = -1;
+            MemoryGovernor.EvaluateNow();
+            var midrunStart = PressureText(pressure);
+            RequireSmoke(MemoryGovernor.CurrentLevel < PressureLevel.Warning,
+                $"中途加压的起跑级别已不低于 Warning,真机余量不足: {midrunStart}");
+
+            await OpenFolderForSmokeAsync(midrunFolder);
+            await WaitForSmokeAsync(() => _main.FolderVM.AllFiles.Count == midrunCount, "中途加压素材载入", 30);
+            await WaitForStableUnindexedCountAsync(midrunCount, "中途加压素材未提取统计");
+            var midrunFiles = _main.FolderVM.AllFiles.ToArray();
+            var midrunGroups = await FolderFeatureIndexer.GroupByFingerprintAsync(midrunFiles);
+            RequireSmoke(midrunGroups.Count == midrunCount, $"中途加压素材分组 {midrunGroups.Count} 与素材数 {midrunCount} 不符");
+            var midrunFullsBefore = FullCacheEntries(midrunFiles);
+
+            var indexer = new FolderFeatureIndexer();
+            var progressGate = new object();
+            var completedSequence = new List<int>();
+            var reportedTotals = new List<int>();
+            var reportedFailures = new List<int>();
+            var switchedAtFirstGroup = false;
+            var switchCompleted = 0;
+            var levelAfterSwitch = MemoryGovernor.CurrentLevel;
+            void OnProgress(IndexProgress progress)
+            {
+                var switchNow = false;
+                lock (progressGate)
+                {
+                    reportedTotals.Add(progress.Total);
+                    reportedFailures.Add(progress.Failed);
+                    if (progress.Completed > 0) completedSequence.Add(progress.Completed);
+                    if (!switchedAtFirstGroup && progress.Completed > 0)
+                    {
+                        switchedAtFirstGroup = true;
+                        switchCompleted = progress.Completed;
+                        switchNow = true;
+                    }
+                }
+
+                if (!switchNow) return;
+                pressure.AvailablePermille = 200;
+                MemoryGovernor.EvaluateNow();
+                levelAfterSwitch = MemoryGovernor.CurrentLevel;
+            }
+
+            indexer.ProgressChanged += OnProgress;
+            try
+            {
+                var midrun = indexer.RunAsync(midrunFiles);
+                var midrunHeartbeat = await PumpUiHeartbeatUntilAsync(
+                    () => midrun.IsCompleted, "中途加压批量提取完成", 240);
+                await midrun;
+
+                RequireSmoke(switchedAtFirstGroup, "中途加压没有在首个组完成时触发");
+                RequireSmoke(levelAfterSwitch == PressureLevel.Warning,
+                    $"首个组完成时把可用量压到预算 20% 后级别不是 Warning: level={levelAfterSwitch}, {PressureText(pressure)}");
+                RequireSmoke(MemoryGovernor.CurrentLevel == PressureLevel.Warning,
+                    $"中途加压后级别没有保持 Warning: {PressureText(pressure)}");
+                RequireSmoke(indexer.LastError == null, $"中途加压提取失败: {indexer.LastError}");
+                RequireHeartbeat("中途加压提取", midrunHeartbeat);
+                lock (progressGate)
+                {
+                    RequireSmoke(completedSequence.SequenceEqual(Enumerable.Range(1, midrunCount)),
+                        $"每组完成事件不是恰好一次: {string.Join(",", completedSequence)}");
+                    RequireSmoke(reportedTotals.Count > 0 && reportedTotals.All(total => total == midrunCount),
+                        $"进度总量不是真实组数: {string.Join(",", reportedTotals.Distinct())}");
+                    RequireSmoke(reportedFailures.All(failed => failed == 0),
+                        $"存在失败组: max={reportedFailures.Max()}");
+                }
+
+                foreach (var group in midrunGroups)
+                {
+                    RequireSmoke(!string.IsNullOrEmpty(group.Fingerprint), $"中途加压素材没有指纹: {group.Representative.Name}");
+                    var missing = await FolderFeatureIndexer.EvaluateMissingPartsAsync(group.Fingerprint);
+                    RequireSmoke(!missing.AnyMissing,
+                        $"组 {group.Representative.Name} 三路不齐: cls={missing.NeedCls} patches={missing.NeedPatches} cv={missing.NeedCv}");
+                    var cv = await PhotoDatabase.ReadCvGridAsync(group.Fingerprint);
+                    RequireSmoke(cv is { ImageWidth: 6000, ImageHeight: 4000 },
+                        $"组 {group.Representative.Name} 的 CV 并非原始 6000×4000: {cv?.ImageWidth}×{cv?.ImageHeight}");
+                }
+
+                var midrunFullsAfter = FullCacheEntries(midrunFiles);
+                var midrunLeaked = midrunFullsAfter.Except(midrunFullsBefore, StringComparer.OrdinalIgnoreCase).ToList();
+                RequireSmoke(midrunLeaked.Count == 0,
+                    $"中途加压提取把 {midrunLeaked.Count} 张全图灌进了浏览 LRU: {string.Join(",", midrunLeaked)}");
+                checks.Add($"PASS similarity extraction mid-run pressure: {midrunStart} → Warning after group {switchCompleted}/{midrunCount} (level={levelAfterSwitch}) and the pipeline still finished; per-group progress exactly once with real totals ({midrunCount}); LastError empty; all {midrunCount} fingerprints re-verified CLS+patch+CV in the isolated DB; {DescribeHeartbeat(midrunHeartbeat)}; browse LRU full {midrunFullsBefore.Count}→{midrunFullsAfter.Count} with no batch full added");
+            }
+            finally
+            {
+                indexer.ProgressChanged -= OnProgress;
+            }
+
+            _main.FileVM.FilterBar.IsSimilarityPanelOpen = false;
+            await Task.Delay(150);
+            RequireSmoke(_similarity.Visibility == Visibility.Collapsed, "关闭相似聚类开关后面板仍在");
+            checks.Add("PASS similarity panel: toggle → empty state → extract all → scored list → select switches main image without re-anchoring");
+        }
+        finally
+        {
+            // 无论成败都恢复真实预算源(显式隔离日志路径,不写用户目录)、应用活跃闸与套件自有的缓存。
+            pressure.AvailablePermille = -1;
+            MemoryGovernor.Initialize(realProvider, Path.Combine(SmokeOutputDirectory, "memory-events.jsonl"));
+            BatchAnalysisContext.SetApplicationActive(true);
+            BitmapPrefetcher.SetApplicationActive(prefetchActive);
+            AnalysisResultCache.InvalidateAll();
+            DinoFeatureCache.InvalidateAll();
+            _main.FileVM.FilterBar.IsSimilarityPanelOpen = false;
+            await Task.Delay(150);
+        }
 #else
         _main.Settings.LayoutMode = LayoutMode.Col;
         await Task.Delay(200);
@@ -1541,6 +1718,193 @@ internal sealed partial class WindowsMainWindow
 
         await RunAnalysisDbPathCheckAsync(checks);
     }
+
+#if PHOTOVIEWER_DINO
+    /// <summary>提取期间 UI dispatcher 心跳的最大允许间隔(毫秒);超过即视为界面在提取中被卡住。</summary>
+    private const int UiHeartbeatMaxGapMs = 2000;
+
+    /// <summary>套件自有的内存事件日志:批量提取的压力试验单独落一份,不写用户目录。</summary>
+    private static string BatchPressureLogPath => Path.Combine(SmokeOutputDirectory, "memory-events-batch.jsonl");
+
+    /// <summary>
+    /// 验收专用预算源:预算/占用/系统内存如实委托真实 provider,只把可用量裁到「预算 × 千分比」。
+    /// 只让 <see cref="MemoryGovernor"/> 按真实读数进入目标压力级别,不改系统内存、不实际分配这些字节。
+    /// </summary>
+    private sealed class SuiteBudgetProvider(IMemoryBudgetProvider inner) : IMemoryBudgetProvider
+    {
+        private int _availablePermille = -1;
+
+        /// <summary>可用量相对预算的千分比(300 = 预算 30%);负值表示不裁剪、如实使用真机余量。整数读写,探测线程与提取线程之间不会读到撕裂值。</summary>
+        internal int AvailablePermille
+        {
+            get => System.Threading.Volatile.Read(ref _availablePermille);
+            set => System.Threading.Volatile.Write(ref _availablePermille, value);
+        }
+
+        public long GetBudgetBytes() => inner.GetBudgetBytes();
+
+        public long GetFootprintBytes() => inner.GetFootprintBytes();
+
+        public SystemMemoryInfo GetSystemMemoryInfo() => inner.GetSystemMemoryInfo();
+
+        public long GetAvailableBytes()
+        {
+            long budget = inner.GetBudgetBytes();
+            long real = inner.GetAvailableBytes();
+            int permille = System.Threading.Volatile.Read(ref _availablePermille);
+            if (permille < 0 || budget <= 0) return real;
+            long cap = (long)((double)budget * permille / 1000.0);
+            return real == long.MaxValue ? cap : Math.Min(real, cap);
+        }
+
+        /// <summary>真机余量(未裁剪),只用于验收读数,不送给状态机。</summary>
+        internal long RealAvailableBytes => inner.GetAvailableBytes();
+    }
+
+    /// <summary>当前压力读数(预算/真机余量/送入状态机的可用量/级别),用于断言失败信息与检查记录。</summary>
+    private static string PressureText(SuiteBudgetProvider provider)
+    {
+        long budget = provider.GetBudgetBytes();
+        long effective = provider.GetAvailableBytes();
+        long real = provider.RealAvailableBytes;
+        double percent = budget > 0 && effective != long.MaxValue ? 100.0 * effective / budget : double.NaN;
+        return $"level={MemoryGovernor.CurrentLevel} budget={budget >> 20}MB real={real >> 20}MB"
+            + $" effective={effective >> 20}MB ({percent:0.#}% of budget)";
+    }
+
+    /// <summary>等未提取统计自己稳定下来:连续两次取样都等于期望组数(不靠固定延时,也不只看字段名)。</summary>
+    /// <param name="expected">期望的未提取组数。</param>
+    /// <param name="stage">超时诊断阶段。</param>
+    /// <returns>统计稳定后的任务。</returns>
+    private async Task WaitForStableUnindexedCountAsync(int expected, string stage)
+    {
+        var previous = int.MinValue;
+        await WaitForSmokeAsync(() =>
+        {
+            var current = _main.FileVM.SimilarityPanel.UnindexedCount;
+            var stable = current == expected && previous == expected;
+            previous = current;
+            return stable;
+        }, $"{stage}(期望 {expected} 组)", 90);
+    }
+
+    /// <summary>只取 <see cref="DescribeTextBlocks"/> 判为 @visible 的文本块内容,即用户真正看得见的文字。</summary>
+    /// <param name="root">起始元素。</param>
+    /// <param name="viewport">可见性判定的视口。</param>
+    /// <returns>可见文本块内容。</returns>
+    private static List<string> VisibleTexts(DependencyObject root, FrameworkElement viewport)
+    {
+        var texts = new List<string>();
+        foreach (var part in DescribeTextBlocks(root, viewport, out _).Split('|'))
+        {
+            var entry = part.Trim();
+            if (!entry.StartsWith('[') || !entry.EndsWith("@visible]", StringComparison.Ordinal)) continue;
+            var colon = entry.LastIndexOf(':');
+            if (colon > 1) texts.Add(entry[1..colon]);
+        }
+
+        return texts;
+    }
+
+    /// <summary>
+    /// 等待条件成立期间持续向真实 UI dispatcher 投递心跳,记录投递次数与相邻两次之间的最大间隔。
+    /// 心跳与状态检查都在 UI 线程上跑:界面被同步工作卡住时心跳自然会迟,不用假 dispatcher 也能测出停顿。
+    /// </summary>
+    /// <param name="condition">就绪条件(在 UI 线程上求值)。</param>
+    /// <param name="stage">超时诊断阶段。</param>
+    /// <param name="timeoutSeconds">超时秒数。</param>
+    /// <returns>心跳次数、最大间隔与总时长。</returns>
+    private static async Task<(int Beats, double MaxGapMs, double ElapsedMs)> PumpUiHeartbeatUntilAsync(
+        Func<bool> condition, string stage, int timeoutSeconds)
+    {
+        var clock = Stopwatch.StartNew();
+        var gate = new object();
+        var beats = 0;
+        double lastMs = 0;
+        double maxGapMs = 0;
+
+        void Beat()
+        {
+            var now = clock.Elapsed.TotalMilliseconds;
+            lock (gate)
+            {
+                if (beats > 0) maxGapMs = Math.Max(maxGapMs, now - lastMs);
+                lastMs = now;
+                beats++;
+            }
+        }
+
+        while (true)
+        {
+            UiDispatcher.Post(Beat);
+            if (condition())
+            {
+                // 让最后一次投递真正落到 dispatcher 上再读心跳值。
+                await Task.Delay(120);
+                lock (gate) return (beats, maxGapMs, clock.Elapsed.TotalMilliseconds);
+            }
+
+            if (clock.Elapsed > TimeSpan.FromSeconds(timeoutSeconds)) throw new TimeoutException(stage);
+            await Task.Delay(100);
+        }
+    }
+
+    /// <summary>断言心跳最大间隔在上界内,失败信息带上实值。</summary>
+    /// <param name="stage">阶段名。</param>
+    /// <param name="heartbeat">心跳读数。</param>
+    private static void RequireHeartbeat(string stage, (int Beats, double MaxGapMs, double ElapsedMs) heartbeat)
+        => RequireSmoke(heartbeat.Beats > 0 && heartbeat.MaxGapMs <= UiHeartbeatMaxGapMs,
+            $"{stage}期间 UI dispatcher 心跳最大间隔 {heartbeat.MaxGapMs:0}ms 超过 {UiHeartbeatMaxGapMs}ms 上界({DescribeHeartbeat(heartbeat)})");
+
+    /// <summary>心跳读数文字。</summary>
+    /// <param name="heartbeat">心跳读数。</param>
+    /// <returns>可记录到检查项的一行文字。</returns>
+    private static string DescribeHeartbeat((int Beats, double MaxGapMs, double ElapsedMs) heartbeat)
+        => $"heartbeat beats={heartbeat.Beats} maxgap={heartbeat.MaxGapMs:0}ms over {heartbeat.ElapsedMs / 1000:0.0}s";
+
+    /// <summary>这批文件里当前留在浏览 LRU 主分区(Full 档)的那些:分析取图不得把整批全图灌进展示缓存。</summary>
+    /// <param name="files">待检查的文件。</param>
+    /// <returns>命中 Full 档的文件名集合。</returns>
+    private HashSet<string> FullCacheEntries(IReadOnlyList<ImageFile> files)
+        => files.Where(file => !ReferenceEquals(file, _main.CurrentFile)
+                && BitmapLoader.IsInCache(file.File.StorageId.Value, ImageSizeClass.Full))
+            .Select(file => file.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 相似聚类与批量提取的套件自有素材:1200×800(短边 800,达到 DINO 的 560 口径)的同构图棋盘 JPEG。
+    /// 结构与取色只按序号轻微变化,同套素材彼此高度相似;文件名互不相同,各自独立成指纹组。
+    /// </summary>
+    /// <param name="folder">素材目录。</param>
+    /// <param name="prefix">文件名前缀。</param>
+    /// <param name="count">张数。</param>
+    private static void CreateSimilarityFixtures(string folder, string prefix, int count)
+    {
+        Directory.CreateDirectory(folder);
+        for (var index = 0; index < count; index++)
+        {
+            var path = Path.Combine(folder, $"{prefix}-{index + 1:00}.jpg");
+            using var bitmap = new SKBitmap(1200, 800);
+            using var canvas = new SKCanvas(bitmap);
+            canvas.Clear(new SKColor((byte)(60 + index * 6), (byte)(60 + index * 6), (byte)(72 + index * 6)));
+            using var paint = new SKPaint();
+            for (var row = 0; row < 8; row++)
+            {
+                for (var column = 0; column < 12; column++)
+                {
+                    paint.Color = (row + column) % 2 == 0
+                        ? new SKColor((byte)(235 - index * 5), (byte)(225 - index * 5), (byte)(205 - index * 5))
+                        : SKColors.DarkSlateBlue;
+                    canvas.DrawRect(column * 100, row * 100, 100, 100, paint);
+                }
+            }
+
+            using var encoded = bitmap.Encode(SKEncodedImageFormat.Jpeg, 90);
+            using var stream = File.Create(path);
+            encoded.SaveTo(stream);
+        }
+    }
+#endif
 
     /// <summary>
     /// <summary>

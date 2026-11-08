@@ -9,6 +9,7 @@ using PhotoViewer.Core;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
+using PhotoViewer.Core.Storage;
 using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.ViewModels.Main.File;
@@ -21,17 +22,40 @@ namespace PhotoViewer.ViewModels.Main.File;
 /// 触发相似项的缩略图加载。面板关闭时取消在途计算,重新展开后按当前图重算。
 /// 面板由两组正交开关驱动:<see cref="HasItems"/> 控制列表/占位,
 /// <see cref="ShowActionArea"/>(= <see cref="HasUnindexed"/> 或 <see cref="IsStateIndexing"/>) 控制按钮/进度条区域。
+/// 批量提取每轮自带文件快照、取消源(链接应用活跃代际与本 VM 生命周期)与根存储访问租约:
+/// 关闭面板、换目录与桌面窗口失焦都不中断,只有应用进入后台(系统后台限制)或宿主释放才终止,
+/// 已写入的部分保留、回前台不隐式续跑(SIM-03)。
 /// </summary>
-public class SimilarityPanelViewModel : ReactiveObject
+public class SimilarityPanelViewModel : ReactiveObject, IDisposable
 {
     private readonly MainViewModel _main;
     private readonly ThumbnailListViewModel _thumbnailList;
     private readonly FolderViewModel _folder;
 
-    private CancellationTokenSource? _computeCts;
+    /// <summary>本 VM 生命周期取消源:释放即取消在途统计与提取,UI 线程不等任务结束。</summary>
+    private readonly CancellationTokenSource _lifetimeCts = new();
 
-    /// <summary>未提取统计的单飞任务:并发调用共享同一轮扫描。</summary>
-    private Task? _unindexedTask;
+    private readonly object _unindexedGate = new();
+    private readonly object _progressGate = new();
+
+    private CancellationTokenSource? _computeCts;
+    private bool _disposed;
+
+    /// <summary>统计单飞:非空即有一轮在跑,新请求复用它;完成与清空在同一次 UI 提交内落定。</summary>
+    private TaskCompletionSource<bool>? _unindexedRun;
+
+    /// <summary>统计代际:目录变化与提取落库只递增它,旧代际的结果不落字段。</summary>
+    private int _unindexedVersion;
+
+    /// <summary>已提交到 UI 字段的代际。</summary>
+    private int _unindexedCommitted;
+
+    private IndexProgress? _pendingProgress;
+    private int _pendingProgressBatch;
+    private bool _progressPostScheduled;
+
+    /// <summary>提取批次代际(UI 线程推进):上一轮迟到的进度投递据此丢弃。</summary>
+    private int _indexBatch;
 
     /// <summary>
     /// 一次性抑制位:由 <see cref="SelectItemCommand"/> 置位,
@@ -181,8 +205,6 @@ public class SimilarityPanelViewModel : ReactiveObject
     /// </summary>
     public bool ShowActionAreaError => HasIndexError && ShowActionArea;
 
-    private FolderFeatureIndexer? _indexer;
-
     // ── 构造 ────────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -227,7 +249,7 @@ public class SimilarityPanelViewModel : ReactiveObject
             .ObserveOn(UiDispatcher.MainThreadScheduler)
             .Subscribe(tuple => { if (IsPanelVisible) _ = RecomputeAsync(_anchorFile); });
 
-        // 面板展开（或文件栏重新可见）时按当前图重算;关闭时取消在途任务。
+        // 面板展开/收起与文件栏显隐都由可见性变化统一处理(展开即按当前图重算并统计)。
         _main.Settings.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName == nameof(SettingsViewModel.SimilarityPanelExpanded))
@@ -240,22 +262,40 @@ public class SimilarityPanelViewModel : ReactiveObject
                 OnPanelVisibilityChanged();
         };
 
-        // 切换/加载文件夹后重新统计未提取数量,避免面板停留在旧文件夹的状态。
+        // 目录变化:先让在途统计失效(不得提交旧目录),面板可见时立刻重扫。
         _folder.AllFilesChanged += () =>
         {
             if (IsPanelVisible)
-                _ = EvaluateUnindexedAsync();
+                _ = EvaluateUnindexedAsync(invalidate: true);
+            else
+                Interlocked.Increment(ref _unindexedVersion);
         };
+    }
 
-        // 面板展开即按当前锚点算一次:旧壳靠切图时顺带算,原生壳只在面板可见时算(SCOPE-01 不在切图隐式推理)。
-        _main.Settings.WhenAnyValue(x => x.SimilarityPanelExpanded)
-            .Skip(1)
-            .Where(open => open)
-            .Subscribe(open =>
-            {
-                _ = EvaluateUnindexedAsync();
-                _ = RecomputeAsync(_anchorFile ?? _main.CurrentFile);
-            });
+    /// <summary>
+    /// 释放:只取消在途相似度计算与批量提取,不阻塞 UI 线程等任务结束。
+    /// 在途提取的收尾(归还存储租约、已入库部分保留)由后台任务自己完成。
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        _computeCts?.Cancel();
+        _computeCts = null;
+        // 不释放令牌源:在途任务仍要读 token 才能自己收尾。
+        _lifetimeCts.Cancel();
+
+        lock (_unindexedGate)
+        {
+            _unindexedRun?.TrySetResult(false);
+            _unindexedRun = null;
+        }
+        lock (_progressGate)
+        {
+            _pendingProgress = null;
+            _progressPostScheduled = false;
+        }
     }
 
     // ── 公共命令 ────────────────────────────────────────────────────────────
@@ -275,14 +315,13 @@ public class SimilarityPanelViewModel : ReactiveObject
         _main.SetCurrentImageKeepAnchor(item.File);
     }
 
-    /// <summary>
-    /// 面板展开时调用:按当前图重算相似列表,并重新统计当前文件夹未提取张数。
-    /// 旧壳的 toggle 与原生面板首次可见都走这里;面板已关闭时由 <see cref="OnPanelVisibilityChanged"/> 丢弃。
-    /// </summary>
+    /// <summary>面板展开时按当前图重算，并重新核对可能在面板关闭期间变化的特征覆盖度。</summary>
     public void OnPanelOpened()
     {
+        if (_disposed || !IsPanelVisible) return;
+
         _anchorFile = _main.CurrentFile;
-        _ = EvaluateUnindexedAsync();
+        _ = EvaluateUnindexedAsync(invalidate: true);
         _ = RecomputeAsync(_anchorFile);
     }
 
@@ -316,43 +355,90 @@ public class SimilarityPanelViewModel : ReactiveObject
     // ── 未提取统计 ──────────────────────────────────────────────────────────
 
     /// <summary>
-    /// 扫描当前文件夹,按指纹聚合后更新 <see cref="UnindexedCount"/>。
-    /// 同次曝光的 RAW+HEIF/JPG 共享指纹,只计为一张待提取。
-    /// 单飞:展开面板、文件夹变化、提取完成都会调用,大文件夹各跑一遍会叠加成全量 EXIF 风暴。
+    /// 请求未提取统计:单飞(在途一轮复用)。<paramref name="invalidate"/> 只用于目录变化与提取落库,
+    /// 面板正常打开复用已提交或正在跑的一轮,不触发无谓重扫。
     /// </summary>
-    private Task EvaluateUnindexedAsync()
+    private Task EvaluateUnindexedAsync(bool invalidate = false)
     {
-        if (_unindexedTask is { IsCompleted: false })
-        {
-            return _unindexedTask;
-        }
+        if (_disposed) return Task.CompletedTask;
+        if (invalidate) Interlocked.Increment(ref _unindexedVersion);
 
-        _unindexedTask = EvaluateUnindexedCoreAsync();
-        return _unindexedTask;
+        lock (_unindexedGate)
+        {
+            if (_unindexedRun != null) return _unindexedRun.Task;
+            if (_unindexedCommitted == Volatile.Read(ref _unindexedVersion)) return Task.CompletedTask;
+
+            var run = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _unindexedRun = run;
+            _ = RunUnindexedAsync(run);
+            return run.Task;
+        }
     }
 
-    /// <summary>未提取统计的实际工作体。</summary>
-    private async Task EvaluateUnindexedCoreAsync()
+    private async Task RunUnindexedAsync(TaskCompletionSource<bool> run)
     {
-        var files = _folder.AllFiles;
-        if (files == null || files.Count == 0)
+        var token = _lifetimeCts.Token;
+        try
         {
-            UiDispatcher.Post(() => UnindexedCount = 0);
-            return;
+            while (!_disposed)
+            {
+                var request = await UiDispatcher.InvokeAsync(() =>
+                    (Version: Volatile.Read(ref _unindexedVersion), Files: _folder.AllFiles.ToArray()))
+                    .ConfigureAwait(false);
+                int count = await Task.Run(() => CountUnindexedAsync(request.Files, token), token)
+                    .ConfigureAwait(false);
+                bool committed = await UiDispatcher.InvokeAsync(() =>
+                {
+                    lock (_unindexedGate)
+                    {
+                        if (!ReferenceEquals(_unindexedRun, run)) return true;
+                        if (_disposed || request.Version != Volatile.Read(ref _unindexedVersion)) return false;
+                        UnindexedCount = count;
+                        _unindexedCommitted = request.Version;
+                        run.TrySetResult(true);
+                        _unindexedRun = null;
+                        return true;
+                    }
+                }).ConfigureAwait(false);
+                if (committed) return;
+            }
         }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("[SimilarityPanel] 未提取统计失败: " + ex.Message);
+        }
+        finally
+        {
+            lock (_unindexedGate)
+            {
+                run.TrySetResult(false);
+                if (ReferenceEquals(_unindexedRun, run)) _unindexedRun = null;
+            }
+        }
+    }
 
-        var groups = await FolderFeatureIndexer.GroupByFingerprintAsync(files).ConfigureAwait(false);
+    /// <summary>
+    /// 按指纹分组统计待提取张数:同次曝光的 RAW/HEIF/JPG 只计一张,三路齐备才算已提取。
+    /// 纯后台执行(不触碰面板字段),取消按文件边界透传。
+    /// </summary>
+    private static async Task<int> CountUnindexedAsync(IReadOnlyList<ImageFile> files, CancellationToken ct)
+    {
+        var groups = await FolderFeatureIndexer.GroupByFingerprintAsync(files, ct).ConfigureAwait(false);
 
-        // 逐组查询库状态:串行即可,并行开连接反而会撞 SQLite 池上限。
         int unindexed = 0;
 
         foreach (var group in groups)
         {
+            ct.ThrowIfCancellationRequested();
+
             try
             {
+                // 无拍摄时间或加载异常的孤立文件也算"未提取"以保持按钮可见
                 if (string.IsNullOrEmpty(group.Fingerprint))
                 {
-                    // 无拍摄时间或加载异常的孤立文件,也算"未提取"以保持按钮可见
                     unindexed++;
                     continue;
                 }
@@ -368,72 +454,223 @@ public class SimilarityPanelViewModel : ReactiveObject
             }
         }
 
-        UiDispatcher.Post(() => UnindexedCount = unindexed);
+        return unindexed;
     }
 
     // ── 批量提取 ────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// 启动批量特征提取任务。切换文件夹后任务继续后台跑完(本期不可中断)。
-    /// 进度按"指纹组"推进 — 同次曝光的 RAW+HEIF/JPG 合并为一组,只跑一次推理。
+    /// 启动一轮批量特征提取(入口在 UI 线程):入口快照 + 根存储租约;取消源链接应用活跃代际与本 VM 生命周期,
+    /// 只有应用进入后台或宿主释放才终止,已入库部分保留(SIM-03)。
     /// </summary>
     private async Task RunIndexingAsync()
     {
+        if (_disposed || IsStateIndexing) return;
+
         var files = _folder.AllFiles;
         if (files == null || files.Count == 0) return;
 
-        _indexer = new FolderFeatureIndexer();
-        IndexProgress = 0;
-        IndexTotal = Math.Max(1, _unindexedCount);
-        IndexError = null;
-        IsStateIndexing = true;
+        // 应用在后台时系统会立刻取消本轮:入口直接拒绝,不留"提取中"假状态。
+        if (!BatchAnalysisContext.IsApplicationActive) return;
 
-        _indexer.ProgressChanged += OnIndexProgress;
+        var snapshot = files.ToArray();
+
+        IStorageAccessSession? lease;
+        try
+        {
+            // 租约在 UI 线程同步建立,必须早于换目录释放旧会话。
+            lease = AcquireRunLease(snapshot);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[SimilarityPanel] 存储访问租约建立失败: {ex.Message}");
+            IndexError = ex.Message;
+            return;
+        }
 
         try
         {
-            await _indexer.RunAsync(files).ConfigureAwait(false);
+            int batch = ++_indexBatch;
+            ResetPendingProgress();
+            IndexProgress = 0;
+            IndexTotal = 0; // 分组总数尚未统计:先按不定态显示,由首个进度事件给出
+            IndexError = null;
+            IsStateIndexing = true;
+
+            var indexer = new FolderFeatureIndexer();
+            using var runCts = CancellationTokenSource.CreateLinkedTokenSource(
+                _lifetimeCts.Token, BatchAnalysisContext.ApplicationToken);
+            var token = runCts.Token;
+
+            void OnProgress(IndexProgress progress) => QueueIndexProgress(batch, progress);
+            indexer.ProgressChanged += OnProgress;
+
+            string? error = null;
+            try
+            {
+                // Attach 是平台权限准入(binder 调用),放后台;未附加成功的文件不进本轮。
+                var attached = await Task.Run(() => AttachAll(lease, snapshot), CancellationToken.None)
+                    .ConfigureAwait(false);
+                error = attached.Error;
+
+                if (attached.Files.Count > 0)
+                    await indexer.RunAsync(attached.Files, token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                // 取消语境在下面按令牌来源判定短原因,不保留异常原文。
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[SimilarityPanel] 批量提取异常: " + ex.Message);
+                error = ex.Message;
+            }
+            finally
+            {
+                indexer.ProgressChanged -= OnProgress;
+                error ??= token.IsCancellationRequested ? CancelReason() : indexer.LastError;
+            }
+
+            // 已入库特征先失效重扫覆盖度:等待最新计数提交到 UI 之后才结束"提取中"。
+            await EvaluateUnindexedAsync(invalidate: true).ConfigureAwait(false);
+
+            // 结束动作、抖动徽标与面板重算在同一次 UI 回合:后台不读面板字段、不改 _computeCts。
+            try
+            {
+                IReadOnlyList<ImageFile>? shakeTarget = null;
+                await UiDispatcher.InvokeAsync(() =>
+                {
+                    FlushIndexProgress();
+                    if (_disposed) return;
+
+                    shakeTarget = _folder.AllFiles;
+                    if (batch != _indexBatch) return;
+
+                    IsStateIndexing = false;
+                    IndexError = error;
+                    if (IsPanelVisible) _ = RecomputeAsync(_anchorFile);
+                }).ConfigureAwait(false);
+
+                if (shakeTarget != null)
+                    await ShakeFlagService.EvaluateAsync(shakeTarget).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[SimilarityPanel] 提取收尾失败: " + ex.Message);
+            }
         }
         finally
         {
-            var error = _indexer.LastError;
-            _indexer.ProgressChanged -= OnIndexProgress;
-            _indexer = null;
-            UiDispatcher.Post(() =>
-            {
-                IsStateIndexing = false;
-                IndexError = error;
-            });
+            // 根租约持到收尾之后:RunAsync、统计与 UI 投递任一步失败都在这里归还。
+            lease?.Dispose();
         }
-
-        // 提取完成后重新判定未提取数量并刷新聚类列表
-        await EvaluateUnindexedAsync().ConfigureAwait(false);
-        // 新数据已落库,按指纹批量回填 ImageFile.IsShake — 直接读 CV grid + 尺寸,不再触发解码
-        await ShakeFlagService.EvaluateAsync(_folder.AllFiles).ConfigureAwait(false);
-        // 提取完成时面板可能已被收起,只在真正可见时重算相似列表。
-        if (IsPanelVisible) _ = RecomputeAsync(_main.CurrentFile);
     }
 
-    private void OnIndexProgress(IndexProgress progress)
+    /// <summary>取消语境的短原因:系统后台限制与宿主释放都不是成功(SIM-03)。</summary>
+    private string CancelReason()
+        => _lifetimeCts.IsCancellationRequested ? "提取已中断（应用退出）" : "提取已中断（应用进入后台）";
+
+    /// <summary>建立本轮根存储访问租约(根取当前文件夹,单图模式回退首张文件);只有平台不支持的会话类型按无租约处理。</summary>
+    private IStorageAccessSession? AcquireRunLease(IReadOnlyList<ImageFile> files)
     {
-        UiDispatcher.Post(() =>
+        IStorageItemRef? root = _folder.CurrentFolder;
+        if (root == null && files.Count > 0) root = files[0].File;
+        if (root == null) return null;
+
+        try
         {
-            IndexProgress = progress.Completed;
-            IndexTotal = progress.Total;
-        });
+            return _main.StorageAccess.Create(root);
+        }
+        catch (StorageException ex) when (ex.Error == StorageError.Unsupported)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>为本轮文件建立访问准入:只返回附加成功的项,首个失败原因一并返回,不在整批上假装通过。</summary>
+    private static (IReadOnlyList<ImageFile> Files, string? Error) AttachAll(
+        IStorageAccessSession? lease, IReadOnlyList<ImageFile> files)
+    {
+        if (lease == null) return (files, null);
+
+        string? error = null;
+        var attached = new List<ImageFile>(files.Count);
+
+        foreach (var file in files)
+        {
+            try
+            {
+                lease.Attach(file.File);
+                attached.Add(file);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[SimilarityPanel] Attach 失败 {file.Name}: {ex.Message}");
+                error ??= ex.Message;
+            }
+        }
+
+        return (attached, error);
+    }
+
+    /// <summary>清空上一轮遗留的待投递进度(新批次从 0 开始)。</summary>
+    private void ResetPendingProgress()
+    {
+        lock (_progressGate)
+        {
+            _pendingProgress = null;
+            _progressPostScheduled = false;
+        }
+    }
+
+    /// <summary>登记最新进度并合并投递:一轮里 UI 线程最多排一次落字段,迟到批次直接丢弃。</summary>
+    private void QueueIndexProgress(int batch, IndexProgress progress)
+    {
+        if (_disposed) return;
+
+        lock (_progressGate)
+        {
+            if (_disposed || batch != Volatile.Read(ref _indexBatch)) return;
+
+            _pendingProgress = progress;
+            _pendingProgressBatch = batch;
+            if (_progressPostScheduled) return;
+            _progressPostScheduled = true;
+        }
+
+        UiDispatcher.Post(FlushIndexProgress);
+    }
+
+    /// <summary>把最新的待投递进度落到 UI 字段;不属于当前批次的迟到值丢弃。</summary>
+    private void FlushIndexProgress()
+    {
+        IndexProgress? pending;
+        int pendingBatch;
+        lock (_progressGate)
+        {
+            pending = _pendingProgress;
+            pendingBatch = _pendingProgressBatch;
+            _pendingProgress = null;
+            _progressPostScheduled = false;
+        }
+
+        if (pending == null || _disposed || pendingBatch != _indexBatch) return;
+
+        IndexProgress = pending.Value.Completed;
+        IndexTotal = pending.Value.Total;
     }
 
     // ── 相似度计算 ──────────────────────────────────────────────────────────
 
     /// <summary>
-    /// 重新计算当前图片的相似项;旧的计算被取消。
-    /// 只在面板展开时计算(共享 5.4/SCOPE-01:切图不隐式推理)。
-    /// 面板收起时先取消在途计算再返回 — 否则收起后那一轮仍会在后台扫全文件夹。
+    /// 重新计算当前图片的相似项(旧计算取消);只在面板可见、应用在前台且处于 UI 线程时发起(SCOPE-01/SIM-06)。
     /// </summary>
     private async Task RecomputeAsync(ImageFile? current)
     {
+        if (_disposed) return;
+
         _computeCts?.Cancel();
-        if (!_main.Settings.SimilarityPanelExpanded) return;
+        if (!IsPanelVisible || !BatchAnalysisContext.IsApplicationActive) return;
 
         var cts = new CancellationTokenSource();
         _computeCts = cts;
@@ -477,7 +714,7 @@ public class SimilarityPanelViewModel : ReactiveObject
     {
         UiDispatcher.Post(() =>
         {
-            if (token.IsCancellationRequested) return;
+            if (_disposed || token.IsCancellationRequested) return;
             SimilarItems = results;
 
             foreach (var item in results)

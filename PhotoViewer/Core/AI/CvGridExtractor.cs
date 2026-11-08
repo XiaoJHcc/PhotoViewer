@@ -56,7 +56,7 @@ public static class CvGridExtractor
     private static CvGridResult Extract(DecodedImage image, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        var (luma, w, h) = ReadLuminance(image);
+        var (luma, w, h) = ReadLuminance(image, ct);
         return ExtractCore(luma, w, h, ct);
     }
 
@@ -80,7 +80,7 @@ public static class CvGridExtractor
         float diagonal = MathF.Sqrt((float)w * w + (float)h * h);
         int maxHalfWidth = Math.Max(MaxHalfWidthMin, (int)MathF.Round(diagonal * MaxHalfWidthRatio));
 
-        Parallel.For(0, Grid * Grid, idx =>
+        RunParallel(0, Grid * Grid, idx =>
         {
             int gy = idx / Grid;
             int gx = idx % Grid;
@@ -104,7 +104,7 @@ public static class CvGridExtractor
             if (bw < CvGridResult.MinBlockSize || bh < CvGridResult.MinBlockSize) return;
 
             ComputeCell(luma, w, h, bx0, by0, bw, bh, gy, gx, maxHalfWidth, data);
-        });
+        }, ct);
 
         return new CvGridResult { Version = CvGridResult.CurrentVersion, Data = data };
     }
@@ -392,7 +392,7 @@ public static class CvGridExtractor
     /// 把图像按 Rec.709 转灰度(Bgra32 字节序:B,G,R,A)。
     /// 短边不足 MinBlockSize 时，<see cref="Extract"/> 会直接返回全 NaN 结果，由热力图渲染层兜底。
     /// </summary>
-    private static (float[] luma, int w, int h) ReadLuminance(DecodedImage image)
+    private static (float[] luma, int w, int h) ReadLuminance(DecodedImage image, CancellationToken ct)
     {
         int w = image.Width;
         int h = image.Height;
@@ -400,7 +400,7 @@ public static class CvGridExtractor
         var src = image.Pixels;
 
         var luma = new float[w * h];
-        Parallel.For(0, h, y =>
+        RunParallel(0, h, y =>
         {
             long row = (long)y * srcStride;
             int dst = y * w;
@@ -412,7 +412,40 @@ public static class CvGridExtractor
                 byte r = src[i + 2];
                 luma[dst + x] = 0.2126f * r + 0.7152f * g + 0.0722f * b;
             }
-        });
+        }, ct);
         return (luma, w, h);
+    }
+
+    /// <summary>按区间并行；批量分析 scope 内改用全局 CPU 调度器，scope 令牌与调用方令牌一并生效。</summary>
+    private static void RunParallel(int from, int to, Action<int> body, CancellationToken ct)
+    {
+        var options = AnalysisParallelOptions(ct, out var linked);
+        try
+        {
+            Parallel.For(from, to, options, body);
+        }
+        finally
+        {
+            linked?.Dispose();
+        }
+    }
+
+    /// <summary>批量 scope 的调度与取消口径；联动令牌源由本方法创建、由调用方释放。</summary>
+    private static ParallelOptions AnalysisParallelOptions(CancellationToken ct, out CancellationTokenSource? linked)
+    {
+        linked = null;
+        if (!BatchAnalysisContext.IsActive) return new ParallelOptions { CancellationToken = ct };
+
+        var scope = BatchAnalysisContext.CancellationToken();
+        if (!ct.CanBeCanceled)
+        {
+            ct = scope;
+        }
+        else if (scope.CanBeCanceled && scope != ct)
+        {
+            linked = CancellationTokenSource.CreateLinkedTokenSource(ct, scope);
+            ct = linked.Token;
+        }
+        return new ParallelOptions { TaskScheduler = BatchAnalysisContext.CpuScheduler, CancellationToken = ct };
     }
 }

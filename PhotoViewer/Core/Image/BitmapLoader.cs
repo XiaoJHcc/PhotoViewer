@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using MetadataExtractor;
+using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Memory;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Storage;
@@ -1345,6 +1346,330 @@ public static class BitmapLoader
             }
             catch { /* 单个失败忽略 */ }
         }
+    }
+
+    // ---- 批量分析取图（显式分析意图，见 BatchAnalysisContext） ----
+
+    /// <summary>分析工作集估算里源编码之外的每像素字节：sRGB8 产物 + 方向变换第二份缓冲 + float 亮度平面。</summary>
+    private const int AnalysisExtraBytesPerPixel = 12;
+
+    /// <summary>元数据缺失时的工作集兜底像素数（单张全画幅量级）。</summary>
+    private const long AnalysisFallbackPixels = 24_000_000;
+
+    /// <summary>缩略图分析预留的像素下限：内嵌预览常见 1600×1200 级，按短边平方估会严重低估。</summary>
+    private const long AnalysisThumbnailMinPixels = 2_000_000;
+
+    /// <summary>
+    /// 取一张分析用全分辨率图的租约：sRGB8、显示朝向、不入展示缓存，工作集许可覆盖到调用方算完。
+    /// 命中展示缓存的 Full（或已达源分辨率的代理）只借原实例，未命中按 Full 口径直接解码。
+    /// 准入被拒抛 <see cref="AnalysisMemoryException"/>；解码失败或只有内嵌预览的伪 Full 抛
+    /// <see cref="InvalidOperationException"/>（调用方可换同组伴侣再试）；取消抛 <see cref="OperationCanceledException"/>。
+    /// </summary>
+    /// <param name="file">文件引用。</param>
+    /// <param name="ct">取消令牌（并入分析作用域与应用代际令牌）。</param>
+    public static Task<AnalysisImageLease> AcquireAnalysisImageAsync(IFileRef file, CancellationToken ct = default)
+    {
+        bool allowWait = !BatchAnalysisContext.InNestedAcquire;
+        // 元数据读取、回收与解码整段都在后台，不占 UI 线程
+        return Task.Run(() => AcquireAnalysisImageCoreAsync(file, ct, allowWait), ct);
+    }
+
+    private static async Task<AnalysisImageLease> AcquireAnalysisImageCoreAsync(
+        IFileRef file, CancellationToken ct, bool allowWait)
+    {
+        using var scope = BatchAnalysisContext.Enter(ct);
+        using var decodeScope = DecodeContext.Enter(DecodePriority.P3_Background);
+        BatchAnalysisContext.EnterAcquire();
+        var token = BatchAnalysisContext.CancellationToken();
+        token.ThrowIfCancellationRequested();
+
+        var filePath = file.StorageId.Value;
+        var encoding = FullRequestEncoding();
+
+        var estimate = await EstimateAnalysisWorkingSetAsync(file, encoding).ConfigureAwait(false);
+        var admission = await ReserveAnalysisAsync(estimate.Bytes, token, allowWait).ConfigureAwait(false);
+
+        DecodedImage? source = null;
+        var handed = false;
+        try
+        {
+            source = TryAcquireAnalysisSource(filePath);
+            bool fromCache = source != null;
+            if (source == null)
+            {
+                BatchAnalysisContext.ClearAdmissionRefusal();
+                source = await DecodeFullForAnalysisAsync(file, encoding, token).ConfigureAwait(false);
+                if (source == null) throw AnalysisFailure(file);
+            }
+
+            if (!IsFullResolution(source, estimate.Width, estimate.Height))
+            {
+                if (!fromCache) throw PseudoFull(file, source);
+                // 缓存里那张不是全分辨率产物：丢弃后按 Full 口径解一次再校验
+                source.Release();
+                source = null;
+                BatchAnalysisContext.ClearAdmissionRefusal();
+                source = await DecodeFullForAnalysisAsync(file, encoding, token).ConfigureAwait(false);
+                if (source == null) throw AnalysisFailure(file);
+                if (!IsFullResolution(source, estimate.Width, estimate.Height)) throw PseudoFull(file, source);
+            }
+
+            BatchAnalysisContext.ClearAdmissionRefusal();
+            long actual = AnalysisWorkingSetBytes((long)source.Width * source.Height, DecodedImage.BytesPerPixel(source.Encoding));
+            if (actual > admission.ReservedBytes && !admission.TryGrow(actual - admission.ReservedBytes))
+                throw BatchAnalysisContext.RefusalException(actual);
+            admission.SetActual(actual);
+
+            var analysis = ColorEngine.ToAnalysisSrgb8(source);
+            source.Release();
+            source = null;
+            handed = true;
+            return new AnalysisImageLease(analysis, admission);
+        }
+        finally
+        {
+            source?.Release();
+            if (!handed) admission.Dispose();
+        }
+    }
+
+    /// <summary>取图失败：优先用本操作记录的准入拒绝原因，否则按解码/格式失败上报（调用方可换伴侣）。</summary>
+    private static Exception AnalysisFailure(IFileRef file)
+        => (Exception?)BatchAnalysisContext.TakeRefusal()
+            ?? new InvalidOperationException($"分析取图失败（解码或格式不支持）：{file.Name}");
+
+    /// <summary>
+    /// 取一张分析用缩略图的租约（推理口径）：选源/缩放/色彩沿用 <see cref="ThumbnailService.GetThumbnailAsync"/>，
+    /// 不经展示缓存，工作集许可覆盖到推理结束。预留按 <see cref="AnalysisThumbnailMinPixels"/> 起步——
+    /// 内嵌预览常见 1600×1200 级，按短边平方估会严重低估，真实尺寸由解码后的差额扩充兜住。
+    /// 异常语义同 <see cref="AcquireAnalysisImageAsync"/>。
+    /// </summary>
+    /// <param name="file">文件引用。</param>
+    /// <param name="shortSide">目标短边像素。</param>
+    /// <param name="ct">取消令牌。</param>
+    public static Task<AnalysisImageLease> AcquireAnalysisThumbnailAsync(
+        IFileRef file, int shortSide, CancellationToken ct = default)
+    {
+        bool allowWait = !BatchAnalysisContext.InNestedAcquire;
+        return Task.Run(() => AcquireAnalysisThumbnailCoreAsync(file, shortSide, ct, allowWait), ct);
+    }
+
+    private static async Task<AnalysisImageLease> AcquireAnalysisThumbnailCoreAsync(
+        IFileRef file, int shortSide, CancellationToken ct, bool allowWait)
+    {
+        using var scope = BatchAnalysisContext.Enter(ct);
+        using var decodeScope = DecodeContext.Enter(DecodePriority.P3_Background);
+        BatchAnalysisContext.EnterAcquire();
+        var token = BatchAnalysisContext.CancellationToken();
+        token.ThrowIfCancellationRequested();
+
+        long pixels = Math.Max(shortSide > 0 ? (long)shortSide * shortSide : 0, AnalysisThumbnailMinPixels);
+        var admission = await ReserveAnalysisAsync(
+            AnalysisWorkingSetBytes(pixels, DecodedImage.BytesPerPixel(PixelEncoding.Bgra32)), token, allowWait).ConfigureAwait(false);
+
+        DecodedImage? thumbnail = null;
+        var handed = false;
+        try
+        {
+            BatchAnalysisContext.ClearAdmissionRefusal();
+            thumbnail = await ThumbnailService
+                .GetThumbnailAsync(file, shortSide, DecodePriority.P3_Background, token)
+                .ConfigureAwait(false);
+            if (thumbnail == null) throw AnalysisFailure(file);
+
+            BatchAnalysisContext.ClearAdmissionRefusal();
+            long actual = AnalysisWorkingSetBytes(
+                (long)thumbnail.Width * thumbnail.Height, DecodedImage.BytesPerPixel(PixelEncoding.Bgra32));
+            if (actual > admission.ReservedBytes && !admission.TryGrow(actual - admission.ReservedBytes))
+                throw BatchAnalysisContext.RefusalException(actual);
+            admission.SetActual(actual);
+
+            handed = true;
+            return new AnalysisImageLease(thumbnail, admission);
+        }
+        finally
+        {
+            if (!handed)
+            {
+                thumbnail?.Release();
+                admission.Dispose();
+            }
+        }
+    }
+
+    /// <summary>
+    /// 分析入口预留不足时的定向回收：只释放空闲像素池与非当前图的主缓存条目（保留排名 0 与缩略图分区）。
+    /// 不触发 <see cref="MemoryGovernor"/> 的级别级联修剪——那会让所有内存 client 按压力口径卸载会话。
+    /// </summary>
+    /// <param name="needBytes">期望腾出的字节数。</param>
+    /// <returns>实际腾出的字节数（含池空闲缓冲）。</returns>
+    public static long ReclaimForAnalysis(long needBytes)
+    {
+        if (needBytes <= 0) return 0;
+        long freed = ImageBufferPool.ReleaseIdle(needBytes);
+        lock (_cleanupLock)
+        {
+            var victims = new List<KeyValuePair<BitmapCacheKey, BitmapCacheItem>>();
+            foreach (var kv in OrderForEviction(thumbScope: false))
+            {
+                if (freed >= needBytes) break;
+                if (RetentionRankOf(kv.Key.Path) == 0) continue;
+                victims.Add(kv);
+                freed += kv.Value.Size;
+            }
+            if (victims.Count > 0) EvictRange(victims);
+        }
+        return freed;
+    }
+
+    /// <summary>
+    /// 分析工作集预留：不足时只要还有可释放的在途 root 就等它释放后重试（无墙钟超时，
+    /// 取消与 Critical 是唯一出口）；没有在途 root 时定向回收后仍放不下才明确失败。
+    /// 嵌套取图不等待（避免与外层所持 root 成环）。
+    /// </summary>
+    /// <param name="bytes">工作集字节数。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <param name="allowWait">是否允许等在对途 root 上。</param>
+    /// <returns>已获批的工作集许可。</returns>
+    private static async Task<AnalysisAdmission> ReserveAnalysisAsync(long bytes, CancellationToken ct, bool allowWait)
+    {
+        while (true)
+        {
+            if (AnalysisAdmission.TryReserve(bytes) is { } reserved)
+            {
+                BatchAnalysisContext.ClearAdmissionRefusal();
+                return reserved;
+            }
+
+            ct.ThrowIfCancellationRequested();
+            if (MemoryGovernor.CurrentLevel == PressureLevel.Critical)
+                throw BatchAnalysisContext.RefusalException(bytes, "可用内存严重不足");
+
+            // 没有可释放的在途 root（或本流程已在取图内）：定向回收后仍不足即明确失败
+            using var waiter = allowWait ? BatchAnalysisContext.WaitForAnalysisRootRelease() : null;
+            if (waiter == null)
+            {
+                ReclaimForAnalysis(bytes);
+                if (AnalysisAdmission.TryReserve(bytes) is { } afterReclaim)
+                {
+                    BatchAnalysisContext.ClearAdmissionRefusal();
+                    return afterReclaim;
+                }
+                throw BatchAnalysisContext.RefusalException(bytes);
+            }
+
+            await waiter.Task.WaitAsync(ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>分析复用展示缓存：Full 档命中，或代理档已达源分辨率（与 Full 请求的跨档复用同判据）。只借原实例。</summary>
+    private static DecodedImage? TryAcquireAnalysisSource(string filePath)
+    {
+        var key = new BitmapCacheKey(filePath, ImageSizeClass.Full);
+        if (_cache.TryGetValue(key, out var item) && item.Image.TryAcquire())
+        {
+            item.UpdateAccessTime();
+            return item.Image;
+        }
+        return TryAcquireSourceResolutionProxy(filePath, FullRequestEncoding());
+    }
+
+    /// <summary>按 Full 口径直接解码（不入 LRU、不并入展示在途任务）。不含内存拒绝时返回 null，取消照常抛出。</summary>
+    private static async Task<DecodedImage?> DecodeFullForAnalysisAsync(
+        IFileRef file, PixelEncoding encoding, CancellationToken ct)
+    {
+        var ticket = DecodeContext.CreateTicket(DecodePriority.P3_Background);
+        try
+        {
+            return await Task.Run(() => LoadBitmapWithExifRotationAsync(file, encoding, ticket, ct), ct)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (AnalysisMemoryException) { throw; }
+        catch (OutOfMemoryException ex)
+        {
+            // 解码器内部的嵌套准入被拒（如 HEIF 快速路径）：按内存受限上报，不当作解码失败
+            var refusal = BatchAnalysisContext.TakeRefusal();
+            throw refusal == null
+                ? new AnalysisMemoryException("内存不足（解码器准入被拒）", 1, ex)
+                : new AnalysisMemoryException(refusal.Reason, refusal.Bytes, ex);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to decode analysis image ({file.Name}): {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 产物是否真是全分辨率：与容器/EXIF 的显示逻辑尺寸比对（长短边分别不低于 95%，兼容方向互换）；
+    /// 逻辑尺寸不可读时退回产物自报的源尺寸。只有内嵌预览的伪 Full 在这里被识别。
+    /// </summary>
+    private static bool IsFullResolution(DecodedImage image, int logicalWidth, int logicalHeight)
+    {
+        int width = logicalWidth;
+        int height = logicalHeight;
+        if (width <= 0 || height <= 0)
+        {
+            width = image.SourceWidth;
+            height = image.SourceHeight;
+        }
+        if (width <= 0 || height <= 0) return true;
+
+        const double tolerance = 0.95;
+        int targetLong = Math.Max(width, height);
+        int targetShort = Math.Min(width, height);
+        return Math.Max(image.Width, image.Height) >= (int)(targetLong * tolerance)
+            && Math.Min(image.Width, image.Height) >= (int)(targetShort * tolerance);
+    }
+
+    private static InvalidOperationException PseudoFull(IFileRef file, DecodedImage image)
+        => new($"分析需要全分辨率产物，但该文件只能取得 {image.Width}×{image.Height} 的内嵌预览：{file.Name}");
+
+    /// <summary>
+    /// 分析工作集字节：源编码 + sRGB8 转换产物 + 方向变换第二份缓冲 + float 亮度平面，
+    /// 再按缓冲池分档对齐上浮 12.5%。
+    /// </summary>
+    private static long AnalysisWorkingSetBytes(long pixels, int sourceBytesPerPixel)
+    {
+        if (pixels <= 0) return 0;
+        long bytes = pixels * (sourceBytesPerPixel + AnalysisExtraBytesPerPixel);
+        return bytes + bytes / 8 + (64L * 1024);
+    }
+
+    /// <summary>
+    /// 解码前的分析工作集估算与逻辑显示尺寸：优先容器/EXIF 逻辑尺寸，其次缓存估算，最后按全画幅兜底。
+    /// 逻辑尺寸同时用于解码后的伪 Full 校验，避免同一张图读两遍元数据。
+    /// </summary>
+    private static async Task<(long Bytes, int Width, int Height)> EstimateAnalysisWorkingSetAsync(
+        IFileRef file, PixelEncoding encoding)
+    {
+        int width = 0, height = 0;
+        long pixels = 0;
+        try
+        {
+            var logical = await GetLogicalDisplaySizeAsync(file).ConfigureAwait(false);
+            if (logical is { } size && size.Width > 0 && size.Height > 0)
+            {
+                width = size.Width;
+                height = size.Height;
+                pixels = (long)width * height;
+            }
+        }
+        catch { /* 元数据读取失败退到下一步 */ }
+
+        if (pixels <= 0)
+        {
+            try
+            {
+                long bytes = await EstimateDecodedSizeAsync(file).ConfigureAwait(false);
+                pixels = bytes / Math.Max(1, PresentationBytesPerPixel);
+            }
+            catch { pixels = 0; }
+        }
+        if (pixels <= 0) pixels = AnalysisFallbackPixels;
+
+        return (AnalysisWorkingSetBytes(pixels, DecodedImage.BytesPerPixel(encoding)), width, height);
     }
     
     /// <summary>

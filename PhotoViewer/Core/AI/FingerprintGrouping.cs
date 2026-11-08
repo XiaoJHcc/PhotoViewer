@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
@@ -19,7 +20,8 @@ public sealed class FingerprintGroup
 /// <summary>只读指纹分组，供批量索引与抖动徽标共用。</summary>
 public static class FingerprintGrouping
 {
-    public static async Task<IReadOnlyList<FingerprintGroup>> GroupByFingerprintAsync(IReadOnlyList<ImageFile> files)
+    public static async Task<IReadOnlyList<FingerprintGroup>> GroupByFingerprintAsync(
+        IReadOnlyList<ImageFile> files, CancellationToken cancellationToken = default)
     {
         var indexed = new Dictionary<string, List<ImageFile>>();
         var indexedInputs = new Dictionary<string, PhotoFingerprintInput>();
@@ -27,11 +29,13 @@ public static class FingerprintGrouping
 
         foreach (var file in files)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 var exif = await file.LoadExifDataAsync().ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
                 if (!file.ModifiedDate.HasValue)
-                    await file.LoadBasicPropertiesAsync().ConfigureAwait(false);
+                    await file.LoadBasicPropertiesAsync(cancellationToken).ConfigureAwait(false);
 
                 var input = PhotoFingerprint.BuildInput(file.Name, exif, file.ModifiedDate?.UtcDateTime);
                 if (!input.CaptureTime.HasValue)
@@ -49,6 +53,10 @@ public static class FingerprintGrouping
                 }
                 list.Add(file);
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 Console.WriteLine($"[FingerprintGrouping] group skip {file.Name}: {ex.Message}");
@@ -56,6 +64,7 @@ public static class FingerprintGrouping
                 orphans.Add(new FingerprintGroup { Fingerprint = "", Input = fallbackInput, Files = new[] { file } });
             }
         }
+        cancellationToken.ThrowIfCancellationRequested();
 
         var result = new List<FingerprintGroup>(indexed.Count + orphans.Count);
         foreach (var (fingerprint, list) in indexed)

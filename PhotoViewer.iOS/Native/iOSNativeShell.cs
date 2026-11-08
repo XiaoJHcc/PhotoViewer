@@ -409,13 +409,22 @@ public static class iOSNativeShell
     }
 
     /// <summary>
-    /// 退到后台时立即落盘设置；退出前先落盘再结束主视图模型（与 Mac 的 Close/Flush/Dispose 顺序同口径）。
+    /// 退到后台时先按系统后台限制终止显式批量提取,再立即落盘设置;
+    /// 退出前先落盘再结束主视图模型（与 Mac 的 Close/Flush/Dispose 顺序同口径）。
+    /// 只听后台/前台切换:控制中心、弹窗与来电中断（WillResignActive）不算后台,不得终止提取。
+    /// 回前台换新应用代际但不自动续跑提取,用户再次提取只补缺失的部分（SIM-03）。
     /// </summary>
     /// <param name="main">共享主 VM。</param>
     private static void SubscribePersistence(MainViewModel main)
     {
         void Flush() => main.SettingsRepository.FlushAsync().GetAwaiter().GetResult();
-        UIApplication.Notifications.ObserveDidEnterBackground((_, _) => Flush());
+        UIApplication.Notifications.ObserveDidEnterBackground((_, _) =>
+        {
+            BatchAnalysisContext.SetApplicationActive(false);
+            Flush();
+        });
+        UIApplication.Notifications.ObserveWillEnterForeground((_, _) =>
+            BatchAnalysisContext.SetApplicationActive(true));
         UIApplication.Notifications.ObserveWillTerminate((_, _) =>
         {
             try

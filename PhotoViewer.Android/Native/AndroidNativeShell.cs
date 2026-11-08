@@ -59,12 +59,15 @@ public static class AndroidNativeShell
     /// <summary>
     /// 应用活跃状态（Activity OnStart/OnStop 调用）：进后台停邻居与当前图 Full 预取、取消尚未开跑与在途的后台工作；
     /// 回前台重新计划邻居与该图 Full 预热。幂等，不借用内存压力通道（不改压力级别、不进恢复观察期）。
+    /// 同一入口把系统前后台状态同步给批量分析上下文：进后台取消当前代际（显式提取随之终止，已入库部分保留），
+    /// 回前台换新代际但**不**自动续跑提取；因此即便预取状态没变也要每次都同步。
     /// </summary>
     /// <param name="active">true 回前台，false 进后台。</param>
     /// <returns>状态真的发生变化返回 true；重复上报同一状态返回 false。</returns>
     public static bool SetApplicationActive(bool active)
     {
         bool changed = BitmapPrefetcher.SetApplicationActive(active);
+        BatchAnalysisContext.SetApplicationActive(active);
         if (changed)
             Console.WriteLine($"[Native] 后台预取{(active ? "恢复" : "暂停")}：active={active}"
                 + $" replan={BitmapPrefetcher.ForegroundReplanCount} suspended={BitmapPrefetcher.SuspendedScheduleCount}");

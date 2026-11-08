@@ -66,7 +66,7 @@
 
 ### 5.4 AI 特征提取与持久化（DINO/CV 索引）
 
-> 三类原始数据(DINO CLS / DINO patch token / CV grid 7 标量)同源同时入库。派生层(锐度热力图 / 抖动矢量场 / 刚体拟合 / PCA-RGB / 参考点 cosine)全部现算,阈值常量从不入库。详见 [Plans/dinov3-photo-ranking-plan-2-3-persistence.md](../Plans/dinov3-photo-ranking-plan-2-3-persistence.md)。
+> 三类原始数据(DINO CLS / DINO patch token / CV grid 7 标量)由同一批次按指纹组生成，成功部分立即入库，后续仅补缺失项。派生层(锐度热力图 / 抖动矢量场 / 刚体拟合 / PCA-RGB / 参考点 cosine)全部现算,阈值常量从不入库。详见 [Plans/dinov3-photo-ranking-plan-2-3-persistence.md](../Plans/dinov3-photo-ranking-plan-2-3-persistence.md)。
 
 **指纹与数据库结构**：
 - 指纹 = SHA1(`filename_noext` + `DateTimeOriginal` + `SubSecTimeOriginal`),同次曝光的 RAW/HIF/JPG 共享同一指纹(见 [PhotoFingerprint](../PhotoViewer/Core/Database/PhotoFingerprint.cs))。
@@ -77,10 +77,10 @@
 1. **入口**:[SimilarityPanelViewModel.StartIndexingCommand](../PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs) → `FolderFeatureIndexer.RunAsync`。
 2. **聚合**:`GroupByFingerprintAsync` 把 RAW+HIF/JPG 合并为指纹组,代表文件按解码代价升序(HEIF→JPG→其他→RAW)。
 3. **缺失评估**:每组先 `EvaluateMissingPartsAsync(fingerprint, modelId, cvSpec)` 拿 `(needCls, needPatch, needCv)` 三元组,全齐备即跳过。
-4. **解码两路**:DINO 走 `ThumbnailService` 560 短边、CV 走 `BitmapLoader` 原始分辨率(共享 LRU);桌面端 `ProcessorCount/2` 并发,移动端单线程。
-5. **推理与提取**:`_inferSemaphore` 闸内一次 `DinoFeatureExtractor.ExtractDualAsync(includePatches: needPatch)` 同时拿 CLS 与 patch;原图喂 `CvGridExtractor.ExtractAsync` 出 7 标量(含 `block_contrast`)。
-6. **写库**:单事务 `PhotoDatabase.WriteIndexedAsync`,任一 blob 为 null 则该项不更新(支持按需补齐);顺手携带 `ExifSnapshot`(代表文件 EXIF 已在聚合阶段加载),写入 EXIF 4 列 + rating(任一字段为 null 走 COALESCE 保留旧值)。CLS 同步进 `DinoFeatureCache._memoryCache`。
-7. **进度**:按指纹组推进而非按文件;失败组跳过不中断整批,本期不可取消。
+4. **有界流水线**:指纹组评估后只排缺失项；DINO 缩略图准备与推理、CV 全图准备与计算各自分阶段，队列和在途指纹组数有界。DINO 保留 560 短边输入，CV 保留全分辨率；同组代表格式失败可尝试伴侣，不重复计算已有成功部分。
+5. **分析资源**:`BatchAnalysisContext` 区分用户显式提取与机会型预取，CV/色彩/HEIF 托管计算共享全核有界调度器。`BitmapLoader.AcquireAnalysisImageAsync` 优先借源分辨率缓存，未命中直接解码为短命分析图，不写浏览 LRU；所有平台编码统一转显示朝向 sRGB8。工作集准入许可覆盖到 CV 完成，不按 Caution/Warning 无限等待 Normal。DINO 批量推理使用低于交互请求的排队优先级，不新增并行模型会话。
+6. **写库**:单路写入 `PhotoDatabase.WriteIndexedAsync`，成功部分立即落盘，任一 blob 为 null 则该项不更新；顺手携带代表文件 `ExifSnapshot`，写入 EXIF 4 列 + rating（任一字段为 null 走 COALESCE 保留旧值）。写库成功后 CLS 才同步进 `DinoFeatureCache._memoryCache`。
+7. **进度与生命周期**:按指纹组推进而非文件，错误与资源不足如实记失败，进度合并投递 UI。统计以最新目录/特征代际提交，完成后再恢复按钮；换目录继续并独立持有访问租约，移动端退后台和宿主释放结束本轮，已入库部分保留，回前台不隐式重启。
 
 **单图懒加载**(相似聚类切图时锚点没入库):
 - `DinoFeatureCache.GetOrComputeAsync` → 进程缓存 → 数据库 → 解码缩略图 → ONNX 推理 → 后台 `WriteFeatureAsync`(只写 CLS,不写 patch);`Lazy` 闸门保证同指纹并发只算一次。
@@ -113,7 +113,7 @@
 
 1. **感知**:`MemoryGovernor` 周期探测(2s)+ OS 事件直报(iOS UIKit 告警与 `DispatchSource.MemoryPressure`（Warn → Warning、Critical → Critical）;Android 只有周期探测——Android 14+ 前台不再收到 `OnTrimMemory` 的 RUNNING_* 回调,旧系统仍可走该事件),状态机带迟滞(进入 40/25/15%、退出 +5%、好转逐级退)。**预算源按平台实测**:iOS 预算 = `phys_footprint + os_proc_available_memory`（含 Metal 纹理与 IOSurface，即 jetsam 上限）、回退物理内存 × 50%；macOS 预算 = 物理内存 × 50%、可用 = 预算 − `phys_footprint`；Windows 预算 = 物理内存 × 50%、footprint = 进程私有提交；Android 预算 = 按 `MemTotal` 查 AOSP MemoryLimiter 前台可见档（3.2–4.8 GB → 2 GB、4.8–6.8 GB → 4 GB、6.8–9 GB → 5 GB、9–14 GB → 8 GB、14–18 GB → 10 GB，档外按 45% / 62.5% 外推；厂商前台红线存在时取较小者，小米 Sentinel 的 PSS 红线取 90%），footprint = `RssAnon + VmSwap` + GL 纹理（GPU 内存在独立显存/驱动内存，不在匿名页里，由主图宿主挂 `AndroidMemoryBudgetProvider.ExternalFootprint` 补上），可用量再受系统 `availMem − threshold` 收窄。`IMemoryBudgetProvider.GetFootprintBytes` 让缓存把"非缓存占用"从预算里扣掉。启动即写一条 `init` 快照（含 budgetMB / availMB / footprintMB），供真机确认上限。
 2. **级联修剪**:级别上升时 Governor 对全部登记客户端同步 `Trim(level)`——统一 LRU(BitmapLoader,Thumb/Proxy/Full 三档分区)、AnalysisResultCache、DinoFeatureCache、ShakeFlagService、ONNX session、雾天增强位图、ImageBufferPool(Caution 起清 ≥1MB 空闲且后续归还不再回填大档，Critical 清空且不留任何归还缓冲，释放量达标时后台 GC)。BitmapLoader 的 Warning/Critical 按**保留排名**修剪（Warning 主分区只留排名 ①②③、Critical 只留 ①，缩略图 Caution 起只留排名内）。各级动作矩阵见总方案 §4.3。
-3. **行为响应**:`BitmapPrefetcher` Caution 起取消在途轮次且新投递空跑;Warning 起 `DecodeScheduler.MaxBackgroundParallelism` 降为 1;`FolderFeatureIndexer` 逐组轮询暂停;**编码降级**(iOS):Warning 起代理档由 RGBA16F 降为 8 位 Display P3,每张驻留字节减半(逐张记录 `stress-flip.jsonl` 的 `enc` 字段;已缓存的 F16 代理在压力下仍可直接复用,不为此重解码)。**解码准入**:一切解码(主图/缩略图/预取/索引/CV·DINO)先 `MemoryGovernor.TryAcquire` 拿在途许可,P0 豁免、其余预算不足直接拒绝不排队;解码完成按实际字节复核。**缓存容量由实测预算推导**（每轮探测后重算，缓存在静态字段）：`有效主分区上限 = clamp(用户上限, 256MB, 预算 × (1 − (Caution 进入阈值 + 5)/100) − 非缓存占用)`，主分区以外占用 = max(0, 实测 footprint − 主分区缓存)，缩略图与池空闲仍是实际占用，不从该项豁免；iPad 壳置 `BitmapLoader.AutomaticCacheLimit`（忽略用户缓存内存/数量上限，张数视为 400），桌面保留用户上限但再受推导上限约束。腾容量时先 `ImageBufferPool.ReleaseIdle` 丢弃空闲大缓冲，再按排名淘汰缓存条目；缓冲池把"因超帽丢弃"的字节累计到 256MB 时在线程池触发一次 gen2（大数组要等 major GC 才归还系统）。回 Normal 后过 `RecoveryHold`(30s)观察期才渐进恢复预取(打破告警→回填循环)。
+3. **行为响应**:`BitmapPrefetcher` Caution 起取消在途轮次且新投递空跑;Warning 起 `DecodeScheduler.MaxBackgroundParallelism` 降为 1;显式 `FolderFeatureIndexer` 不按压力级别暂停，而按实际工作集准入和有界队列背压持续推进，无法容纳必要工作集时明确失败；其解码仍低于当前图排队优先级;**编码降级**(iOS):Warning 起代理档由 RGBA16F 降为 8 位 Display P3,每张驻留字节减半(逐张记录 `stress-flip.jsonl` 的 `enc` 字段;已缓存的 F16 代理在压力下仍可直接复用,不为此重解码)。**解码准入**:一切解码(主图/缩略图/预取/索引/CV·DINO)先 `MemoryGovernor.TryAcquire` 拿在途许可,P0 豁免、其余预算不足直接拒绝不排队;解码完成按实际字节复核。**缓存容量由实测预算推导**（每轮探测后重算，缓存在静态字段）：`有效主分区上限 = clamp(用户上限, 256MB, 预算 × (1 − (Caution 进入阈值 + 5)/100) − 非缓存占用)`，主分区以外占用 = max(0, 实测 footprint − 主分区缓存)，缩略图与池空闲仍是实际占用，不从该项豁免；iPad 壳置 `BitmapLoader.AutomaticCacheLimit`（忽略用户缓存内存/数量上限，张数视为 400），桌面保留用户上限但再受推导上限约束。腾容量时先 `ImageBufferPool.ReleaseIdle` 丢弃空闲大缓冲，再按排名淘汰缓存条目；缓冲池把"因超帽丢弃"的字节累计到 256MB 时在线程池触发一次 gen2（大数组要等 major GC 才归还系统）。回 Normal 后过 `RecoveryHold`(30s)观察期才渐进恢复预取(打破告警→回填循环)。
 4. **观测**:级别迁移、拒批与启动上限落 `memory-events.jsonl`(settings 同目录;iOS 真机为沙盒 `Documents/PhotoViewer/`,devicectl copy 可取回),含各客户端占用、footprint 与近期解码未命中统计。
 5. **诊断与展示通知隔离**：`MemoryGovernor.Probed` 可以持续更新 `SettingsViewModel` 的预算与缓存说明属性，但不表示用户设置或主屏结构改变。原生主屏消费共享 `PresentationChanged(SettingsChangeImpact)`，由共享层以正向映射给出布局、导航图、评分、EXIF、命令、输入绑定、文件投影、分析与相似面板的影响；未登记属性不触发展示刷新。普通 `PropertyChanged` 仍供说明文本和精确业务绑定使用，不得据任意属性通知全量重建主屏。整份快照回填合并展示影响，快捷键子项与集合变化也进入同一通道；平台只负责在 UI 线程按影响范围更新，重复布局或未变内容不替换正在交互的控件。
 

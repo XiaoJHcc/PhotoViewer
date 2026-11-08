@@ -17,6 +17,9 @@ namespace PhotoViewer.Core.Memory;
 /// - P0(当前图)豁免准入,永远放行,但仍记账保持可见;
 /// - P1/P2/P3 预算不足时直接拒绝(不排队,防后台解码饿死/堵死 P0);
 /// - Warning 起拒绝 P2/P3,Critical 拒绝一切非 P0;批量索引走 P3,被拒绝即自然暂停。
+/// - 显式分析批次(<see cref="BatchAnalysisContext.IsActive"/>)的非 P0 请求改按实测预算/可用量/在途做 CAS 检查,
+///   不按 Caution/Warning 拒绝(Critical 仍拒);被拒原因记在分析作用域上,由取图入口转成
+///   <see cref="AnalysisMemoryException"/>。背压(等在途 work set 释放)只在取图入口做,本方法从不等待。
 /// </summary>
 public static class MemoryGovernor
 {
@@ -173,6 +176,11 @@ public static class MemoryGovernor
             return true;
         }
 
+        // 显式分析意图:不按 Caution/Warning 拒绝,改按实际预算/可用量/在途做 CAS 检查
+        // (只保留 Critical 安全拒绝)。不排队、不等待——需要背压的一侧在取图入口,不在本方法。
+        if (BatchAnalysisContext.IsActive)
+            return TryAcquireForAnalysis(bytes, priority, provider, out permit);
+
         // 检查与记账必须一次原子提交:若各自读到同一个 reserved 再分别累加,
         // 多个并发申请会同时通过"reserved + bytes <= cap",实际预留越过级别上限。
         var level = PressureLevel.Normal;
@@ -220,6 +228,129 @@ public static class MemoryGovernor
         PressureLevel.Caution => 0.25,
         _ => 0.10,
     };
+
+    // ---- 分析批次准入(显式分析意图) ----
+
+    /// <summary>分析批次的在途预留上限比例:固定按 Normal 的 50%,不随 Caution/Warning 收紧。</summary>
+    private const double AnalysisCapRatio = 0.50;
+
+    /// <summary>分析批次还要求"总在途 + 本次"不超过当前可用量的一半(安全余量)。</summary>
+    private const double AnalysisAvailableShare = 0.50;
+
+    private const string AnalysisCapReason = "分析内存额度已满";
+    private const string AnalysisAvailableReason = "系统可用内存不足";
+    private const string AnalysisCriticalReason = "可用内存严重不足";
+
+    /// <summary>
+    /// 分析口准入口:按实测预算/可用量/在途做原子检查,不按 Caution/Warning 拒绝,只保留 Critical 安全拒绝。
+    /// 被拒时把短原因记到当前操作作用域,由取图入口在退出作用域前抛 <see cref="AnalysisMemoryException"/>。
+    /// </summary>
+    private static bool TryAcquireForAnalysis(
+        long bytes, DecodePriority priority, IMemoryBudgetProvider provider, out AdmissionPermit? permit)
+    {
+        permit = null;
+        var level = PressureLevel.Normal;
+        long budget = 0;
+        long available = 0;
+        string reason = AnalysisCapReason;
+
+        for (int attempt = 0; attempt < MaxAdmissionAttempts; attempt++)
+        {
+            level = CurrentLevel;
+            if (level == PressureLevel.Critical)
+            {
+                reason = AnalysisCriticalReason;
+                break;
+            }
+
+            budget = provider.GetBudgetBytes();
+            available = provider.GetAvailableBytes();
+            long reserved = Interlocked.Read(ref _reservedBytes);
+            if (!FitsAnalysisCeiling(reserved, bytes, budget, available, out reason)) break;
+
+            if (Interlocked.CompareExchange(ref _reservedBytes, reserved + bytes, reserved) != reserved)
+                continue;
+
+            permit = new AdmissionPermit(bytes);
+            return true;
+        }
+
+        BatchAnalysisContext.RecordAdmissionRefusal(bytes, reason);
+        RefusalLog(bytes, priority, level, available, budget, "analysis-reject");
+        return false;
+    }
+
+    /// <summary>
+    /// 分析工作集按实际尺寸扩充预留(实际源尺寸大于估算时用,不做事后仅记账)。
+    /// 允许量与单次准入同口径;失败时同样记拒绝原因。
+    /// </summary>
+    /// <param name="permit">既有许可。</param>
+    /// <param name="extraBytes">需要增加的字节数。</param>
+    internal static bool TryGrowAnalysisPermit(AdmissionPermit permit, long extraBytes)
+    {
+        ArgumentNullException.ThrowIfNull(permit);
+        if (extraBytes <= 0) return true;
+
+        IMemoryBudgetProvider? provider;
+        lock (_gate) provider = _provider;
+        if (provider == null)
+        {
+            AdjustReserved(extraBytes);
+            permit.Grow(extraBytes);
+            return true;
+        }
+
+        var level = PressureLevel.Normal;
+        long budget = 0;
+        long available = 0;
+        string reason = AnalysisCapReason;
+
+        for (int attempt = 0; attempt < MaxAdmissionAttempts; attempt++)
+        {
+            level = CurrentLevel;
+            if (level == PressureLevel.Critical)
+            {
+                reason = AnalysisCriticalReason;
+                break;
+            }
+
+            budget = provider.GetBudgetBytes();
+            available = provider.GetAvailableBytes();
+            long reserved = Interlocked.Read(ref _reservedBytes);
+            if (!FitsAnalysisCeiling(reserved, extraBytes, budget, available, out reason)) break;
+
+            if (Interlocked.CompareExchange(ref _reservedBytes, reserved + extraBytes, reserved) != reserved)
+                continue;
+
+            permit.Grow(extraBytes);
+            return true;
+        }
+
+        BatchAnalysisContext.RecordAdmissionRefusal(extraBytes, reason);
+        RefusalLog(extraBytes, DecodePriority.P3_Background, level, available, budget, "analysis-grow");
+        return false;
+    }
+
+    /// <summary>
+    /// 分析口径的额度判据:总在途 + 本次不超过预算的一半,且不超过可用量的一半(安全余量)。
+    /// 可用量只有 unknown 哨兵(<see cref="long.MaxValue"/> 或负数)才放开;0 是真实"没有余量",必须拒。
+    /// 判据用减法比较,避免 reserved + bytes 溢出。
+    /// </summary>
+    private static bool FitsAnalysisCeiling(long reserved, long bytes, long budget, long available, out string reason)
+    {
+        long budgetCap = budget > 0 ? (long)(budget * AnalysisCapRatio) : long.MaxValue;
+        long availableCap = available != long.MaxValue && available >= 0
+            ? (long)(available * AnalysisAvailableShare)
+            : long.MaxValue;
+        long ceiling = Math.Min(budgetCap, availableCap);
+        if (reserved >= 0 && reserved <= ceiling && bytes <= ceiling - reserved)
+        {
+            reason = string.Empty;
+            return true;
+        }
+        reason = budgetCap <= availableCap ? AnalysisCapReason : AnalysisAvailableReason;
+        return false;
+    }
 
     /// <summary>
     /// OS 内存事件直报(iOS DidReceiveMemoryWarning / Android OnTrimMemory):只升不降,立即生效并落快照。
@@ -390,6 +521,16 @@ public static class MemoryGovernor
             if (Volatile.Read(ref _disposed) != 0) return;
             long delta = actualBytes - Interlocked.Exchange(ref _reserved, actualBytes);
             if (delta != 0) AdjustReserved(delta);
+        }
+
+        /// <summary>
+        /// 扩充本许可的预留额度;调用方必须先在 <see cref="MemoryGovernor"/> 侧通过分析口径的额度检查，
+        /// 否则只加本凭证的账会把在途总额推过上限。
+        /// </summary>
+        internal void Grow(long extraBytes)
+        {
+            if (extraBytes <= 0 || Volatile.Read(ref _disposed) != 0) return;
+            Interlocked.Add(ref _reserved, extraBytes);
         }
 
         /// <summary>归还在途预留。</summary>

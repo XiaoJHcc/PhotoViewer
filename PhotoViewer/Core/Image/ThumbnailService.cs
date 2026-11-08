@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Memory;
@@ -64,7 +65,9 @@ public static class ThumbnailService
     /// <param name="file">文件引用。</param>
     /// <param name="targetShortSide">目标短边像素。</param>
     /// <param name="priority">解码优先级(准入语义;批量索引传 P3)。准入被拒返回 null。</param>
-    public static async Task<DecodedImage?> GetThumbnailAsync(IFileRef file, int targetShortSide, DecodePriority priority = DecodePriority.P1_HighValue)
+    /// <param name="ct">取消令牌；只透传给已支持取消的入口（原始字节读取各入口签名未带令牌，行为不变）。</param>
+    public static async Task<DecodedImage?> GetThumbnailAsync(
+        IFileRef file, int targetShortSide, DecodePriority priority = DecodePriority.P1_HighValue, CancellationToken ct = default)
     {
         if (file == null || targetShortSide <= 0) return null;
 
@@ -73,7 +76,7 @@ public static class ThumbnailService
             return null;
         using (thumbPermit)
         {
-            var result = await GetThumbnailCoreAsync(file, targetShortSide).ConfigureAwait(false);
+            var result = await GetThumbnailCoreAsync(file, targetShortSide, ct).ConfigureAwait(false);
             thumbPermit!.SetActual(result?.ByteCount ?? 0);
             return result;
         }
@@ -82,7 +85,7 @@ public static class ThumbnailService
     /// <summary>缩略图解码准入的固定估值(内嵌预览/小尺寸解码,完成后按实际复核)。</summary>
     private const long EstimatedThumbBytes = 4L * 1024 * 1024;
 
-    private static async Task<DecodedImage?> GetThumbnailCoreAsync(IFileRef file, int targetShortSide)
+    private static async Task<DecodedImage?> GetThumbnailCoreAsync(IFileRef file, int targetShortSide, CancellationToken ct)
     {
         IReadOnlyList<MetadataExtractor.Directory> directories;
         bool isHeif = HeifLoader.IsHeifFile(file);
@@ -121,7 +124,7 @@ public static class ThumbnailService
         if (sources.Count == 0)
         {
             if (_missingPreviewDecoder == null) return null;
-            var substitute = await _missingPreviewDecoder.DecodeThumbnailAsync(file, targetShortSide, CancellationToken.None).ConfigureAwait(false);
+            var substitute = await _missingPreviewDecoder.DecodeThumbnailAsync(file, targetShortSide, ct).ConfigureAwait(false);
             return substitute == null ? null : ToSrgb(substitute);
         }
 

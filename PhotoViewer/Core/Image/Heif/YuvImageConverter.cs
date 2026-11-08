@@ -454,10 +454,21 @@ public static class YuvImageConverter
         Interlocked.Exchange(ref s_scratchPeak, 0);
 
         var options = new ParallelOptions();
-        var threadLimit = MaxDegreeOfParallelism;
-        if (threadLimit > 0) options.MaxDegreeOfParallelism = threadLimit;
-        var scheduler = ConversionTaskScheduler;
-        if (scheduler != null) options.TaskScheduler = scheduler;
+        if (BatchAnalysisContext.IsActive)
+        {
+            // 批量分析 scope：共用全局 CPU 调度器，并发上限不超过该调度器自身并发度。
+            var batchScheduler = BatchAnalysisContext.CpuScheduler;
+            options.TaskScheduler = batchScheduler;
+            options.MaxDegreeOfParallelism = Math.Max(1, Math.Min(Environment.ProcessorCount, batchScheduler.MaximumConcurrencyLevel));
+            options.CancellationToken = BatchAnalysisContext.CancellationToken();
+        }
+        else
+        {
+            var threadLimit = MaxDegreeOfParallelism;
+            if (threadLimit > 0) options.MaxDegreeOfParallelism = threadLimit;
+            var scheduler = ConversionTaskScheduler;
+            if (scheduler != null) options.TaskScheduler = scheduler;
+        }
 
         unsafe
         {

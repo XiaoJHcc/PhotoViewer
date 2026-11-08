@@ -393,24 +393,51 @@ public static class ColorEngine
             sourceWidth ?? source.SourceWidth, sourceHeight ?? source.SourceHeight, orientation ?? source.Orientation);
     }
 
-    /// <summary>按行分带并行；小图退化为串行，避免调度开销压过像素量。每个行带起点与并行调度都响应取消。</summary>
+    /// <summary>按行分带并行；小图退化为串行。批量分析 scope 内改用全局 CPU 调度器，scope 令牌一并生效。</summary>
     private static void ForEachRowBand(int height, Action<int, int> rows, CancellationToken cancellationToken = default)
     {
-        int bands = Math.Min(Environment.ProcessorCount * 4, height / 32);
-        if (bands <= 1)
+        var options = AnalysisParallelOptions(cancellationToken, out var linked);
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            rows(0, height);
-            return;
+            int bands = Math.Min(Environment.ProcessorCount * 4, height / 32);
+            if (bands <= 1)
+            {
+                options.CancellationToken.ThrowIfCancellationRequested();
+                rows(0, height);
+                return;
+            }
+            Parallel.For(0, bands, options, band =>
+            {
+                options.CancellationToken.ThrowIfCancellationRequested();
+                int perBand = (height + bands - 1) / bands;
+                int start = band * perBand;
+                int end = Math.Min(height, start + perBand);
+                if (start < end) rows(start, end);
+            });
         }
-        Parallel.For(0, bands, new ParallelOptions { CancellationToken = cancellationToken }, band =>
+        finally
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            int perBand = (height + bands - 1) / bands;
-            int start = band * perBand;
-            int end = Math.Min(height, start + perBand);
-            if (start < end) rows(start, end);
-        });
+            linked?.Dispose();
+        }
+    }
+
+    /// <summary>批量 scope 的调度与取消口径；联动令牌源由本方法创建、由调用方释放。</summary>
+    private static ParallelOptions AnalysisParallelOptions(CancellationToken ct, out CancellationTokenSource? linked)
+    {
+        linked = null;
+        if (!BatchAnalysisContext.IsActive) return new ParallelOptions { CancellationToken = ct };
+
+        var scope = BatchAnalysisContext.CancellationToken();
+        if (!ct.CanBeCanceled)
+        {
+            ct = scope;
+        }
+        else if (scope.CanBeCanceled && scope != ct)
+        {
+            linked = CancellationTokenSource.CreateLinkedTokenSource(ct, scope);
+            ct = linked.Token;
+        }
+        return new ParallelOptions { TaskScheduler = BatchAnalysisContext.CpuScheduler, CancellationToken = ct };
     }
 
     /// <summary>用 skcms 本身跑一行像素；查表的内容因此与通用转换逐字节一致（含 NaN/Inf/负值）。</summary>
