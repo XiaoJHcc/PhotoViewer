@@ -551,8 +551,6 @@ public static class DesignTokens
     public const double ShellPhoneEdgeMargin = 16.0;
     /// <summary>shell.phone.rowInset（pt） SHELL-01：手机形态行到安全区/栏缘的间距，也是栏背景超出元素的余量。</summary>
     public const double ShellPhoneRowInset = 8.0;
-    /// <summary>shell.photo.bareGap（pt） SHELL-01：适应态主图距无栏背景裸按钮/EXIF 的额外避让。</summary>
-    public const double ShellPhotoBareGap = 8.0;
     /// <summary>shell.titlebar.backdrop.blurAmount（pt） SHELL-02：Windows 主图渲染器在标题栏下绘制亚克力时的高斯模糊标准差（与 WinUI AcrylicBrush 的 BlurAmount 同值，按物理倍率换算到像素）。</summary>
     public const double ShellTitlebarBackdropBlurAmount = 30.0;
     /// <summary>shell.titlebar.button.glyphSize（pt） SHELL-02：Windows 窗口按钮 Segoe Fluent Icons 字形字号。</summary>
