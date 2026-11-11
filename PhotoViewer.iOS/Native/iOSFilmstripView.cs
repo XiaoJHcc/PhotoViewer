@@ -145,10 +145,10 @@ internal sealed class iOSFilmstripView : UIView
         _displaySnapshot = main.FileVM.ThumbnailList.FilteredFiles.ToArray();
         _layout.CountProvider = () => _displaySnapshot.Length;
         _animationTarget = new DisplayLinkTarget(StepAnimation);
-        BackgroundColor = UIColor.FromWhiteAlpha(.07f, 1);
+        BackgroundColor = UIColor.Clear;
         _collection = new UICollectionView(CGRect.Empty, _layout)
         {
-            BackgroundColor = UIColor.FromWhiteAlpha(.07f, 1),
+            BackgroundColor = UIColor.Clear,
             AllowsSelection = false,
             ShowsHorizontalScrollIndicator = true,
             ShowsVerticalScrollIndicator = false,

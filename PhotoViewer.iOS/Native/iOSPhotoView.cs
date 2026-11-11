@@ -20,6 +20,10 @@ namespace PhotoViewer.iOS.Native;
 /// <para>代理 ↔ Full 热替换（同一张照片、ImageSize 恒定）只换纹理，完全不碰滚动状态；照片身份或逻辑尺寸变化（切图，
 /// 含方向码变化）沿用旧壳 / Mac 的 <see cref="PhotoViewport.ApplyImage"/> 语义：适应态重新适应、跟随对焦时
 /// 保持倍率并居中到新照片对焦点、其余情况保持倍率与同一归一化中心点（不重置到适应态）。</para>
+///
+/// <para><see cref="SetFitInsets"/> 把窗口减去栏位与裸按钮后的避让交给适应区：滚动视图仍铺满 Bounds，
+/// 内边距只进入 contentInset 与共享视口——适应态照片放进适应区，放大后的平移边界取适应区边缘（照片边缘最多拖到
+/// 适应区边缘），程序化缩放的锚点取适应区中心。内边距为零时适应区就是整个视图，行为与引入适应区之前一致。</para>
 /// </summary>
 internal sealed class iOSPhotoView : UIView, IMemoryClient
 {
@@ -50,6 +54,8 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
     private bool _syncingScroll;
     /// <summary>滚动基准（contentSize / 缩放范围 / 内边距）是否已按当前照片与视口尺寸建立；首图早于布局上屏时为 false。</summary>
     private bool _scrollGeometryValid;
+    /// <summary>主图适应区四边内边距（逻辑点）：照片仍画满视图，适应态只放进适应区、平移边界取适应区边缘。</summary>
+    private UIEdgeInsets _fitInsets;
     /// <summary>推迟滚动基准的取证日志是否已输出（每段连续未布局期只记一次）。</summary>
     private bool _deferredGeometryLogged;
     /// <summary>正在执行程序化缩放（ZoomToRect / SetZoomScale 动画）：期间的 DidZoom 不重估跟随对焦。</summary>
@@ -95,6 +101,10 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
     internal double DisplayHeight => _viewport.ImageHeight;
     /// <summary>图像像素到视图点的当前缩放（点/像素）。</summary>
     internal double PointScale => _viewport.Scale;
+    /// <summary>主图适应区四边内边距（逻辑点）：窗口减去栏位与裸按钮后的四边避让。</summary>
+    internal UIEdgeInsets FitInsets => _fitInsets;
+    /// <summary>主图适应区（视图坐标）：适应态照片放进这个矩形，放大后的平移边界也取它的边缘。</summary>
+    internal CGRect FitRect => new(_fitInsets.Left, _fitInsets.Top, (nfloat)_viewport.FitWidth, (nfloat)_viewport.FitHeight);
     /// <summary>导航图逻辑点尺寸（长边 150、按显示朝向比例缩小，不补方形衬边）。</summary>
     internal CGSize NavigationSize
     {
@@ -251,6 +261,63 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
     }
 
     /// <summary>
+    /// 设置主图适应区四边内边距（窗口减去栏位与裸按钮后的避让）：滚动视图仍铺满 Bounds，
+    /// 内边距只进入 <c>contentInset</c> 与共享视口。值不变时什么都不做；变化后沿用布局/旋转的重建路径——
+    /// 适应态重新适应到新适应区，放大态保持适应区中心下的图像点与相对缩放。
+    /// 尺寸与内边距同时变化（旋转、分屏、舞台限宽）时一次性落地：先按旧几何读出缩放与中心，
+    /// 再同步新尺寸与新内边距后重建，避免用新尺寸配旧避让算出负适应区而把视口中心钳掉。
+    /// </summary>
+    /// <param name="insets">四边内边距（逻辑点，负值按 0）。</param>
+    internal void SetFitInsets(UIEdgeInsets insets)
+    {
+        var normalized = new UIEdgeInsets(
+            (nfloat)Math.Max(0, (double)insets.Top),
+            (nfloat)Math.Max(0, (double)insets.Left),
+            (nfloat)Math.Max(0, (double)insets.Bottom),
+            (nfloat)Math.Max(0, (double)insets.Right));
+        if (normalized.Equals(_fitInsets)) return;
+        bool sizePending = Math.Abs(_viewport.ViewWidth - (double)Bounds.Width) > .5
+            || Math.Abs(_viewport.ViewHeight - (double)Bounds.Height) > .5;
+        // 相对缩放与中心图像点必须先按旧适应区读出，再写新内边距（写完后视口中心语义就换了基准）。
+        double relativeZoom = _scrollGeometryValid
+            ? Math.Max(1, (double)_scroll.ZoomScale)
+            : (_viewport.IsFit ? 1 : Math.Max(1, _viewport.Scale / Math.Max(1e-9, _viewport.FitScale)));
+        var center = _viewport.CenterUV;
+        _fitInsets = normalized;
+        _viewport.SetFitInsets(new EdgeInsets(
+            (double)normalized.Left, (double)normalized.Top, (double)normalized.Right, (double)normalized.Bottom));
+        if (sizePending)
+        {
+            double width = (double)Bounds.Width, height = (double)Bounds.Height;
+            _viewport.ResizeView(width, height, DisplayScale);
+            if (_identity == default || width < 1 || height < 1)
+            {
+                _scrollGeometryValid = false;
+                DrawFrame();
+                ViewportChanged?.Invoke();
+                return;
+            }
+        }
+        else if (_identity == default || (double)Bounds.Width < 1 || (double)Bounds.Height < 1)
+        {
+            // 尚未上屏或尺寸为零：由下一次布局按新内边距重建基准。
+            _scrollGeometryValid = false;
+            DrawFrame();
+            ViewportChanged?.Invoke();
+            return;
+        }
+        if (_viewport.IsFit)
+        {
+            _viewport.FitToView();
+            relativeZoom = 1;
+            center = (.5, .5);
+        }
+        RebuildScrollGeometry(relativeZoom, center);
+        DrawFrame();
+        ViewportChanged?.Invoke();
+    }
+
+    /// <summary>
     /// 适应 ↔ 物理 100% 切换（控制栏 Fit 命令与热键；旧壳 <c>ToggleFit()</c> 语义）：
     /// 适应态且照片有对焦点时以对焦点为中心放大到 100% 并开启跟随对焦，无对焦点时从视口中心放大；
     /// 已放大时回适应。视图状态一律经共享视口决定，再由滚动视图执行（动画与双击同一路径）。
@@ -291,7 +358,7 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
         SyncScrollFromViewport(animated: true);
     }
 
-    /// <summary>把显示朝向的归一化图像点移到视口中心（导航图拖动/点按用），滚动视图仍执行实际位移。</summary>
+    /// <summary>把显示朝向的归一化图像点移到视口中心（适应区中心，导航图拖动/点按用），滚动视图仍执行实际位移。</summary>
     /// <param name="u">归一化横坐标。</param>
     /// <param name="v">归一化纵坐标。</param>
     internal void CenterOnNormalizedPoint(double u, double v)
@@ -303,9 +370,10 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
         var display = FitContentSize();
         var insets = CenteringInsets(zoom, display);
         double width = (double)Bounds.Width, height = (double)Bounds.Height;
+        var fitCenter = FitCenter;
         var offset = new CGPoint(
-            Math.Clamp(u * (double)display.Width * zoom - width / 2, -(double)insets.Left, Math.Max(-(double)insets.Left, (double)display.Width * zoom - width + (double)insets.Right)),
-            Math.Clamp(v * (double)display.Height * zoom - height / 2, -(double)insets.Top, Math.Max(-(double)insets.Top, (double)display.Height * zoom - height + (double)insets.Bottom)));
+            Math.Clamp(u * (double)display.Width * zoom - fitCenter.X, -(double)insets.Left, Math.Max(-(double)insets.Left, (double)display.Width * zoom - width + (double)insets.Right)),
+            Math.Clamp(v * (double)display.Height * zoom - fitCenter.Y, -(double)insets.Top, Math.Max(-(double)insets.Top, (double)display.Height * zoom - height + (double)insets.Bottom)));
         _scroll.SetContentOffset(offset, false);
     }
 
@@ -409,8 +477,15 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
         }
     }
 
-    /// <summary>视口中心（视图坐标）。</summary>
-    private (double X, double Y) ViewCenter => ((double)Bounds.Width / 2, (double)Bounds.Height / 2);
+    /// <summary>适应区中心（视图坐标）：程序化缩放与"视口中心"语义一律以它为准。</summary>
+    private (double X, double Y) FitCenter
+    {
+        get
+        {
+            var fit = FitRect;
+            return ((double)fit.X + (double)fit.Width / 2, (double)fit.Y + (double)fit.Height / 2);
+        }
+    }
 
     /// <summary>zoomScale=1 时的内容尺寸，即适应态显示尺寸。</summary>
     private CGSize FitContentSize()
@@ -567,7 +642,7 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
         else
         {
             _programmaticZoom = true;
-            if (relativeZoom > 1 + ZoomEpsilon) ZoomAnchored(relativeZoom, _viewport.CenterUV, ViewCenter);
+            if (relativeZoom > 1 + ZoomEpsilon) ZoomAnchored(relativeZoom, _viewport.CenterUV, FitCenter);
             else _scroll.SetZoomScale(1, true);
         }
         DrawFrame();
@@ -593,9 +668,10 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
             var insets = CenteringInsets(zoom, display);
             _scroll.ContentInset = insets;
             double width = (double)Bounds.Width, height = (double)Bounds.Height;
+            var fitCenter = FitCenter;
             _scroll.ContentOffset = new CGPoint(
-                Math.Clamp(center.U * (double)display.Width * zoom - width / 2, -(double)insets.Left, Math.Max(-(double)insets.Left, (double)display.Width * zoom - width + (double)insets.Right)),
-                Math.Clamp(center.V * (double)display.Height * zoom - height / 2, -(double)insets.Top, Math.Max(-(double)insets.Top, (double)display.Height * zoom - height + (double)insets.Bottom)));
+                Math.Clamp(center.U * (double)display.Width * zoom - fitCenter.X, -(double)insets.Left, Math.Max(-(double)insets.Left, (double)display.Width * zoom - width + (double)insets.Right)),
+                Math.Clamp(center.V * (double)display.Height * zoom - fitCenter.Y, -(double)insets.Top, Math.Max(-(double)insets.Top, (double)display.Height * zoom - height + (double)insets.Bottom)));
         }
         finally
         {
@@ -606,8 +682,8 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
     }
 
     /// <summary>
-    /// 居中内边距：内容在某一轴上小于视口时，用等量内边距把它居中（UIScrollView 的标准居中模式）。
-    /// 缩放跨过视图尺寸时内边距连续趋近 0，不产生内容跳动；捏合回调与每次滚动状态重建都更新。
+    /// 居中内边距：适应区内边距 + 内容在某一轴上小于适应区时的居中补偿（UIScrollView 的标准居中模式）。
+    /// 缩放跨过适应区尺寸时补偿连续趋近 0，不产生内容跳动；捏合回调与每次滚动状态重建都更新。
     /// </summary>
     private void UpdateCenteringInsets()
     {
@@ -615,24 +691,24 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
         if (_scroll.ContentInset != insets) _scroll.ContentInset = insets;
     }
 
-    /// <summary>按给定缩放倍率与适应态内容尺寸计算居中内边距。</summary>
+    /// <summary>按给定缩放倍率与适应态内容尺寸计算内边距：四边避让 + 适应区内的居中补偿。</summary>
     /// <param name="zoom">相对适应态的缩放倍率。</param>
     /// <param name="display">适应态（zoomScale=1）内容尺寸。</param>
-    /// <returns>四边等量的居中内边距。</returns>
+    /// <returns>四边内边距：内侧为适应区避让，外侧为居中补偿。</returns>
     private UIEdgeInsets CenteringInsets(double zoom, CGSize display)
     {
-        double horizontal = Math.Max(0, ((double)Bounds.Width - (double)display.Width * zoom) / 2);
-        double vertical = Math.Max(0, ((double)Bounds.Height - (double)display.Height * zoom) / 2);
-        return new UIEdgeInsets((nfloat)vertical, (nfloat)horizontal, (nfloat)vertical, (nfloat)horizontal);
+        var fit = FitRect;
+        double horizontal = Math.Max(0, ((double)fit.Width - (double)display.Width * zoom) / 2);
+        double vertical = Math.Max(0, ((double)fit.Height - (double)display.Height * zoom) / 2);
+        return new UIEdgeInsets(
+            (nfloat)((double)_fitInsets.Top + vertical),
+            (nfloat)((double)_fitInsets.Left + horizontal),
+            (nfloat)((double)_fitInsets.Bottom + vertical),
+            (nfloat)((double)_fitInsets.Right + horizontal));
     }
 
-    /// <summary>从视口数学直接求视口中心的归一化图像点：布局重建时滚动视图的 frame 已变，不能用它反算。</summary>
-    private (double U, double V) ViewportCenterImagePoint()
-    {
-        double width = _viewport.ImageWidth * _viewport.Scale, height = _viewport.ImageHeight * _viewport.Scale;
-        if (width <= 0 || height <= 0) return (.5, .5);
-        return (.5 - _viewport.PanX / width, .5 - _viewport.PanY / height);
-    }
+    /// <summary>从视口数学直接求视口中心（适应区中心）的归一化图像点：布局重建时滚动视图的 frame 已变，不能用它反算。</summary>
+    private (double U, double V) ViewportCenterImagePoint() => _viewport.CenterUV;
 
     /// <summary>视图坐标点对应的归一化图像点（显示朝向 0–1，越界钳制）；与 <see cref="ViewPoint"/> 互逆，验收也用它核对锚点。</summary>
     /// <param name="point">主图视图坐标（点）。</param>
@@ -649,10 +725,13 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
     /// <summary>
     /// 以"某个图像点保持在其视图落点"为锚点缩放：用一条 ZoomToRect 动画同时完成缩放与偏移
     /// （先 SetZoomScale 再 SetContentOffset 会互相取消，实测缩放停在原值）。
+    /// <c>ZoomToRect</c> 的缩放按视图 bounds 取、目标矩形居中于视图中心，因此矩形尺寸取 bounds/zoom；
+    /// 内边距不为零时再把矩形中心平移"适应区中心 − 视图中心"的量，使适应区中心成为不动点
+    /// （内边距为零时两项都退化为 bounds 口径）。
     /// </summary>
     /// <param name="relativeZoom">目标 zoomScale（相对适应态）。</param>
     /// <param name="anchor">锚点对应的归一化图像点。</param>
-    /// <param name="viewPoint">锚点的视图坐标（缩放前后保持不动）。</param>
+    /// <param name="viewPoint">锚点的视图坐标（缩放前后保持不动，调用方传适应区中心）。</param>
     private void ZoomAnchored(double relativeZoom, (double U, double V) anchor, (double X, double Y) viewPoint)
     {
         if (_identity == default) return;

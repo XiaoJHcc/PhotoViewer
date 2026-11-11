@@ -1,0 +1,1228 @@
+using System.Diagnostics;
+using CoreGraphics;
+using Foundation;
+using PhotoViewer.Apple;
+using PhotoViewer.Core.Design;
+using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Platform;
+using PhotoViewer.Core.Settings;
+using PhotoViewer.Core.Storage;
+using PhotoViewer.ViewModels.Main;
+using PhotoViewer.ViewModels.Main.File;
+using UIKit;
+
+namespace PhotoViewer.iOS.Native;
+
+/// <summary>
+/// 验收专用（非产品行为，测试钩子）：<c>--pv-native-form-check &lt;目录&gt;</c> 核对主屏形态骨架——
+/// iPhone 竖屏与两种横屏刘海方向（真实 <c>RequestGeometryUpdate</c> 旋转）、iPad 四种布局模式与
+/// 1/3、1/2、2/3 限宽分屏（舞台容器 + 紧凑尺寸类别覆盖），每个配置遍历栏位显隐组合，断言：
+/// 形态判定、手机槽位与实际视图 frame、主图适应区内边距与满舞台、适应区与可见控件/栏背景不相交、
+/// 按钮命中区、圆角安全区、横屏镜像与控制列次序、筛选与更多菜单结构、切换保持当前照片与缩放位置、
+/// 放大后照片垫在栏位下方。带 <c>--pv-native-ui-snapshots</c> 时把阶段名写入
+/// <c>Documents/PhotoViewer/native-ui-snapshot-stage.txt</c> 并停留供外部截图。
+/// 需要与 <c>--pv-open &lt;同一目录&gt;</c> 一起使用；所有临时设置、栏位显隐、方向与覆盖在收尾还原。
+/// 报告写 Documents/PhotoViewer/native-form-checks.txt，打印 <c>[NativeSmoke] PASS form (n checks)</c> / FAIL。
+/// </summary>
+internal static class iOSNativeFormCheck
+{
+    /// <summary>验收开关。</summary>
+    private const string Switch = "--pv-native-form-check";
+    /// <summary>截图检查点开关。</summary>
+    private const string SnapshotsSwitch = "--pv-native-ui-snapshots";
+    /// <summary>截图检查点停留时间（覆盖外部轮询与截图）。</summary>
+    private static readonly TimeSpan StageHold = TimeSpan.FromMilliseconds(2500);
+    /// <summary>几何比较允许误差（点）。</summary>
+    private const double Tolerance = .5;
+    /// <summary>交互控件最小命中边长（设计令牌 44 点）。</summary>
+    private static readonly double HitSize = DesignTokens.ShellGlassButtonSize;
+
+    /// <summary>配置类型：真实旋转、真实窗口布局模式、限宽分屏。</summary>
+    private enum SetupKind
+    {
+        /// <summary>iPhone 真实旋转到指定方向。</summary>
+        PhoneOrientation,
+        /// <summary>iPad 真实窗口下的布局模式。</summary>
+        LayoutMode,
+        /// <summary>iPad 限宽舞台 + 紧凑尺寸类别模拟分屏。</summary>
+        Split,
+    }
+
+    /// <summary>一个形态配置：名称、准备方式、目标方向/模式/宽度比例与期望形态。</summary>
+    private sealed record Config(string Name, SetupKind Kind, UIInterfaceOrientationMask Mask, LayoutMode Mode,
+        double StageFraction, ScreenForm Expected);
+
+    /// <summary>一个栏位显隐组合。</summary>
+    private sealed record Combo(string Name, bool Film, bool Control, bool Analysis, bool ShowNavigation, bool NoExif);
+
+    private static readonly Combo[] Combos =
+    [
+        new("all", true, true, false, true, false),
+        new("film-hidden", false, true, false, true, false),
+        new("control-hidden", true, false, false, true, false),
+        new("analysis-shown", true, true, true, true, false),
+        new("no-navigation", true, true, false, false, false),
+        new("no-exif", true, true, false, true, true),
+    ];
+
+    private static readonly Combo ShownCombo = new("all-shown", true, true, true, true, false);
+
+    /// <summary>iPhone 横屏刘海在左时的槽位（供另一方向做镜像比对）。</summary>
+    private static PhoneLayout? notchLeftSlots;
+    private static double notchLeftWidth;
+    /// <summary>横屏控制列的基准槽位（上下张开启时），供关闭态比对。</summary>
+    private static PhoneLayout? controlColumnSlots;
+    /// <summary>筛选菜单写回只做一次（其余组合只核对菜单结构）。</summary>
+    private static bool filterMutationChecked;
+
+    /// <summary>解析验收开关；命中即以给定目录启动异步核对。</summary>
+    /// <param name="args">进程启动参数。</param>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="session">原生展示会话。</param>
+    public static void MaybeStart(string[] args, iOSNativeRootViewController root, PhotoLoadSession session)
+    {
+        string? directory = null;
+        for (int index = 0; index + 1 < args.Length; index++)
+        {
+            if (string.Equals(args[index], Switch, StringComparison.Ordinal)) directory = args[index + 1];
+        }
+        if (directory == null) return;
+        bool snapshots = args.Contains(SnapshotsSwitch, StringComparer.Ordinal);
+        _ = RunAsync(root, session, ResolveDocumentsPath(directory), snapshots);
+    }
+
+    /// <summary>相对路径按沙盒 Documents 解析（与壳层 --pv-open 同一口径）。</summary>
+    /// <param name="path">绝对或相对路径。</param>
+    /// <returns>绝对路径。</returns>
+    private static string ResolveDocumentsPath(string path)
+        => Path.IsPathRooted(path) ? path : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), path);
+
+    /// <summary>核对主流程：载入素材 → 逐配置/组合断言 → 截图检查点 → 收尾还原 → 落盘。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="session">原生展示会话。</param>
+    /// <param name="directory">自有夹具目录（绝对路径）。</param>
+    /// <param name="snapshots">是否写截图检查点并停留。</param>
+    private static async Task RunAsync(iOSNativeRootViewController root, PhotoLoadSession session, string directory, bool snapshots)
+    {
+        var lines = new List<string>();
+        string output = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "PhotoViewer");
+        Directory.CreateDirectory(output);
+        string report = Path.Combine(output, "native-form-checks.txt");
+        AppSettings? settings = null;
+        bool entryFilm = true, entryControl = true, entryAnalysis = false;
+        var entryExif = new HashSet<string>(StringComparer.Ordinal);
+        var entryOrientation = UIInterfaceOrientation.Unknown;
+        var entrySort = SortMode.Name;
+        var entryOrder = SortOrder.Ascending;
+        string entryRatingFilter = "All";
+        MainViewModel? main = null;
+        try
+        {
+            main = iOSNativeShell.Main ?? throw new InvalidOperationException("原生壳主 VM 未就绪");
+            await WaitAsync(() => root.ViewIfLoaded?.Window != null && root.Stage.Bounds.Width > 100 && root.Photo.Bounds.Width > 100, "主屏布局");
+            string[] fixtures = Directory.GetFiles(directory, "*.jpg");
+            if (fixtures.Length == 0) throw new InvalidOperationException($"形态验收需要至少一张自有夹具：{directory}");
+            settings = main.Settings.CreateSnapshot();
+            entryFilm = main.IsThumbnailViewVisible;
+            entryControl = main.IsControlViewVisible;
+            entryAnalysis = main.IsAnalysisViewVisible;
+            foreach (var item in main.Settings.ExifDisplayItems)
+                if (item.IsEnabled) entryExif.Add(item.PropertyName);
+            // 进入时可能没有任何 EXIF 显示项（历史验收会话留下的隔离设置）：临时启用默认项核对 EXIF 列，
+            // 收尾仍按进入时的真实状态还原。
+            var workingExif = new HashSet<string>(entryExif, StringComparer.Ordinal);
+            if (workingExif.Count == 0)
+            {
+                foreach (var field in SettingsCatalog.DefaultExifFields)
+                    if (field.IsEnabled) workingExif.Add(field.Id);
+            }
+            entryOrientation = CurrentOrientation(root);
+            entrySort = main.FileVM.FilterBar.SortMode;
+            entryOrder = main.FileVM.FilterBar.SortOrder;
+            entryRatingFilter = main.FileVM.FilterBar.SelectedRatingFilter;
+
+            await main.FolderVM.OpenFolderAsync(new LocalFolderRef(directory));
+            await WaitAsync(() => main.CurrentFile != null && session.Image != null, "首图解码");
+            await SettleAsync(root);
+            bool phoneDevice = UIDevice.CurrentDevice.UserInterfaceIdiom == UIUserInterfaceIdiom.Phone;
+            lines.Add($"PASS 素材：{fixtures.Length} 张自有夹具（{directory}），设备={(phoneDevice ? "iPhone" : "iPad")}，" +
+                $"窗口 {Size(root.View!.Bounds.Size)}，安全区 {Insets(root.View!.SafeAreaInsets)}，起始方向 {entryOrientation}");
+
+            var configs = BuildConfigs(phoneDevice);
+            foreach (var config in configs)
+            {
+                await ApplyConfigAsync(root, main, config);
+                lines.Add($"PASS 配置 {config.Name}：形态 {root.Form}，窗口 {Size(root.Stage.Bounds.Size)}，" +
+                    $"方向 {CurrentOrientation(root)}，刘海在左={root.NotchOnLeft}");
+                foreach (var combo in Combos)
+                {
+                    await ApplyComboAsync(root, main, combo, workingExif);
+                    var scope = $"{config.Name}/{combo.Name}";
+                    VerifyForm(root, config, scope);
+                    VerifyGeometry(root, scope);
+                    VerifyMenus(root, main, scope);
+                    if (IsLandscapeForm(root) && combo.Name is "all" or "no-navigation")
+                        VerifyControlColumn(root, combo.Name, scope);
+                    if (config.Kind == SetupKind.Split && combo.Name == "all")
+                        VerifySplitStage(root, config, scope);
+                    lines.Add($"PASS {scope}：形态/槽位/避让/可见性/命中区/安全区/菜单结构通过" +
+                        $"（胶片{OnOff(combo.Film)} 控制{OnOff(combo.Control)} 分析{OnOff(combo.Analysis)}" +
+                        $"{(combo.ShowNavigation ? " 有导航" : " 无导航")}{(combo.NoExif ? " 无EXIF" : "")}）");
+                    if (snapshots && combo.Name == "all") await HoldAsync(config.Name, lines);
+                }
+                if (IsLandscapeForm(root))
+                {
+                    if (root.NotchOnLeft)
+                    {
+                        notchLeftSlots = root.PhoneSlots;
+                        notchLeftWidth = root.Stage.Bounds.Width;
+                        lines.Add($"PASS {config.Name}：记录刘海在左的槽位（宽 {notchLeftWidth:0.#}）供另一方向镜像比对");
+                    }
+                    else
+                    {
+                        VerifyMirror(root, config.Name, lines);
+                    }
+                }
+            }
+
+            await VerifySwitchKeepsPhotoAsync(root, main, configs);
+            await VerifyZoomedAsync(root, lines);
+            if (!filterMutationChecked) await VerifyFilterMutationAsync(root, main, lines);
+
+            if (snapshots) await CaptureTuningShotsAsync(root, main, configs, workingExif, lines);
+            if (snapshots && phoneDevice) await CaptureZoomedShotAsync(root, main, workingExif, lines);
+
+            await RestoreAsync(root, main, settings, entryFilm, entryControl, entryAnalysis, entryExif, entryOrientation,
+                entrySort, entryOrder, entryRatingFilter);
+            lines.Add("PASS 收尾还原：方向、舞台、尺寸类别覆盖、布局模式、栏位显隐、EXIF 显示项、筛选回到进入本检查时的状态");
+            if (snapshots) await WriteStageAsync("done");
+            await File.WriteAllLinesAsync(report, lines);
+            Console.WriteLine($"[NativeSmoke] PASS form ({lines.Count} checks)");
+        }
+        catch (Exception exception)
+        {
+            lines.Add($"FAIL {exception}");
+            if (snapshots) await WriteStageAsync("done");
+            await File.WriteAllLinesAsync(report, lines);
+            Console.Error.WriteLine("[NativeSmoke] FAIL form " + exception);
+            if (main != null && settings != null)
+            {
+                try
+                {
+                    await RestoreAsync(root, main, settings, entryFilm, entryControl, entryAnalysis, entryExif,
+                        entryOrientation, entrySort, entryOrder, entryRatingFilter);
+                }
+                catch (Exception restoreFailure)
+                {
+                    Console.Error.WriteLine("[NativeSmoke] form 还原失败 " + restoreFailure.Message);
+                }
+            }
+        }
+    }
+
+    /// <summary>按当前设备给出配置清单：iPhone 三种方向；iPad 四种布局模式加三档限宽分屏。</summary>
+    /// <param name="phoneDevice">是否 iPhone。</param>
+    /// <returns>配置清单。</returns>
+    private static Config[] BuildConfigs(bool phoneDevice) => phoneDevice
+        ?
+        [
+            new("iphone-portrait", SetupKind.PhoneOrientation, UIInterfaceOrientationMask.Portrait, LayoutMode.Auto, 0, ScreenForm.PhonePortrait),
+            new("iphone-landscape-notch-left", SetupKind.PhoneOrientation, UIInterfaceOrientationMask.LandscapeRight, LayoutMode.Auto, 0, ScreenForm.PhoneLandscape),
+            new("iphone-landscape-notch-right", SetupKind.PhoneOrientation, UIInterfaceOrientationMask.LandscapeLeft, LayoutMode.Auto, 0, ScreenForm.PhoneLandscape),
+        ]
+        :
+        [
+            new("ipad-row", SetupKind.LayoutMode, default, LayoutMode.Row, 0, ScreenForm.Wide),
+            new("ipad-col", SetupKind.LayoutMode, default, LayoutMode.Col, 0, ScreenForm.Wide),
+            new("ipad-auto", SetupKind.LayoutMode, default, LayoutMode.Auto, 0, ScreenForm.Wide),
+            new("ipad-phone", SetupKind.LayoutMode, default, LayoutMode.Phone, 0, ScreenForm.PhonePortrait),
+            new("ipad-split-1-3", SetupKind.Split, default, LayoutMode.Auto, 1.0 / 3, ScreenForm.PhonePortrait),
+            new("ipad-split-1-2", SetupKind.Split, default, LayoutMode.Auto, 0.5, ScreenForm.PhonePortrait),
+            new("ipad-split-2-3", SetupKind.Split, default, LayoutMode.Auto, 2.0 / 3, ScreenForm.PhonePortrait),
+        ];
+
+    /// <summary>应用一个配置：真实旋转、布局模式或限宽分屏，并等待形态与窗口到位。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="config">配置。</param>
+    private static async Task ApplyConfigAsync(iOSNativeRootViewController root, MainViewModel main, Config config)
+    {
+        switch (config.Kind)
+        {
+            case SetupKind.PhoneOrientation:
+                await UiDispatcher.InvokeAsync(() =>
+                {
+                    root.StageWidthFraction = null;
+                    root.TraitOverrides.RemoveTrait<UITraitHorizontalSizeClass>();
+                    main.Settings.LayoutMode = LayoutMode.Auto;
+                    root.SupportedOrientationsOverride = config.Mask;
+                    root.SetNeedsUpdateOfSupportedInterfaceOrientations();
+                });
+                await RequestOrientationAsync(root, config.Mask);
+                break;
+            case SetupKind.LayoutMode:
+                await UiDispatcher.InvokeAsync(() =>
+                {
+                    root.StageWidthFraction = null;
+                    root.TraitOverrides.RemoveTrait<UITraitHorizontalSizeClass>();
+                    main.Settings.LayoutMode = config.Mode;
+                });
+                break;
+            case SetupKind.Split:
+                await UiDispatcher.InvokeAsync(() =>
+                {
+                    main.Settings.LayoutMode = LayoutMode.Auto;
+                    root.StageWidthFraction = config.StageFraction;
+                    root.TraitOverrides.HorizontalSizeClass = UIUserInterfaceSizeClass.Compact;
+                });
+                await WaitAsync(() =>
+                {
+                    double expected = (double)root.View!.Bounds.Width * config.StageFraction;
+                    return Math.Abs((double)root.Stage.Bounds.Width - expected) <= 1;
+                }, $"{config.Name} 舞台宽度");
+                break;
+        }
+        await WaitAsync(() => root.Form == config.Expected,
+            $"{config.Name} 期望形态 {config.Expected}，实际 {root.Form}（窗口 {Size(root.Stage.Bounds.Size)}，" +
+            $"尺寸类别 {TraitSizes(root)}，布局模式 {main.Settings.LayoutMode}）");
+        await SettleAsync(root);
+    }
+
+    /// <summary>请求系统旋转到指定方向并等待界面方向到位；超时把接受状态与实际方向写进失败原因。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="mask">目标方向掩码（单一方向）。</param>
+    private static async Task RequestOrientationAsync(iOSNativeRootViewController root, UIInterfaceOrientationMask mask)
+    {
+        var expected = mask switch
+        {
+            UIInterfaceOrientationMask.Portrait => UIInterfaceOrientation.Portrait,
+            UIInterfaceOrientationMask.LandscapeRight => UIInterfaceOrientation.LandscapeRight,
+            UIInterfaceOrientationMask.LandscapeLeft => UIInterfaceOrientation.LandscapeLeft,
+            _ => throw new InvalidOperationException($"形态验收只支持单一方向请求：{mask}"),
+        };
+        var scene = root.View!.Window?.WindowScene
+            ?? throw new InvalidOperationException("主屏尚未连接到 window scene，无法请求旋转");
+        bool accepted = false;
+        string failure = "未收到回调";
+        scene.RequestGeometryUpdate(new UIWindowSceneGeometryPreferencesIOS(mask), error =>
+        {
+            accepted = error == null;
+            failure = error?.LocalizedDescription ?? string.Empty;
+        });
+        var watch = Stopwatch.StartNew();
+        while (watch.Elapsed < TimeSpan.FromSeconds(10))
+        {
+            await Task.Delay(100);
+            if (CurrentOrientation(root) == expected) break;
+        }
+        var actual = CurrentOrientation(root);
+        if (actual != expected)
+        {
+            throw new InvalidOperationException(
+                $"方向切换超时：请求 {mask}，实际 {actual}（accepted={accepted}，error={failure}，" +
+                $"窗口 {Size(root.View!.Bounds.Size)}，形态 {root.Form}）");
+        }
+        await SettleAsync(root);
+    }
+
+    /// <summary>应用一个栏位显隐组合（含临时清空 EXIF 显示项）并等待布局落地。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="combo">组合。</param>
+    /// <param name="entryExif">进入检查时启用的 EXIF 项。</param>
+    private static async Task ApplyComboAsync(iOSNativeRootViewController root, MainViewModel main, Combo combo, HashSet<string> entryExif)
+    {
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            main.Settings.ShowNavigationButtons = combo.ShowNavigation;
+            main.IsThumbnailViewVisible = combo.Film;
+            main.IsControlViewVisible = combo.Control;
+            main.IsAnalysisViewVisible = combo.Analysis;
+            foreach (var item in main.Settings.ExifDisplayItems)
+            {
+                bool enabled = !combo.NoExif && entryExif.Contains(item.PropertyName);
+                if (item.IsEnabled != enabled) item.IsEnabled = enabled;
+            }
+            root.Photo.FitToView();
+        });
+        await WaitAsync(() =>
+        {
+            if (main.IsThumbnailViewVisible != combo.Film || main.IsControlViewVisible != combo.Control
+                || main.IsAnalysisViewVisible != combo.Analysis || main.Settings.ShowNavigationButtons != combo.ShowNavigation)
+                return false;
+            if (combo.NoExif ? main.ControlVM.EnabledExifItems.Count != 0 : entryExif.Count > 0 && main.ControlVM.EnabledExifItems.Count == 0)
+                return false;
+            if (root.Form == ScreenForm.Wide)
+                return root.FileBarView.Hidden == !combo.Film && root.ControlScroll.Hidden == !combo.Control
+                    && root.AnalysisPane.Hidden == !combo.Analysis;
+            return root.PhoneSlotsInput.FilmVisible == combo.Film && root.PhoneSlotsInput.ControlVisible == combo.Control
+                && root.PhoneSlotsInput.AnalysisVisible == combo.Analysis
+                && root.PhoneSlotsInput.ShowNavigation == combo.ShowNavigation
+                && root.AnalysisPane.Hidden == !combo.Analysis;
+        }, "栏位显隐落地");
+        await SettleAsync(root);
+    }
+
+    /// <summary>断言形态判定与配置期望一致，并核对手机槽位输入的方向分量。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="config">配置。</param>
+    /// <param name="scope">报告范围名。</param>
+    private static void VerifyForm(iOSNativeRootViewController root, Config config, string scope)
+    {
+        if (root.Form != config.Expected)
+            throw new InvalidOperationException($"{scope} 形态判定 {root.Form} ≠ 期望 {config.Expected}");
+        if (root.Form == ScreenForm.Wide) return;
+        var input = root.PhoneSlotsInput;
+        bool landscape = root.Form == ScreenForm.PhoneLandscape;
+        if (input.Landscape != landscape)
+            throw new InvalidOperationException($"{scope} 手机槽位输入排布 {input.Landscape} 与形态 {root.Form} 不符");
+        if (input.NotchOnLeft != root.NotchOnLeft)
+            throw new InvalidOperationException($"{scope} 槽位输入刘海方向 {input.NotchOnLeft} 与判定 {root.NotchOnLeft} 不符");
+        if (landscape && root.NotchOnLeft != (CurrentOrientation(root) != UIInterfaceOrientation.LandscapeLeft))
+            throw new InvalidOperationException(
+                $"{scope} 刘海方向与界面方向不符：方向 {CurrentOrientation(root)}，刘海在左={root.NotchOnLeft}");
+    }
+
+    /// <summary>核对槽位/分区避让、主图满舞台、适应区不相交、命中区与安全区。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="combo">组合。</param>
+    /// <param name="scope">报告范围名。</param>
+    private static void VerifyGeometry(iOSNativeRootViewController root, string scope)
+    {
+        if (root.Form != ScreenForm.Wide) VerifyPhoneGeometry(root, scope);
+        else VerifyWideGeometry(root, scope);
+        VerifyFitPlacement(root, scope);
+        VerifyFitAvoidance(root, scope);
+        if (root.Form != ScreenForm.Wide) VerifyHitTargets(root, scope);
+    }
+
+    /// <summary>手机形态：槽位与实际视图 frame 逐项一致、空槽位视图隐藏、槽位输入可复算、主图满舞台。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="scope">报告范围名。</param>
+    private static void VerifyPhoneGeometry(iOSNativeRootViewController root, string scope)
+    {
+        bool portrait = root.Form == ScreenForm.PhonePortrait;
+        var slots = root.PhoneSlots;
+        var recomputed = PhoneScreenLayout.Compute(root.PhoneSlotsInput);
+        if (recomputed != slots)
+            throw new InvalidOperationException($"{scope} 槽位输入复算结果与最近一次布局不一致");
+        if (root.Photo.Frame != root.Stage.Bounds)
+            throw new InvalidOperationException($"{scope} 主图视图未铺满舞台：{CGRect(root.Photo.Frame)} vs {CGRect(root.Stage.Bounds)}");
+        var bars = root.PhoneBarBackgrounds;
+        var entries = new (string Name, LayoutRect Slot, UIView View)[]
+        {
+            ("Filter", slots.Filter, portrait ? root.PhoneFilterButton : root.PhoneFilterSegment),
+            ("More", slots.More, portrait ? root.PhoneMoreButton : root.PhoneMoreSegment),
+            ("FilterMoreGroup", slots.FilterMoreGroup, root.PhoneFilterMoreGroup),
+            ("Exif", slots.Exif, root.PhoneExifPlaceholder),
+            ("Navigation", slots.Navigation, root.PhoneNavigationGroup),
+            ("Rating", slots.Rating, root.PhoneRatingPlaceholder),
+            ("FitEnhance", slots.FitEnhance, root.PhoneFitEnhanceGroup),
+            ("Filmstrip", slots.Filmstrip, root.Filmstrip),
+            ("Analysis", slots.Analysis, root.AnalysisPane),
+            ("TopBar", slots.TopBar, bars.Top),
+            ("BottomBar", slots.BottomBar, bars.Bottom),
+            ("LeadingBar", slots.LeadingBar, bars.Leading),
+            ("TrailingBar", slots.TrailingBar, bars.Trailing),
+        };
+        foreach (var (name, slot, view) in entries)
+        {
+            bool has = Has(slot);
+            if (view.Hidden == has)
+                throw new InvalidOperationException($"{scope} {name} 可见性不符：Hidden={view.Hidden}，槽位={Rect(slot)}");
+            if (!has) continue;
+            var actual = FrameInStage(root, view);
+            if (Math.Abs((double)actual.X - slot.X) > Tolerance || Math.Abs((double)actual.Y - slot.Y) > Tolerance
+                || Math.Abs((double)actual.Width - slot.Width) > Tolerance || Math.Abs((double)actual.Height - slot.Height) > Tolerance)
+                throw new InvalidOperationException($"{scope} {name} frame {CGRect(actual)} 与槽位 {Rect(slot)} 不一致");
+        }
+        if (portrait)
+        {
+            if (!root.PhoneFilterMoreGroup.Hidden)
+                throw new InvalidOperationException($"{scope} 竖屏仍显示横屏筛选更多合体");
+        }
+        else if (!root.PhoneFilterButton.Hidden || !root.PhoneMoreButton.Hidden)
+        {
+            throw new InvalidOperationException($"{scope} 横屏仍显示竖屏筛选/更多圆按钮");
+        }
+    }
+
+    /// <summary>宽形态：主图满舞台、分区避让作为适应区内边距。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="scope">报告范围名。</param>
+    private static void VerifyWideGeometry(iOSNativeRootViewController root, string scope)
+    {
+        if (root.Photo.Frame != root.Stage.Bounds)
+            throw new InvalidOperationException($"{scope} 主图视图未铺满舞台：{CGRect(root.Photo.Frame)} vs {CGRect(root.Stage.Bounds)}");
+        var panes = root.Panes;
+        var bounds = root.Stage.Bounds;
+        var expected = new UIEdgeInsets(
+            (nfloat)Math.Max(0, (double)panes.Photo.Y),
+            (nfloat)Math.Max(0, (double)panes.Photo.X),
+            (nfloat)Math.Max(0, (double)bounds.Height - panes.Photo.MaxY),
+            (nfloat)Math.Max(0, (double)bounds.Width - panes.Photo.MaxX));
+        var actual = root.Photo.FitInsets;
+        if (Math.Abs((double)actual.Top - (double)expected.Top) > Tolerance
+            || Math.Abs((double)actual.Left - (double)expected.Left) > Tolerance
+            || Math.Abs((double)actual.Bottom - (double)expected.Bottom) > Tolerance
+            || Math.Abs((double)actual.Right - (double)expected.Right) > Tolerance)
+            throw new InvalidOperationException($"{scope} 宽形态适应区内边距 {Insets(actual)} ≠ 分区避让 {Insets(expected)}");
+    }
+
+    /// <summary>
+    /// 适应区与其他元素：可见控件/占位/胶片条/分析栏/栏背景都不与适应区相交；
+    /// 不在栏背景内的裸控件按 BareGap 外扩后也不相交；适应态照片落在适应区内并至少一轴贴边。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="scope">报告范围名。</param>
+    private static void VerifyFitAvoidance(iOSNativeRootViewController root, string scope)
+    {
+        var fit = FitArea(root);
+        if ((double)fit.Width <= 0 || (double)fit.Height <= 0)
+            throw new InvalidOperationException($"{scope} 适应区为空：{CGRect(fit)}");
+        bool phone = root.Form != ScreenForm.Wide;
+        var bars = new List<CGRect>();
+        if (phone)
+        {
+            var views = root.PhoneBarBackgrounds;
+            foreach (var bar in new UIView[] { views.Top, views.Bottom, views.Leading, views.Trailing })
+                if (IsVisible(root, bar)) bars.Add(FrameInStage(root, bar));
+            if (IsVisible(root, root.AnalysisBarBackground)) bars.Add(FrameInStage(root, root.AnalysisBarBackground));
+        }
+        else
+        {
+            foreach (var bar in new UIView[] { root.FileBarView, root.ControlBackgroundView, root.AnalysisBarBackground })
+                if (IsVisible(root, bar)) bars.Add(FrameInStage(root, bar));
+        }
+        var elements = new List<(string Name, CGRect Frame)>();
+        void Add(string name, UIView view)
+        {
+            if (IsVisible(root, view)) elements.Add((name, FrameInStage(root, view)));
+        }
+
+        if (phone)
+        {
+            var portrait = root.Form == ScreenForm.PhonePortrait;
+            Add("Filter", portrait ? root.PhoneFilterButton : root.PhoneFilterSegment);
+            Add("More", portrait ? root.PhoneMoreButton : root.PhoneMoreSegment);
+            Add("Exif", root.PhoneExifPlaceholder);
+            Add("Navigation", root.PhoneNavigationGroup);
+            Add("Rating", root.PhoneRatingPlaceholder);
+            Add("FitEnhance", root.PhoneFitEnhanceGroup);
+            Add("Filmstrip", root.Filmstrip);
+            Add("Analysis", root.AnalysisPane);
+        }
+        else
+        {
+            Add("FilterBar", root.FilterBar);
+            Add("Filmstrip", root.Filmstrip);
+            Add("ControlScroll", root.ControlScroll);
+            Add("Analysis", root.AnalysisPane);
+        }
+        foreach (var (name, frame) in elements)
+        {
+            if (Intersects(fit, frame))
+                throw new InvalidOperationException($"{scope} {name} {CGRect(frame)} 与适应区 {CGRect(fit)} 相交");
+            if (bars.Any(bar => Contains(bar, frame))) continue;
+            double bare = phone ? root.PhoneSlotsInput.BareGap : 0;
+            if (Intersects(fit, Expand(frame, bare)))
+                throw new InvalidOperationException(
+                    $"{scope} 裸控件 {name} {CGRect(frame)} 按 BareGap {bare:0.#} 外扩后与适应区 {CGRect(fit)} 相交");
+        }
+        foreach (var bar in bars)
+        {
+            if (Intersects(fit, bar))
+                throw new InvalidOperationException($"{scope} 栏背景 {CGRect(bar)} 与适应区 {CGRect(fit)} 相交");
+        }
+        var photo = PhotoBounds(root.Photo);
+        if (photo.Left < (double)fit.X - Tolerance || photo.Top < (double)fit.Y - Tolerance
+            || photo.Right > (double)fit.GetMaxX() + Tolerance || photo.Bottom > (double)fit.GetMaxY() + Tolerance)
+            throw new InvalidOperationException($"{scope} 适应态照片 {Format(photo)} 超出适应区 {CGRect(fit)}");
+        bool touches = Math.Abs(photo.Left - (double)fit.X) <= Tolerance || Math.Abs(photo.Right - (double)fit.GetMaxX()) <= Tolerance
+            || Math.Abs(photo.Top - (double)fit.Y) <= Tolerance || Math.Abs(photo.Bottom - (double)fit.GetMaxY()) <= Tolerance;
+        if (!touches)
+            throw new InvalidOperationException($"{scope} 适应态照片 {Format(photo)} 没有贴住适应区 {CGRect(fit)} 的任何一边");
+    }
+
+    /// <summary>主图内边距与手机形态避让一致（宽形态已由 <see cref="VerifyWideGeometry"/> 核对）。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="scope">报告范围名。</param>
+    private static void VerifyFitPlacement(iOSNativeRootViewController root, string scope)
+    {
+        if (root.Form == ScreenForm.Wide) return;
+        var insets = root.Photo.FitInsets;
+        var avoid = root.PhoneSlots.PhotoAvoidance;
+        if (Math.Abs((double)insets.Left - avoid.Left) > Tolerance || Math.Abs((double)insets.Top - avoid.Top) > Tolerance
+            || Math.Abs((double)insets.Right - avoid.Right) > Tolerance || Math.Abs((double)insets.Bottom - avoid.Bottom) > Tolerance)
+            throw new InvalidOperationException($"{scope} 主图内边距 {Insets(insets)} ≠ 手机避让 {avoid}");
+    }
+
+    /// <summary>手机形态按钮命中区不小于 44 点（含合体按钮每一段）。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="scope">报告范围名。</param>
+    private static void VerifyHitTargets(iOSNativeRootViewController root, string scope)
+    {
+        var buttons = new List<(string Name, UIButton Button)>
+        {
+            ("Filter", root.PhoneFilterButton),
+            ("More", root.PhoneMoreButton),
+        };
+        var groups = new (string Name, iOSGlassButtonGroup Group)[]
+        {
+            ("FilterMore", root.PhoneFilterMoreGroup),
+            ("Navigation", root.PhoneNavigationGroup),
+            ("FitEnhance", root.PhoneFitEnhanceGroup),
+        };
+        foreach (var (name, group) in groups)
+        {
+            for (int index = 0; index < group.Buttons.Count; index++) buttons.Add(($"{name}[{index}]", group.Buttons[index]));
+        }
+        foreach (var (name, button) in buttons)
+        {
+            if (!IsVisible(root, button)) continue;
+            var frame = FrameInStage(root, button);
+            if ((double)frame.Width < HitSize - Tolerance || (double)frame.Height < HitSize - Tolerance)
+                throw new InvalidOperationException($"{scope} {name} 命中区 {CGRect(frame)} 小于 {HitSize:0.#}×{HitSize:0.#}");
+        }
+    }
+
+    /// <summary>横屏控制列：次序 分析栏 → EXIF 列 → 控制列，上下张不落在控制列内，且不随上下张开关变化。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="comboName">组合名。</param>
+    /// <param name="scope">报告范围名。</param>
+    private static void VerifyControlColumn(iOSNativeRootViewController root, string comboName, string scope)
+    {
+        var slots = root.PhoneSlots;
+        double controlX = Math.Min(slots.FitEnhance.X, slots.Rating.X);
+        // 刘海在左时自内向外为分析栏 → EXIF 列 → 控制列；刘海在右时整体镜像，次序反向。
+        bool notchLeft = root.NotchOnLeft;
+        if (Has(slots.Exif))
+        {
+            bool exifBeforeControl = notchLeft ? slots.Exif.X < controlX - Tolerance : slots.Exif.X > controlX + Tolerance;
+            if (!exifBeforeControl)
+                throw new InvalidOperationException($"{scope} EXIF 列 X {slots.Exif.X:0.#} 与控制列 {controlX:0.#} 次序不符（刘海在左={notchLeft}）");
+            if (Has(slots.Analysis))
+            {
+                bool analysisBeforeExif = notchLeft
+                    ? slots.Analysis.X < slots.Exif.X - Tolerance
+                    : slots.Analysis.X > slots.Exif.X + Tolerance;
+                if (!analysisBeforeExif)
+                    throw new InvalidOperationException(
+                        $"{scope} 分析栏 X {slots.Analysis.X:0.#} 与 EXIF 列 {slots.Exif.X:0.#} 次序不符（刘海在左={notchLeft}）");
+            }
+        }
+        else if (Has(slots.Analysis))
+        {
+            bool separated = notchLeft ? slots.Analysis.MaxX <= controlX + Tolerance : slots.Analysis.X >= controlX - Tolerance;
+            if (!separated)
+                throw new InvalidOperationException($"{scope} 分析栏 {Rect(slots.Analysis)} 与无 EXIF 时的控制列 {controlX:0.#} 重叠");
+        }
+        if (Has(slots.Navigation))
+        {
+            var navigation = ToCGRect(slots.Navigation);
+            foreach (var (name, target) in new (string, LayoutRect)[]
+            {
+                ("缩放增强", slots.FitEnhance), ("星级", slots.Rating), ("EXIF", slots.Exif), ("分析栏", slots.Analysis),
+            })
+            {
+                if (Has(target) && Intersects(navigation, ToCGRect(target)))
+                    throw new InvalidOperationException($"{scope} 上下张 {Rect(slots.Navigation)} 落在{name} {Rect(target)} 内");
+            }
+        }
+        if (comboName == "all")
+        {
+            controlColumnSlots = slots;
+            return;
+        }
+        if (controlColumnSlots is not { } reference)
+            throw new InvalidOperationException($"{scope} 缺少上下张开启时的控制列基准");
+        if (!SameRect(reference.FitEnhance, slots.FitEnhance) || !SameRect(reference.Rating, slots.Rating)
+            || !SameRect(reference.Exif, slots.Exif))
+            throw new InvalidOperationException(
+                $"{scope} 关闭上下张后控制列几何变化：FitEnhance {Rect(reference.FitEnhance)}→{Rect(slots.FitEnhance)}，" +
+                $"Rating {Rect(reference.Rating)}→{Rect(slots.Rating)}");
+    }
+
+    /// <summary>核对分屏窗口的舞台宽度、右安全区扣除与主图宽度。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="config">配置。</param>
+    /// <param name="scope">报告范围名。</param>
+    private static void VerifySplitStage(iOSNativeRootViewController root, Config config, string scope)
+    {
+        double expected = (double)root.View!.Bounds.Width * config.StageFraction;
+        if (Math.Abs((double)root.Stage.Bounds.Width - expected) > 1)
+            throw new InvalidOperationException($"{scope} 舞台宽 {(double)root.Stage.Bounds.Width:0.#} ≠ 期望 {expected:0.#}");
+        var input = root.PhoneSlotsInput;
+        var rootSafe = root.View!.SafeAreaInsets;
+        double expectedRight = Math.Max(0, (double)rootSafe.Right - ((double)root.View!.Bounds.Width - (double)root.Stage.Bounds.Width));
+        if (Math.Abs(input.Safe.Right - expectedRight) > 1)
+            throw new InvalidOperationException($"{scope} 分屏右安全区 {input.Safe.Right:0.#} 未按舞台覆盖区域扣除（期望 {expectedRight:0.#}）");
+        if (Math.Abs((double)root.Photo.Bounds.Width - (double)root.Stage.Bounds.Width) > Tolerance)
+            throw new InvalidOperationException($"{scope} 主图宽度 {(double)root.Photo.Bounds.Width:0.#} ≠ 舞台宽 {(double)root.Stage.Bounds.Width:0.#}");
+    }
+
+    /// <summary>核对更多菜单与筛选菜单的结构，以及主图菜单的勾选态。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="scope">报告范围名。</param>
+    private static void VerifyMenus(iOSNativeRootViewController root, MainViewModel main, string scope)
+    {
+        var moreMenu = root.PhoneMoreButton.Menu
+            ?? throw new InvalidOperationException($"{scope} 更多按钮没有菜单");
+        if (moreMenu.Children.Length != 1 || moreMenu.Children[0] is not UIDeferredMenuElement)
+            throw new InvalidOperationException($"{scope} 更多菜单应为单个延迟元素，实际 {moreMenu.Children.Length} 项");
+        var fromSource = Flatten(root.PhotoMenuItems());
+        var fromLongPress = Flatten(root.BuildPhotoMenu().Menu.Children);
+        if (!fromSource.SequenceEqual(fromLongPress, StringComparer.Ordinal))
+            throw new InvalidOperationException($"{scope} 更多菜单内容与主图长按菜单不一致");
+        var states = PhotoMenuStates(root.PhotoMenuItems());
+        var expected = new Dictionary<string, bool>(StringComparer.Ordinal)
+        {
+            ["photo.film"] = main.IsThumbnailViewVisible,
+            ["photo.control"] = main.IsControlViewVisible,
+            ["photo.analysis"] = main.IsAnalysisViewVisible,
+        };
+        foreach (var (identifier, value) in expected)
+        {
+            if (states.TryGetValue(identifier, out bool actual) && actual != value)
+                throw new InvalidOperationException($"{scope} 主图菜单 {identifier} 勾选 {actual} ≠ 状态 {value}");
+        }
+        foreach (var button in new[] { root.PhoneFilterButton, root.PhoneFilterSegment })
+        {
+            var menu = button.Menu ?? throw new InvalidOperationException($"{scope} 筛选按钮没有菜单");
+            if (menu.Children.Length != 3)
+                throw new InvalidOperationException($"{scope} 筛选菜单应为三个内联分组，实际 {menu.Children.Length}");
+            foreach (var child in menu.Children)
+            {
+                if (child is not UIMenu sub)
+                    throw new InvalidOperationException($"{scope} 筛选分组不是 UIMenu");
+                if ((sub.Options & (UIMenuOptions.DisplayInline | UIMenuOptions.SingleSelection))
+                    != (UIMenuOptions.DisplayInline | UIMenuOptions.SingleSelection))
+                    throw new InvalidOperationException($"{scope} 筛选分组缺少 DisplayInline/SingleSelection：{sub.Options}");
+                if (sub.Children.Length == 0)
+                    throw new InvalidOperationException($"{scope} 筛选分组为空");
+                foreach (var element in sub.Children)
+                {
+                    if (element is not UIAction action)
+                        throw new InvalidOperationException($"{scope} 筛选项不是 UIAction");
+                    if ((action.Attributes & UIMenuElementAttributes.KeepsMenuPresented) == 0)
+                        throw new InvalidOperationException($"{scope} 筛选项「{action.Title}」未保持菜单展开");
+                }
+            }
+        }
+    }
+
+    /// <summary>筛选菜单写回：直接调用排序动作处理器，共享筛选状态改变后按钮菜单的新选项转为勾选。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="lines">报告行。</param>
+    private static async Task VerifyFilterMutationAsync(iOSNativeRootViewController root, MainViewModel main, List<string> lines)
+    {
+        var filter = main.FileVM.FilterBar;
+        var original = filter.SortMode;
+        var target = filter.SortModes.Select(option => (SortMode)option.Value).FirstOrDefault(value => value != original);
+        if (target == original) throw new InvalidOperationException("筛选菜单只有一个排序选项，无法核对写回");
+        var result = iOSFilterMenu.Build(filter, () => { });
+        if (!result.Handlers.TryGetValue($"sort:{target}", out var handler))
+            throw new InvalidOperationException($"筛选菜单缺少 sort:{target} 的处理器");
+        await UiDispatcher.InvokeAsync(handler);
+        await WaitAsync(() => filter.SortMode == target, "排序写回共享筛选状态");
+        string title = filter.SortModes.First(option => (SortMode)option.Value == target).DisplayName;
+        await WaitAsync(() =>
+        {
+            var menu = root.PhoneFilterSegment.Menu;
+            return menu != null && SortAction(menu, title) is { State: UIMenuElementState.On };
+        }, $"按钮菜单「{title}」转为勾选");
+        lines.Add($"PASS 筛选菜单动作：sort:{target} 写回共享筛选状态，按钮菜单新选项「{title}」为勾选");
+        await UiDispatcher.InvokeAsync(() => filter.SortMode = original);
+        await WaitAsync(() => filter.SortMode == original, "排序还原");
+        filterMutationChecked = true;
+    }
+
+    /// <summary>在筛选菜单的排序分组里按标题查找 action。</summary>
+    /// <param name="menu">筛选菜单。</param>
+    /// <param name="title">选项标题。</param>
+    /// <returns>命中的 action；没有返回 null。</returns>
+    private static UIAction? SortAction(UIMenu menu, string title)
+        => menu.Children.OfType<UIMenu>().SelectMany(group => group.Children.OfType<UIAction>())
+            .FirstOrDefault(action => string.Equals(action.Title, title, StringComparison.Ordinal));
+
+    /// <summary>切换配置后主图保持当前照片与归一化中心；适应区不变时物理倍率也不变。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="configs">配置清单。</param>
+    private static async Task VerifySwitchKeepsPhotoAsync(iOSNativeRootViewController root, MainViewModel main, Config[] configs)
+    {
+        await ApplyConfigAsync(root, main, configs[0]);
+        await ZoomBeyondFitAsync(root, 3);
+        await UiDispatcher.InvokeAsync(() => root.Photo.CenterOnNormalizedPoint(.3, .7));
+        await SettleAsync(root);
+        var before = await UiDispatcher.InvokeAsync(() => (File: main.CurrentFile, Center: root.Photo.Viewport.CenterUV,
+            Physical: root.Photo.PhysicalScale, Zoom: (double)root.Photo.ScrollView.ZoomScale, Fit: root.Photo.FitRect));
+        if (Math.Abs(before.Center.U - .3) > .02 || Math.Abs(before.Center.V - .7) > .02)
+            throw new InvalidOperationException($"切换前未能把视口中心移到 (.3,.7)：({before.Center.U:0.###},{before.Center.V:0.###})");
+        await ApplyConfigAsync(root, main, configs[1]);
+        await SettleAsync(root);
+        var after = await UiDispatcher.InvokeAsync(() => (File: main.CurrentFile, Center: root.Photo.Viewport.CenterUV,
+            Physical: root.Photo.PhysicalScale, Zoom: (double)root.Photo.ScrollView.ZoomScale, Fit: root.Photo.FitRect));
+        if (!ReferenceEquals(before.File, after.File))
+            throw new InvalidOperationException($"切换配置后当前照片变化：{before.File?.Name} → {after.File?.Name}");
+        if (Math.Abs(before.Center.U - after.Center.U) > .02 || Math.Abs(before.Center.V - after.Center.V) > .02)
+            throw new InvalidOperationException($"切换配置后视口中心 ({before.Center.U:0.###},{before.Center.V:0.###}) → " +
+                $"({after.Center.U:0.###},{after.Center.V:0.###}) 偏差超过 0.02");
+        bool sameFit = Math.Abs((double)before.Fit.Width - (double)after.Fit.Width) <= Tolerance
+            && Math.Abs((double)before.Fit.Height - (double)after.Fit.Height) <= Tolerance;
+        if (sameFit)
+        {
+            if (Math.Abs(before.Physical - after.Physical) > Math.Max(.01, before.Physical * .01))
+                throw new InvalidOperationException($"切换配置后物理倍率 {before.Physical:0.###} → {after.Physical:0.###}（适应区相同）");
+        }
+        else if (Math.Abs(before.Zoom - after.Zoom) > Math.Max(1e-3, before.Zoom * .01))
+        {
+            throw new InvalidOperationException($"切换配置后相对缩放 {before.Zoom:0.###} → {after.Zoom:0.###}（适应区变化）");
+        }
+        await UiDispatcher.InvokeAsync(() => root.Photo.FitToView());
+        await SettleAsync(root);
+    }
+
+    /// <summary>放大到超过适应区后核对 contentInset 避让、极限偏移贴边并垫到栏位下方。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="lines">报告行。</param>
+    private static async Task VerifyZoomedAsync(iOSNativeRootViewController root, List<string> lines)
+    {
+        await ZoomBeyondFitAsync(root, 2);
+        await SettleAsync(root);
+        if (root.Photo.IsFit) throw new InvalidOperationException("放大态检查仍处于适应态");
+        var insets = root.Photo.FitInsets;
+        var contentInset = root.Photo.ScrollView.ContentInset;
+        if ((double)contentInset.Left < (double)insets.Left - Tolerance
+            || (double)contentInset.Top < (double)insets.Top - Tolerance
+            || (double)contentInset.Right < (double)insets.Right - Tolerance
+            || (double)contentInset.Bottom < (double)insets.Bottom - Tolerance)
+            throw new InvalidOperationException($"放大态 contentInset {Insets(contentInset)} 未包含适应区避让 {Insets(insets)}");
+        var fit = FitArea(root);
+        var displayed = await UiDispatcher.InvokeAsync(() => (Width: root.Photo.DisplayWidth * root.Photo.PointScale,
+            Height: root.Photo.DisplayHeight * root.Photo.PointScale));
+        var scroll = root.Photo.ScrollView;
+        await UiDispatcher.InvokeAsync(() => scroll.SetContentOffset(new CGPoint(-(double)contentInset.Left, -(double)contentInset.Top), false));
+        await SettleAsync(root);
+        var corner = PhotoBounds(root.Photo);
+        if (displayed.Width > (double)fit.Width + Tolerance && Math.Abs(corner.Left - (double)fit.X) > 1)
+            throw new InvalidOperationException($"左极限照片 {Format(corner)} 未贴住适应区 {CGRect(fit)} 左边");
+        if (displayed.Height > (double)fit.Height + Tolerance && Math.Abs(corner.Top - (double)fit.Y) > 1)
+            throw new InvalidOperationException($"上极限照片 {Format(corner)} 未贴住适应区 {CGRect(fit)} 上边");
+        if (corner.Right <= (double)fit.GetMaxX() + Tolerance && corner.Bottom <= (double)fit.GetMaxY() + Tolerance)
+            throw new InvalidOperationException($"放大态照片 {Format(corner)} 没有超出适应区（栏位下方应仍有照片）");
+        await UiDispatcher.InvokeAsync(() => scroll.SetContentOffset(new CGPoint(
+            Math.Max(0, (double)scroll.ContentSize.Width - (double)scroll.Bounds.Width + (double)contentInset.Right),
+            Math.Max(0, (double)scroll.ContentSize.Height - (double)scroll.Bounds.Height + (double)contentInset.Bottom)), false));
+        await SettleAsync(root);
+        var opposite = PhotoBounds(root.Photo);
+        if (displayed.Width > (double)fit.Width + Tolerance && Math.Abs(opposite.Right - (double)fit.GetMaxX()) > 1)
+            throw new InvalidOperationException($"右极限照片 {Format(opposite)} 未贴住适应区 {CGRect(fit)} 右边");
+        if (displayed.Height > (double)fit.Height + Tolerance && Math.Abs(opposite.Bottom - (double)fit.GetMaxY()) > 1)
+            throw new InvalidOperationException($"下极限照片 {Format(opposite)} 未贴住适应区 {CGRect(fit)} 下边");
+        lines.Add($"PASS 放大态：contentInset {Insets(contentInset)} 含避让 {Insets(insets)}，极限偏移贴适应区且照片垫到栏位下方（{Format(corner)}）");
+        await UiDispatcher.InvokeAsync(() => root.Photo.FitToView());
+        await SettleAsync(root);
+    }
+
+    /// <summary>把主图放大到显示尺寸超过适应区（至少一轴），不改动视口中心语义。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="factor">相对适应区的放大倍数。</param>
+    private static async Task ZoomBeyondFitAsync(iOSNativeRootViewController root, double factor)
+    {
+        double target = await UiDispatcher.InvokeAsync(() =>
+        {
+            root.Photo.FitToView();
+            var viewport = root.Photo.Viewport;
+            double width = root.Photo.DisplayWidth, height = root.Photo.DisplayHeight;
+            double ratio = Math.Max((double)viewport.FitWidth / Math.Max(1, width), (double)viewport.FitHeight / Math.Max(1, height));
+            double physical = ratio * (double)viewport.BackingScale * factor;
+            root.Photo.ZoomToPhysical(physical);
+            return physical;
+        });
+        await WaitAsync(() => !root.Photo.IsFit && Math.Abs(root.Photo.PhysicalScale - target) <= Math.Max(.02, target * .03),
+            $"放大到超过适应区（目标物理 {target:0.###}，实际 {root.Photo.PhysicalScale:0.###}）");
+        await SettleAsync(root);
+    }
+
+    /// <summary>两向横屏槽位水平镜像：x' = W − x − w，避让左右互换。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="scope">报告范围名。</param>
+    /// <param name="lines">报告行。</param>
+    private static void VerifyMirror(iOSNativeRootViewController root, string scope, List<string> lines)
+    {
+        if (notchLeftSlots is not { } left)
+            throw new InvalidOperationException($"{scope} 缺少刘海在左的槽位记录，无法核对镜像");
+        var right = root.PhoneSlots;
+        double width = root.Stage.Bounds.Width;
+        if (Math.Abs(width - notchLeftWidth) > Tolerance)
+            throw new InvalidOperationException($"{scope} 两个横屏配置窗口宽不同：{width:0.#} vs {notchLeftWidth:0.#}");
+        var pairs = new (string Name, LayoutRect Left, LayoutRect Right)[]
+        {
+            ("Filter", left.Filter, right.Filter), ("More", left.More, right.More),
+            ("FilterMoreGroup", left.FilterMoreGroup, right.FilterMoreGroup), ("Exif", left.Exif, right.Exif),
+            ("Navigation", left.Navigation, right.Navigation), ("Rating", left.Rating, right.Rating),
+            ("FitEnhance", left.FitEnhance, right.FitEnhance), ("Filmstrip", left.Filmstrip, right.Filmstrip),
+            ("Analysis", left.Analysis, right.Analysis), ("TopBar", left.TopBar, right.TopBar),
+            ("BottomBar", left.BottomBar, right.BottomBar), ("LeadingBar", left.LeadingBar, right.LeadingBar),
+            ("TrailingBar", left.TrailingBar, right.TrailingBar),
+        };
+        foreach (var (name, a, b) in pairs)
+        {
+            if (Has(a) != Has(b))
+                throw new InvalidOperationException($"{scope} {name} 镜像后可见性变化：{Rect(a)} vs {Rect(b)}");
+            if (!Has(a)) continue;
+            double expectedX = width - a.X - a.Width;
+            if (Math.Abs(b.X - expectedX) > Tolerance || Math.Abs(b.Y - a.Y) > Tolerance
+                || Math.Abs(b.Width - a.Width) > Tolerance || Math.Abs(b.Height - a.Height) > Tolerance)
+                throw new InvalidOperationException($"{scope} {name} 未镜像：左向 {Rect(a)}，右向 {Rect(b)}（期望 X={expectedX:0.#}）");
+        }
+        var la = left.PhotoAvoidance;
+        var ra = right.PhotoAvoidance;
+        if (Math.Abs(la.Left - ra.Right) > Tolerance || Math.Abs(la.Right - ra.Left) > Tolerance
+            || Math.Abs(la.Top - ra.Top) > Tolerance || Math.Abs(la.Bottom - ra.Bottom) > Tolerance)
+            throw new InvalidOperationException($"{scope} 主图避让未镜像：{la} vs {ra}");
+        lines.Add($"PASS {scope}：刘海左/右两组槽位与主图避让互为水平镜像（宽 {width:0.#}）");
+    }
+
+    /// <summary>三个指定配置在各避让参数下的截图候选（全部显示 / 分析栏隐藏）。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="configs">配置清单。</param>
+    /// <param name="entryExif">进入检查时启用的 EXIF 项。</param>
+    /// <param name="lines">报告行。</param>
+    private static async Task CaptureTuningShotsAsync(iOSNativeRootViewController root, MainViewModel main, Config[] configs,
+        HashSet<string> workingExif, List<string> lines)
+    {
+        var targets = configs.Where(config => config.Name is "iphone-portrait" or "iphone-landscape-notch-left" or "ipad-phone").ToArray();
+        foreach (var config in targets)
+        {
+            await ApplyConfigAsync(root, main, config);
+            foreach (double tuning in new[] { 8.0, 12.0, 16.0 })
+            {
+                foreach (bool analysis in new[] { true, false })
+                {
+                    var combo = new Combo(analysis ? "tuning-all" : "tuning-analysis-off", true, true, analysis, true, false);
+                    await ApplyComboAsync(root, main, combo, workingExif);
+                    await UiDispatcher.InvokeAsync(() => root.AvoidanceTuningOverride = (tuning, tuning));
+                    await SettleAsync(root);
+                    string state = analysis ? "all" : "analysis-off";
+                    await HoldAsync($"{config.Name}-tuning-{tuning:0}-{state}", lines);
+                }
+            }
+            await UiDispatcher.InvokeAsync(() => root.AvoidanceTuningOverride = null);
+            await SettleAsync(root);
+        }
+        lines.Add("PASS 避让候选组：iPhone 竖屏 / 横屏刘海在左 / iPad 手机模式各 8/12/16 两态截图");
+    }
+
+    /// <summary>iPhone 竖屏放大并平移到角落的截图（照片垫在栏位下方）。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="entryExif">进入检查时启用的 EXIF 项。</param>
+    /// <param name="lines">报告行。</param>
+    private static async Task CaptureZoomedShotAsync(iOSNativeRootViewController root, MainViewModel main, HashSet<string> workingExif, List<string> lines)
+    {
+        await ApplyConfigAsync(root, main, BuildConfigs(phoneDevice: true)[0]);
+        await ApplyComboAsync(root, main, ShownCombo, workingExif);
+        await ZoomBeyondFitAsync(root, 2);
+        await UiDispatcher.InvokeAsync(() => root.Photo.CenterOnNormalizedPoint(.2, .25));
+        await SettleAsync(root);
+        await HoldAsync("zoomed-under-bars", lines);
+        await UiDispatcher.InvokeAsync(() => root.Photo.FitToView());
+        await SettleAsync(root);
+    }
+
+    /// <summary>收尾还原：方向、舞台、尺寸类别、布局模式、栏位显隐、EXIF 显示项与筛选状态。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="settings">进入本检查时的不可变设置快照。</param>
+    /// <param name="film">进入时的胶片栏显隐。</param>
+    /// <param name="control">进入时的控制栏显隐。</param>
+    /// <param name="analysis">进入时的分析栏显隐。</param>
+    /// <param name="entryExif">进入时启用的 EXIF 项。</param>
+    /// <param name="orientation">进入时的界面方向。</param>
+    /// <param name="sort">进入时的排序方式。</param>
+    /// <param name="order">进入时的排序方向。</param>
+    /// <param name="ratingFilter">进入时的星级筛选。</param>
+    private static async Task RestoreAsync(iOSNativeRootViewController root, MainViewModel main, AppSettings settings,
+        bool film, bool control, bool analysis, HashSet<string> entryExif, UIInterfaceOrientation orientation,
+        SortMode sort, SortOrder order, string ratingFilter)
+    {
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            root.StageWidthFraction = null;
+            root.TraitOverrides.RemoveTrait<UITraitHorizontalSizeClass>();
+            root.AvoidanceTuningOverride = null;
+            root.FitInsetsOverride = null;
+            main.Settings.ApplySnapshot(settings);
+            main.IsThumbnailViewVisible = film;
+            main.IsControlViewVisible = control;
+            main.IsAnalysisViewVisible = analysis;
+            foreach (var item in main.Settings.ExifDisplayItems)
+            {
+                bool enabled = entryExif.Contains(item.PropertyName);
+                if (item.IsEnabled != enabled) item.IsEnabled = enabled;
+            }
+            main.FileVM.FilterBar.SortMode = sort;
+            main.FileVM.FilterBar.SortOrder = order;
+            main.FileVM.FilterBar.SelectedRatingFilter = ratingFilter;
+            root.SupportedOrientationsOverride = null;
+            root.SetNeedsUpdateOfSupportedInterfaceOrientations();
+        });
+        await SettleAsync(root);
+        var mask = orientation switch
+        {
+            UIInterfaceOrientation.Portrait => UIInterfaceOrientationMask.Portrait,
+            UIInterfaceOrientation.PortraitUpsideDown => UIInterfaceOrientationMask.PortraitUpsideDown,
+            UIInterfaceOrientation.LandscapeLeft => UIInterfaceOrientationMask.LandscapeLeft,
+            UIInterfaceOrientation.LandscapeRight => UIInterfaceOrientationMask.LandscapeRight,
+            _ => UIInterfaceOrientationMask.Portrait,
+        };
+        if (CurrentOrientation(root) != orientation)
+        {
+            try
+            {
+                await RequestOrientationAsync(root, mask);
+            }
+            catch (InvalidOperationException exception)
+            {
+                Console.WriteLine("[NativeSmoke] form 收尾旋转未生效：" + exception.Message);
+            }
+        }
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            root.BuildControls();
+            root.Photo.FitToView();
+        });
+        await SettleAsync(root);
+    }
+
+    /// <summary>记录一个截图检查点并停留，供外部脚本截图。</summary>
+    /// <param name="stage">检查点名（与截图文件名一致）。</param>
+    /// <param name="lines">报告行。</param>
+    private static async Task HoldAsync(string stage, List<string> lines)
+    {
+        lines.Add($"STAGE {stage}");
+        await WriteStageAsync(stage);
+        await Task.Delay(StageHold);
+    }
+
+    /// <summary>写入当前截图阶段名（外部脚本据此截图）。</summary>
+    /// <param name="stage">阶段名；<c>done</c> 表示验收结束。</param>
+    private static Task WriteStageAsync(string stage)
+    {
+        string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "PhotoViewer", "native-ui-snapshot-stage.txt");
+        return File.WriteAllTextAsync(path, stage);
+    }
+
+    /// <summary>轮询等待条件成立，超时即失败。</summary>
+    /// <param name="condition">条件。</param>
+    /// <param name="label">等待标签。</param>
+    private static async Task WaitAsync(Func<bool> condition, string label)
+    {
+        for (int attempt = 0; attempt < 600; attempt++)
+        {
+            if (condition()) return;
+            await Task.Delay(25);
+        }
+        throw new InvalidOperationException($"等待超时：{label}");
+    }
+
+    /// <summary>等待一轮布局落地（UIKit 布局 + 共享 VM 通知）。</summary>
+    /// <param name="root">原生根控制器。</param>
+    private static async Task SettleAsync(iOSNativeRootViewController root)
+    {
+        await Task.Delay(120);
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            root.View!.LayoutIfNeeded();
+            root.Stage.LayoutIfNeeded();
+        });
+        await Task.Delay(80);
+    }
+
+    /// <summary>当前界面方向（以 window scene 的有效几何为准）。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <returns>界面方向；无 scene 时为 Unknown。</returns>
+    private static UIInterfaceOrientation CurrentOrientation(iOSNativeRootViewController root)
+        => root.View?.Window?.WindowScene?.EffectiveGeometry?.InterfaceOrientation ?? UIInterfaceOrientation.Unknown;
+
+    /// <summary>当前是否手机横屏排布。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <returns>手机横屏形态时为 true。</returns>
+    private static bool IsLandscapeForm(iOSNativeRootViewController root)
+        => root.Form == ScreenForm.PhoneLandscape;
+
+    /// <summary>主图适应区（舞台坐标，由内边距与主图尺寸直算，空态同样有效）。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <returns>适应区矩形。</returns>
+    private static CGRect FitArea(iOSNativeRootViewController root)
+    {
+        var bounds = root.Photo.Bounds;
+        var insets = root.Photo.FitInsets;
+        return new CGRect(
+            (double)insets.Left,
+            (double)insets.Top,
+            Math.Max(0, (double)bounds.Width - (double)insets.Left - (double)insets.Right),
+            Math.Max(0, (double)bounds.Height - (double)insets.Top - (double)insets.Bottom));
+    }
+
+    /// <summary>照片（含适应区内边距）在舞台坐标中的外接矩形。</summary>
+    /// <param name="photo">主图宿主。</param>
+    /// <returns>外接矩形。</returns>
+    private static (double Left, double Top, double Right, double Bottom) PhotoBounds(iOSPhotoView photo)
+    {
+        double width = photo.DisplayWidth * photo.PointScale, height = photo.DisplayHeight * photo.PointScale;
+        double centerX = (double)photo.Bounds.Width / 2 + photo.Viewport.PanX;
+        double centerY = (double)photo.Bounds.Height / 2 + photo.Viewport.PanY;
+        return (centerX - width / 2, centerY - height / 2, centerX + width / 2, centerY + height / 2);
+    }
+
+    /// <summary>视图在舞台坐标中的 frame。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="view">目标视图。</param>
+    /// <returns>舞台坐标矩形。</returns>
+    private static CGRect FrameInStage(iOSNativeRootViewController root, UIView view)
+        => view.ConvertRectToView(view.Bounds, root.Stage);
+
+    /// <summary>视图自身与全部祖先都未隐藏。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="view">目标视图。</param>
+    /// <returns>实际可见时为 true。</returns>
+    private static bool IsVisible(iOSNativeRootViewController root, UIView view)
+    {
+        for (UIView? current = view; current != null && !ReferenceEquals(current, root.View); current = current.Superview)
+            if (current.Hidden) return false;
+        return true;
+    }
+
+    /// <summary>槽位矩形是否非空。</summary>
+    /// <param name="rect">槽位矩形。</param>
+    /// <returns>宽度与高度都大于 0 时为 true。</returns>
+    private static bool Has(LayoutRect rect) => rect.Width > 0 && rect.Height > 0;
+
+    /// <summary>两个共享矩形是否一致（±0.5）。</summary>
+    /// <param name="left">矩形一。</param>
+    /// <param name="right">矩形二。</param>
+    /// <returns>一致时为 true。</returns>
+    private static bool SameRect(LayoutRect left, LayoutRect right)
+        => Has(left) == Has(right)
+        && Math.Abs(left.X - right.X) <= Tolerance && Math.Abs(left.Y - right.Y) <= Tolerance
+        && Math.Abs(left.Width - right.Width) <= Tolerance && Math.Abs(left.Height - right.Height) <= Tolerance;
+
+    /// <summary>共享矩形转 UIKit 矩形。</summary>
+    /// <param name="rect">共享矩形。</param>
+    /// <returns>UIKit 矩形。</returns>
+    private static CGRect ToCGRect(LayoutRect rect) => new(rect.X, rect.Y, rect.Width, rect.Height);
+
+    /// <summary>两个矩形是否实质相交（重叠超过半个点）。</summary>
+    /// <param name="left">矩形一。</param>
+    /// <param name="right">矩形二。</param>
+    /// <returns>相交时为 true。</returns>
+    private static bool Intersects(CGRect left, CGRect right)
+    {
+        double width = Math.Min((double)left.GetMaxX(), (double)right.GetMaxX()) - Math.Max((double)left.X, (double)right.X);
+        double height = Math.Min((double)left.GetMaxY(), (double)right.GetMaxY()) - Math.Max((double)left.Y, (double)right.Y);
+        return width > Tolerance && height > Tolerance;
+    }
+
+    /// <summary>矩形向外扩张。</summary>
+    /// <param name="rect">矩形。</param>
+    /// <param name="amount">扩张量（点）。</param>
+    /// <returns>扩张后的矩形。</returns>
+    private static CGRect Expand(CGRect rect, double amount)
+        => amount <= 0 ? rect : rect.Inset((nfloat)(-amount), (nfloat)(-amount));
+
+    /// <summary>外矩形是否完整包含内矩形。</summary>
+    /// <param name="outer">外矩形。</param>
+    /// <param name="inner">内矩形。</param>
+    /// <returns>包含时为 true。</returns>
+    private static bool Contains(CGRect outer, CGRect inner)
+        => (double)inner.X >= (double)outer.X - Tolerance && (double)inner.Y >= (double)outer.Y - Tolerance
+            && (double)inner.GetMaxX() <= (double)outer.GetMaxX() + Tolerance
+            && (double)inner.GetMaxY() <= (double)outer.GetMaxY() + Tolerance;
+
+    /// <summary>把菜单元素（含内联子菜单）摊平成标题序列，用于比较菜单内容。</summary>
+    /// <param name="elements">顶层元素。</param>
+    /// <returns>标题序列。</returns>
+    private static List<string> Flatten(IEnumerable<UIMenuElement> elements)
+    {
+        var titles = new List<string>();
+        foreach (var element in elements)
+        {
+            switch (element)
+            {
+                case UIMenu menu:
+                    titles.Add("[menu]");
+                    titles.AddRange(Flatten(menu.Children));
+                    break;
+                case UIAction action:
+                    titles.Add(action.Title);
+                    break;
+            }
+        }
+        return titles;
+    }
+
+    /// <summary>主图菜单里带勾选态的 action（按标识读取当前勾选）。</summary>
+    /// <param name="elements">菜单元素。</param>
+    /// <returns>标识 → 是否勾选。</returns>
+    private static Dictionary<string, bool> PhotoMenuStates(IEnumerable<UIMenuElement> elements)
+    {
+        var states = new Dictionary<string, bool>(StringComparer.Ordinal);
+        foreach (var element in elements)
+        {
+            switch (element)
+            {
+                case UIMenu menu:
+                    foreach (var (key, value) in PhotoMenuStates(menu.Children)) states[key] = value;
+                    break;
+                case UIAction { Identifier: { Length: > 0 } identifier } action:
+                    states[identifier] = action.State == UIMenuElementState.On;
+                    break;
+            }
+        }
+        return states;
+    }
+
+    /// <summary>尺寸格式化。</summary>
+    /// <param name="size">尺寸。</param>
+    /// <returns>文本。</returns>
+    private static string Size(CGSize size) => FormattableString.Invariant($"{size.Width:0.#}×{size.Height:0.#}");
+
+    /// <summary>矩形格式化。</summary>
+    /// <param name="rect">共享矩形。</param>
+    /// <returns>文本。</returns>
+    private static string Rect(LayoutRect rect) => FormattableString.Invariant($"{rect.X:0.#},{rect.Y:0.#} {rect.Width:0.#}×{rect.Height:0.#}");
+
+    /// <summary>UIKit 矩形格式化。</summary>
+    /// <param name="rect">矩形。</param>
+    /// <returns>文本。</returns>
+    private static string CGRect(CGRect rect) => FormattableString.Invariant($"{rect.X:0.#},{rect.Y:0.#} {rect.Width:0.#}×{rect.Height:0.#}");
+
+    /// <summary>照片外接矩形格式化。</summary>
+    /// <param name="photo">外接矩形。</param>
+    /// <returns>文本。</returns>
+    private static string Format((double Left, double Top, double Right, double Bottom) photo)
+        => FormattableString.Invariant($"{photo.Left:0.#},{photo.Top:0.#}→{photo.Right:0.#},{photo.Bottom:0.#}");
+
+    /// <summary>内边距格式化。</summary>
+    /// <param name="insets">内边距。</param>
+    /// <returns>文本。</returns>
+    private static string Insets(UIEdgeInsets insets)
+        => FormattableString.Invariant($"T{insets.Top:0.#} L{insets.Left:0.#} B{insets.Bottom:0.#} R{insets.Right:0.#}");
+
+    /// <summary>开关格式化。</summary>
+    /// <param name="value">状态。</param>
+    /// <returns>文本。</returns>
+    private static string OnOff(bool value) => value ? "开" : "关";
+
+    /// <summary>尺寸类别格式化。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <returns>文本。</returns>
+    private static string TraitSizes(iOSNativeRootViewController root)
+        => $"{root.TraitCollection.HorizontalSizeClass}/{root.TraitCollection.VerticalSizeClass}";
+}

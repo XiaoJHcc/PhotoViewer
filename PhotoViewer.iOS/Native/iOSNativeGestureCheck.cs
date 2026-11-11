@@ -285,6 +285,10 @@ internal static class iOSNativeGestureCheck
                 VerifyNavigationIndicator(root, visible: false, lines);
                 lines.Add($"PASS Fit 命令：适应 ⇄ 物理 {fitCommand.Physical * 100:0.#}% 双向切换（无对焦点以视口中心放大，导航图随态显隐）");
 
+                // 七之三、适应区内边距（适应区与视图区分离）：滚动视图仍铺满 Bounds，内边距只进入 contentInset
+                //       与共享视口；适应态照片居中于适应区，放大后平移极限让照片边缘正好落在适应区边缘。
+                await VerifyFitInsetsAsync(root, lines);
+
                 // 七之三、放大态切图：保持倍率与同一归一化中心点（旧壳 OnBitmapChanged / Mac ApplyImage 同语义）；
                 //       切图首帧若是代理、随后升 Full，热替换不得改动滚动状态。
                 var sameLarge = await UiDispatcher.InvokeAsync(() => main.FolderVM.AllFiles.First(item => item.Name == "gesture-b-large.jpg"));
@@ -555,6 +559,218 @@ internal static class iOSNativeGestureCheck
             Console.Error.WriteLine("[NativeSmoke] FAIL gesture " + exception);
         }
     }
+
+    /// <summary>
+    /// 适应区内边距断言（适应区与视图区分离）：对当前主图设置一组非对称内边距，核对适应态照片在适应区内居中贴边、
+    /// Fit 到物理 100% 后 <c>zoomScale == 1/(BackingScale×FitScale)</c>（FitScale 按适应区）、拖到四个极限时照片边缘
+    /// 与适应区边缘对齐（±1 点）、<c>contentSize = 内容视图 × zoomScale</c>、捏合锚点保持，
+    /// 最后撤掉验收注入的内边距并核对适应区回到进入前的分区避让、滚动状态与进入前逐项一致。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="lines">报告行。</param>
+    private static async Task VerifyFitInsetsAsync(iOSNativeRootViewController root, List<string> lines)
+    {
+        await UiDispatcher.InvokeAsync(() => root.Photo.FitToView());
+        await SettleAsync(root);
+        var entry = await UiDispatcher.InvokeAsync(() => (Insets: root.Photo.FitInsets, Fit: root.Photo.FitRect));
+        var original = await SnapshotAsync(root);
+        var insets = new UIEdgeInsets(90, 40, 160, 20);
+        var applied = await UiDispatcher.InvokeAsync(() =>
+        {
+            root.FitInsetsOverride = insets;
+            var photo = root.Photo;
+            return (Insets: photo.FitInsets, Fit: photo.FitRect, Bounds: photo.Bounds,
+                IsFit: photo.IsFit, Center: photo.Viewport.CenterUV, Photo: PhotoBounds(photo));
+        });
+        await SettleAsync(root);
+        if (Math.Abs((double)applied.Insets.Left - 40) > .01 || Math.Abs((double)applied.Insets.Top - 90) > .01
+            || Math.Abs((double)applied.Insets.Right - 20) > .01 || Math.Abs((double)applied.Insets.Bottom - 160) > .01)
+            throw new InvalidOperationException($"适应区内边距未按入参生效：{applied.Insets}");
+        if (Math.Abs((double)applied.Fit.Width - ((double)applied.Bounds.Width - 60)) > .5
+            || Math.Abs((double)applied.Fit.Height - ((double)applied.Bounds.Height - 250)) > .5
+            || Math.Abs((double)applied.Fit.X - 40) > .5 || Math.Abs((double)applied.Fit.Y - 90) > .5)
+            throw new InvalidOperationException($"适应区矩形 {applied.Fit} 与视图 {applied.Bounds.Size} 减去内边距不符");
+        if (!applied.IsFit) throw new InvalidOperationException("设置内边距后应保持适应态");
+        var fitState = await UiDispatcher.InvokeAsync(() => (Photo: PhotoBounds(root.Photo), Fit: root.Photo.FitRect,
+            Center: root.Photo.Viewport.CenterUV, Inset: root.Photo.ScrollView.ContentInset));
+        AssertInside(applied.Fit, fitState.Photo, "适应态照片在适应区内");
+        double fitCenterX = (double)applied.Fit.X + (double)applied.Fit.Width / 2;
+        double fitCenterY = (double)applied.Fit.Y + (double)applied.Fit.Height / 2;
+        AssertCentered("适应态照片水平居中于适应区", (fitState.Photo.Left + fitState.Photo.Right) / 2, fitCenterX);
+        AssertCentered("适应态照片垂直居中于适应区", (fitState.Photo.Top + fitState.Photo.Bottom) / 2, fitCenterY);
+        if (!(Math.Abs(fitState.Photo.Left - (double)applied.Fit.Left) <= 1 || Math.Abs(fitState.Photo.Right - (double)applied.Fit.Right) <= 1
+            || Math.Abs(fitState.Photo.Top - (double)applied.Fit.Top) <= 1 || Math.Abs(fitState.Photo.Bottom - (double)applied.Fit.Bottom) <= 1))
+            throw new InvalidOperationException($"适应态照片 {Format(fitState.Photo)} 没有贴住适应区 {applied.Fit} 的任何一边");
+        if (Math.Abs(fitState.Center.U - .5) > .001 || Math.Abs(fitState.Center.V - .5) > .001)
+            throw new InvalidOperationException($"适应态 CenterUV 应为 (.5,.5)，实际 ({fitState.Center.U:0.####},{fitState.Center.V:0.####})");
+        if ((double)fitState.Inset.Left < 40 - .5 || (double)fitState.Inset.Top < 90 - .5
+            || (double)fitState.Inset.Right < 20 - .5 || (double)fitState.Inset.Bottom < 160 - .5)
+            throw new InvalidOperationException($"contentInset {fitState.Inset} 未包含适应区四边避让");
+        lines.Add($"PASS 适应区内边距：适应区 {Size(applied.Fit.Size)} 位于 ({applied.Fit.X:0.#},{applied.Fit.Y:0.#})，" +
+            $"照片 {Size(new CGSize(fitState.Photo.Right - fitState.Photo.Left, fitState.Photo.Bottom - fitState.Photo.Top))} " +
+            $"居中且贴边，contentInset 含四边避让");
+
+        // Fit 到物理 100%：zoomScale 必须按适应区算出的适应倍率给出。
+        await UiDispatcher.InvokeAsync(() => root.Photo.ToggleFit());
+        await WaitAsync(() => !root.Photo.IsFit && Math.Abs(root.Photo.PhysicalScale - 1) < .01, "适应区内边距 Fit 到物理 100%");
+        await SettleAsync(root);
+        var zoomed = await UiDispatcher.InvokeAsync(() => (Zoom: (double)root.Photo.ScrollView.ZoomScale,
+            Bs: root.Photo.Viewport.BackingScale, FitScale: root.Photo.Viewport.FitScale));
+        double expectedZoom = 1 / (zoomed.Bs * zoomed.FitScale);
+        if (Math.Abs(zoomed.Zoom - expectedZoom) > expectedZoom * .01)
+            throw new InvalidOperationException(
+                $"适应区内边距 Fit 后 zoomScale {zoomed.Zoom:0.####} 不是物理 100% 的 {expectedZoom:0.####}" +
+                $"（bs={zoomed.Bs:0.##}，fit={zoomed.FitScale:0.####}，按适应区）");
+        await AssertScrollInvariantsAsync(root, "适应区内边距 100%");
+        var anchorUV = await UiDispatcher.InvokeAsync(() => root.Photo.Viewport.CenterUV);
+        if (Math.Abs(anchorUV.U - .5) > .002 || Math.Abs(anchorUV.V - .5) > .002)
+            throw new InvalidOperationException(
+                $"适应区内边距 Fit 未以适应区中心为锚点：视口中心 ({anchorUV.U:0.####},{anchorUV.V:0.####})，期望 (.5,.5)");
+
+        // 拖到四个极限：可平移的轴必须让照片边缘与适应区边缘对齐，小于适应区的轴保持居中。
+        var displayed = await UiDispatcher.InvokeAsync(() => (Width: root.Photo.DisplayWidth * root.Photo.PointScale,
+            Height: root.Photo.DisplayHeight * root.Photo.PointScale));
+        var left = await ScrollToExtremeAsync(root, horizontal: -1, vertical: 0);
+        AssertExtreme("拖到左极限", left.Photo, left.Fit, displayed.Width, displayed.Height, horizontal: true, trailing: false);
+        var right = await ScrollToExtremeAsync(root, horizontal: 1, vertical: 0);
+        AssertExtreme("拖到右极限", right.Photo, right.Fit, displayed.Width, displayed.Height, horizontal: true, trailing: true);
+        var top = await ScrollToExtremeAsync(root, horizontal: 0, vertical: -1);
+        AssertExtreme("拖到上极限", top.Photo, top.Fit, displayed.Width, displayed.Height, horizontal: false, trailing: false);
+        var bottom = await ScrollToExtremeAsync(root, horizontal: 0, vertical: 1);
+        AssertExtreme("拖到下极限", bottom.Photo, bottom.Fit, displayed.Width, displayed.Height, horizontal: false, trailing: true);
+        await AssertScrollInvariantsAsync(root, "拖到极限后");
+
+        // 捏合锚点：手指下的图像点在非对称内边距下同样保持不动。
+        var pinchCenter = new CGPoint((double)root.Photo.Bounds.Width * .62, (double)root.Photo.Bounds.Height * .58);
+        var anchorBefore = await UiDispatcher.InvokeAsync(() => root.Photo.ImagePointAt(pinchCenter));
+        await PinchAsync(root, pinchCenter, Math.Max(2, zoomed.Zoom * 1.6));
+        await Task.Delay(60);
+        var anchorAfter = await UiDispatcher.InvokeAsync(() => root.Photo.ImagePointAt(pinchCenter));
+        AssertImagePoint(anchorBefore, anchorAfter, AnchorTolerance, root.Photo, "适应区内边距捏合后手指下的图像点");
+        await AssertScrollInvariantsAsync(root, "适应区内边距捏合后");
+        lines.Add($"PASS 适应区内边距改视口：100% zoomScale {zoomed.Zoom:0.####} = 1/({zoomed.Bs:0.##}×{zoomed.FitScale:0.####})，" +
+            $"四极限照片边缘贴合适应区，捏合锚点保持 ({anchorBefore.U:0.####},{anchorBefore.V:0.####})");
+
+        // 恢复进入前的内边距（宽形态的分区避让非零）：适应区回到进入前的位置，滚动状态回到设置内边距之前。
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            root.FitInsetsOverride = null;
+            root.Photo.FitToView();
+        });
+        await SettleAsync(root);
+        var restored = await SnapshotAsync(root);
+        AssertSnapshot(original, restored, "恢复进入前内边距");
+        var restoredFit = await UiDispatcher.InvokeAsync(() => (Inset: root.Photo.FitInsets, Fit: root.Photo.FitRect,
+            Bounds: root.Photo.Bounds, IsFit: root.Photo.IsFit));
+        if (!restoredFit.IsFit) throw new InvalidOperationException("恢复进入前内边距后不是适应态");
+        if (Math.Abs((double)restoredFit.Inset.Left - (double)entry.Insets.Left) > .5
+            || Math.Abs((double)restoredFit.Inset.Top - (double)entry.Insets.Top) > .5
+            || Math.Abs((double)restoredFit.Inset.Right - (double)entry.Insets.Right) > .5
+            || Math.Abs((double)restoredFit.Inset.Bottom - (double)entry.Insets.Bottom) > .5)
+            throw new InvalidOperationException($"恢复后内边距未回到进入前：{restoredFit.Inset} vs {entry.Insets}");
+        if (Math.Abs((double)restoredFit.Fit.X - (double)entry.Fit.X) > .5
+            || Math.Abs((double)restoredFit.Fit.Y - (double)entry.Fit.Y) > .5
+            || Math.Abs((double)restoredFit.Fit.Width - (double)entry.Fit.Width) > .5
+            || Math.Abs((double)restoredFit.Fit.Height - (double)entry.Fit.Height) > .5)
+            throw new InvalidOperationException($"恢复后适应区 {restoredFit.Fit} 未回到进入前的 {entry.Fit}");
+        lines.Add($"PASS 适应区内边距复位：适应区回到进入前的 {Size(entry.Fit.Size)}@{entry.Fit.X:0.#},{entry.Fit.Y:0.#}，" +
+            "contentSize/contentOffset/zoom/pan 与设置前逐项一致");
+    }
+
+    /// <summary>把滚动偏移推到某一轴的极限并返回视口给出的照片外接矩形与适应区。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="horizontal">-1 取 contentOffset 下限（照片左边缘贴适应区左缘），+1 取上限，0 保持当前。</param>
+    /// <param name="vertical">-1 取 contentOffset 下限（照片上边缘贴适应区上缘），+1 取上限，0 保持当前。</param>
+    private static Task<((double Left, double Top, double Right, double Bottom) Photo, CGRect Fit)> ScrollToExtremeAsync(
+        iOSNativeRootViewController root, int horizontal, int vertical)
+        => UiDispatcher.InvokeAsync(() =>
+        {
+            var photo = root.Photo;
+            var scroll = photo.ScrollView;
+            var insets = scroll.ContentInset;
+            double minX = -(double)insets.Left;
+            double maxX = Math.Max(minX, (double)scroll.ContentSize.Width - (double)scroll.Bounds.Width + (double)insets.Right);
+            double minY = -(double)insets.Top;
+            double maxY = Math.Max(minY, (double)scroll.ContentSize.Height - (double)scroll.Bounds.Height + (double)insets.Bottom);
+            scroll.SetContentOffset(new CGPoint(
+                horizontal < 0 ? minX : horizontal > 0 ? maxX : (double)scroll.ContentOffset.X,
+                vertical < 0 ? minY : vertical > 0 ? maxY : (double)scroll.ContentOffset.Y), false);
+            return (PhotoBounds(photo), photo.FitRect);
+        });
+
+    /// <summary>照片（含适应区内边距）在视图坐标中的外接矩形。</summary>
+    /// <param name="photo">主图宿主。</param>
+    private static (double Left, double Top, double Right, double Bottom) PhotoBounds(iOSPhotoView photo)
+    {
+        double width = photo.DisplayWidth * photo.PointScale, height = photo.DisplayHeight * photo.PointScale;
+        double centerX = (double)photo.Bounds.Width / 2 + photo.Viewport.PanX;
+        double centerY = (double)photo.Bounds.Height / 2 + photo.Viewport.PanY;
+        return (centerX - width / 2, centerY - height / 2, centerX + width / 2, centerY + height / 2);
+    }
+
+    /// <summary>照片外接矩形必须完整落在适应区内。</summary>
+    /// <param name="fit">适应区。</param>
+    /// <param name="photo">照片外接矩形。</param>
+    /// <param name="stage">阶段名。</param>
+    private static void AssertInside(CGRect fit, (double Left, double Top, double Right, double Bottom) photo, string stage)
+    {
+        if (photo.Left < (double)fit.Left - SizeTolerance || photo.Top < (double)fit.Top - SizeTolerance
+            || photo.Right > (double)fit.Right + SizeTolerance || photo.Bottom > (double)fit.Bottom + SizeTolerance)
+            throw new InvalidOperationException($"{stage}：照片 {Format(photo)} 超出适应区 {fit}");
+    }
+
+    /// <summary>居中断言（±1 点）。</summary>
+    /// <param name="stage">阶段名。</param>
+    /// <param name="actual">照片中心坐标。</param>
+    /// <param name="expected">适应区中心坐标。</param>
+    private static void AssertCentered(string stage, double actual, double expected)
+    {
+        if (Math.Abs(actual - expected) > SizeTolerance)
+            throw new InvalidOperationException($"{stage}：中心 {actual:0.##} 与适应区中心 {expected:0.##} 不符");
+    }
+
+    /// <summary>
+    /// 单轴极限断言：显示尺寸超过适应区的轴必须让照片边缘落在适应区边缘（±1 点），
+    /// 小于适应区的轴不得平移、必须居中于适应区。
+    /// </summary>
+    /// <param name="stage">阶段名。</param>
+    /// <param name="photo">照片外接矩形。</param>
+    /// <param name="fit">适应区。</param>
+    /// <param name="displayedWidth">照片横向显示尺寸。</param>
+    /// <param name="displayedHeight">照片纵向显示尺寸。</param>
+    /// <param name="horizontal">true 核对横向，false 核对纵向。</param>
+    /// <param name="trailing">true 核对尾随边（右/下），false 核对前导边（左/上）。</param>
+    private static void AssertExtreme(string stage, (double Left, double Top, double Right, double Bottom) photo,
+        CGRect fit, double displayedWidth, double displayedHeight, bool horizontal, bool trailing)
+    {
+        double displayed = horizontal ? displayedWidth : displayedHeight;
+        double extent = horizontal ? (double)fit.Width : (double)fit.Height;
+        string axis = horizontal ? "横向" : "纵向";
+        if (displayed <= extent + SizeTolerance)
+        {
+            double center = horizontal ? (photo.Left + photo.Right) / 2 : (photo.Top + photo.Bottom) / 2;
+            double fitCenter = horizontal
+                ? (double)fit.Left + (double)fit.Width / 2
+                : (double)fit.Top + (double)fit.Height / 2;
+            if (Math.Abs(center - fitCenter) > SizeTolerance)
+                throw new InvalidOperationException(
+                    $"{stage}：显示 {displayed:0.##} 小于适应区 {extent:0.##} 的{axis}轴未居中于适应区（中心 {center:0.##} vs {fitCenter:0.##}）");
+            return;
+        }
+        double edge = horizontal ? (trailing ? photo.Right : photo.Left) : (trailing ? photo.Bottom : photo.Top);
+        double fitEdge = horizontal
+            ? (trailing ? (double)fit.Right : (double)fit.Left)
+            : (trailing ? (double)fit.Bottom : (double)fit.Top);
+        if (Math.Abs(edge - fitEdge) > SizeTolerance)
+            throw new InvalidOperationException(
+                $"{stage}：照片{(horizontal ? (trailing ? "右" : "左") : (trailing ? "下" : "上"))}边缘 {edge:0.##} " +
+                $"未对齐适应区边缘 {fitEdge:0.##}（容差 {SizeTolerance} 点）");
+    }
+
+    /// <summary>矩形文本。</summary>
+    /// <param name="rect">照片外接矩形。</param>
+    private static string Format((double Left, double Top, double Right, double Bottom) rect)
+        => $"({rect.Left:0.##},{rect.Top:0.##},{rect.Right:0.##},{rect.Bottom:0.##})";
 
     /// <summary>
     /// 选择当前照片并等待会话真正把新产物上屏（会话重置换图经 UI 线程排队，切到与已有产物相同的引用时只等非空）。

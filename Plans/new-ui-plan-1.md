@@ -270,6 +270,11 @@
   循环：每落一个形态或槽位就重跑对应检查。
   停止：遇到 U0 未覆盖的设计取舍、绑定缺失或模拟器无法驱动的场景，记入 §8 并停下报告。
   ```
+- **执行结论**（U0 的规范草案未先行，U1 所需选型由主模型裁定，规范条目仍待 U0 补写）：
+  - 共享层：`LayoutMode.Phone` + `LayoutCapabilities.PhoneLayoutSupported`（iOS 启动期置 true，其他平台列表不出现"手机"、读到时按自动处理且不改写设置值）；设置项 `ShowNavigationButtons`；`ScreenFormResolver`（Row/Col 显式选择恒为宽形态，只有自动在紧凑时转手机）；`PhoneScreenLayout`（竖屏/横屏槽位、栏背景与主图避让，刘海在右整体镜像）；`PhotoViewport.SetFitInsets`（适应区与视图区分离，零内边距逐位等价）。新令牌 `shell.glass.button.size`、`shell.phone.edgeMargin`、`shell.phone.rowInset`、`shell.glass.group.gap`、`shell.photo.bareGap`。
+  - 探针结论：S1 玻璃与模糊材质叠在 Metal 主图上取样正常（截图目视，帧率未测）；S2 内联单选分组 + `KeepsMenuPresented` 可行，勾选态靠重赋菜单 + `UpdateVisibleMenu` 刷新（真实弹出状态下的就地刷新留 G1 手验）；S4 不用系统工具栏——横屏控制列需竖排、槽位要与共享几何逐点一致，合体按钮改用 `UIGlassEffect` 胶囊容器 + 无底色按钮段，单按钮用 `GlassButtonConfiguration`；S5 滚动视图内边距表达适应区可行，放大后滚动边界取适应区边缘（照片画满窗口、垫在栏下，每个像素都能拖进无遮挡区）；S6 iPhone 程序化旋转（含左右横屏）可用作验收缝，iPad 分屏以舞台容器限宽 + `TraitOverrides` 紧凑覆盖模拟。S3 属 U2。
+  - 宽形态本阶段只换外壳（主图满窗口、栏背景改模糊材质、按分区避让），旧筛选条与旧控制栏内容不动，分别在 U3（筛选）与 U2/U3（星级、EXIF、圆按钮命令）替换。
+  - 证据：CoreContractCheck 两版 0 FAIL；`--pv-native-form-check` 标准版 iPhone 17e / 17 / 17 Pro Max（44 项）、iPad mini / Pro 13（67 项）与 AI 版 iPhone 17 / iPad Pro 13 全 PASS；iPad Pro 13 photo PASS，gesture 除基线既有一条外 PASS；Mac layout/filmstrip 冒烟 PASS，Windows 类型检查与令牌校验、Web 单测通过。截图与报告在 `artifacts/acceptance/new-ui/u1/`。
 
 ### U2 星级控件与星级弹窗
 
@@ -462,6 +467,16 @@
 - 图区避让参数与边栏背景观感：G1。
 - 星级控件手感：G2。
 - 三合体里计数的位置：G5。
+
+U1 执行中新出现的暂行决定（G1 一并过目）：
+
+- 手机形态"控制栏"显隐收起上下张、星级、缩放/增强、EXIF 与更多按钮；"胶片栏"显隐收起胶片条与筛选按钮。都隐藏时靠主图长按菜单恢复。
+- 本阶段筛选按钮是单图标圆按钮，筛选胶囊的文字与计数在 U5 加入。
+- 竖屏胶片条按圆角适应安全区左右内缩，滚动内容在两侧被截出空隙；横屏胶片条夹在两组按钮之间，尚未滚到按钮下方，也还没有滚动边缘效果。两项随 U3 胶片条宿主改造一并处理。
+- 卡片入口的来源浮窗方向仍取 `IsRowLayout`，手机形态未单独适配；手机形态的控制栏入口浮窗直接关闭。U2 星级弹窗吞并来源浮窗时一并处理。
+- 旧 `--pv-native-layout-check` 按主图分区口径在首项即失败（主图改为满窗口后不变量已过时），layout/input/similarity 等旧套件在 U4 改写。
+- 既有问题，与本计划无关：iPad Pro 13 上 `--pv-native-gesture-check` 的"半倍率切图未保持归一化中心"在改动前的基线上就失败。原因是 50% 时照片纵向小于主图区、该轴不可平移，断言的前提不成立；它之后的用例在该设备上没有执行到。
+- 本机没有 Android workload，Android 构建未验证。
 
 ## 9. 风险
 

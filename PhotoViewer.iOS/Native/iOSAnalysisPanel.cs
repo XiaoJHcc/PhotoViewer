@@ -16,7 +16,8 @@ namespace PhotoViewer.iOS.Native;
 /// 几何与旧壳 <c>AnalysisView</c>/Mac 原生分析栏同口径：正方形瓦片边长 =
 /// <c>floor((可用主轴长度 − 20 − 8×(n−1)) / n)</c>，行布局排在主图下方、列布局排在主图右侧，
 /// 交叉轴尺寸 = 瓦片边长 + 20。
-/// 背景 <c>#111</c>，朝主图一侧 1 点 <c>#333</c> 分隔线；空白处点击清空准星。
+/// 背景由宿主栏位背景承担（系统深色模糊材质），面板本身透明，朝主图一侧保留 1 点 <c>#333</c> 分隔线；
+/// 空白处点击清空准星。
 /// 细节裁剪从展示会话取源图：F16 代理与 8 位 P3 Full 都经共享 <see cref="DisplayCrop"/> 转成显示朝向 sRGB8。
 /// </summary>
 internal sealed class iOSAnalysisPanel : UIView
@@ -65,7 +66,7 @@ internal sealed class iOSAnalysisPanel : UIView
     {
         _main = main;
         _session = session;
-        BackgroundColor = UIColor.FromRGB(0x11, 0x11, 0x11);
+        BackgroundColor = UIColor.Clear;
         _divider.BackgroundColor = UIColor.FromRGB(0x33, 0x33, 0x33);
         AddSubview(_divider);
 

@@ -93,6 +93,7 @@ public static class iOSNativeShell
         iOSNativePhotoCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeGestureCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeLayoutCheck.MaybeStart(args, _rootViewController, _session);
+        iOSNativeFormCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeInputCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeAnalysisCheck.MaybeStart(args, _rootViewController, _session);
 #if PHOTOVIEWER_DINO
@@ -235,8 +236,8 @@ public static class iOSNativeShell
     }
 
     /// <summary>
-    /// 验收专用（非产品行为）：<c>--pv-layout-mode row|col</c> 在启动期固定布局方向，
-    /// 供模拟器截图核对两向主屏（iPadOS 不允许 <c>requestGeometryUpdate</c> 触发旋转，
+    /// 验收专用（非产品行为）：<c>--pv-layout-mode row|col|auto|phone</c> 在启动期固定布局模式，
+    /// 供模拟器截图核对两向主屏与手机形态（iPadOS 不允许 <c>requestGeometryUpdate</c> 触发旋转，
     /// 见 Plans/native-rebuild-phase-ipad.md 发现清单）。
     /// </summary>
     /// <param name="args">进程启动参数。</param>
@@ -250,7 +251,9 @@ public static class iOSNativeShell
             {
                 "row" => LayoutMode.Row,
                 "col" => LayoutMode.Col,
-                _ => throw new InvalidOperationException($"--pv-layout-mode 只接受 row/col：{args[index + 1]}"),
+                "auto" => LayoutMode.Auto,
+                "phone" => LayoutMode.Phone,
+                _ => throw new InvalidOperationException($"--pv-layout-mode 只接受 row/col/auto/phone：{args[index + 1]}"),
             };
             Console.WriteLine($"[Native] --pv-layout-mode {args[index + 1]}");
         }
@@ -294,6 +297,8 @@ public static class iOSNativeShell
         BitmapLoader.InitializePresentationDecoder(new ApplePresentationDecoder(), new iOSPresentationEncodingPolicy());
         BitmapPrefetcher.RawAlongsideLookahead = 4;
         PerformanceBudget.Initialize(new iOSPerformanceBudget());
+        // 主屏形态能力：iOS 实现了手机形态，布局模式在设置页出现「手机」，自动模式按尺寸类别进入手机形态。
+        LayoutCapabilities.PhoneLayoutSupported = true;
         // iPad 的缓存容量由实测预算推导,忽略用户缓存上限(自动口径在 BitmapLoader 内生效)
         BitmapLoader.AutomaticCacheLimit = true;
         MemoryGovernor.Initialize(new iOSMemoryBudgetProvider());

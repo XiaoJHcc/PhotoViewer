@@ -7,7 +7,7 @@
         <ApplicationTitle>$(PhotoViewerDisplayName)</ApplicationTitle>
         <!-- DINO 编译能力由 edition 派生：标准版不编译，AI 版内置模型与推理依赖。 -->
         <DefineConstants Condition="'$(PhotoViewerEdition)' == 'ai'">$(DefineConstants);PHOTOVIEWER_DINO</DefineConstants>
-        <SupportedOSPlatformVersion>17.0</SupportedOSPlatformVersion>
+        <SupportedOSPlatformVersion>26.0</SupportedOSPlatformVersion>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>

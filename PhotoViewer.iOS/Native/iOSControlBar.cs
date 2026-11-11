@@ -50,8 +50,8 @@ internal sealed class iOSControlBar : UIView
     public iOSControlBar(Action changed) : base(CGRect.Empty)
     {
         _changed = changed;
-        // SHELL-01：控制栏底色与窗口/栏位同一令牌（#111111）。
-        BackgroundColor = iOSColors.FromToken(DesignTokens.ColorBarBackground);
+        // 底色由宿主栏位背景承担（系统深色模糊材质），控制栏文档本身透明。
+        BackgroundColor = UIColor.Clear;
     }
 
     /// <summary>是否提供该命令的入口：分析栏 / 增强预览 / 其余共享命令都有原生实现。</summary>

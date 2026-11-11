@@ -149,7 +149,7 @@ internal sealed class iOSRatingSourcesPopover : IDisposable
                 if (_disposed || !_main.RatingSources.IsOpen || !ReferenceEquals(controller, _controller)) return;
                 if (ReferenceEquals(_owner.PresentedViewController, previous)) continue;
                 var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-                _owner.PresentViewController(controller, OperatingSystem.IsIOSVersionAtLeast(26), () => completion.TrySetResult(true));
+                _owner.PresentViewController(controller, true, () => completion.TrySetResult(true));
                 await completion.Task;
                 return;
             }
@@ -307,7 +307,7 @@ internal sealed class iOSRatingSourcesPopover : IDisposable
         if (_owner.PresentedViewController != _controller && !IsOpen) return;
         var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _dismissalTask = completion.Task;
-        _controller.DismissViewController(OperatingSystem.IsIOSVersionAtLeast(26), () => completion.TrySetResult(true));
+        _controller.DismissViewController(true, () => completion.TrySetResult(true));
     }
 
     internal void Close()
