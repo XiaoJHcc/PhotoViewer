@@ -309,6 +309,13 @@
   范围：PhotoViewer.Shared、PhotoViewer.iOS、Tools/CoreContractCheck、Design、Plans；评分写回只走共享 RatingService，不新增写入路径。
   停止：手感类问题（触感力度、动效时长）只记录候选值，留给 G2 由作者定，不反复调参。
   ```
+- **执行结论**（组件设计见 [new-ui-plan-2.md](new-ui-plan-2.md) §1）：
+  - 共享层：`RatingControlGeometry`（形态判定、格子映射、紧凑星簇、方向表与落位）、`RatingGesture`（一次手势至多一次提交）、`RatingPopupLayout`（弹窗步长与条目排版）、`ToolbarFlowLayout`（宽形态控制栏分组与换行，旧 `ControlBarLayout` 留给其他三端）；新令牌 `rating.*` 与 `motion.rating.*`，`rating` 域已登记。
+  - iOS：`iOSRatingRow` / `iOSRatingControl` / `iOSRatingPopup` 接入手机竖屏底行、横屏控制列与宽形态控制栏；宽形态控制栏换为 `iOSToolbarView`（星级控件 + 44 圆形玻璃命令按钮，EXIF 小块暂沿旧样式）；卡片冲突三角改开星级弹窗来源条目。删除 `iOSControlBar`、`iOSRatingSourcesPopover`、`iOSNativeRatingPopoverProbe` 与星级占位视图；旧 layout 检查的来源浮窗段落删除，覆盖面迁到 `--pv-native-rating-control-check`。
+  - S3 结论：直接采用窗口内玻璃面板（系统浮窗展示期间无法把起手触摸延续到弹窗星排），卡片长按与紧凑态共用同一转发路径。
+  - 实测槽位（iPhone 17）：竖屏底行显示上下张 165 → 紧凑、关闭上下张 261 → 展开；横屏控制列 261 → 展开；iPad 宽形态一律展开。
+  - 证据：CoreContractCheck 标准版 1662 / AI 版 1678 PASS、0 FAIL；`--pv-native-rating-control-check` 标准版 iPhone 17（27 项）、iPad Pro 13（24 项）与 AI 版 iPad Pro 13（24 项）全 PASS；`--pv-native-form-check` iPhone 17（28）、iPad Pro 13（53）PASS；Mac Debug 构建、Windows 类型检查、令牌校验与 Web 单测通过。截图与报告在 `artifacts/acceptance/new-ui/u2/`。
+  - 未程序化覆盖：真实手指触摸（模拟器无法合成，接缝与识别器同一路径）、外部点按只核结构与关闭路径、触感与动效手感，留 G2。
 
 ### U3 信息组件：卡片两档、EXIF 块、宽形态筛选
 
@@ -486,6 +493,15 @@ U1 执行中新出现的暂行决定（G1 一并过目）：
 - 旧 `--pv-native-layout-check` 按主图分区口径在首项即失败（主图改为满窗口后不变量已过时），layout/input/similarity 等旧套件在 U4 改写。
 - 既有问题，与本计划无关：iPad Pro 13 上 `--pv-native-gesture-check` 的"半倍率切图未保持归一化中心"在改动前的基线上就失败。原因是 50% 时照片纵向小于主图区、该轴不可平移，断言的前提不成立；它之后的用例在该设备上没有执行到。
 - 本机没有 Android workload，Android 构建未验证。
+
+U2 执行中新出现的暂行决定（G2 一并过目）：
+
+- 星级弹窗用窗口内玻璃面板而不是系统浮窗，外部点按只用于关闭（与系统浮窗一致）。
+- 展开态步长 36（命中区 36×44，靠拖动修正精度），弹窗步长 44；紧凑星簇字号 18、中心距 11，未点亮取描边星。
+- 提交后到写回完成之间显示"待确认"半透明星，失败回到真值并提示。
+- 手机形态关闭"显示评分"时星级控件隐藏、槽位留空。
+- 弹窗打开期间键盘快捷键照常派发（切图会关闭弹窗），只有 `Esc` 被弹窗消费。
+- 验收设置里 EXIF 显示项曾被前序检查全部关掉（模拟器容器的隔离设置残留），U2 截图前已恢复默认四项；input 检查的收尾还原待 U4 复核。
 
 ## 9. 风险
 

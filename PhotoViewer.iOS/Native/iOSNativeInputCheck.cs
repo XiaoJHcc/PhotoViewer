@@ -841,7 +841,7 @@ internal static class iOSNativeInputCheck
         await WaitAsync(() => root.ControlBar.Commands.ContainsKey("ZoomInScale")
             && root.ControlBar.Commands.Keys.First() == "ZoomInScale", "控制栏命令显隐与顺序传播");
         await WaitAsync(() => main.Settings.Hotkeys.First(hotkey => hotkey.Command == "Next").PrimaryHotkey?.Key?.Key == GestureKey.F5, "快捷键绑定传播");
-        await WaitAsync(() => root.ControlBar.Ratings.Count == 0 && main.ControlVM.EnabledExifItems.Count == 0, "评分与 EXIF 分组传播");
+        await WaitAsync(() => !root.ControlBar.HasRatingGroup && main.ControlVM.EnabledExifItems.Count == 0, "评分与 EXIF 分组传播");
         lines.Add($"PASS 设置写回①：布局模式→{(expectedRow ? "行" : "列")}、控制栏命令显隐/顺序（ZoomInScale 置顶）、Next 重绑 F5、评分与 EXIF 分组即时消失");
         RequireControlBarStructure(root, main, "设置写回①");
         RequireCommandAccessibilityFormat(root, main, lines);

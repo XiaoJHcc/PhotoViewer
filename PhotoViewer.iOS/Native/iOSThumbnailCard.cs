@@ -14,7 +14,7 @@ namespace PhotoViewer.iOS.Native;
 /// 6 个星级、抖动徽标与占位/加载状态；几何与 Mac 原生壳同口径（<see cref="FilmstripGeometry"/> 与固定内部 frame），
 /// 便于程序化对拍。星级是独立 UIButton，选择是覆盖整卡的独立 UIButton，命中测试天然分离，点星不会切图。
 /// 组级星级冲突（RATING-04）时 0 号槽位画 <c>exclamationmark.triangle.fill</c>（<c>color.star.conflict</c>），
-/// 点击打开来源浮窗、不写值；非冲突仍是清零叉、点击写 0。
+/// 点击打开星级弹窗（按来源逐条写回）、不写值；非冲突仍是清零叉、点击写 0。
 /// </summary>
 [Register("PViOSThumbnailCard")]
 internal sealed class iOSThumbnailCard : UICollectionViewCell

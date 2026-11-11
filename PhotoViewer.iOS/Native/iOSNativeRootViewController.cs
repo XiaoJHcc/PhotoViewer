@@ -65,8 +65,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <summary>手机横屏下巴侧栏背景。</summary>
     private readonly UIVisualEffectView _phoneTrailingBar = BarBackground();
     private readonly UIScrollView _controlScroll = new();
-    private readonly iOSControlBar _controlBar;
-    private readonly iOSRatingSourcesPopover _ratingSources;
+    private readonly iOSToolbarView _controlBar;
+    /// <summary>星级弹窗：窗口内玻璃面板，挂在根视图上（视图树就绪后创建）。</summary>
+    private iOSRatingPopup _ratingPopup = null!;
     private readonly iOSFilterBar _filterBar;
     private readonly iOSFilmstripView _filmstrip;
     private readonly iOSAnalysisPanel _analysisPane;
@@ -78,7 +79,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private iOSGlassButtonGroup _phoneNavigation = null!;
     private iOSGlassButtonGroup _phoneFitEnhance = null!;
     private UIButton _phoneEnhanceSegment = null!;
-    private iOSSlotPlaceholder _phoneRatingSlot = null!;
+    private iOSRatingControl _phoneRating = null!;
     private iOSSlotPlaceholder _phoneExifSlot = null!;
 #if PHOTOVIEWER_DINO
     private readonly iOSSimilarityPanel _similarityPane;
@@ -145,7 +146,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private IUITraitChangeRegistration? _traitRegistration;
     private bool _phoneControlsBuilt;
     private CGPoint _lastControlScrollOffset;
-    /// <summary>控制栏当前内容摘要：输入未变时跳过一次重建，保住按钮身份与已展示的来源浮窗。</summary>
+    /// <summary>控制栏当前内容摘要：输入未变时跳过一次重建，保住按钮身份与控制栏滚动位置。</summary>
     private string _controlSignature = string.Empty;
     private bool _controlsBuilt;
 
@@ -153,9 +154,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
     internal iOSPhotoView Photo => _photo;
     /// <summary>胶片栏（验收读取可见卡片、偏移与定位动画）。</summary>
     internal iOSFilmstripView Filmstrip => _filmstrip;
-    /// <summary>控制栏（验收读取分组、命令与评分按钮）。</summary>
-    internal iOSControlBar ControlBar => _controlBar;
-    internal iOSRatingSourcesPopover RatingSourcesPopover => _ratingSources;
+    /// <summary>控制栏（验收读取分组、命令与星级控件）。</summary>
+    internal iOSToolbarView ControlBar => _controlBar;
+    /// <summary>星级弹窗（验收读取打开态、内容与落位）。</summary>
+    internal iOSRatingPopup RatingPopup => _ratingPopup;
     /// <summary>筛选条（验收读取筛选控件几何）。</summary>
     internal iOSFilterBar FilterBar => _filterBar;
     /// <summary>文件栏背景视图。</summary>
@@ -259,8 +261,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
     internal iOSGlassButtonGroup PhoneNavigationGroup => _phoneNavigation;
     /// <summary>手机形态缩放适应/雾天增强合体。</summary>
     internal iOSGlassButtonGroup PhoneFitEnhanceGroup => _phoneFitEnhance;
-    /// <summary>手机形态星级占位。</summary>
-    internal iOSSlotPlaceholder PhoneRatingPlaceholder => _phoneRatingSlot;
+    /// <summary>手机形态星级控件（与宽形态控制栏共用同一实现）。</summary>
+    internal iOSRatingControl PhoneRatingControl => _phoneRating;
     /// <summary>手机形态 EXIF 占位。</summary>
     internal iOSSlotPlaceholder PhoneExifPlaceholder => _phoneExifSlot;
     /// <summary>手机形态四条栏背景。</summary>
@@ -348,8 +350,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
 #if PHOTOVIEWER_DINO
         _similarityPane = new iOSSimilarityPanel(main) { Hidden = true };
 #endif
-        _controlBar = new iOSControlBar(RequestControlsRefresh);
-        _ratingSources = new iOSRatingSourcesPopover(main, this);
+        _controlBar = new iOSToolbarView(RequestControlsRefresh);
         // 主图菜单用触点处的 1 点透明预览：长按只弹菜单，照片不抬升、不缩小。
         _photoMenu = new iOSContextMenuDelegate(_ => BuildPhotoMenu(), stablePreview: true);
         _drop = new UIDropInteraction(new iOSDropDelegate(this));
@@ -375,11 +376,11 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _main.FileVM.SimilarityPanel.PropertyChanged += OnSimilarityPanelChanged;
 #endif
         _filmstrip.RateRequested += OnRateRequested;
-        _filmstrip.RatingSourcesRequested += ShowRatingSources;
-        _filmstrip.RatingAnchorMoved += CloseCardRatingSources;
+        _filmstrip.RatingPopupRequested += OpenCardPopup;
+        _filmstrip.RatingAnchorMoved += CloseCardPopup;
 #if PHOTOVIEWER_DINO
-        _similarityPane.RatingSourcesRequested += ShowRatingSources;
-        _similarityPane.RatingAnchorMoved += CloseCardRatingSources;
+        _similarityPane.RatingPopupRequested += OpenCardPopup;
+        _similarityPane.RatingAnchorMoved += CloseCardPopup;
 #endif
         // STATE-03：评分写回失败统一由共享事件驱动提示条（共享层只对 RolledBack/Partial/异常发事件，
         // Superseded/Canceled 不发，因此快速连按不会弹虚假失败）。
@@ -484,6 +485,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
 #endif
         _stage.AddSubview(_analysisPane);
         BuildPhoneControls(_stage);
+        // 星级弹窗挂在根视图上（不进入舞台）：玻璃面板与全窗拦截层浮在所有主屏内容之上。
+        _ratingPopup = new iOSRatingPopup(_main, root, CommitPopupAsync);
+        WireRatingControls();
         // 尺寸类别变化（旋转、Split View、Stage Manager）走系统特性登记；普通窗口尺寸变化由 bounds 布局覆盖。
         var traitRegistration = root.RegisterForTraitChanges<UITraitHorizontalSizeClass, UITraitVerticalSizeClass>(
             (_, _) => View?.SetNeedsLayout());
@@ -494,6 +498,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         OnSessionChanged();
         UpdateHint();
         RefreshScreen();
+        UpdateRatingControls();
         BootTrace.Mark("native shell: main screen ready");
     }
 
@@ -544,10 +549,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
         {
             if (press.Key is not { } key) continue;
             int usage = (int)key.KeyCode;
-            if (_ratingSources.IsOpen && usage == 41)
+            if (usage == 41 && HandleEscapeKey())
             {
-                ClearHeldKeys();
-                _ratingSources.Close();
                 consumed = true;
                 continue;
             }
@@ -566,6 +569,19 @@ internal sealed class iOSNativeRootViewController : UIViewController
             else if (_repeatUsage == usage) StopKeyRepeat();
         }
         if (!consumed) base.PressesBegan(presses, evt);
+    }
+
+    /// <summary>
+    /// Esc 收起星级弹窗（<see cref="PressesBegan"/> 与验收共用）：弹窗未打开时不处理，
+    /// 打开时同时作废按住状态的重复目标。
+    /// </summary>
+    /// <returns>是否关闭了弹窗。</returns>
+    internal bool HandleEscapeKey()
+    {
+        if (!_ratingPopup.IsOpen) return false;
+        ClearHeldKeys();
+        _ratingPopup.Close();
+        return true;
     }
 
     /// <summary>硬件键盘抬起：停止该键的重复计时；未登记的按键交还系统。</summary>
@@ -616,7 +632,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         if (KeyboardInputBlocked) return false;
         var gesture = AppleInputMapping.FromHidUsage(usage, modifierFlags, _main.Settings);
         command = InputCommandMap.CommandForGesture(gesture, _main.Settings);
-        if (!InputCommandMap.IsCommandKnown(command) || !iOSControlBar.IsCommandAvailable(command!))
+        if (!InputCommandMap.IsCommandKnown(command) || !iOSToolbarView.IsCommandAvailable(command!))
         {
             command = null;
             return false;
@@ -658,14 +674,14 @@ internal sealed class iOSNativeRootViewController : UIViewController
             _main.FileVM.SimilarityPanel.PropertyChanged -= OnSimilarityPanelChanged;
 #endif
             _filmstrip.RateRequested -= OnRateRequested;
-            _filmstrip.RatingSourcesRequested -= ShowRatingSources;
-            _filmstrip.RatingAnchorMoved -= CloseCardRatingSources;
+            _filmstrip.RatingPopupRequested -= OpenCardPopup;
+            _filmstrip.RatingAnchorMoved -= CloseCardPopup;
 #if PHOTOVIEWER_DINO
-            _similarityPane.RatingSourcesRequested -= ShowRatingSources;
-            _similarityPane.RatingAnchorMoved -= CloseCardRatingSources;
+            _similarityPane.RatingPopupRequested -= OpenCardPopup;
+            _similarityPane.RatingAnchorMoved -= CloseCardPopup;
 #endif
             _main.RatingWriteFailedDetailed -= OnRatingWriteFailed;
-            _ratingSources.Dispose();
+            _ratingPopup.Dispose();
             _traitRegistration = null;
             _photo.ViewportChanged -= ApplyDetailHighlight;
             if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
@@ -716,6 +732,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
             else LayoutPhone(width, height, safe);
             ApplyDetailHighlight();
             LayoutOverlays();
+            _ratingPopup?.RevalidateAnchor();
         }
         finally { _layingOut = false; }
     }
@@ -828,7 +845,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
             _filterBar.Arrange(row, contentWidth, leadingInset);
             double filmWidth = row ? Math.Max(1, contentWidth - similarityColumn) : contentWidth;
             var nextFilmstripFrame = new CGRect(content.X, content.Y + filterMain, filmWidth, Math.Max(1, content.Height - filterMain));
-            if (_filmstrip.Frame != nextFilmstripFrame) CloseCardRatingSources();
+            if (_filmstrip.Frame != nextFilmstripFrame) _ratingPopup.CloseIfAnchoredTo(RatingPopupAnchor.Card);
             _filmstrip.Frame = nextFilmstripFrame;
 #if PHOTOVIEWER_DINO
             if (similarityOpen)
@@ -838,7 +855,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
                         Math.Max(1, similarityColumn - SimilarityPanelGeometry.Margin), (nfloat)_similarityPane.CrossSize)
                     : new CGRect(content.X + MainScreenLayout.FileBarContentWidth, content.Y + filterMain,
                         (nfloat)_similarityPane.CrossSize, Math.Max(1, content.Height - filterMain));
-                if (_similarityPane.Frame != nextSimilarityFrame) CloseCardRatingSources();
+                if (_similarityPane.Frame != nextSimilarityFrame) _ratingPopup.CloseIfAnchoredTo(RatingPopupAnchor.Card);
                 _similarityPane.Frame = nextSimilarityFrame;
                 _similarityPane.LayoutIfNeeded();
             }
@@ -852,7 +869,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         // 方向变化属于显式定位条件（[FILM-04] 登记的原生增强），普通尺寸变化只约束偏移。
         if (axisChanged)
         {
-            CloseCardRatingSources();
+            _ratingPopup.CloseIfAnchoredTo(RatingPopupAnchor.Card);
             _filmstrip.ScrollToCurrent();
         }
 
@@ -998,7 +1015,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         ApplyBarBackground(_analysisBackground, portrait ? default : slots.Analysis);
 
         var filmFrame = ToFrame(slots.Filmstrip);
-        if (_filmstrip.Frame != filmFrame) CloseCardRatingSources();
+        if (_filmstrip.Frame != filmFrame) _ratingPopup.CloseIfAnchoredTo(RatingPopupAnchor.Card);
         _filmstrip.Frame = filmFrame;
         _filmstrip.Hidden = !filmVisible;
         if (filmVisible)
@@ -1007,7 +1024,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
             _filmstrip.SetAxis(portrait);
             if (axisChanged)
             {
-                CloseCardRatingSources();
+                _ratingPopup.CloseIfAnchoredTo(RatingPopupAnchor.Card);
                 _filmstrip.ScrollToCurrent();
             }
         }
@@ -1051,8 +1068,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _phoneFitEnhance.Frame = ToFrame(slots.FitEnhance);
         _phoneFitEnhance.LayoutIfNeeded();
 
-        _phoneRatingSlot.Hidden = !Has(slots.Rating);
-        _phoneRatingSlot.Frame = ToFrame(slots.Rating);
+        // 显示评分关闭时手机形态保留空槽位、控件隐藏（宽形态是整组移除）。
+        _phoneRating.Horizontal = portrait;
+        _phoneRating.Hidden = !Has(slots.Rating) || !_main.Settings.ShowRating;
+        _phoneRating.Frame = ToFrame(slots.Rating);
         _phoneExifSlot.Hidden = !Has(slots.Exif);
         _phoneExifSlot.Frame = ToFrame(slots.Exif);
     }
@@ -1069,7 +1088,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _phoneFilterMore.Hidden = true;
         _phoneNavigation.Hidden = true;
         _phoneFitEnhance.Hidden = true;
-        _phoneRatingSlot.Hidden = true;
+        _phoneRating.Hidden = true;
         _phoneExifSlot.Hidden = true;
     }
 
@@ -1235,12 +1254,12 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _phoneEnhanceSegment = _phoneFitEnhance.Add(
             AppleSymbolNames.ForCommand("ToggleEnhance")!, CommandLabel("ToggleEnhance"), () => Execute("ToggleEnhance"));
 
-        _phoneRatingSlot = iOSSlotPlaceholder.Rating();
+        _phoneRating = new iOSRatingControl();
         _phoneExifSlot = iOSSlotPlaceholder.Exif();
 
         foreach (var view in new UIView[]
         {
-            _phoneFilter, _phoneMore, _phoneFilterMore, _phoneNavigation, _phoneFitEnhance, _phoneRatingSlot, _phoneExifSlot,
+            _phoneFilter, _phoneMore, _phoneFilterMore, _phoneNavigation, _phoneFitEnhance, _phoneRating, _phoneExifSlot,
         })
         {
             view.Hidden = true;
@@ -1483,32 +1502,14 @@ internal sealed class iOSNativeRootViewController : UIViewController
     internal void BuildControls()
     {
         // 周期性内存探测会持续改写缓存提示等诊断属性，触发无关的设置通知；输入摘要相同就保持现有控件
-        // （就地不重建），否则每次通知都会换掉按钮实例，来源浮窗的锚点随之消失、列表也随之重载。
+        // （就地不重建），否则每次通知都会换掉按钮实例与控制栏滚动位置。
         string signature = ControlSignature();
         if (_controlsBuilt && string.Equals(signature, _controlSignature, StringComparison.Ordinal)) return;
         _controlSignature = signature;
         _controlsBuilt = true;
-        // 手机形态（或控制栏已隐藏）没有可见的控制栏入口：入口浮窗直接关闭，卡片入口照常。
-        bool controlAnchorAvailable = _form == ScreenForm.Wide && _main.IsControlViewVisible;
-        bool reopen = controlAnchorAvailable && (_ratingSources.IsOpen || _ratingSources.IsOpening) && _ratingSources.IsAnchoredToControlBar;
-        var sourceTarget = reopen ? _main.RatingSources.Target : null;
-        if (reopen && _ratingSources.IsOpening) _ratingSources.Close();
-        _controlBar.Rebuild(_main, Execute, rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); },
-            ShowExifTools, anchor => { if (_main.CurrentFile is { } file) ShowRatingSources(file, anchor); });
+        _controlBar.Rebuild(_main, Execute, ShowExifTools);
+        UpdateRatingControls();
         Layout();
-        if (sourceTarget == null) return;
-        if (!controlAnchorAvailable)
-        {
-            _ratingSources.Close();
-            return;
-        }
-        if (_controlBar.RatingClearButton is not { } anchor)
-        {
-            _ratingSources.Close();
-            return;
-        }
-        if (!_main.RatingSources.IsOpen) _main.ShowRatingSources(sourceTarget);
-        _ratingSources.Show(anchor, true, _main.IsRowLayout);
     }
 
     /// <summary>
@@ -1519,9 +1520,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
     {
         var builder = new System.Text.StringBuilder();
         builder.Append(_main.Settings.ShowRating ? '1' : '0');
-        builder.Append('|');
-        var file = _main.CurrentFile;
-        builder.Append(file == null ? "-" : $"{file.Rating}/{file.HasRatingConflict}");
+        // 有无当前照片决定命令按钮的可用态（TOOLBAR-09），必须参与比对。
+        builder.Append(_main.CurrentFile == null ? '-' : '+');
         builder.Append('|');
         foreach (var entry in _main.ControlVM.EnabledExifItems)
             builder.Append(entry.DisplayName).Append('=').Append(entry.DisplayValue).Append(';');
@@ -1534,43 +1534,72 @@ internal sealed class iOSNativeRootViewController : UIViewController
         return builder.ToString();
     }
 
-    internal void ShowRatingSources(ImageFile file, UIButton anchor)
+    /// <summary>星级写回事件：每次提交在真正落盘前触发（验收按此计数写回次数）。</summary>
+    internal event Action<ImageFile, int>? RatingCommitted;
+
+    /// <summary>一次接线：两个星级控件共用写回入口、弹窗入口与同一个弹窗实例。</summary>
+    private void WireRatingControls()
     {
-        _ratingSources.Close();
-        _main.ShowRatingSources(file);
-        bool controlBarAnchor = false;
-        for (UIView? view = anchor; view != null; view = view.Superview)
+        foreach (var control in new[] { _phoneRating, _controlBar.RatingControl })
         {
-            if (!ReferenceEquals(view, _controlBar)) continue;
-            controlBarAnchor = true;
-            break;
+            control.CommitRequested = OnControlCommit;
+            control.PopupRequested = () => OpenControlPopup(control);
+            control.Popup = _ratingPopup;
         }
-        _ratingSources.Show(anchor, controlBarAnchor, _main.IsRowLayout);
     }
 
-    /// <summary>列表重载会换掉卡片实例：浮窗只在同一照片的入口仍停在展示时的矩形上才保留，否则按 RATING-04 关闭。</summary>
-    private void RevalidateCardRatingSources()
+    /// <summary>控件入口的写回（展开态点星、紧凑态弹窗提交、读屏增减共用一个入口）。</summary>
+    /// <param name="value">星级。</param>
+    private void OnControlCommit(int value)
     {
-        if (!_ratingSources.IsOpen && !_ratingSources.IsOpening || _ratingSources.IsAnchoredToControlBar) return;
-        if (_ratingSources.SourceRect is not { } shown || _main.RatingSources.Target is not { } target)
-        {
-            _ratingSources.Close();
-            return;
-        }
-        bool SameEntry(UICollectionView list) => list.Window != null && list.VisibleCells.OfType<iOSThumbnailCard>().Any(card =>
-            ReferenceEquals(card.BoundFile, target) && card.StarButtons.Count > 0
-            && card.StarButtons[0].ConvertRectToView(card.StarButtons[0].Bounds, View) == shown);
-#if PHOTOVIEWER_DINO
-        if (!SameEntry(_filmstrip.Collection) && !SameEntry(_similarityPane.List)) _ratingSources.Close();
-#else
-        if (!SameEntry(_filmstrip.Collection)) _ratingSources.Close();
-#endif
+        if (_main.CurrentFile is not { } file) return;
+        _ = RateAsync(file, value);
     }
 
-    private void CloseCardRatingSources()
+    /// <summary>星级弹窗的写回入口：整组写入来源，成功后由来源 VM 收起并刷新控件。</summary>
+    /// <param name="file">目标照片。</param>
+    /// <param name="value">星级。</param>
+    private async Task CommitPopupAsync(ImageFile file, int value)
     {
-        if ((_ratingSources.IsOpen || _ratingSources.IsOpening) && !_ratingSources.IsAnchoredToControlBar) _ratingSources.Close();
+        RatingCommitted?.Invoke(file, value);
+        await _main.RatingSources.SetRatingAsync(value);
+        UpdateRatingControls();
     }
+
+    /// <summary>把当前照片的评分真值同步到两个星级控件（只刷新显示值，不重建控制栏）。</summary>
+    private void UpdateRatingControls()
+    {
+        var file = _main.CurrentFile;
+        int value = Math.Max(0, file?.Rating ?? 0);
+        bool conflict = file?.HasRatingConflict ?? false;
+        bool enabled = file != null;
+        _controlBar.RatingControl.SetState(value, conflict, enabled);
+        if (_phoneRating != null) _phoneRating.SetState(value, conflict, enabled);
+    }
+
+    /// <summary>控件入口：按形态取展开方向，锚点取控件胶囊（与入口复检用同一矩形）。</summary>
+    /// <param name="control">发起入口的星级控件。</param>
+    /// <returns>是否打开了弹窗。</returns>
+    private bool OpenControlPopup(iOSRatingControl control)
+    {
+        if (_main.CurrentFile is not { } file) return false;
+        var direction = RatingControlGeometry.PopupDirection(_form, _main.IsRowLayout, _notchOnLeft,
+            RatingPopupAnchor.Control);
+        _ratingPopup.Open(file, control.Capsule, RatingPopupAnchor.Control, direction, horizontalRow: control.Horizontal);
+        return true;
+    }
+
+    /// <summary>卡片冲突三角入口：锚点为整张卡片，星排横排。</summary>
+    /// <param name="file">目标照片。</param>
+    /// <param name="anchor">卡片视图。</param>
+    private void OpenCardPopup(ImageFile file, UIView anchor)
+    {
+        var direction = RatingControlGeometry.PopupDirection(_form, _main.IsRowLayout, _notchOnLeft, RatingPopupAnchor.Card);
+        _ratingPopup.Open(file, anchor, RatingPopupAnchor.Card, direction, horizontalRow: true);
+    }
+
+    /// <summary>卡片入口所在列表滚动：只关闭卡片锚定的弹窗。</summary>
+    private void CloseCardPopup() => _ratingPopup.CloseIfAnchoredTo(RatingPopupAnchor.Card);
 
     private sealed class ControlScrollObserver(iOSNativeRootViewController owner) : UIScrollViewDelegate
     {
@@ -1580,7 +1609,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
             var offset = scrollView.ContentOffset;
             if (offset == owner._lastControlScrollOffset) return;
             owner._lastControlScrollOffset = offset;
-            if (owner._ratingSources.IsOpen && owner._ratingSources.IsAnchoredToControlBar) owner._ratingSources.Close();
+            // 控制栏滚动后控件入口会移出原位：只关闭控件锚定的弹窗，卡片入口照常。
+            owner._ratingPopup.CloseIfAnchoredTo(RatingPopupAnchor.Control);
         }
     }
 
@@ -1630,8 +1660,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <param name="rating">星级。</param>
     internal async Task RateAsync(ImageFile file, int rating)
     {
+        RatingCommitted?.Invoke(file, rating);
         await _main.SetRatingAsync(file, rating);
-        BuildControls();
+        UpdateRatingControls();
     }
 
     /// <summary>
@@ -1724,7 +1755,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         if (KeyboardInputBlocked) return;
         var gesture = AppleInputMapping.FromRaw(AppleInputMapping.ScrollWheel, 0, modifierFlags, 0, up ? 1 : -1, false, null, _main.Settings);
         string? command = InputCommandMap.CommandForGesture(gesture, _main.Settings);
-        if (!InputCommandMap.IsCommandKnown(command) || !iOSControlBar.IsCommandAvailable(command!)) return;
+        if (!InputCommandMap.IsCommandKnown(command) || !iOSToolbarView.IsCommandAvailable(command!)) return;
         Execute(command!);
     }
 
@@ -1832,7 +1863,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
                 if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
                 _observedFile = _main.CurrentFile;
                 if (_observedFile != null) _observedFile.PropertyChanged += OnCurrentFileChanged;
-                _ratingSources.Close();
+                _ratingPopup?.Close();
                 // 切图后细节预览的触控活动/悬停都作废，绿框不得跟着旧裁剪中心留在新照片上。
                 HideDetailHighlight();
                 if (_sessionStarted) _session.SetFile(_main.CurrentFile?.File);
@@ -1845,7 +1876,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
             or nameof(MainViewModel.IsControlViewVisible) or nameof(MainViewModel.IsAnalysisViewVisible))) return;
         UiDispatcher.Post(() =>
         {
-            _ratingSources.Close();
+            _ratingPopup?.Close();
             if (!_main.IsThumbnailViewVisible) _filmstrip.CancelScrollUpToNow();
             if (!_main.IsAnalysisViewVisible)
             {
@@ -1865,9 +1896,14 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private void OnCurrentFileChanged(object? sender, PropertyChangedEventArgs args) => UiDispatcher.Post(() =>
     {
         if (!ReferenceEquals(sender, _observedFile)) return;
-        if (args.PropertyName == nameof(ImageFile.ExifData)) UpdateFocusPoint();
-        if (args.PropertyName is nameof(ImageFile.Rating) or nameof(ImageFile.ExifData)
-            or nameof(ImageFile.HasRatingConflict) or nameof(ImageFile.RatingSources)) BuildControls();
+        if (args.PropertyName == nameof(ImageFile.ExifData))
+        {
+            UpdateFocusPoint();
+            BuildControls();
+        }
+        // 评分/冲突/来源只刷新星级控件显示值；不再因此重建控制栏。
+        if (args.PropertyName is nameof(ImageFile.Rating) or nameof(ImageFile.HasRatingConflict)
+            or nameof(ImageFile.RatingSources)) UpdateRatingControls();
     });
 
     /// <summary>设置影响位：按共享分流重建必要的原生结构，并合并同一快照回写的多次通知。</summary>
@@ -1914,7 +1950,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
             // 星级显隐等卡片绑定依赖设置：重载一次，位置由胶片栏自身约束，不改变用户滚动偏移。
             _filmstrip.ReloadData();
             _filmstrip.Collection.LayoutIfNeeded();
-            RevalidateCardRatingSources();
+            _ratingPopup.RevalidateAnchor();
         }
         // 筛选条文本/菜单、计数宽度与分区几何一并刷新；文件格式变化也在这里反映到胶片栏。
         if ((impact & (SettingsChangeImpact.Layout | SettingsChangeImpact.FileProjection)) != 0) RefreshScreen();
@@ -1959,7 +1995,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
             _displayedFiles = files.ToArray();
             if (!sameSequence)
             {
-                CloseCardRatingSources();
+                _ratingPopup.CloseIfAnchoredTo(RatingPopupAnchor.Card);
                 _filmstrip.ReloadData();
             }
             RefreshScreen();
@@ -1986,7 +2022,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
             or nameof(SimilarityPanelViewModel.ShowActionAreaError))) return;
         UiDispatcher.Post(() =>
         {
-            CloseCardRatingSources();
+            _ratingPopup.CloseIfAnchoredTo(RatingPopupAnchor.Card);
             Layout();
         });
     }

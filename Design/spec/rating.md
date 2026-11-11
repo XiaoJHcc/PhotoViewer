@@ -122,3 +122,30 @@
 - 一次手势最多写回一次：滑动过程只预览、不落盘；滑回原值或取消不写；写回成功之后控件才显示新值（PRIN-02、RATING-03）。
 - 冲突时 0 号槽位是警示三角，点它打开星级弹窗（RATING-04）；弹窗内任一条目点值都整组写入，写入成功且冲突解除才关闭。
 - 无当前照片时控件禁用，但保留几何与命中区，不隐藏（TOOLBAR-03、TOOLBAR-09）。
+
+**几何与令牌**
+
+- 控件交叉轴取 `shell.glass.button.size`。展开态固有长度 = 6 × `rating.control.slot` + 2 × `rating.control.endInset`，沿槽位主轴居中；紧凑态铺满槽位主轴，宽形态控制栏里放不下展开态时取 `rating.compact.minLength`。字形取 `rating.control.glyph.fontSize` / `rating.control.clearGlyph.fontSize`（展开态）与 `rating.compact.glyph.fontSize`（紧凑态）。
+- 紧凑态内容是五颗星叠压成的一簇（中心距 `rating.compact.step`），点亮的在前；冲突时簇前加警示三角。横排 1 号星在左，竖排 1 号星在下。
+- 弹窗星排每格 `rating.popup.slot`，可用空间不足时按六格均分收窄，不小于 `rating.popup.minSlot`；字形 `rating.popup.glyph.fontSize` / `rating.popup.clearGlyph.fontSize`；与入口相距 `rating.popup.gap`，圆角 `rating.popup.cornerRadius`，整体夹在窗口安全区内缩 `popup.ratingSources.edgeMargin` 的范围里。竖排控件打开的非冲突弹窗宽 `rating.popup.columnWidth`，文件名与拍摄时间各占一行，下方是竖排星列（5→0 自上而下）；冲突来源条目恒为横排星排。
+
+**展开方向**（一律朝主图内侧）：
+
+| 入口 | 手机竖屏 | 手机横屏 | 宽形态行布局 | 宽形态列布局 |
+|---|---|---|---|---|
+| 星级控件 | 上 | 刘海在左向左，刘海在右向右 | 上 | 左 |
+| 卡片 | 上 | 刘海在左向右，刘海在右向左 | 下 | 右 |
+
+**手势**
+
+- 展开态：按下即预览按下的格，沿星排拖动预览跟随，抬手提交；越过两端夹到 0 / 5；手指在交叉轴越出星排 `rating.gesture.cancelSlop` 即进入取消区，预览回到原值，抬手不写。
+- 紧凑态与卡片长按：起手即打开星级弹窗；手指越过 `rating.gesture.tapSlop` 之前不预览，之后按手指在弹窗星排主轴上的投影取值，手指不必移进弹窗；抬手提交。未越过阈值就抬手视为点按，弹窗保持打开，再点弹窗里的星提交。交叉轴越出"入口远端到弹窗远端"一带外加 `rating.gesture.cancelSlop` 即取消，抬手不写并收起弹窗。冲突时只打开来源条目，不做滑动选择。
+- 冲突时落在 1–5 的提交即使等于当前显示值也写入（同值写入消解冲突）；落在警示三角只打开来源条目。
+- 提交后控件以"待确认"外观显示提交值，写回成功由真值接管；失败回到真值并按 STATE-03 提示，不静默回滚。
+
+**关闭与反馈**
+
+- 弹窗在以下情况关闭：写入成功且冲突解除（RATING-04）、点按弹窗外部（该次点按只用于关闭）、`Esc`、切图或当前照片因筛选重算改变、入口被隐藏/移除/移动（布局重排、旋转、列表重载或滚动）。
+- 预览每跨一档给一次选择触感，提交给一次轻冲击触感；被按住的格放大到 `motion.rating.press.scale`；弹窗打开 `motion.rating.popup.open`、关闭 `motion.rating.popup.close`。开启减少动态效果时不缩放，只淡入淡出。
+- 指针悬停逐格高亮（紧凑态整胶囊高亮）；读屏把控件作为可调节元素，增减各写回一次，紧凑态与冲突时激活即打开弹窗。
+- 手机形态关闭"显示评分"时控件隐藏、槽位保留；宽形态整组移除（TOOLBAR-03）。

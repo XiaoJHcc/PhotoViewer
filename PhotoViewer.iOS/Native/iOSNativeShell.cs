@@ -94,6 +94,7 @@ public static class iOSNativeShell
         iOSNativeGestureCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeLayoutCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeFormCheck.MaybeStart(args, _rootViewController, _session);
+        iOSNativeRatingControlCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeInputCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeAnalysisCheck.MaybeStart(args, _rootViewController, _session);
 #if PHOTOVIEWER_DINO

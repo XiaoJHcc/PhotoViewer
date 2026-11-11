@@ -153,7 +153,8 @@ internal sealed class iOSFilmstripView : UIView
 
     /// <summary>星级点击回调（写回交给宿主统一走共享评分与错误提示）。</summary>
     internal event Action<ImageFile, int>? RateRequested;
-    internal event Action<ImageFile, UIButton>? RatingSourcesRequested;
+    /// <summary>卡片 0 号冲突三角入口：目标照片与整张卡片（弹窗锚点）。</summary>
+    internal event Action<ImageFile, UIView>? RatingPopupRequested;
     internal event Action? RatingAnchorMoved;
 
     /// <summary>真实集合视图（验收读取可见卡片与偏移）。</summary>
@@ -494,7 +495,7 @@ internal sealed class iOSFilmstripView : UIView
             card.Bind(file, _owner._main.Settings.ShowRating,
                 selected => _owner.OnCardSelected(selected),
                 (selected, rating) => _owner.RateRequested?.Invoke(selected, rating),
-                showSources: (selected, anchor) => _owner.RatingSourcesRequested?.Invoke(selected, anchor));
+                showSources: (selected, _) => _owner.RatingPopupRequested?.Invoke(selected, card));
             _owner._main.FileVM.ThumbnailList.QueueThumbnailLoad(file, true);
             return card;
         }

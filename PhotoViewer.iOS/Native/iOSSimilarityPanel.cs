@@ -78,7 +78,8 @@ internal sealed class iOSSimilarityPanel : UIView
     private double _crossSize = SimilarityPanelGeometry.MinHeight;
     private bool _disposed;
 
-    internal event Action<ImageFile, UIButton>? RatingSourcesRequested;
+    /// <summary>卡片 0 号冲突三角入口：目标照片与整张卡片（弹窗锚点）。</summary>
+    internal event Action<ImageFile, UIView>? RatingPopupRequested;
     internal event Action? RatingAnchorMoved;
 
     /// <summary>相似项原生列表，供验收读取真实卡片与几何。</summary>
@@ -588,7 +589,7 @@ internal sealed class iOSSimilarityPanel : UIView
             card.Bind(similar.File, owner._main.Settings.ShowRating, _ => owner._panel.SelectItemCommand(similar),
                 (file, rating) => _ = owner._main.SetRatingAsync(file, rating), ScoreText(similar.Score), ScoreFraction(similar.Score),
                 selectByDisplayedImage: true,
-                showSources: (file, anchor) => owner.RatingSourcesRequested?.Invoke(file, anchor));
+                showSources: (file, _) => owner.RatingPopupRequested?.Invoke(file, card));
             owner._main.FileVM.ThumbnailList.QueueThumbnailLoad(similar.File, true);
             return card;
         }

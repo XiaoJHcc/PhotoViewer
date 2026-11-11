@@ -14,7 +14,7 @@
 | 主图 | `MetalPhotoView`（`CAMetalLayer`）+ 共享 `MetalPhotoRenderer` | `UIScrollView` + 透明 `CAMetalLayer` 子层 | `SwapChainPanel` + D3D11 F16 | `SurfaceView` + EGL14/GLES |
 | 导航图 | 自绘 `NSView`（`NavigatorHostView`），白框可拖动定位 | 自绘 `UIView`，白框可拖动定位 | `WindowsNavigator`，白框可拖动定位 | `AndroidNavigationOverlay`，白框可拖动定位 |
 | 分析栏 | `MacAnalysisPanel`（`NSView`） | `iOSAnalysisPanel`（`UIView`） | `WindowsAnalysisPanel`（`Grid` + `IAnalysisHost`） | `AndroidAnalysisPanel`（自绘 `View`） |
-| 控制栏 | `MacControlBar`（`NSView`） | `iOSControlBar`（`UIView`） | `WindowsControlBar`（`Grid` + `WindowsWrapPanel`） | `AndroidControlBar`（单个自绘 `View`） |
+| 控制栏 | `MacControlBar`（`NSView`） | `iOSToolbarView`（`UIView`） | `WindowsControlBar`（`Grid` + `WindowsWrapPanel`） | `AndroidControlBar`（单个自绘 `View`） |
 | 相似面板 | `MacSimilarityPanel` + `NSCollectionView` | `iOSSimilarityPanel` + `UICollectionView` | `WindowsSimilarityPanel`（`Grid`） | `AndroidSimilarityPanel`（`LinearLayout` + `RecyclerView`） |
 | 主图 / 卡片菜单 | `NSMenu` | `UIContextMenuInteraction` + `UIMenu` | `MenuFlyout` | 自绘 `PopupWindow` |
 | 设置窗口 | SwiftUI `NavigationSplitView` + `Form(.grouped)` | UIKit 半屏 `PageSheet` | WinUI `NavigationView` + `SettingsCard` | Material 3 `BottomSheetDialog` |
@@ -70,11 +70,13 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - **RATING-06@android**：SAF 目标先核对可定位原位写能力；不可定位句柄、云 Provider 或需要远端移位/扩容的写入在首次修改前失败，不做原位假成功。
 - **RATING-04**：全局规则见 [spec/rating.md](spec/rating.md)。共享来源状态与整组写入由 `PhotoViewer/ViewModels/Main/RatingSourcesViewModel.cs` 提供（`SetRatingAsync`，成功且冲突解除才收起）；浮窗宽度、条目单行/双行排版、展开方向、夹取与文件名中间省略由共享 `PhotoViewer.Shared/RatingSourcesLayout.cs` 计算（Web 镜像 `PhotoViewer.Web/src/core/layout/ratingpopover.js`），各端只提供文本测量、参照矩形与原生宿主。下面只记录宿主、材质与字形差异。
   - **RATING-04@mac**：`NSPopover`（`PhotoViewer.Mac/Native/MacRatingSourcesPopover.cs`）提供原生毛玻璃、圆角与箭头，内容区不自绘背景或描边；标签底与分隔线用 `NSBox`，文本用 `NSTextField`（测量另加控件内边距），星按钮复用控制栏 `ToolbarButton`。卡片方向的上下余量按屏幕可见区计算。每个主窗口复用唯一 popover/controller/content，内容尺寸只写 `ContentSize`；实例保留到窗口终结以兼容 AppKit 迟后访问，旧 `DidClose` 不得影响新展示。
-  - **RATING-04@ios**：`UIPopoverPresentationController`（`PhotoViewer.iOS/Native/iOSRatingSourcesPopover.cs`）提供系统箭头、圆角、材质与贴边形变，不拟合 Mac 曲线。紧凑环境仍保留浮窗：`GetAdaptivePresentationStyle` 的两个重载均返回 `UIModalPresentationStyle.None`（系统公开支持的适配方式；HIG 默认建议紧凑屏用 sheet，此处按作者要求保留浮窗）。锚点统一用稳定主根视图 `SourceView` + 入口按钮完整 `Bounds` 换算的 `SourceRect`，不为卡片另建 `SourceItem` 视图；控制栏重建保留展示时重设同一矩形。`PopoverLayoutMargins` 设为根视图安全区 + `popup.ratingSources.edgeMargin`：系统默认边距会让贴边入口的箭头被推离三角，收窄后系统自行把贴边一角形变为平滑过渡。列表重载后只在同一照片的入口仍停在展示矩形上才保留卡片浮窗；展示与退出由 UIKit 完成回调串行衔接。
+  - **RATING-04@ios**：不再有独立来源浮窗，冲突来源以星级弹窗的来源条目显示（RATING-07@ios）；条目排版取共享 `PhotoViewer.Shared/RatingPopupLayout.cs`，状态与整组写入仍由 `RatingSourcesViewModel` 提供。
   - **RATING-04@mac / @ios**：警示三角取 SF Symbols `exclamationmark.triangle.fill`，语义同 `icon.warning`。
   - **RATING-04@win**：警示三角取 Segoe Fluent Icons Warning `E7BA`。来源浮窗 `PhotoViewer.Windows/Native/WindowsRatingSourcesFlyout.cs`：原生 `Flyout` 继承默认 Presenter 样式，与右键菜单一样以窗口化弹层承载 `DesktopAcrylicBackdrop` 与透明背景（约束在根内容内时系统材质只剩半透明），外部点击与 Esc 由原生关闭，不自绘箭头或底色。窗口化弹层会按显示器工作区自行夹取或翻转，因此共享算出的位置先夹入「窗口安全区 ∩ 所在显示器工作区」的可见交集（容不下时退回窗口安全区）再交 `ShowAt`，避免主窗口部分越出工作区时发生二次翻转。定位所用外形尺寸须按当前 DPI 对内容及四侧原生边框分别做物理像素取整，再换回 DIP；不能把未取整的边框厚度直接加到内容上，否则贴工作区边缘时一像素溢出也会触发整块翻转。星排复用控制栏按钮规格与 `WindowsControlStyles`。
   - **RATING-04@android**：`PopupWindow` + 自绘内容视图（`PhotoViewer.Android/Native/AndroidRatingSourcesPopup.cs`），警示三角直接用 `icon.warning`；内容宽外另加 1dp 自绘描边，底板、描边与圆角取 `color.popup.background`、`color.popup.border`、`popup.ratingSources.cornerRadius`。卡片锚点为该卡片 0 号槽位的真实屏幕矩形（绘制、命中与锚点共用同一星级行几何），浮窗夹在宿主根视图内；每帧核对锚点、宿主矩形与目标冲突态。返回键顺序为长按菜单 → 来源浮窗 → 筛选下拉 → 设置/工具，外部点击/返回键收起后同步共享 `IsOpen`；读屏经 `ExploreByTouchHelper` 暴露每格星级。
   - **RATING-04@web**：自绘组件 `PhotoViewer.Web/src/shell/ratingsources.js`，警示三角用 `icon.warning`；写入走 `core/app.js` 的整组路径。
+- **RATING-07**：共享 `PhotoViewer.Shared/RatingControlGeometry.cs`（形态判定、格子映射、紧凑星簇、方向表与落位）、`RatingGesture.cs`（一次手势至多一次提交的状态机）、`RatingPopupLayout.cs`（弹窗步长与条目排版）；宽形态控制栏的分组尺寸与换行取 `ToolbarFlowLayout.cs`。
+  - **RATING-07@ios**：控件 `PhotoViewer.iOS/Native/iOSRatingControl.cs`（`UIGlassEffect` 胶囊，紧凑态为交互式玻璃）与星排 `iOSRatingRow.cs`，手势用零时长 `UILongPressGestureRecognizer`（`CancelsTouchesInView = false`，在控制栏滚动容器里拖星不触发滚动），逐格 `UIPointerInteraction` 高亮，读屏 `Adjustable`；触感为 `UISelectionFeedbackGenerator` 与 Light 档 `UIImpactFeedbackGenerator`。弹窗 `iOSRatingPopup.cs` 是根视图上的 `UIGlassEffect` 面板加全窗透明拦截层，不用 `UIPopoverPresentationController`：系统浮窗展示期间无法把起手触摸延续到弹窗星排。
 - **RATING-05**：数字/以上筛选投影在 `PhotoViewer/ViewModels/Main/File/PhotoListProjection.cs` 的 `MatchesRating`，筛选项在 `PhotoViewer/ViewModels/Main/File/FilterBarViewModel.cs`；训练快照由独立仓 `Training/DatasetBuilder`（`FingerprintGrouper`）只读取实际选用的文件，sidecar 与伴侣不参与取 max，文件内部不是有效 1–5 时不落值。
 - Web 参考壳没有真实文件写入；冲突指示、来源浮窗与 13 项筛选由 `?check=all` 校验界面语义（合成数据）。
 
@@ -175,14 +177,14 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
 
 - **TOOLBAR-01、TOOLBAR-02**：共享 `PhotoViewer.Shared/ControlBarLayout.cs`。
   - macOS：`PhotoViewer.Mac/Native/MacControlBar.cs`（`NSView`），置于 `NSScrollView`。
-  - iOS：`PhotoViewer.iOS/Native/iOSControlBar.cs`（`UIView`），置于 `UIScrollView`，`Arrange` 后写 `ContentSize` 并夹取偏移（`iOSNativeRootViewController.Layout`）。
+  - iOS：`PhotoViewer.iOS/Native/iOSToolbarView.cs`（`UIView`），分组尺寸与换行取共享 `ToolbarFlowLayout`（不再用 `ControlBarLayout`），置于 `UIScrollView`，`Arrange` 后写 `ContentSize` 并夹取偏移（`iOSNativeRootViewController.Layout`）。
   - Windows：`PhotoViewer.Windows/Native/WindowsControlBar.cs`（`Grid` + `WindowsWrapPanel`），控制栏自带 `ScrollViewer`（`_scroll`）保存并夹取偏移。
   - Android：`PhotoViewer.Android/Native/AndroidControlBar.cs`（单个自绘 `View`），置于 `AndroidControlBarScrollHost`（`AndroidNativeRootView._controlScrollHost`）滚动。
 - **TOOLBAR-03**：评分组。自绘控件禁用不换底色、只降内容强调；原生控件可用系统禁用外观但保持可辨、不近似隐藏（与 TOOLBAR-10 同一口径）；评分快捷命令统一画数字（0=叉）。冲突时 0 号换警示三角，字形、浮窗宿主与整组写入见 [rating](#rating)（RATING-04）。
-  - **TOOLBAR-03@ios**：评分组由 RATING-07 的自定义控件承担，不再按 30×30 按钮口径；宽形态当前仍为旧控件，手机槽位为占位视图。
+  - **TOOLBAR-03@ios**：评分组就是 RATING-07 的 `iOSRatingControl`（宽形态控制栏、手机竖屏底行与横屏控制列同一实例类型），不再按 30×30 按钮口径。
 - **TOOLBAR-04**：命令组。桌面 tooltip 与移动端命令读屏名称统一为 `命令名（主 / 次）`，四端 C# 壳共用 `PhotoViewer/Core/Input/CommandTooltipText.cs` 拼接，键名仍由各端输入映射格式化；Web 在 `src/core/input.js` 实现同一文案。INPUT-13 只控制设置中的键鼠配置可见性；移动端不另造长按浮层。
   - 图标基准为 `icon.font`（uicons Regular Rounded）/ `icon.fontSolid`（实心星）与 `icon.*` 码位；Android 与 Web 直接使用该字体（Android `AndroidUiTheme.IconFontAsset`；Web 由 `PhotoViewer.Web/tools/subset-icons.py` 按令牌码位生成 woff2 子集）。
-  - **TOOLBAR-04@mac / @ios**：命令图标与评分星用 SF Symbols（`PhotoViewer.Apple/AppleSymbolNames.cs`），语义同 `icon.command.*`。评分快捷命令为 `star.fill` 内叠数字（`PhotoViewer.Mac/Native/MacControlBar.cs`、`PhotoViewer.iOS/Native/iOSControlBar.cs` 的 `RatingDigitLabel`），0 为 `xmark`。
+  - **TOOLBAR-04@mac / @ios**：命令图标与评分星用 SF Symbols（`PhotoViewer.Apple/AppleSymbolNames.cs`），语义同 `icon.command.*`。评分快捷命令为 `star.fill` 内叠数字（`PhotoViewer.Mac/Native/MacControlBar.cs`、`PhotoViewer.iOS/Native/iOSToolbarView.cs` 的 `RatingDigitLabel`；iOS 命令为 `GlassButtonConfiguration` 圆按钮），0 为 `xmark`。
   - **TOOLBAR-04@win**：命令图标用 Segoe Fluent Icons，评分快捷命令为实心星 FavoriteStarFill `E735` 内叠数字（0=清零叉）；显式映射在 `PhotoViewer.Windows/Native/WindowsIcons.cs`：打开=Folder `E8B7`、缩放适应=BackToWindow `E73F`（双对角箭头）、放大/缩小=Add `E710` / Remove `E738`、增强=Contrast `E7A1`。tooltip 绑定经 `WindowsInput.FormatGesture` 显示可读键名（`D2`→`2`、`Oem3`→`` ` ``，并补 Oem1–Oem8 别名），不再出现枚举名。
 - **TOOLBAR-05**：EXIF 摘要。桌面 tooltip `标签 · 值`；触屏完整值由 TOOLBAR-06 的详情页承担。
   - **TOOLBAR-05@win**：值文本取 Bold（12 点 SemiBold 在 Windows 上肉眼与正文同重），标签保持 10 点次要色。

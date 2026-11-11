@@ -118,9 +118,6 @@ internal static class iOSNativeLayoutCheck
             // 三、卡片星级写回与筛选连续性（[FILM-05/06]）
             await VerifyRatingAsync(root, main, lines, directory);
 
-            // 四、组级冲突指示（[RATING-04]）
-            await VerifyRatingConflictAsync(root, main, lines, directory);
-
             // 五、胶片栏显示快照：重载前的陈旧索引不得读到缩短后的 live 筛选列表
             await VerifyDisplaySnapshotAsync(root, main, lines);
 
@@ -396,7 +393,10 @@ internal static class iOSNativeLayoutCheck
 #endif
     }
 
-    /// <summary>核对控制栏：分组数量/子项与共享设置一致、分组外边距与不重叠、子控件尺寸、评分方向随布局方向。</summary>
+    /// <summary>
+    /// 核对控制栏：分组顺序固定为 EXIF → 星级 → 命令、分组尺寸取共享 <see cref="ToolbarFlowLayout"/>、
+    /// 分组外边距与不重叠；星级控件在组内铺满并按共享几何落在展开/紧凑形态，命令圆按钮 44×44 按共享偏移排布。
+    /// </summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="main">共享主 VM（分组组成以当前设置为准，硬编码数量会把设置回写误判为回归）。</param>
     /// <param name="row">是否行布局。</param>
@@ -407,51 +407,93 @@ internal static class iOSNativeLayoutCheck
         var bar = root.ControlBar;
         var bounds = bar.Bounds;
         int exifCount = main.ControlVM.EnabledExifItems.Count;
-        int ratingCount = main.Settings.ShowRating ? 6 : 0;
         int commandCount = main.ControlVM.EnabledControls.Count(hotkey =>
-            iOSControlBar.IsCommandAvailable(hotkey.Command) && AppleSymbolNames.ForCommand(hotkey.Command) != null);
-        int expectedGroups = (exifCount > 0 ? 1 : 0) + (ratingCount > 0 ? 1 : 0) + (commandCount > 0 ? 1 : 0);
-        if (bar.Groups.Count != expectedGroups || bar.Ratings.Count != ratingCount)
+            iOSToolbarView.IsCommandAvailable(hotkey.Command) && AppleSymbolNames.ForCommand(hotkey.Command) != null);
+        int expectedGroups = (exifCount > 0 ? 1 : 0) + (bar.HasRatingGroup ? 1 : 0) + (commandCount > 0 ? 1 : 0);
+        if (bar.Groups.Count != expectedGroups || bar.HasRatingGroup != main.Settings.ShowRating)
             throw new InvalidOperationException(
-                $"{scope} 控制栏分组与共享设置不一致：组 {bar.Groups.Count}/{expectedGroups}、评分 {bar.Ratings.Count}/{ratingCount}（EXIF {exifCount}、命令 {commandCount}）");
+                $"{scope} 控制栏分组与共享设置不一致：组 {bar.Groups.Count}/{expectedGroups}、星级分组 {bar.HasRatingGroup}/{main.Settings.ShowRating}（EXIF {exifCount}、命令 {commandCount}）");
+        // 固定顺序 EXIF → 星级 → 命令；星级组就是常驻控件本身。
+        int groupIndex = 0;
+        if (exifCount > 0)
+        {
+            if (!ReferenceEquals(bar.Groups[groupIndex], bar.ExifGroup))
+                throw new InvalidOperationException($"{scope} 控制栏第 {groupIndex + 1} 组不是 EXIF 信息块");
+            groupIndex++;
+        }
+        if (bar.HasRatingGroup)
+        {
+            if (!ReferenceEquals(bar.Groups[groupIndex], bar.RatingControl))
+                throw new InvalidOperationException($"{scope} 控制栏第 {groupIndex + 1} 组不是星级控件");
+            groupIndex++;
+        }
+        int commandIndex = groupIndex;
+        if (commandCount > 0 && (commandIndex >= bar.Groups.Count || bar.Groups[commandIndex].Subviews.Length != commandCount))
+            throw new InvalidOperationException(
+                $"{scope} 命令分组缺失或子项数量不符：{commandIndex}/{bar.Groups.Count}、{bar.Groups.ElementAtOrDefault(commandIndex)?.Subviews.Length}/{commandCount}");
         foreach (var group in bar.Groups)
         {
             var frame = group.Frame;
-            if ((double)frame.X < ControlBarLayout.Padding - Exact || (double)frame.Y < ControlBarLayout.Padding - Exact ||
-                (double)frame.X + (double)frame.Width > (double)bounds.Width - ControlBarLayout.Padding + Exact ||
-                (double)frame.Y + (double)frame.Height > (double)bounds.Height - ControlBarLayout.Padding + Exact)
+            if ((double)frame.X < ToolbarFlowLayout.Padding - Exact || (double)frame.Y < ToolbarFlowLayout.Padding - Exact ||
+                (double)frame.X + (double)frame.Width > (double)bounds.Width - ToolbarFlowLayout.Padding + Exact ||
+                (double)frame.Y + (double)frame.Height > (double)bounds.Height - ToolbarFlowLayout.Padding + Exact)
                 throw new InvalidOperationException($"{scope} 控制组未保留 10 点外边距：{frame}/{bounds}");
             foreach (var other in bar.Groups.Where(other => !ReferenceEquals(other, group)))
                 if (Overlaps(frame, other.Frame)) throw new InvalidOperationException($"{scope} 控制组重叠：{frame} / {other.Frame}");
         }
-        // 子项数量直接取共享设置（EXIF 显隐/评分显隐/命令显隐与顺序都可被用户改写）。
-        var childCounts = new List<int>();
-        if (exifCount > 0) childCounts.Add(exifCount);
-        if (ratingCount > 0) childCounts.Add(ratingCount);
-        if (commandCount > 0) childCounts.Add(commandCount);
-        for (int index = 0; index < bar.Groups.Count; index++)
-            if (bar.Groups[index].Subviews.Length != childCounts[index])
-                throw new InvalidOperationException($"{scope} 控制组 {index} 子项数量 {bar.Groups[index].Subviews.Length}，预期 {childCounts[index]}");
-        if (exifCount > 0) foreach (var tile in bar.Groups[0].Subviews)
+        if (exifCount > 0) foreach (var tile in bar.ExifGroup!.Subviews)
         {
             RequireFrame(tile.Frame, new CGRect(tile.Frame.X, tile.Frame.Y, 50, 40), $"{scope} EXIF 信息块未保持 50×40");
             var labels = tile.Subviews.OfType<UILabel>().ToArray();
             if (labels.Length != 2 || labels[1].Font.PointSize <= labels[0].Font.PointSize)
                 throw new InvalidOperationException($"{scope} EXIF 标签/值层级丢失");
         }
-        foreach (var rating in bar.Ratings)
-            RequireFrame(rating.Frame, new CGRect(rating.Frame.X, rating.Frame.Y, 30, 30), $"{scope} 评分按钮未保持 30×30");
-        foreach (var command in bar.Commands.Values)
-            RequireFrame(command.Frame, new CGRect(command.Frame.X, command.Frame.Y, 40, 40), $"{scope} 命令按钮未保持 40×40");
-        for (int index = 1; index < bar.Ratings.Count; index++)
+        // 星级分组：共享尺寸占位，控件在组内铺满，胶囊按共享几何落在展开/紧凑形态。
+        double availableMain = row ? (double)root.ControlScroll.Bounds.Width : (double)root.ControlScroll.Bounds.Height;
+        var ratingSize = ToolbarFlowLayout.Rating(Math.Max(1, availableMain - ToolbarFlowLayout.Padding * 2));
+        string ratingSummary = "无星级分组";
+        if (bar.HasRatingGroup)
         {
-            if (row && (double)bar.Ratings[index].Frame.X <= (double)bar.Ratings[index - 1].Frame.X)
-                throw new InvalidOperationException($"{scope} 横排评分方向不是 0→5");
-            if (!row && (double)bar.Ratings[index].Frame.Y >= (double)bar.Ratings[index - 1].Frame.Y)
-                throw new InvalidOperationException($"{scope} 竖排评分方向不是 5→0");
+            var control = bar.RatingControl;
+            if (control.Horizontal != row)
+                throw new InvalidOperationException($"{scope} 星级控件主轴方向未随布局方向：{control.Horizontal}/{row}");
+            double frameMain = row ? (double)control.Frame.Width : (double)control.Frame.Height;
+            if (Math.Abs(frameMain - ratingSize.Main) > Exact)
+                throw new InvalidOperationException($"{scope} 星级分组主轴 {frameMain:0.##} 与共享尺寸 {ratingSize.Main:0.##} 不一致");
+            double capsuleMain = row ? (double)control.Bounds.Width : (double)control.Bounds.Height;
+            var form = RatingControlGeometry.ResolveForm(capsuleMain);
+            if (control.Form != form)
+                throw new InvalidOperationException($"{scope} 星级控件形态 {control.Form} 与共享判定 {form} 不一致");
+            var capsule = control.CapsuleFrame;
+            double capsuleWidth = capsule.Width, capsuleHeight = capsule.Height;
+            if (Math.Abs((row ? capsuleHeight : capsuleWidth) - RatingControlGeometry.Thickness) > Exact)
+                throw new InvalidOperationException($"{scope} 星级胶囊交叉轴 {capsuleWidth:0.##}×{capsuleHeight:0.##} 不是 44 点");
+            double expectedMain = form == RatingControlForm.Expanded ? RatingControlGeometry.ExpandedLength : capsuleMain;
+            if (Math.Abs((row ? capsuleWidth : capsuleHeight) - expectedMain) > Exact)
+                throw new InvalidOperationException(
+                    $"{scope} 星级胶囊主轴 {(row ? capsuleWidth : capsuleHeight):0.##} 与 {form} 形态预期 {expectedMain:0.##} 不一致");
+            if (control.Row.Frame != control.Capsule.Frame)
+                throw new InvalidOperationException($"{scope} 展开态星排未铺满胶囊：{control.Row.Frame}/{control.Capsule.Frame}");
+            ratingSummary = $"{form} 胶囊 {(int)capsuleWidth}×{(int)capsuleHeight}";
+        }
+        // 命令圆按钮：44×44，沿命令组主轴按共享偏移排布。
+        foreach (var command in bar.Commands.Values)
+            RequireFrame(command.Frame, new CGRect(command.Frame.X, command.Frame.Y, ToolbarFlowLayout.CommandSize, ToolbarFlowLayout.CommandSize),
+                $"{scope} 命令按钮未保持 44×44");
+        if (commandCount > 0)
+        {
+            var group = bar.Groups[commandIndex];
+            for (int index = 0; index < commandCount; index++)
+            {
+                double expected = ToolbarFlowLayout.CommandOffset(index);
+                var frame = group.Subviews[index].Frame;
+                double actual = row ? (double)frame.X : (double)frame.Y;
+                if (Math.Abs(actual - expected) > Exact)
+                    throw new InvalidOperationException($"{scope} 命令按钮 {index} 偏移 {actual:0.##} 与共享偏移 {expected:0.##} 不一致");
+            }
         }
         // 分析栏/增强预览命令实现可用；是否出现在控制栏仍由共享设置的显隐决定（默认分析栏不显示）。
-        if (!iOSControlBar.IsCommandAvailable("ToggleAnalysisView") || !iOSControlBar.IsCommandAvailable("ToggleEnhance"))
+        if (!iOSToolbarView.IsCommandAvailable("ToggleAnalysisView") || !iOSToolbarView.IsCommandAvailable("ToggleEnhance"))
             throw new InvalidOperationException($"{scope} I5 起分析栏/增强预览命令必须有原生实现（SCOPE-01 解禁）");
         // TOOLBAR-08：滚动宿主的内容尺寸与控制栏文档一致，偏移落在合法范围（重排只夹取，不重置）。
         if (root.ControlScroll.ContentSize != bar.Frame.Size)
@@ -461,7 +503,7 @@ internal static class iOSNativeLayoutCheck
             || (double)offset.X > Math.Max(0, (double)root.ControlScroll.ContentSize.Width - (double)root.ControlScroll.Bounds.Width)
             || (double)offset.Y > Math.Max(0, (double)root.ControlScroll.ContentSize.Height - (double)root.ControlScroll.Bounds.Height))
             throw new InvalidOperationException($"{scope} 控制栏滚动偏移越界：{offset}");
-        lines.Add($"PASS {scope} 控制栏：{bar.Groups.Count} 组({string.Join("/", bar.Groups.Select(group => group.Subviews.Length))}) 文档 {Size(bounds)} 裁剪区 {Size(root.ControlScroll.Bounds)}；10 点外边距、组内 50×40/30×30/40×40、{(row ? "横排评分 0→5" : "竖排评分 5→0")}、I5 命令入口可用、滚动内容尺寸与偏移合规");
+        lines.Add($"PASS {scope} 控制栏：{bar.Groups.Count} 组（EXIF {exifCount}/星级 {ratingSummary}/命令 {commandCount}）文档 {Size(bounds)} 裁剪区 {Size(root.ControlScroll.Bounds)}；10 点外边距、EXIF 50×40、命令 44×44 按共享偏移、I5 命令入口可用、滚动内容尺寸与偏移合规");
     }
 
     /// <summary>核对卡片几何（96×144 外框 / 90×138 占位区 / 80 方形照片区 / 星级与文字位置）与身份绑定。</summary>
@@ -770,464 +812,6 @@ internal static class iOSNativeLayoutCheck
             await UiDispatcher.InvokeAsync(() => filter.SelectedRatingFilter = entryFilter);
             if (main.CurrentFile?.File.StorageId != entryFile.File.StorageId)
                 await main.FolderVM.OpenImageAsync(entryFile.File);
-        }
-    }
-
-    /// <summary>
-    /// 核对 [RATING-04] 的冲突指示：组内来源不一致时胶片栏卡片与控制栏 0 号槽位换成警示三角，
-    /// 几何与命中区不变；三角打开原生来源浮窗但不写值、不切主图，并核对条目、锚点生命周期与整组写回。
-    /// 全程只操作 App 沙盒内自建的工作副本，收尾删除冲突夹具并重开目录。
-    /// </summary>
-    /// <param name="root">原生根控制器。</param>
-    /// <param name="main">共享主 VM。</param>
-    /// <param name="lines">报告行。</param>
-    /// <param name="directory">自有夹具目录。</param>
-    private static async Task VerifyRatingConflictAsync(iOSNativeRootViewController root, MainViewModel main, List<string> lines, string directory)
-    {
-        var filter = main.FileVM.FilterBar;
-        string entryFilter = filter.SelectedRatingFilter;
-        var entryFile = main.CurrentFile;
-        string pair = Path.Combine(directory, "rating-conflict.jpg");
-        string companion = Path.Combine(directory, "rating-conflict.jpeg");
-        string sidecar = Path.Combine(directory, "rating-conflict.xmp");
-        try
-        {
-            // 组内差异：同一 stem 的 .jpg/.jpeg 内嵌各写不同值，再加一份真实存在的同名 sidecar。
-            File.Copy(Path.Combine(directory, "orientation-1.jpg"), pair, true);
-            File.Copy(Path.Combine(directory, "orientation-2.jpg"), companion, true);
-            await XmpRatingStoreFactory.Create(new LocalFileRef(pair)).WriteAsync(4, true);
-            await XmpRatingStoreFactory.Create(new LocalFileRef(companion)).WriteAsync(2, true);
-            await File.WriteAllTextAsync(sidecar,
-                "<x:xmpmeta xmlns:x='adobe:ns:meta/'><rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'><rdf:Description rdf:about='' xmlns:xmp='http://ns.adobe.com/xap/1.0/' xmp:Rating='1'/></rdf:RDF></x:xmpmeta>");
-            await UiDispatcher.InvokeAsync(() => filter.SelectedRatingFilter = "All");
-            await main.FolderVM.OpenFolderAsync(new LocalFolderRef(directory));
-            var conflictMember = main.FolderVM.AllFiles.FirstOrDefault(candidate => candidate.Name == "rating-conflict.jpg")
-                ?? throw new InvalidOperationException("冲突夹具未出现在列表中");
-            var group = conflictMember.Group ?? throw new InvalidOperationException("冲突夹具未按同名合并成组");
-            if (group.Files.Count != 2) throw new InvalidOperationException($"冲突夹具组应含 2 个文件，实际 {group.Files.Count}");
-            foreach (var member in group.Files) await member.LoadExifDataAsync();
-            var photo = group.Representative;
-            await main.FolderVM.OpenImageAsync(photo.File);
-            await WaitAsync(() => ReferenceEquals(main.CurrentFile, photo) && photo.HasRatingConflict, "冲突夹具来源就绪");
-            await SettleAsync(root);
-
-            // 控制栏 0 号：字形换成警示三角、颜色取令牌，几何仍是 30×30 评分按钮。
-            var controlClear = root.ControlBar.RatingClearButton
-                ?? throw new InvalidOperationException("控制栏缺少评分 0 号按钮");
-            if (root.ControlBar.RatingClearSymbol != "exclamationmark.triangle.fill")
-                throw new InvalidOperationException($"控制栏 0 号未换成警示三角：{root.ControlBar.RatingClearSymbol}");
-            RequireColor(controlClear.TintColor, DesignTokens.ColorStarConflict, "控制栏冲突三角颜色");
-            RequireFrame(controlClear.Frame, new CGRect(controlClear.Frame.X, controlClear.Frame.Y, 30, 30), "控制栏冲突三角未沿用 30×30 命中区");
-
-            // 胶片栏卡片 0 号：同一字形/颜色，几何仍取 film.card.star 原槽位。
-            await UiDispatcher.InvokeAsync(() => main.Settings.LayoutMode = LayoutMode.Col);
-            await SettleAsync(root);
-            await UiDispatcher.InvokeAsync(() => main.FileVM.ThumbnailList.ScrollToCurrent());
-            int index = main.FileVM.ThumbnailList.FilteredFiles.IndexOf(photo);
-            var card = await WaitForCardAsync(root, main, index, "RATING-04");
-            if (card.ClearRatingSymbol != "exclamationmark.triangle.fill")
-                throw new InvalidOperationException($"卡片 0 号未换成警示三角：{card.ClearRatingSymbol}");
-            RequireColor(card.StarButtons[0].TintColor, DesignTokens.ColorStarConflict, "卡片冲突三角颜色");
-            RequireFrame(card.StarButtons[0].Frame, new CGRect(3, 116, 14, 14), "卡片冲突三角未沿用 film.card.star 槽位");
-
-            int ratingBefore = photo.Rating;
-            var currentBefore = main.CurrentFile;
-            var popover = root.RatingSourcesPopover;
-            await WaitAsync(() => !root.Filmstrip.IsAnimating, "RATING-04 打开前胶片栏定位结束");
-            var expectedCardAnchor = CGRect.Empty;
-            var initialFilmstripOffset = root.Filmstrip.ContentOffset;
-            var initialCardFrame = card.Frame;
-            await UiDispatcher.InvokeAsync(() =>
-            {
-                root.Filmstrip.Collection.LayoutIfNeeded();
-                root.View!.LayoutIfNeeded();
-                expectedCardAnchor = card.StarButtons[0].ConvertRectToView(card.StarButtons[0].Bounds, root.View);
-                card.StarButtons[0].SendActionForControlEvents(UIControlEvent.TouchUpInside);
-            });
-            await WaitAsync(() => popover.IsOpen && main.RatingSources.IsOpen, "卡片三角打开来源浮窗");
-            await popover.PresentationTask;
-            await WaitAsync(() => popover.Presentation?.ArrowDirection is UIPopoverArrowDirection.Up or UIPopoverArrowDirection.Down
-                && popover.PresentedContentSize.Height > 0, "卡片来源浮窗完成原生布局");
-            await SettleAsync(root);
-            if (!ReferenceEquals(main.CurrentFile, currentBefore)) throw new InvalidOperationException("点卡片冲突三角切换了当前主图");
-            if (photo.Rating != ratingBefore) throw new InvalidOperationException("点卡片冲突三角改了评分");
-            if (!ReferenceEquals(main.RatingSources.Target, photo)) throw new InvalidOperationException("卡片来源浮窗目标错误");
-            var cardPresentation = popover.Presentation ?? throw new InvalidOperationException("卡片浮窗缺少原生展示控制器");
-            if (cardPresentation.SourceItem != null)
-                throw new InvalidOperationException("卡片浮窗仍在使用合成 SourceItem 视图，未改为主窗口锚点");
-            if (cardPresentation.SourceView != root.View)
-                throw new InvalidOperationException("卡片浮窗锚点未落在主窗口");
-            RequireFrame(cardPresentation.SourceRect, expectedCardAnchor, "卡片浮窗锚点未取 0 号槽位在主窗口内的完整矩形");
-            var stableSourceRect = cardPresentation.SourceRect;
-            var stableSourceView = cardPresentation.SourceView;
-            var expectedDirection = iOSRatingSourcesPopover.ResolveCardArrow(expectedCardAnchor, root.View!.Bounds, popover.ContentSize);
-            if (cardPresentation.PermittedArrowDirections != expectedDirection || cardPresentation.ArrowDirection != expectedDirection)
-                throw new InvalidOperationException($"卡片浮窗展开方向错误：{cardPresentation.PermittedArrowDirections}/{cardPresentation.ArrowDirection}/{expectedDirection}");
-            var viewport = new CGRect(0, 0, 744, 1133);
-            var content = new CGSize(224, 228);
-            if (iOSRatingSourcesPopover.ResolveCardArrow(new CGRect(10, 100, 14, 14), viewport, content) != UIPopoverArrowDirection.Up
-                || iOSRatingSourcesPopover.ResolveCardArrow(new CGRect(10, 1000, 14, 14), viewport, content) != UIPopoverArrowDirection.Down
-                || iOSRatingSourcesPopover.ResolveCardArrow(new CGRect(10, 500, 14, 14), viewport, content) != UIPopoverArrowDirection.Up)
-                throw new InvalidOperationException("卡片向下优先、空间不足向上回退的方向规则错误");
-
-            int sourceCount = group.RatingSources.Count;
-            if (popover.EntryViews.Count != sourceCount || popover.DividerViews.Count != sourceCount - 1)
-                throw new InvalidOperationException($"来源条目/分隔线数量错误：{popover.EntryViews.Count}/{popover.DividerViews.Count}");
-            var ratingMetrics = ControlBarLayout.GetMetrics(ControlBarGroupKind.Rating);
-            double expectedWidth = 6 * ratingMetrics.Width + 5 * ratingMetrics.Spacing
-                + 2 * DesignTokens.PopupRatingSourcesEntryPadding + 2 * DesignTokens.PopupPadding;
-            if (Math.Abs((double)popover.ContentSize.Width - expectedWidth) > Exact)
-                throw new InvalidOperationException($"来源浮窗宽度未由星排决定：{popover.ContentSize.Width}/{expectedWidth}");
-            for (int entryIndex = 0; entryIndex < popover.EntryViews.Count; entryIndex++)
-            {
-                var entry = popover.EntryViews[entryIndex];
-                var source = main.RatingSources.Items[entryIndex];
-                if (entry.Name.Text != source.Name || entry.Kind.Text != source.Kind || entry.Status.Text != source.Status)
-                    throw new InvalidOperationException($"来源条目 {entryIndex} 文本未按共享真值刷新");
-                if (entryIndex > 0 && entry.Frame.Y <= popover.EntryViews[entryIndex - 1].Frame.Bottom)
-                    throw new InvalidOperationException("来源条目未纵向排列");
-                var expectedEntry = iOSRatingSourcesPopover.MeasureEntryLayout(source.Name, source.Kind, source.Status);
-                RequireFrame(entry.Name.Frame, expectedEntry.NameFrame, $"来源条目 {entryIndex} 文件名边距/位置");
-                RequireFrame(entry.Badge.Frame, expectedEntry.BadgeFrame, $"来源条目 {entryIndex} 标签边距/位置");
-                RequireFrame(entry.Status.Frame, expectedEntry.StatusFrame, $"来源条目 {entryIndex} 状态边距/位置");
-                if (entry.Stars.Count != 6) throw new InvalidOperationException("来源星排未保留六格槽位");
-                for (int starIndex = 0; starIndex < entry.Stars.Count; starIndex++)
-                    RequireFrame(entry.Stars[starIndex].Frame,
-                        new CGRect(DesignTokens.PopupRatingSourcesEntryPadding + starIndex * (ratingMetrics.Width + ratingMetrics.Spacing),
-                            expectedEntry.StarsY, ratingMetrics.Width, ratingMetrics.Height), $"来源条目 {entryIndex} 星排 {starIndex} 边距/位置");
-            }
-            var shortLayout = iOSRatingSourcesPopover.MeasureEntryLayout("A6702544.ARW", "ARW", "1 星");
-            var longLayout = iOSRatingSourcesPopover.MeasureEntryLayout(
-                "rating-conflict-source-with-a-deliberately-long-name.jpg", "JPG", "1 星");
-            if (shortLayout.TwoLines || !longLayout.TwoLines
-                || Math.Abs((double)longLayout.NameFrame.Width - iOSRatingSourcesPopover.EntryContentWidth) > Exact)
-                throw new InvalidOperationException("来源信息行长名双行/截断布局错误");
-            await SettleAsync(root);
-            VerifyPopoverContentLayout(popover, cardPresentation, "左侧胶片栏");
-            VerifyPopoverEdgeMargins(root, popover, cardPresentation, expectedCardAnchor, "左侧胶片栏");
-            if (popover.EntryViews.Any(entry => entry.Frame.Bottom > popover.PresentedContentSize.Height + 1))
-                throw new InvalidOperationException($"首次来源浮窗实际高度裁切条目：{popover.PresentedContentSize.Height}/{popover.ContentSize.Height}");
-            // 人工核查模式停在首次真实 UIKit 展示，避免后续列表异步变化把产品按规范关闭后无法取图。
-            if (NSProcessInfo.ProcessInfo.Arguments.Contains("--pv-native-rating-hold", StringComparer.Ordinal))
-                await Task.Delay(Timeout.Infinite);
-            await Task.Delay(2200);
-            // 列表重载会把同一张照片换到另一个复用卡片实例上，稳定性按照片重新取卡片核对。
-            card = await WaitForCardAsync(root, main, index, "RATING-04 稳定期");
-            lines.Add($"STABILITY: offset={initialFilmstripOffset} -> {root.Filmstrip.ContentOffset}; cardFrame={initialCardFrame} -> {card.Frame}; " +
-                $"bound={card.BoundFile?.Name}; controlAnchor={popover.IsAnchoredToControlBar}; animating={root.Filmstrip.IsAnimating}");
-            await iOSNativeSettingsCheck.SnapshotStageAsync("rating-sources-card-popover");
-            if (!popover.IsOpen || popover.Presentation?.SourceItem != null
-                || popover.Presentation?.SourceView != stableSourceView)
-                throw new InvalidOperationException("卡片浮窗在稳定期间意外关闭或更换了锚点视图");
-            var stableCardAnchor = await UiDispatcher.InvokeAsync(() =>
-            {
-                root.View!.LayoutIfNeeded();
-                root.Filmstrip.Collection.LayoutIfNeeded();
-                return card.StarButtons[0].ConvertRectToView(card.StarButtons[0].Bounds, root.View);
-            });
-            RequireFrame(stableCardAnchor, expectedCardAnchor, "卡片 0 号槽位在浮窗展示期间漂移");
-            RequireFrame(popover.Presentation!.SourceRect, stableSourceRect, "卡片浮窗主窗口锚点矩形未保持展示时的入口矩形");
-            VerifyPopoverContentLayout(popover, cardPresentation, "左侧胶片栏稳定后");
-            lines.Add($"PASS RATING-04 来源浮窗：原生 popover 完整显示 {sourceCount} 个纵向来源，宽度/星排/长短文件名布局符合令牌");
-            lines.Add("PASS RATING-04 卡片锚点：主窗口 SourceView + 完整入口矩形固定 2.2 s 不漂移（无合成 SourceItem），默认向下且仅空间不足时向上回退");
-            iOSNativeRatingPopoverProbe.Capture(root, cardPresentation, "current-col", lines);
-
-            await UiDispatcher.InvokeAsync(() =>
-            {
-                var offset = root.Filmstrip.ContentOffset;
-                root.Filmstrip.Collection.SetContentOffset(new CGPoint(offset.X - (main.IsRowLayout ? 40 : 0), offset.Y - (main.IsRowLayout ? 0 : 40)), false);
-            });
-            await WaitAsync(() => !popover.IsOpen && !main.RatingSources.IsOpen, "胶片栏滚动关闭来源浮窗");
-            await popover.DismissalTask;
-            await UiDispatcher.InvokeAsync(() => main.Settings.LayoutMode = LayoutMode.Row);
-            await SettleAsync(root);
-            index = main.FileVM.ThumbnailList.FilteredFiles.IndexOf(photo);
-            await WaitAsync(() => !root.Filmstrip.IsAnimating, "RATING-04 横排打开前定位结束");
-            card = await WaitForCardAsync(root, main, index, "RATING-04 滚动后重开");
-            await WaitAsync(() => !root.Filmstrip.IsAnimating, "RATING-04 横排卡片就绪后定位结束");
-            await UiDispatcher.InvokeAsync(() =>
-            {
-                if (!ReferenceEquals(card.BoundFile, photo))
-                    throw new InvalidOperationException($"横排入口身份错误：{card.BoundFile?.Name} != {photo.Name}");
-                card.StarButtons[0].SendActionForControlEvents(UIControlEvent.TouchUpInside);
-            });
-            await WaitAsync(() => popover.IsOpen, "卡片三角重复打开");
-            await popover.PresentationTask;
-            await WaitAsync(() => popover.Presentation?.ArrowDirection is UIPopoverArrowDirection.Up or UIPopoverArrowDirection.Down
-                && popover.PresentedContentSize.Height > 0, "横排卡片来源浮窗完成原生布局");
-            await SettleAsync(root);
-            var rowPresentation = popover.Presentation!;
-            card = await WaitForCardAsync(root, main, index, "RATING-04 横排展示后");
-            var rowCardAnchor = await UiDispatcher.InvokeAsync(() =>
-                card.StarButtons[0].ConvertRectToView(card.StarButtons[0].Bounds, root.View!));
-            if (rowPresentation.SourceItem != null || rowPresentation.SourceView != root.View)
-                throw new InvalidOperationException("横排卡片浮窗未以主窗口锚定（不得使用合成 SourceItem）");
-            RequireFrame(rowPresentation.SourceRect, rowCardAnchor, "横排卡片浮窗锚点未取 0 号槽位在主窗口内的完整矩形");
-            VerifyPopoverContentLayout(popover, rowPresentation, "顶部胶片栏");
-            iOSNativeRatingPopoverProbe.Capture(root, rowPresentation, "current-row", lines);
-            await iOSNativeSettingsCheck.SnapshotStageAsync("rating-sources-card-row-popover");
-            await UiDispatcher.InvokeAsync(popover.Close);
-            await WaitAsync(() => !popover.IsOpen && !main.RatingSources.IsOpen, "外部关闭同步共享状态");
-
-            await UiDispatcher.InvokeAsync(() =>
-            {
-                controlClear = root.ControlBar.RatingClearButton ?? throw new InvalidOperationException("控制栏缺少当前 0 号按钮");
-                controlClear.SendActionForControlEvents(UIControlEvent.TouchUpInside);
-            });
-            await WaitAsync(() => popover.IsOpen && main.RatingSources.IsOpen, "控制栏三角打开来源浮窗");
-            await popover.PresentationTask;
-            await SettleAsync(root);
-            if (!ReferenceEquals(main.CurrentFile, currentBefore) || photo.Rating != ratingBefore)
-                throw new InvalidOperationException("点控制栏冲突三角切图或写值");
-            var controlAnchorRect = await UiDispatcher.InvokeAsync(() =>
-            {
-                var anchor = root.ControlBar.RatingClearButton ?? throw new InvalidOperationException("控制栏缺少当前 0 号按钮");
-                return anchor.ConvertRectToView(anchor.Bounds, root.View!);
-            });
-            var controlPresentation = popover.Presentation ?? throw new InvalidOperationException("横排控制栏缺少原生展示控制器");
-            if (controlPresentation.SourceItem != null || controlPresentation.SourceView != root.View)
-                throw new InvalidOperationException("横排控制栏来源浮窗未以主窗口锚定（不得使用合成 SourceItem 或按钮自身作 SourceView）");
-            RequireFrame(controlPresentation.SourceRect, controlAnchorRect, "横排控制栏浮窗锚点未取实际按钮在主窗口内的完整矩形");
-            if (controlPresentation.PermittedArrowDirections != UIPopoverArrowDirection.Down
-                || controlPresentation.ArrowDirection != UIPopoverArrowDirection.Down)
-                throw new InvalidOperationException($"横排控制栏来源浮窗未向上展开：{controlPresentation.PermittedArrowDirections}/{controlPresentation.ArrowDirection}");
-            await UiDispatcher.InvokeAsync(root.BuildControls);
-            await WaitAsync(() => popover.IsOpen && main.RatingSources.IsOpen, "控制栏重建后来源浮窗重开");
-            await SettleAsync(root);
-            var rebuiltAnchor = await UiDispatcher.InvokeAsync(() =>
-                root.ControlBar.RatingClearButton ?? throw new InvalidOperationException("控制栏重建后缺少评分 0 号按钮"));
-            var rebuiltPresentation = popover.Presentation ?? throw new InvalidOperationException("控制栏重建后缺少原生展示控制器");
-            if (rebuiltPresentation.SourceItem != null || rebuiltPresentation.SourceView != root.View)
-                throw new InvalidOperationException("控制栏重建后浮窗锚点未落在主窗口");
-            RequireFrame(rebuiltPresentation.SourceRect, rebuiltAnchor.ConvertRectToView(rebuiltAnchor.Bounds, root.View!),
-                "控制栏重建后浮窗锚点未换到新按钮在主窗口内的完整矩形");
-            VerifyPopoverContentLayout(popover, popover.Presentation!, "底部控制栏");
-            if (popover.EntryViews.Any(entry => entry.Frame.Bottom > popover.PresentedContentSize.Height + 1))
-                throw new InvalidOperationException($"来源浮窗实际高度裁切条目：{popover.PresentedContentSize.Height}/{popover.ContentSize.Height}");
-            lines.Add("PASS RATING-04 锚点生命周期：卡片/控制栏点击不切图不写值，滚动关闭，控制栏重建保持展示并换锚、全部条目可见");
-
-            // 周期刷新回归：内存管家每 2s 探测会改写缓存提示（诊断属性），不能把浮窗关掉或换掉按钮。
-            await Task.Delay(2600);
-            await SettleAsync(root);
-            if (!popover.IsOpen || !main.RatingSources.IsOpen)
-                throw new InvalidOperationException("内存探测的周期设置通知关闭了来源浮窗");
-            int cycleIndex = main.FileVM.ThumbnailList.FilteredFiles.IndexOf(main.CurrentFile
-                ?? throw new InvalidOperationException("周期刷新缺少当前照片"));
-            var stableCard = await WaitForCardAsync(root, main, cycleIndex, "周期刷新");
-            var stable = await UiDispatcher.InvokeAsync(() => (
-                Clear: root.ControlBar.RatingClearButton ?? throw new InvalidOperationException("周期通知后控制栏缺少评分 0 号按钮"),
-                Command: root.ControlBar.Commands.Values.FirstOrDefault(),
-                SortMenu: root.FilterBar.SortControl.Menu,
-                OrderMenu: root.FilterBar.OrderControl.Menu,
-                RatingMenu: root.FilterBar.RatingControl.Menu,
-                Card: stableCard));
-            // 跨周期的身份断言：控制栏按钮、筛选条下拉菜单、胶片卡片与来源浮窗锚点都必须原样保留。
-            async Task RequireUnchangedAsync(string stage)
-            {
-                await UiDispatcher.InvokeAsync(() =>
-                {
-                    var clear = root.ControlBar.RatingClearButton
-                        ?? throw new InvalidOperationException($"{stage}后控制栏缺少评分 0 号按钮");
-                    if (!ReferenceEquals(clear, stable.Clear))
-                        throw new InvalidOperationException($"{stage}重建了控制栏按钮，浮窗锚点被换掉");
-                    if (root.ControlBar.Commands.Values.FirstOrDefault() is { } command && !ReferenceEquals(command, stable.Command))
-                        throw new InvalidOperationException($"{stage}重建了控制栏命令按钮");
-                    if (!ReferenceEquals(root.FilterBar.SortControl.Menu, stable.SortMenu)
-                        || !ReferenceEquals(root.FilterBar.OrderControl.Menu, stable.OrderMenu)
-                        || !ReferenceEquals(root.FilterBar.RatingControl.Menu, stable.RatingMenu))
-                        throw new InvalidOperationException($"{stage}重建了筛选条下拉菜单");
-                    var card = root.Filmstrip.CardAt(cycleIndex)
-                        ?? throw new InvalidOperationException($"{stage}后胶片卡片已不在可见范围");
-                    if (!ReferenceEquals(card, stable.Card))
-                        throw new InvalidOperationException($"{stage}重载了胶片卡片");
-                    if (!popover.IsOpen || !main.RatingSources.IsOpen)
-                        throw new InvalidOperationException($"{stage}关闭了来源浮窗");
-                    RequireFrame(popover.Presentation!.SourceRect, clear.ConvertRectToView(clear.Bounds, root.View!),
-                        $"{stage}后浮窗锚点漂移");
-                });
-            }
-            // 显式诊断通知走真实设置 VM 的属性通道：四项诊断与一个未登记名字都不得触发结构刷新。
-            string[] diagnostics =
-            [
-                nameof(SettingsViewModel.BitmapCacheCountInfo),
-                nameof(SettingsViewModel.BitmapCacheCountInfoLevel),
-                nameof(SettingsViewModel.PerformanceBudgetInfo),
-                nameof(SettingsViewModel.PerformanceBudgetInfoLevel),
-                "FutureDiagnosticText",
-            ];
-            foreach (var diagnostic in diagnostics)
-            {
-                await UiDispatcher.InvokeAsync(() => root.NotifySettingsProperty(diagnostic));
-                await SettleAsync(root);
-                await RequireUnchangedAsync($"诊断通知 {diagnostic}");
-            }
-            // 跨第二个内存探测周期：真实周期通知叠加在显式诊断之后，结构仍不得变化。
-            await Task.Delay(2600);
-            await SettleAsync(root);
-            await RequireUnchangedAsync("第二个内存探测周期");
-            await UiDispatcher.InvokeAsync(popover.Close);
-            await Task.Delay(200);
-            lines.Add("PASS RATING-04 跨周期刷新：两个 2.6s 内存探测周期，加上四项诊断属性与未登记属性经真实设置 VM 注入，控制栏按钮/筛选条下拉菜单/胶片卡片身份与来源浮窗锚点均保持（诊断走共享无影响分流）");
-            await UiDispatcher.InvokeAsync(() =>
-            {
-                var clear = root.ControlBar.RatingClearButton ?? throw new InvalidOperationException("跨周期刷新后缺少评分 0 号按钮");
-                clear.SendActionForControlEvents(UIControlEvent.TouchUpInside);
-            });
-            await WaitAsync(() => popover.IsOpen && main.RatingSources.IsOpen, "跨周期刷新后重开来源浮窗");
-            await popover.PresentationTask;
-            await SettleAsync(root);
-            var reopenedAnchor = await UiDispatcher.InvokeAsync(() =>
-            {
-                var clear = root.ControlBar.RatingClearButton ?? throw new InvalidOperationException("重开后缺少评分 0 号按钮");
-                return clear.ConvertRectToView(clear.Bounds, root.View!);
-            });
-            RequireFrame(popover.Presentation!.SourceRect, reopenedAnchor,
-                "跨周期刷新后重开的浮窗锚点未对准评分 0 号按钮");
-            lines.Add("PASS RATING-04 跨周期刷新后真实入口仍可用：点控制栏评分 0 号按钮重开来源浮窗并对准同一按钮");
-            await iOSNativeSettingsCheck.SnapshotStageAsync("rating-sources-popover");
-
-            await UiDispatcher.InvokeAsync(popover.Close);
-            await popover.DismissalTask;
-            await UiDispatcher.InvokeAsync(() => main.Settings.LayoutMode = LayoutMode.Col);
-            await SettleAsync(root);
-            await UiDispatcher.InvokeAsync(() =>
-            {
-                controlClear = root.ControlBar.RatingClearButton ?? throw new InvalidOperationException("竖排控制栏缺少评分 0 号按钮");
-                controlClear.SendActionForControlEvents(UIControlEvent.TouchUpInside);
-            });
-            await WaitAsync(() => popover.IsOpen && main.RatingSources.IsOpen, "竖排控制栏打开来源浮窗");
-            await popover.PresentationTask;
-            await SettleAsync(root);
-            var columnControlPresentation = popover.Presentation ?? throw new InvalidOperationException("竖排控制栏缺少原生展示控制器");
-            if (columnControlPresentation.PermittedArrowDirections != UIPopoverArrowDirection.Right
-                || columnControlPresentation.ArrowDirection != UIPopoverArrowDirection.Right)
-                throw new InvalidOperationException("竖排控制栏来源浮窗未向左展开");
-            var columnControlAnchor = controlClear.ConvertRectToView(controlClear.Bounds, root.View);
-            if (columnControlPresentation.SourceItem != null || columnControlPresentation.SourceView != root.View)
-                throw new InvalidOperationException("竖排控制栏来源浮窗未以主窗口锚定（不得使用合成 SourceItem 或按钮自身作 SourceView）");
-            RequireFrame(columnControlPresentation.SourceRect, columnControlAnchor, "竖排控制栏浮窗锚点未取实际按钮在主窗口内的完整矩形");
-            if (columnControlPresentation.FrameOfPresentedViewInContainerView.GetMidX() >= columnControlAnchor.GetMidX())
-                throw new InvalidOperationException("竖排控制栏浮窗实际不在入口左侧");
-            VerifyPopoverContentLayout(popover, columnControlPresentation, "右侧控制栏");
-            lines.Add("PASS RATING-04 竖排控制栏：原生浮窗以主窗口入口矩形锚定、位于入口左侧、箭头向右，内容保留系统安全区");
-            await iOSNativeSettingsCheck.SnapshotStageAsync("rating-sources-control-col-popover");
-
-            // 入口消失回归：隐藏评分组后锚点视图不存在，浮窗必须关闭而不是继续挂在已移除的按钮上。
-            await UiDispatcher.InvokeAsync(() => main.Settings.ShowRating = false);
-            await SettleAsync(root);
-            await UiDispatcher.InvokeAsync(root.BuildControls);
-            await WaitAsync(() => !popover.IsOpen && !main.RatingSources.IsOpen, "移除评分组后关闭来源浮窗");
-            await SettleAsync(root);
-            lines.Add("PASS RATING-04 锚点移除：隐藏评分组后控制栏入口消失，来源浮窗随之关闭");
-            await UiDispatcher.InvokeAsync(() => main.Settings.ShowRating = true);
-            await SettleAsync(root);
-            await UiDispatcher.InvokeAsync(root.BuildControls);
-            await SettleAsync(root);
-            await UiDispatcher.InvokeAsync(() =>
-            {
-                controlClear = root.ControlBar.RatingClearButton ?? throw new InvalidOperationException("恢复评分组后缺少评分 0 号按钮");
-                controlClear.SendActionForControlEvents(UIControlEvent.TouchUpInside);
-            });
-            await WaitAsync(() => popover.IsOpen && main.RatingSources.IsOpen, "恢复评分组后重开来源浮窗");
-            await popover.PresentationTask;
-            await SettleAsync(root);
-
-            await UiDispatcher.InvokeAsync(() => popover.EntryViews[0].Stars[3].SendActionForControlEvents(UIControlEvent.TouchUpInside));
-            await WaitAsync(() => !photo.HasRatingConflict && !main.RatingSources.IsOpen && !popover.IsOpen
-                && group.RatingSources.All(source => source.State == XmpRatingState.Rated && source.Value == 3),
-                "任一条目评分统一写入全部来源并关闭浮窗");
-            await SettleAsync(root);
-            // 竖排重排后旧卡片已不在视图层级，按布局后重新取当前卡片再读字形；刷新可能晚一轮到达，限时轮询。
-            index = main.FileVM.ThumbnailList.FilteredFiles.IndexOf(photo);
-            var releaseWatch = Stopwatch.StartNew();
-            while (true)
-            {
-                card = await WaitForCardAsync(root, main, index, "RATING-04 冲突解除");
-                if (root.ControlBar.RatingClearSymbol == "xmark" && card.ClearRatingSymbol == "xmark") break;
-                if (releaseWatch.Elapsed > TimeSpan.FromSeconds(5))
-                    throw new InvalidOperationException($"冲突解除后入口未恢复清零叉：控制栏={root.ControlBar.RatingClearSymbol}，卡片={card.ClearRatingSymbol}");
-                await Task.Delay(25);
-            }
-            lines.Add("PASS RATING-04 整组写回：任一条目点 3 星写入全部实际来源，冲突解除后自动关闭并恢复清零叉");
-        }
-        finally
-        {
-            if (!main.Settings.ShowRating)
-            {
-                await UiDispatcher.InvokeAsync(() => main.Settings.ShowRating = true);
-                await SettleAsync(root);
-                await UiDispatcher.InvokeAsync(root.BuildControls);
-            }
-            foreach (string path in new[] { pair, companion, sidecar })
-            {
-                try { if (File.Exists(path)) File.Delete(path); } catch (Exception exception) { Console.Error.WriteLine(exception); }
-            }
-            await main.FolderVM.OpenFolderAsync(new LocalFolderRef(directory));
-            await UiDispatcher.InvokeAsync(() => filter.SelectedRatingFilter = entryFilter);
-            if (entryFile != null && main.CurrentFile?.File.StorageId != entryFile.File.StorageId)
-                await main.FolderVM.OpenImageAsync(entryFile.File);
-        }
-    }
-
-    /// <summary>贴边入口：边距取安全区 + 令牌，主体贴到允许边界，箭头才能对准三角而不被系统默认边距推开。</summary>
-    private static void VerifyPopoverEdgeMargins(iOSNativeRootViewController root, iOSRatingSourcesPopover popover,
-        UIPopoverPresentationController presentation, CGRect anchor, string scope)
-    {
-        var safe = root.View!.SafeAreaInsets;
-        double edge = DesignTokens.PopupRatingSourcesEdgeMargin;
-        var margins = presentation.PopoverLayoutMargins;
-        if (Math.Abs((double)margins.Left - ((double)safe.Left + edge)) > Exact || Math.Abs((double)margins.Right - ((double)safe.Right + edge)) > Exact
-            || Math.Abs((double)margins.Top - ((double)safe.Top + edge)) > Exact || Math.Abs((double)margins.Bottom - ((double)safe.Bottom + edge)) > Exact)
-            throw new InvalidOperationException($"{scope} 浮窗边距未取安全区 + popup.ratingSources.edgeMargin：{margins}/{safe}");
-        var frame = presentation.FrameOfPresentedViewInContainerView;
-        if ((double)anchor.GetMidX() - (double)popover.ContentSize.Width / 2 < (double)margins.Left
-            && Math.Abs((double)frame.X - (double)margins.Left) > Exact)
-            throw new InvalidOperationException($"{scope} 贴边入口的浮窗主体未贴到允许边界，箭头会被推离入口：{frame}/{margins}");
-    }
-
-    private static void VerifyPopoverContentLayout(iOSRatingSourcesPopover popover,
-        UIPopoverPresentationController presentation, string scope)
-    {
-        if (popover.EntryViews.Count == 0) throw new InvalidOperationException($"{scope} 来源浮窗没有可布局条目");
-        var content = presentation.PresentedViewController.View!;
-        content.LayoutIfNeeded();
-        // 紧凑屏回归：系统把 popover 适配成 sheet 时箭头消失、展示视图铺满窗口；这里直接读实际展示结果，
-        // 不合成 trait collection（绑定层没有该属性，只有 delegate 的 GetAdaptivePresentationStyle）。
-        var windowBounds = content.Window?.Bounds ?? CGRect.Empty;
-        if ((double)windowBounds.Width <= 0)
-            throw new InvalidOperationException($"{scope} 来源浮窗未挂到窗口上，无法判定是否被适配成 sheet");
-        if (presentation.ArrowDirection is not (UIPopoverArrowDirection.Up or UIPopoverArrowDirection.Down
-                or UIPopoverArrowDirection.Left or UIPopoverArrowDirection.Right))
-            throw new InvalidOperationException($"{scope} 紧凑屏已将来源浮窗适配成 sheet（实际箭头 {presentation.ArrowDirection}）");
-        if ((double)content.Bounds.Width > (double)windowBounds.Width - 40
-            || (double)content.Bounds.Height > (double)windowBounds.Height - 40)
-            throw new InvalidOperationException($"{scope} 来源浮窗实际铺满窗口（按 sheet 展开）：{content.Bounds}/{windowBounds}");
-        var safe = content.SafeAreaInsets;
-        bool arrowSpaceReserved = presentation.ArrowDirection switch
-        {
-            UIPopoverArrowDirection.Up => safe.Top > 0,
-            UIPopoverArrowDirection.Down => safe.Bottom > 0,
-            UIPopoverArrowDirection.Left => safe.Left > 0,
-            UIPopoverArrowDirection.Right => safe.Right > 0,
-            _ => false,
-        };
-        if (!arrowSpaceReserved)
-            throw new InvalidOperationException($"{scope} 系统未给内容保留箭头安全区：{presentation.ArrowDirection}/{safe}");
-        var first = popover.EntryViews[0].Container.ConvertRectToView(popover.EntryViews[0].Container.Bounds, content);
-        RequireFrame(first, new CGRect(DesignTokens.PopupPadding,
-            (double)safe.Top + DesignTokens.PopupPadding, first.Width, first.Height), $"{scope} 首条目未使用系统安全区与规范内边距");
-        if (Math.Abs((double)first.Right - ((double)content.Bounds.Width - DesignTokens.PopupPadding)) > Exact)
-            throw new InvalidOperationException($"{scope} 条目右侧边距错误：{first}/{content.Bounds}/{safe}");
-        var last = popover.EntryViews[^1].Container.ConvertRectToView(popover.EntryViews[^1].Container.Bounds, content);
-        if (Math.Abs((double)last.Bottom - ((double)content.Bounds.Height - (double)safe.Bottom - DesignTokens.PopupPadding)) > Exact)
-            throw new InvalidOperationException($"{scope} 末条目底边未按系统安全区布局：{last}/{content.Bounds}/{safe}");
-        for (int index = 1; index < popover.EntryViews.Count; index++)
-        {
-            var next = popover.EntryViews[index].Container.ConvertRectToView(popover.EntryViews[index].Container.Bounds, content);
-            var divider = popover.DividerViews[index - 1].ConvertRectToView(popover.DividerViews[index - 1].Bounds, content);
-            RequireFrame(divider, new CGRect(next.X,
-                (double)next.Y - (DesignTokens.PopupRatingSourcesEntrySpacing + DesignTokens.PopupRatingSourcesDividerHeight) / 2,
-                next.Width, DesignTokens.PopupRatingSourcesDividerHeight), $"{scope} 分隔线 {index} 未居中于条目间隔");
         }
     }
 

@@ -67,6 +67,8 @@ internal static class Program
             PhotoMenuCatalogChecks.Run(checks);
             PhotoHintTextChecks.Run(checks);
             RatingSourcesLayoutChecks.Run(checks);
+            RatingControlChecks.Run(checks);
+            ToolbarFlowLayoutChecks.Run(checks);
             TitleBarLayoutChecks.Run(checks);
             ScreenFormChecks.Run(checks);
             PhoneScreenLayoutChecks.Run(checks);

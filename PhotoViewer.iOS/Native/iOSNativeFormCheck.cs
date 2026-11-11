@@ -426,7 +426,7 @@ internal static class iOSNativeFormCheck
             ("FilterMoreGroup", slots.FilterMoreGroup, root.PhoneFilterMoreGroup),
             ("Exif", slots.Exif, root.PhoneExifPlaceholder),
             ("Navigation", slots.Navigation, root.PhoneNavigationGroup),
-            ("Rating", slots.Rating, root.PhoneRatingPlaceholder),
+            ("Rating", slots.Rating, root.PhoneRatingControl),
             ("FitEnhance", slots.FitEnhance, root.PhoneFitEnhanceGroup),
             ("Filmstrip", slots.Filmstrip, root.Filmstrip),
             ("Analysis", slots.Analysis, root.AnalysisPane),
@@ -476,7 +476,7 @@ internal static class iOSNativeFormCheck
             targets.Add(("More", root.PhoneMoreButton, string.Empty));
             targets.Add(("Navigation", root.PhoneNavigationGroup, string.Empty));
             targets.Add(("FitEnhance", root.PhoneFitEnhanceGroup, string.Empty));
-            targets.Add(("Rating", root.PhoneRatingPlaceholder, string.Empty));
+            targets.Add(("Rating", root.PhoneRatingControl, string.Empty));
             targets.Add(("Exif", root.PhoneExifPlaceholder, string.Empty));
         }
         else
@@ -486,7 +486,7 @@ internal static class iOSNativeFormCheck
             targets.Add(("FilterMore", root.PhoneFilterMoreGroup, notchSide));
             targets.Add(("Navigation", root.PhoneNavigationGroup, notchSide));
             targets.Add(("FitEnhance", root.PhoneFitEnhanceGroup, chinSide));
-            targets.Add(("Rating", root.PhoneRatingPlaceholder, chinSide));
+            targets.Add(("Rating", root.PhoneRatingControl, chinSide));
             targets.Add(("Exif", root.PhoneExifPlaceholder, chinSide));
         }
 
@@ -688,7 +688,7 @@ internal static class iOSNativeFormCheck
             Add("More", portrait ? root.PhoneMoreButton : root.PhoneMoreSegment);
             Add("Exif", root.PhoneExifPlaceholder);
             Add("Navigation", root.PhoneNavigationGroup);
-            Add("Rating", root.PhoneRatingPlaceholder);
+            Add("Rating", root.PhoneRatingControl);
             Add("FitEnhance", root.PhoneFitEnhanceGroup);
             Add("Filmstrip", root.Filmstrip);
             Add("Analysis", root.AnalysisPane);

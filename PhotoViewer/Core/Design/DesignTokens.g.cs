@@ -459,6 +459,14 @@ public static class DesignTokens
     public const double MotionFilmScrollTick = 16.667;
     /// <summary>motion.image.zoom.duration（ms） IMAGE-02：Android 主图程序化缩放的动画时长（iOS 用 ZoomToRect 系统动画，Mac 直接落位）。</summary>
     public const int MotionImageZoomDuration = 250;
+    /// <summary>motion.rating.longPress（ms） FILM-05：卡片长按打开星级弹窗的按住时长。</summary>
+    public const int MotionRatingLongPress = 350;
+    /// <summary>motion.rating.popup.close（ms） RATING-07：弹窗关闭淡出时长。</summary>
+    public const int MotionRatingPopupClose = 160;
+    /// <summary>motion.rating.popup.open（ms） RATING-07：弹窗打开弹簧动画时长。</summary>
+    public const int MotionRatingPopupOpen = 280;
+    /// <summary>motion.rating.press.scale（ratio） RATING-07：被按住的星格放大倍率（减少动态效果时不缩放）。</summary>
+    public const double MotionRatingPressScale = 1.25;
     /// <summary>motion.sim.params.throttle（ms） SIM-08：相似度阈值/数量连续调整的合并间隔，结束后按当前锚点重算一次。</summary>
     public const int MotionSimParamsThrottle = 150;
     /// <summary>motion.status.toast.duration（ms） FILM-06：窗口内状态提示停留时长。</summary>
@@ -513,6 +521,38 @@ public static class DesignTokens
     public const double PopupRatingSourcesMetaLineGap = 4.0;
     /// <summary>popup.ratingSources.nameFontSize（pt） RATING-04：评分来源文件名字号；平台可以使用对应原生字体。</summary>
     public const double PopupRatingSourcesNameFontSize = 11.0;
+    /// <summary>rating.compact.glyph.fontSize（pt） RATING-07：紧凑态叠压星字号。</summary>
+    public const double RatingCompactGlyphFontSize = 18.0;
+    /// <summary>rating.compact.minLength（pt） RATING-07：紧凑态胶囊最短主轴长度。</summary>
+    public const double RatingCompactMinLength = 88.0;
+    /// <summary>rating.compact.step（pt） RATING-07：紧凑态相邻叠压星中心距。</summary>
+    public const double RatingCompactStep = 11.0;
+    /// <summary>rating.control.clearGlyph.fontSize（pt） RATING-07：控件清零叉字号。</summary>
+    public const double RatingControlClearGlyphFontSize = 15.0;
+    /// <summary>rating.control.endInset（pt） RATING-07：展开态星排两端到胶囊端的留白；固有长度 = 6×slot + 2×endInset。</summary>
+    public const double RatingControlEndInset = 4.0;
+    /// <summary>rating.control.glyph.fontSize（pt） RATING-07：控件星形与冲突三角字号。</summary>
+    public const double RatingControlGlyphFontSize = 20.0;
+    /// <summary>rating.control.slot（pt） RATING-07：展开态星级控件每格沿主轴的步长（六格）。</summary>
+    public const double RatingControlSlot = 36.0;
+    /// <summary>rating.gesture.cancelSlop（pt） RATING-07：手指在交叉轴越出星排/弹窗该距离即进入取消区。</summary>
+    public const double RatingGestureCancelSlop = 44.0;
+    /// <summary>rating.gesture.tapSlop（pt） RATING-07：紧凑态/卡片长按起手后未越过该距离视为点按，不预览。</summary>
+    public const double RatingGestureTapSlop = 8.0;
+    /// <summary>rating.popup.clearGlyph.fontSize（pt） RATING-07：弹窗清零叉字号。</summary>
+    public const double RatingPopupClearGlyphFontSize = 18.0;
+    /// <summary>rating.popup.columnWidth（pt） RATING-07：竖排弹窗（竖排控件）宽度。</summary>
+    public const double RatingPopupColumnWidth = 120.0;
+    /// <summary>rating.popup.cornerRadius（pt） RATING-07：弹窗玻璃面板圆角。</summary>
+    public const double RatingPopupCornerRadius = 24.0;
+    /// <summary>rating.popup.gap（pt） RATING-07：弹窗与入口的间距。</summary>
+    public const double RatingPopupGap = 8.0;
+    /// <summary>rating.popup.glyph.fontSize（pt） RATING-07：弹窗星形与冲突三角字号。</summary>
+    public const double RatingPopupGlyphFontSize = 24.0;
+    /// <summary>rating.popup.minSlot（pt） RATING-07：可用空间不足时弹窗星排步长下限。</summary>
+    public const double RatingPopupMinSlot = 28.0;
+    /// <summary>rating.popup.slot（pt） RATING-07：星级弹窗星排每格边长。</summary>
+    public const double RatingPopupSlot = 44.0;
     /// <summary>settings.android.card.paddingX（pt） SETTINGS-15：Android 设置卡片内容视觉左右内边距；勾选字形左缘与普通标签对齐，透明命中区不额外内缩内容。</summary>
     public const double SettingsAndroidCardPaddingX = 16.0;
     /// <summary>settings.android.icon.gap（pt） SETTINGS-01：Android 控制功能行勾选字形→命令图标、命令图标→命令名的视觉间距；图标左边距扣除勾选 44dp 命中区的透明内缩，命中区本身不缩小。</summary>
