@@ -187,6 +187,70 @@ internal sealed class iOSRatingPopup : IDisposable
     }
 
     /// <summary>
+    /// 入口把同一次手势交给弹窗（紧凑胶囊与卡片长按共用）：只有单条目形态才把触摸延续到面板星排上，
+    /// 起点按延迟预览处理（越过点按阈值前不点亮）。返回是否真的开始转发。
+    /// </summary>
+    /// <param name="source">发起入口（控件胶囊或胶片卡片）。</param>
+    /// <param name="pointInSource">入口坐标中的触点。</param>
+    /// <returns>已在弹窗星排上起手返回 true；弹窗未打开或为来源条目不转发。</returns>
+    internal bool BeginExternal(UIView source, CGPoint pointInSource)
+    {
+        if (!IsOpen || Mode != RatingPopupMode.Single || TrackingRow is not { } row) return false;
+        row.TrackBegan(row.ConvertPointFromView(pointInSource, source), deferPreview: true);
+        return true;
+    }
+
+    /// <summary>入口手势移动：按弹窗宿主坐标里的取消带取星，手指不必移进面板。</summary>
+    /// <param name="source">发起入口。</param>
+    /// <param name="pointInSource">入口坐标中的触点。</param>
+    internal void MoveExternal(UIView source, CGPoint pointInSource)
+    {
+        if (TrackingRow is not { } row) return;
+        var point = row.ConvertPointFromView(pointInSource, source);
+        row.TrackMoved(point, IsInBand(row, _host.ConvertPointFromView(pointInSource, source)));
+    }
+
+    /// <summary>
+    /// 入口手势抬手：按共享手势状态机提交或保持弹窗；越界离开（不写回）即收起弹窗。
+    /// </summary>
+    /// <param name="source">发起入口。</param>
+    /// <param name="pointInSource">入口坐标中的触点。</param>
+    /// <returns>结束语义与对应值。</returns>
+    internal RatingGestureResult EndExternal(UIView source, CGPoint pointInSource)
+    {
+        if (TrackingRow is not { } row)
+        {
+            Close();
+            return new RatingGestureResult(RatingGestureOutcome.None, 0);
+        }
+        var point = row.ConvertPointFromView(pointInSource, source);
+        var result = row.TrackEnded(point, IsInBand(row, _host.ConvertPointFromView(pointInSource, source)));
+        if (result.Outcome == RatingGestureOutcome.None) Close();
+        return result;
+    }
+
+    /// <summary>入口手势被系统打断：清掉预览并收起弹窗。</summary>
+    internal void CancelExternal()
+    {
+        TrackingRow?.TrackCancelled();
+        Close();
+    }
+
+    /// <summary>
+    /// 入口手势的取消带：入口与弹窗交叉轴范围的并集两侧外扩取消阈值，主轴再限制在星排两端半格内。
+    /// 坐标在弹窗宿主空间里计算，这样手指不必移进弹窗也能判断是否越界。
+    /// </summary>
+    /// <param name="row">弹窗内正在跟踪的星排。</param>
+    /// <param name="pointInHost">宿主坐标中的触点。</param>
+    /// <returns>是否仍可预览。</returns>
+    private bool IsInBand(iOSRatingRow row, CGPoint pointInHost)
+    {
+        var rect = row.ConvertRectToView(row.Bounds, _host);
+        return RatingControlGeometry.ExternalInBand((double)pointInHost.X, (double)pointInHost.Y, AnchorRect, PanelFrame,
+            new LayoutRect(rect.X, rect.Y, rect.Width, rect.Height), row.Horizontal);
+    }
+
+    /// <summary>
     /// 重排后复检入口：入口离开窗口、自身或祖先隐藏、或矩形相对打开时移动超过半点即关闭，
     /// 避免面板停在一个已经消失的入口旁边。
     /// </summary>

@@ -43,14 +43,25 @@ internal static class ToolbarFlowLayoutChecks
         c.True("可用主轴 133 时星级组紧凑", Near(ToolbarFlowLayout.Rating(133).Main, 88));
 
         var exifHorizontal = ToolbarFlowLayout.Exif(3, true);
-        c.True("横排 EXIF 三块主轴 182、交叉轴 40",
-            Near(exifHorizontal.Main, 182) && Near(exifHorizontal.Cross, 40)
+        c.True("横排 EXIF 三项主轴 172、交叉轴 44",
+            Near(exifHorizontal.Main, 172) && Near(exifHorizontal.Cross, 44)
             && exifHorizontal.Kind == ControlBarGroupKind.Exif,
             $"{exifHorizontal.Main}×{exifHorizontal.Cross}");
         var exifVertical = ToolbarFlowLayout.Exif(2, false);
-        c.True("竖排 EXIF 两块主轴 100、交叉轴 50",
-            Near(exifVertical.Main, 100) && Near(exifVertical.Cross, 50),
+        c.True("竖排 EXIF 两项主轴 86、交叉轴 64",
+            Near(exifVertical.Main, 86) && Near(exifVertical.Cross, 64),
             $"{exifVertical.Main}×{exifVertical.Cross}");
+
+        var exifMatchesBlock = true;
+        for (int count = 0; count <= 7; count++)
+        foreach (bool horizontal in new[] { false, true })
+        {
+            var block = ExifBlockGeometry.Size(count, horizontal);
+            var group = ToolbarFlowLayout.Exif(count, horizontal);
+            exifMatchesBlock &= Near(group.Main, horizontal ? block.Width : block.Height)
+                && Near(group.Cross, horizontal ? block.Height : block.Width);
+        }
+        c.True("EXIF 分组尺寸与 EXIF 块几何一致（0–7 项、两向）", exifMatchesBlock);
 
         var groups = new[]
         {

@@ -19,16 +19,16 @@
 |---|---|---|
 | 文档四周外边距 | `toolbar.padding` | 10 |
 | 组间距 / 行（列）距 | `toolbar.group.spacing` | 10 |
-| EXIF 块 | `toolbar.exif.block.width` / `toolbar.exif.block.height` | 50 × 40 |
-| EXIF 块主轴每端留白 | `toolbar.exif.inset` | 4（每块各留一次） |
-| EXIF 块间额外间距 | `toolbar.exif.spacing` | 4（与相邻留白叠加为 12） |
+| EXIF 块每项 | `toolbar.exif.item.width` × 块高（横排）/ `toolbar.exif.item.width` × `toolbar.exif.item.height`（竖排） | 52 × 44 / 52 × 36 |
+| EXIF 块内边距 / 项距 | `toolbar.exif.padding` / `toolbar.exif.item.spacing` | 6 / 2 |
+| EXIF 块高（横排） | `shell.glass.button.size` | 44 |
 | 星级控件 | 按自身固有长度占位 | 见 RATING-07 |
 | 命令按钮 | `shell.glass.button.size` | 44 × 44 |
 | 命令按钮间距 | `toolbar.command.spacing` | 8 |
-| EXIF 块圆角 | `toolbar.cornerRadius` | 6 |
+| EXIF 块圆角 | `toolbar.exif.cornerRadius` | 12 |
 
 - 行布局（控制栏在底行）主轴为宽，三组沿宽排成一行；列布局（控制栏在右列）主轴为高，三组沿高排列。方向随布局切换，不按照片横竖改变。
-- 分组主轴长度 = 子控件数 × 边长 + （n−1）× 组内间距 + 组内边距（EXIF 每块两端各留一次，评分按星级控件自身长度，命令组不留）。组与组之间 `toolbar.group.spacing`（10），四周 `toolbar.padding`（10）。
+- 分组主轴长度：EXIF 块 = 2 × 内边距 + 项数 × 项宽（竖排为项高）+ （n−1）× 项距；评分按星级控件自身长度；命令组 = 按钮数 × 边长 + （n−1）× 按钮间距，不留组内边距。组与组之间 `toolbar.group.spacing`（10），四周 `toolbar.padding`（10）。
 - 放不下时**整组**换到下一行/列：可用主轴扣掉两侧外边距后，若本行已有组且再加本组会超长，则本组另起一行。单组超长时不拆组（TOOLBAR-08）。
 - 手机形态控制栏不换行也不滚动：槽位固定（SHELL-08、SHELL-09），长度不足时由星级控件降到紧凑态（RATING-07），其余槽位不压缩、不重叠。
 - 每行/列在主轴上居中：起点 = `max(toolbar.padding, (可用主轴 − 行长) / 2)`；行长超过可用主轴时从 `toolbar.padding` 起排，不裁切、不重叠。
@@ -63,7 +63,7 @@
 ## TOOLBAR-05 EXIF 摘要：内容、格式与更新 · 必须
 
 - 内容 = 设置启用的 EXIF 项，按设置顺序；默认光圈、快门、ISO、等效焦距。
-- 每块尺寸见 TOOLBAR-02（`toolbar.exif.block.*`）：标签 `toolbar.exif.label.fontSize`（10）次要色，值 `toolbar.exif.value.fontSize`（12）半粗主色；两者居中、尾部截断，标签不得与值同字号同色。小字号下半粗与常规难以区分的平台可以取加粗（TOOLBAR-05@win）。
+- EXIF 摘要是一个整块（几何见 TOOLBAR-02）：一个深色半透明圆角矩形，块内按设置顺序排各项，横排时项沿宽排开，竖排（列布局与手机横屏 EXIF 列）时自上而下；每项上为标签 `toolbar.exif.label.fontSize`（10）次要色，下为值 `toolbar.exif.value.fontSize`（12）半粗主色，两者居中、尾部截断，标签不得与值同字号同色。块被槽位压短时各项等分缩窄，不丢项。同一组件用在宽形态控制栏、手机竖屏顶部行中间与手机横屏 EXIF 列。小字号下半粗与常规难以区分的平台可以取加粗（TOOLBAR-05@win）。
 - 值按摄影习惯格式化：光圈 `f/2.8`（至多 1 位小数、去尾零）；快门 <1 s 且接近 1/n（偏差 ≤2%）写 `1/250`，否则写小数秒（至多 2 位，`0.3s`），≥1 s 写 `2s`、`1s`、`1.5s`；ISO 整数；焦距 `14mm`、`10.5mm`（至多 1 位小数、去尾零）；曝光补偿 `+0.7 EV`；拍摄时间摘要 `yyyy-MM-dd HH:mm`（完整值见悬停提示）；缺失值显示 `--`，不留空块、不猜测、不用别的字段顶替。
 - 完整值必须可查看：桌面悬停提示 `标签 · 值`；触屏没有悬停，完整值由整组点击进入的 EXIF 详情承担（TOOLBAR-06）。
 - 切图后不得残留上一张照片的 EXIF 值：先显示占位或新值，EXIF 异步就绪后再更新；更新只改文本，不改变分组数量与几何。
@@ -101,7 +101,7 @@
 
 ## TOOLBAR-10 视觉与反馈 · 应当
 
-- 圆按钮与合体按钮按 SHELL-12 用平台原生按钮材质与系统状态外观；本条的自绘底色、描边与圆角只约束自绘控件（EXIF 块与星级控件的自绘部分）。EXIF 块与评分组共用深色底 `color.toolbar.block.background`（#222222）；命令按钮 `color.toolbar.command.background`（#333333）+ 描边 `color.toolbar.command.border`（#555555）；圆角 `toolbar.cornerRadius`（6）只由控件自身一层裁切产生，不叠卡中卡双层圆角，也不把自绘圆角与系统按钮 bezel 或系统描边裁切叠加成二次裁角。
+- 圆按钮与合体按钮按 SHELL-12 用平台原生按钮材质与系统状态外观；本条的自绘底色、描边与圆角只约束自绘控件（EXIF 块与星级控件的自绘部分）。EXIF 块是深色半透明圆角矩形（圆角 `toolbar.exif.cornerRadius`），有平台深色模糊材质时取该材质，没有时取 `color.toolbar.block.background`（#222222）；星级控件的胶囊按 RATING-07 取平台原生按钮材质；命令按钮 `color.toolbar.command.background`（#333333）+ 描边 `color.toolbar.command.border`（#555555）；圆角 `toolbar.cornerRadius`（6）只由控件自身一层裁切产生，不叠卡中卡双层圆角，也不把自绘圆角与系统按钮 bezel 或系统描边裁切叠加成二次裁角。
 - 评分星形字号 `toolbar.rating.glyph.fontSize`（16），0 号清零叉 `toolbar.rating.clearGlyph.fontSize`（12），冲突警示三角 `icon.warning` 取 `toolbar.rating.glyph.fontSize`（16）并占同一 0 号槽位（`color.star.conflict`）；星形不因槽位小而缩小到不可辨，换成三角不改变槽位几何与命中区。
 - 每个小控件有常态、悬停、按下、禁用、焦点五态。任何状态切换都不得引起布局抖动、残留旧态或裁切内容：不改尺寸与占位、不缩放、不绘制到父容器之外；焦点用可见焦点环或描边表达，本身不被裁切。
 - 自绘控件按令牌绘制状态色，只改底色、描边与前景色，不加过渡动画，避免连续划过按钮时闪烁。原生控件可以使用系统状态色与轻量状态动效（L4），但占位、命中区与令牌几何一致。

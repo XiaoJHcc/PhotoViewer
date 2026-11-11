@@ -69,6 +69,9 @@ internal static class Program
             RatingSourcesLayoutChecks.Run(checks);
             RatingControlChecks.Run(checks);
             ToolbarFlowLayoutChecks.Run(checks);
+            FilmCardGeometryChecks.Run(checks);
+            ExifBlockGeometryChecks.Run(checks);
+            WideFilterLayoutChecks.Run(checks);
             TitleBarLayoutChecks.Run(checks);
             ScreenFormChecks.Run(checks);
             PhoneScreenLayoutChecks.Run(checks);

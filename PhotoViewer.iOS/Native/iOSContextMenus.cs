@@ -10,16 +10,14 @@ namespace PhotoViewer.iOS.Native;
 
 /// <summary>
 /// 原生上下文菜单构建（[INPUT-01] 的触屏入口）：
-/// 主图菜单与 Mac 原生右键菜单同序（打开文件夹、栏位显隐、增强、工具、设置），分析栏/增强/工具页都是真实可用项；
-/// 胶片栏卡片菜单提供评分 0–5，并以菜单标题承载完整文件名与拍摄时间（[FILM-05] 的触屏 tooltip 等价物）。
+/// 主图菜单与 Mac 原生右键菜单同序（打开文件夹、栏位显隐、增强、工具、设置），分析栏/增强/工具页都是真实可用项。
+/// 胶片卡片不再挂上下文菜单——评分入口改为长按/指针辅助点按直接打开星级弹窗（[FILM-05]）。
 /// 菜单在每次弹出时现建，勾选态与星级直接读共享状态，不做缓存。
 /// </summary>
 internal static class iOSContextMenus
 {
     /// <summary>主图菜单标识（验收按标识核对配置来源）。</summary>
     internal const string PhotoIdentifier = "photo";
-    /// <summary>卡片菜单标识。</summary>
-    internal const string CardIdentifier = "card";
 
     /// <summary>一次菜单构建的产物：系统菜单对象与按 action 标识索引的同源回调。</summary>
     internal sealed class MenuResult(string identifier, UIMenu menu, IReadOnlyDictionary<string, Action> handlers)
@@ -128,31 +126,6 @@ internal static class iOSContextMenus
         PhotoMenuItemId.Tools => AppleSymbolNames.Menu.Tools,
         _ => AppleSymbolNames.Menu.Settings,
     };
-
-    /// <summary>
-    /// 胶片栏卡片上下文菜单：标题为完整文件名与拍摄时间（[FILM-05] tooltip 的触屏等价物），
-    /// 唯一功能是"评分 0–5"——写回走共享评分路径，不改变当前主图（[FILM-06] 暂留语义由共享列表负责）。
-    /// </summary>
-    /// <param name="file">卡片绑定的照片。</param>
-    /// <param name="rate">评分回调（0 清空）。</param>
-    /// <returns>菜单与同源回调。</returns>
-    internal static MenuResult Card(ImageFile file, Action<int> rate)
-    {
-        var handlers = new Dictionary<string, Action>(StringComparer.Ordinal);
-        var items = new UIMenuElement[6];
-        for (int rating = 0; rating < 6; rating++)
-        {
-            int value = rating;
-            items[rating] = Item(handlers, $"card.rating.{rating}", rating == 0 ? "无星级" : $"{rating} 星",
-                rating == 0 ? "xmark" : "star", file.Rating == rating, () => rate(value));
-        }
-        var ratingMenu = UIMenu.Create("评分", null!, new NSString("card.rating-menu"), default, items);
-        string title = file.PhotoDate is { } date
-            ? $"{file.Name} · {ShotTimeText.FormatShotTime(date)}"
-            : file.Name;
-        var menu = UIMenu.Create(title, null!, new NSString(CardIdentifier), default, [ratingMenu]);
-        return new MenuResult(CardIdentifier, menu, handlers);
-    }
 
     /// <summary>创建一条 action 并登记同一份回调；勾选态为 null 时是普通命令。</summary>
     /// <param name="handlers">action 标识 → 回调。</param>

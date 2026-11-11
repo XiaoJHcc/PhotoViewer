@@ -1144,7 +1144,7 @@ internal static class iOSNativeRatingControlCheck
             var card = await WaitForCardAsync(index, "卡片冲突三角");
             if (card.ClearRatingSymbol != "exclamationmark.triangle.fill")
                 throw new InvalidOperationException($"卡片 0 号槽位未换成警示三角：{card.ClearRatingSymbol}");
-            await UiDispatcher.InvokeAsync(() => card.StarButtons[0].SendActionForControlEvents(UIControlEvent.TouchUpInside));
+            await UiDispatcher.InvokeAsync(() => card.HandleStarTap(0, indirectPointer: true));
             await WaitAsync(() => popup.IsOpen, "卡片三角打开弹窗");
             if (popup.AnchorKind != RatingPopupAnchor.Card)
                 throw new InvalidOperationException($"卡片三角入口类型为 {popup.AnchorKind} ≠ Card");

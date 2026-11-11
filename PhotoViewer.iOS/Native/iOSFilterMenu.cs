@@ -5,12 +5,25 @@ using PhotoViewer.ViewModels.Main.File;
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// 手机形态的筛选菜单：根菜单下三个内联单选分组（排序方式、排序方向、星级筛选），
-/// 分组之间由系统画分隔线；选项保持菜单展开，选中后写回共享筛选状态，失焦才关闭。
-/// 数据与当前值一律现读共享 <see cref="FilterBarViewModel"/>，本类不缓存筛选条件。
+/// 筛选菜单：根菜单下三个内联单选分组（排序方式、排序方向、星级筛选），分组之间由系统画分隔线；
+/// 选项保持菜单展开，选中后写回共享筛选状态，失焦才关闭。手机形态的筛选圆按钮与宽形态的单胶囊
+/// （<see cref="iOSFilterControl"/>）共用本菜单；数据与当前值一律现读共享
+/// <see cref="FilterBarViewModel"/>，本类不缓存筛选条件。
 /// </summary>
 internal static class iOSFilterMenu
 {
+    /// <summary>菜单正在显示时用系统入口就地替换内容，保持展开态并刷新勾选。</summary>
+    /// <param name="button">带菜单的按钮。</param>
+    internal static void UpdateVisibleMenu(UIButton button)
+    {
+        foreach (var interaction in button.Interactions)
+        {
+            if (interaction is not UIContextMenuInteraction menuInteraction) continue;
+            menuInteraction.UpdateVisibleMenu(_ => button.Menu!);
+            return;
+        }
+    }
+
     /// <summary>一次菜单构建的产物：系统菜单对象与按业务键索引的同源回调（<see cref="UIAction"/> 不公开 handler）。</summary>
     /// <param name="menu">交给按钮的菜单。</param>
     /// <param name="handlers">业务键 → 回调；键为 <c>sort:值</c> / <c>order:值</c> / <c>rating:键</c>。</param>

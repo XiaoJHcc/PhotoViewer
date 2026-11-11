@@ -49,14 +49,15 @@
 
 ## FILM-05 卡片两档、内容与命中区域 · 必须
 
-卡片分大、小两档，共用一套视觉语言。两档各有一对固定尺寸并登记为令牌（大档即 `film.card.width` × `film.card.height`），本条只定内容构成，不复述数值。
+卡片分大、小两档，共用一套视觉语言。两档各有一对固定尺寸并登记为令牌（大档 `film.card.width` × `film.card.height`，小档 `film.card.small.width` × `film.card.small.height`），本条只定内容构成，不复述数值。
 
 | 档 | 内容 |
 |---|---|
 | 大档 | 缩略图、文件名、拍摄时间、完整星级、抖动标记 |
 | 小档 | 缩略图、星级数字、文件名、圆形抖动点 |
 
-- 选档只看胶片栏主轴可用长度：放得下至少 5 张大档卡片就用大档，否则用小档；两档都必须保证可见卡片不少于 5 张。
+- 选档只看胶片栏主轴可用长度：扣掉大档主轴两端内边距后放得下至少 5 张大档卡片就用大档，否则用小档；可见张数按胶片栏整条主轴长度 ÷ 卡片步长计（手机形态胶片栏贯穿屏幕，卡片可滚到按钮下方），两档都必须保证不少于 5 张。宽形态打开相似面板时胶片栏固定取大档（面板只有大档）。
+- 小档的胶片栏带厚 = 卡片交叉轴长度 + 2 × `film.list.small.padCross`，主轴两端内边距 `film.list.small.padMain`；大档沿用 `film.list.pad*` 与 `film.band.height`。
 - 卡片内含方形照片区，照片按原比例适应留边、不拉伸，方形不随控件原生化变形。
 
 大档内部节点坐标相对内层占位面（`film.card.surface.*`，在外框内缩 `film.card.inset`）：
@@ -68,6 +69,8 @@
 | 第二行 | 水平居中、宽 `film.card.secondLine.width`（80），y = `film.card.secondLine.y`（103），行高 `film.card.secondLine.height`（11） |
 | 星级行 | y = `film.card.star.y`（116），六个 `film.card.star.size`（14）见方按钮无间距、在内层宽内居中 |
 | 抖动徽标 | 照片区右下角内缩 `film.card.badge.inset`（2），边长 `film.card.badge.size`（16） |
+
+小档内部节点相对占位面（在外框内缩 `film.card.small.inset`）：照片区左上 `film.card.small.thumb.inset`、边长 `film.card.small.thumb.size`；文件名 y = `film.card.small.name.y`、行高 `film.card.small.name.height`、字号 `film.card.small.name.fontSize` 半粗；星级角标贴照片区右下角，高 `film.card.small.badge.height`、字号 `film.card.small.badge.fontSize`（金色实心星 + 白色数字，0 星不显示，冲突时前加警示三角）；抖动点直径 `film.card.small.shakeDot.size`，贴照片区右上角内缩 `film.card.small.shakeDot.inset`。
 
 | 元素 | 规则 |
 |---|---|

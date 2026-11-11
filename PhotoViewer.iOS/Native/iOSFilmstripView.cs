@@ -10,9 +10,9 @@ using UIKit;
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// 单轴胶片栏布局（UICollectionViewLayout）：几何全部取自共享 <see cref="FilmstripGeometry"/>——
-/// 96×144 卡片、10/5/10 内边距、横向首项居中、文档主轴长度与可见项范围；索引顺序就是屏幕顺序。
-/// 宿主只决定主轴方向、视口与两端的主轴内容留白，本类不重复任何尺寸常量。
+/// 单轴胶片栏布局（UICollectionViewLayout）：几何全部取自共享 <see cref="FilmCardGeometry"/>——
+/// 按档位取卡片尺寸（大档 96×144 / 小档 64×76）、主轴与交叉轴内边距、横向首项居中、文档主轴长度与可见项范围；
+/// 索引顺序就是屏幕顺序。宿主只决定主轴方向、档位、视口与两端的主轴内容留白，本类不重复任何尺寸常量。
 /// <para>主轴内容留白（<see cref="MainLead"/>/<see cref="MainTrail"/>）把共享几何整体内缩到「内视口」上：
 /// 文档主轴长度 = 共享文档长度（按视口减去两端留白算）+ 两端留白，每张卡片再沿主轴后移前导留白，
 /// 因此短列表仍不滚动、横向短列表在内视口里居中。默认 0 时与不带留白逐位一致。</para>
@@ -21,6 +21,9 @@ internal sealed class iOSFilmstripLayout : UICollectionViewLayout
 {
     /// <summary>行布局为横向单行，列布局为纵向单列。</summary>
     internal bool Horizontal { get; set; } = true;
+
+    /// <summary>卡片档位：大档（含文件名、拍摄时间与六格星级）或小档（含星级角标与抖动点）。</summary>
+    internal FilmCardTier Tier { get; set; } = FilmCardTier.Large;
 
     /// <summary>主轴前导内容留白：卡片停靠线到视口前导边的距离（宽形态与相似面板保持 0）。</summary>
     internal double MainLead { get; set; }
@@ -56,7 +59,8 @@ internal sealed class iOSFilmstripLayout : UICollectionViewLayout
         get
         {
             var viewport = Viewport;
-            var inner = FilmstripGeometry.ContentSize(
+            var inner = FilmCardGeometry.ContentSize(
+                Tier,
                 Horizontal,
                 Horizontal ? InnerMain : (double)viewport.Width,
                 Horizontal ? (double)viewport.Height : InnerMain,
@@ -90,7 +94,7 @@ internal sealed class iOSFilmstripLayout : UICollectionViewLayout
     /// <returns>卡片矩形。</returns>
     private CGRect ItemFrame(int index)
     {
-        var card = FilmstripGeometry.ItemFrame(Horizontal, index, Count, SharedContentWidth);
+        var card = FilmCardGeometry.ItemFrame(Tier, Horizontal, index, Count, SharedContentWidth);
         return Horizontal
             ? new CGRect(card.X + MainLead, card.Y, card.Width, card.Height)
             : new CGRect(card.X, card.Y + MainLead, card.Width, card.Height);
@@ -102,8 +106,8 @@ internal sealed class iOSFilmstripLayout : UICollectionViewLayout
     public override UICollectionViewLayoutAttributes[] LayoutAttributesForElementsInRect(CGRect rect)
     {
         if (Count <= 0) return [];
-        var range = FilmstripGeometry.VisibleRange(Count, FilmstripGeometry.ItemStart(Horizontal, SharedContentWidth, Count),
-            FilmstripGeometry.Step(Horizontal),
+        var range = FilmstripGeometry.VisibleRange(Count, FilmCardGeometry.ItemStart(Tier, Horizontal, SharedContentWidth, Count),
+            FilmCardGeometry.Step(Tier, Horizontal),
             (Horizontal ? (double)rect.X : (double)rect.Y) - MainLead,
             Horizontal ? (double)rect.Width : (double)rect.Height);
         if (range.Last < range.First) return [];
@@ -153,14 +157,18 @@ internal sealed class iOSFilmstripView : UIView
 
     /// <summary>星级点击回调（写回交给宿主统一走共享评分与错误提示）。</summary>
     internal event Action<ImageFile, int>? RateRequested;
-    /// <summary>卡片 0 号冲突三角入口：目标照片与整张卡片（弹窗锚点）。</summary>
+    /// <summary>卡片冲突三角/指针辅助点按入口：目标照片与整张卡片（弹窗锚点）。</summary>
     internal event Action<ImageFile, UIView>? RatingPopupRequested;
+    /// <summary>卡片长按：卡片、手势状态与卡片坐标中的触点（宿主把同一次触摸延续到弹窗星排上）。</summary>
+    internal event Action<iOSThumbnailCard, UIGestureRecognizerState, CGPoint>? CardLongPress;
     internal event Action? RatingAnchorMoved;
 
     /// <summary>真实集合视图（验收读取可见卡片与偏移）。</summary>
     internal UICollectionView Collection => _collection;
     /// <summary>当前主轴是否为横向单行。</summary>
     internal bool Horizontal => _layout.Horizontal;
+    /// <summary>当前卡片档位（大档 96×144 / 小档 64×76）。</summary>
+    internal FilmCardTier Tier => _layout.Tier;
     /// <summary>定位动画是否仍在播放（验收区分自动定位与用户滚动）。</summary>
     internal bool IsAnimating => _animation != null;
     /// <summary>系统减少动态效果；测试缝允许注入固定值（验收核对直接到终点路径）。</summary>
@@ -211,6 +219,24 @@ internal sealed class iOSFilmstripView : UIView
         _collection.ShowsVerticalScrollIndicator = !horizontal;
         _layout.InvalidateLayout();
         SetNeedsLayout();
+    }
+
+    /// <summary>
+    /// 设置卡片档位（[FILM-05] 选档结果由宿主给出）：换档即重排布局与已建卡片的内部几何，
+    /// 并按换轴同口径显式定位当前项（[FILM-04]），避免卡片尺寸变化后当前项停在栏位外。
+    /// </summary>
+    /// <param name="tier">大档或小档。</param>
+    internal void SetTier(FilmCardTier tier)
+    {
+        if (_layout.Tier == tier) return;
+        _layout.Tier = tier;
+        foreach (var card in _collection.VisibleCells.OfType<iOSThumbnailCard>()) card.Tier = tier;
+        _layout.InvalidateLayout();
+        SetNeedsLayout();
+        _collection.LayoutIfNeeded();
+        ClampOffset();
+        ReportVisibleRange();
+        ScrollToCurrent();
     }
 
     /// <summary>
@@ -492,10 +518,12 @@ internal sealed class iOSFilmstripView : UIView
 
             card.Hidden = false;
             var file = files[index];
+            card.Tier = _owner.Tier;
             card.Bind(file, _owner._main.Settings.ShowRating,
                 selected => _owner.OnCardSelected(selected),
                 (selected, rating) => _owner.RateRequested?.Invoke(selected, rating),
-                showSources: (selected, _) => _owner.RatingPopupRequested?.Invoke(selected, card));
+                ratingPopup: (selected, _) => _owner.RatingPopupRequested?.Invoke(selected, card),
+                longPress: (target, state, point) => _owner.CardLongPress?.Invoke(target, state, point));
             _owner._main.FileVM.ThumbnailList.QueueThumbnailLoad(file, true);
             return card;
         }

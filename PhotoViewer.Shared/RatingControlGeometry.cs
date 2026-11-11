@@ -150,6 +150,35 @@ public static class RatingControlGeometry
         => cross >= bandStart - CancelSlop && cross <= bandEnd + CancelSlop;
 
     /// <summary>
+    /// 起点在弹窗外的手势（紧凑胶囊、卡片长按）是否仍可继续取星：交叉轴取入口与弹窗范围的并集两侧外扩
+    /// <see cref="CancelSlop"/>，主轴还要落在弹窗星排的主轴范围两侧各外扩半格之内。跨轴外扩沿用
+    /// <see cref="InBand"/>；主轴半格是为了让手指还停在入口上时不凭空取到首末格——停在卡片上的手指若
+    /// 落在星排主轴范围之外，旧口径会把交叉轴越界当作「在带内」而夹出 0 / 5 的预览，这里直接不产生预览。
+    /// 三个矩形与坐标点必须在同一坐标空间（弹窗宿主坐标）。
+    /// </summary>
+    /// <param name="x">触点横坐标（宿主坐标）。</param>
+    /// <param name="y">触点纵坐标（宿主坐标）。</param>
+    /// <param name="anchor">手势起点的入口矩形（控件胶囊或卡片）。</param>
+    /// <param name="panel">弹窗面板矩形。</param>
+    /// <param name="row">弹窗星排矩形（宿主坐标；主轴长度除以 <see cref="SlotCount"/> 即一格步长）。</param>
+    /// <param name="horizontalRow">星排主轴是否为水平方向。</param>
+    /// <returns>仍可预览返回 true；主轴越出星排两端半格外返回 false。</returns>
+    public static bool ExternalInBand(double x, double y, LayoutRect anchor, LayoutRect panel, LayoutRect row,
+        bool horizontalRow)
+    {
+        double cross = horizontalRow ? y : x;
+        double crossStart = Math.Min(horizontalRow ? anchor.Y : anchor.X, horizontalRow ? panel.Y : panel.X);
+        double crossEnd = Math.Max(horizontalRow ? anchor.MaxY : anchor.MaxX, horizontalRow ? panel.MaxY : panel.MaxX);
+        if (!InBand(cross, crossStart, crossEnd)) return false;
+
+        double main = horizontalRow ? x : y;
+        double mainStart = horizontalRow ? row.X : row.Y;
+        double mainEnd = horizontalRow ? row.MaxX : row.MaxY;
+        double halfPitch = (horizontalRow ? row.Width : row.Height) / SlotCount / 2;
+        return main >= mainStart - halfPitch && main <= mainEnd + halfPitch;
+    }
+
+    /// <summary>
     /// 紧凑星簇中单个字形中心相对胶囊中心的主轴偏移。1–5 为星，0 为冲突警示三角
     /// （仅在冲突时有效）；无冲突时星 k 中心为 (k−3)×步长，有冲突时三角在最前，
     /// 之后空一格再接 1–5 星。横排向右为正（星 1 在左），竖排取反（星 1 在下，三角在最下）。

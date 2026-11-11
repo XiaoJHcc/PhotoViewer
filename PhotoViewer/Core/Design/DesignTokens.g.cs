@@ -267,6 +267,30 @@ public static class DesignTokens
     public const double FilmCardSecondLineWidth = 80.0;
     /// <summary>film.card.secondLine.y（pt） FILM-05：第二行相对内层占位区原点的纵坐标（Android 在外框坐标画 106，内层占位从 3 起算即同一位置）。</summary>
     public const double FilmCardSecondLineY = 103.0;
+    /// <summary>film.card.small.badge.fontSize（pt） FILM-05：小档星级角标字号。</summary>
+    public const double FilmCardSmallBadgeFontSize = 8.0;
+    /// <summary>film.card.small.badge.height（pt） FILM-05：小档星级角标高。</summary>
+    public const double FilmCardSmallBadgeHeight = 12.0;
+    /// <summary>film.card.small.height（pt） FILM-05：小档卡片外框高。</summary>
+    public const double FilmCardSmallHeight = 76.0;
+    /// <summary>film.card.small.inset（pt） FILM-05：小档占位面在外框内的内缩。</summary>
+    public const double FilmCardSmallInset = 2.0;
+    /// <summary>film.card.small.name.fontSize（pt） FILM-05：小档文件名字号。</summary>
+    public const double FilmCardSmallNameFontSize = 9.0;
+    /// <summary>film.card.small.name.height（pt） FILM-05：小档文件名行高。</summary>
+    public const double FilmCardSmallNameHeight = 11.0;
+    /// <summary>film.card.small.name.y（pt） FILM-05：小档文件名行相对占位面的纵坐标。</summary>
+    public const double FilmCardSmallNameY = 59.0;
+    /// <summary>film.card.small.shakeDot.inset（pt） FILM-05：抖动点相对照片区右上角的内缩。</summary>
+    public const double FilmCardSmallShakeDotInset = 3.0;
+    /// <summary>film.card.small.shakeDot.size（pt） FILM-05：小档圆形抖动点直径。</summary>
+    public const double FilmCardSmallShakeDotSize = 8.0;
+    /// <summary>film.card.small.thumb.inset（pt） FILM-05：小档照片区相对占位面左上的内缩。</summary>
+    public const double FilmCardSmallThumbInset = 3.0;
+    /// <summary>film.card.small.thumb.size（pt） FILM-05：小档方形照片区边长。</summary>
+    public const double FilmCardSmallThumbSize = 54.0;
+    /// <summary>film.card.small.width（pt） FILM-05：小档卡片外框宽。</summary>
+    public const double FilmCardSmallWidth = 64.0;
     /// <summary>film.card.spacing（pt） FILM-05：卡片间距；3 点占位已含在卡片外框内，步长即卡片尺寸。</summary>
     public const double FilmCardSpacing = 0.0;
     /// <summary>film.card.star.fontSize（pt） FILM-05：卡片星级字形字号（uicons 星形与清零叉，按钮仍为 film.card.star.size 见方）。</summary>
@@ -291,6 +315,10 @@ public static class DesignTokens
     public const double FilmListPadRight = 10.0;
     /// <summary>film.list.padTop（pt） FILM-04：列表上内边距（纵向列表顶边，也是横向列表的顶边起点）。</summary>
     public const double FilmListPadTop = 5.0;
+    /// <summary>film.list.small.padCross（pt） FILM-02：小档胶片栏交叉轴两侧内边距。</summary>
+    public const double FilmListSmallPadCross = 8.0;
+    /// <summary>film.list.small.padMain（pt） FILM-02：小档胶片栏主轴两端内边距。</summary>
+    public const double FilmListSmallPadMain = 6.0;
     /// <summary>film.thumb.cornerRadius（pt） FILM-05：缩略图槽圆角。</summary>
     public const double FilmThumbCornerRadius = 4.0;
     /// <summary>film.thumb.size（pt） FILM-05：缩略图正方形边长；照片等比适应留边，不拉伸。</summary>
@@ -681,10 +709,20 @@ public static class DesignTokens
     public const double ToolbarExifBlockHeight = 40.0;
     /// <summary>toolbar.exif.block.width（pt） TOOLBAR-01：单个 EXIF 信息块宽。</summary>
     public const double ToolbarExifBlockWidth = 50.0;
+    /// <summary>toolbar.exif.cornerRadius（pt） TOOLBAR-10：EXIF 块圆角。</summary>
+    public const double ToolbarExifCornerRadius = 12.0;
     /// <summary>toolbar.exif.inset（pt） TOOLBAR-01：EXIF 块主轴两端留白（每块各留一次）。</summary>
     public const double ToolbarExifInset = 4.0;
+    /// <summary>toolbar.exif.item.height（pt） TOOLBAR-05：EXIF 块竖排时每项高。</summary>
+    public const double ToolbarExifItemHeight = 36.0;
+    /// <summary>toolbar.exif.item.spacing（pt） TOOLBAR-05：EXIF 块内相邻项间距。</summary>
+    public const double ToolbarExifItemSpacing = 2.0;
+    /// <summary>toolbar.exif.item.width（pt） TOOLBAR-05：EXIF 块内每项宽。</summary>
+    public const double ToolbarExifItemWidth = 52.0;
     /// <summary>toolbar.exif.label.fontSize（pt） TOOLBAR-01：EXIF 块标签字号。</summary>
     public const double ToolbarExifLabelFontSize = 10.0;
+    /// <summary>toolbar.exif.padding（pt） TOOLBAR-05：EXIF 块四周内边距。</summary>
+    public const double ToolbarExifPadding = 6.0;
     /// <summary>toolbar.exif.spacing（pt） TOOLBAR-01：EXIF 块之间的额外间距（与两侧留白叠加成 12）。</summary>
     public const double ToolbarExifSpacing = 4.0;
     /// <summary>toolbar.exif.value.fontSize（pt） TOOLBAR-01：EXIF 块强调值字号（半粗）。</summary>

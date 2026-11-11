@@ -17,8 +17,8 @@ namespace PhotoViewer.iOS.Native;
 /// 工具页——sheet + 导航控制器展示/关闭、列表页两个入口（照片数据统计为 Windows 专属，不出现）、
 /// EXIF 详情页按共享 7 列几何渲染分组与标签（多格式时真实切换格式），并在 320–1024 点七档宽度下核对卡片
 /// 内缩只取系统 InsetGrouped 一次边距、7 列与行高按实际卡片宽重算、行内无自绘圆角；当前发行版的诊断页
-/// （AI 版 DINO 五瓦片、标准版 CV 三瓦片）与共享 presenter 就绪、返回列表页，以及控制栏 EXIF 信息块直达
-/// EXIF 详情（工具 sheet 与设置页同配置）。
+/// （AI 版 DINO 五瓦片、标准版 CV 三瓦片）与共享 presenter 就绪、返回列表页，以及 EXIF 信息块直达
+/// EXIF 详情（宽形态取控制栏 EXIF 组、手机形态取手机 EXIF 块，同一组件；工具 sheet 与设置页同配置）。
 /// 素材要求：目录内至少 1 张自有 jpg 且能读到 EXIF；只读素材，不写用户照片或 TestCase。
 /// 报告写 Documents/PhotoViewer/native-tools-checks.txt。
 /// </summary>
@@ -109,10 +109,18 @@ internal static class iOSNativeToolsCheck
             lines.Add($"PASS 素材：{fixtures.Length} 张自有夹具（{directory}），列表 {mainVm.FileVM.ThumbnailList.FilteredFiles.Count} 张，" +
                 $"当前照片 {mainVm.CurrentFile!.Name}（伴侣 {mainVm.CurrentFile.Group?.Companions.Count ?? 0}）");
 
-            // 一、控制栏 EXIF 信息块直达 EXIF 详情（另一条入口，与主图菜单共用同一个展示器）。
-            if (root.ControlBar.ExifGroup == null) throw new InvalidOperationException("控制栏缺少 EXIF 信息块分组");
+            // 一、EXIF 信息块直达 EXIF 详情（另一条入口，与主图菜单共用同一个展示器）。
+            // 宽形态取控制栏 EXIF 组，手机形态取手机 EXIF 块（同一组件），两种形态都必须直达详情。
+            if (root.Form == ScreenForm.Wide)
+            {
+                if (root.ControlBar.ExifGroup == null) throw new InvalidOperationException("控制栏缺少 EXIF 信息块分组");
+            }
+            else if (root.PhoneExifBlock.Hidden || root.PhoneExifBlock.ItemLabels.Count == 0)
+            {
+                throw new InvalidOperationException("手机形态 EXIF 块不可见或没有显示项");
+            }
             if (presenter.IsPresented) throw new InvalidOperationException("工具页在入口调用前已展示");
-            await UiDispatcher.InvokeAsync(root.ControlBar.TapExifGroup);
+            await UiDispatcher.InvokeAsync(() => TapExifEntry(root));
             await WaitAsync(() => presenter.IsPresented && root.PresentedViewController is UINavigationController, "控制栏 EXIF 块打开工具页并压入 EXIF 详情");
             // TOOLS-01：展示时写共享展示态，主窗口入口据此只前置。
             if (!mainVm.Tools.IsPresented) throw new InvalidOperationException("工具页展示后共享 ToolsViewModel.IsPresented 仍为 false");
@@ -306,7 +314,7 @@ internal static class iOSNativeToolsCheck
             await iOSNativeSettingsCheck.SnapshotStageAsync(iOSAppCapabilities.HasDino ? "tools-dino" : "tools-cv");
 
             // TOOLBAR-06：已展示诊断页时控制栏 EXIF 入口仍明确切到 EXIF 详情，并取消在途诊断计算。
-            await UiDispatcher.InvokeAsync(root.ControlBar.TapExifGroup);
+            await UiDispatcher.InvokeAsync(() => TapExifEntry(root));
             await WaitAsync(() => navigation.TopViewController is iOSExifDetailView && mainVm.Tools.CurrentTool is ExifDetailViewModel,
                 "已展示诊断页时 EXIF 入口切回详情");
             if (DiagnosticBusy(mainVm)) throw new InvalidOperationException("切到 EXIF 后诊断仍在计算");
@@ -332,14 +340,14 @@ internal static class iOSNativeToolsCheck
             var loadedFile = mainVm.CurrentFile!;
             await UiDispatcher.InvokeAsync(() => mainVm.Tools.SyncCurrentFile(new ImageFile(loadedFile.File)));
             if (!mainVm.Tools.IsExifDetailEnabled) throw new InvalidOperationException("EXIF 加载中被当作缺 EXIF");
-            await UiDispatcher.InvokeAsync(root.ControlBar.TapExifGroup);
+            await UiDispatcher.InvokeAsync(() => TapExifEntry(root));
             await WaitAsync(() => navigation.TopViewController is iOSExifDetailView && mainVm.Tools.CurrentTool is ExifDetailViewModel,
                 "加载中 EXIF 入口直达详情");
             lines.Add("PASS TOOLBAR-06：EXIF 加载中仍可进入详情（不按缺 EXIF 回退）");
 
             await UiDispatcher.InvokeAsync(() => mainVm.CurrentFile = null);
             await WaitAsync(() => !mainVm.Tools.IsExifDetailEnabled, "无照片时 EXIF 不可用");
-            await UiDispatcher.InvokeAsync(root.ControlBar.TapExifGroup);
+            await UiDispatcher.InvokeAsync(() => TapExifEntry(root));
             await WaitAsync(() => navigation.TopViewController is iOSNativeToolsListViewController && mainVm.Tools.CurrentTool == null,
                 "无照片 EXIF 入口回退工具列表");
             lines.Add("PASS TOOLS-02：无照片时控制栏 EXIF 入口回退工具列表");
@@ -434,6 +442,23 @@ internal static class iOSNativeToolsCheck
 #else
         => main.Tools.CvPresenter.IsBusy;
 #endif
+
+    /// <summary>
+    /// EXIF 块入口的点按（TOOLBAR-06）：宽形态取控制栏 EXIF 组，手机形态取手机 EXIF 块——两处是同一个
+    /// <see cref="iOSExifBlock"/> 组件，都必须直达 EXIF 详情（无可用 EXIF 时回退工具列表）。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    private static void TapExifEntry(iOSNativeRootViewController root)
+    {
+        if (root.Form == ScreenForm.Wide)
+        {
+            if (root.ControlBar.ExifGroup == null)
+                throw new InvalidOperationException("控制栏缺少 EXIF 信息块分组");
+            root.ControlBar.TapExifGroup();
+            return;
+        }
+        root.PhoneExifBlock.Tap();
+    }
 
     /// <summary>轮询等待条件成立，超时即失败。</summary>
     /// <param name="condition">条件。</param>

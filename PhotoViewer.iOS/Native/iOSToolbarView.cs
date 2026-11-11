@@ -25,7 +25,7 @@ internal sealed class iOSToolbarView : UIView
     private readonly List<SettingsViewModel.HotkeyItem> _hotkeys = [];
     private readonly Dictionary<string, UIButton> _commands = new(StringComparer.Ordinal);
     private readonly iOSRatingControl _ratingControl = new();
-    private UIView? _exifGroup;
+    private iOSExifBlock? _exifGroup;
     private Action? _openExif;
     private bool _horizontal;
     private bool _hasRatingGroup;
@@ -46,7 +46,7 @@ internal sealed class iOSToolbarView : UIView
     internal IReadOnlyDictionary<string, UIButton> Commands => _commands;
 
     /// <summary>EXIF 信息块分组（点击直接进入 EXIF 详情；验收核对入口）。</summary>
-    internal UIView? ExifGroup => _exifGroup;
+    internal iOSExifBlock? ExifGroup => _exifGroup;
 
     /// <summary>常驻星级控件（三个槽位共用同一实现；宽形态控制栏始终是同一个实例）。</summary>
     internal iOSRatingControl RatingControl => _ratingControl;
@@ -54,8 +54,8 @@ internal sealed class iOSToolbarView : UIView
     /// <summary>本次重建是否包含星级分组（「显示评分」关闭时整组移除）。</summary>
     internal bool HasRatingGroup => _hasRatingGroup;
 
-    /// <summary>EXIF 信息块点按入口（识别器与验收共用）：直接进入 EXIF 详情。</summary>
-    internal void TapExifGroup() => _openExif?.Invoke();
+    /// <summary>EXIF 信息块点按入口（识别器与验收共用）：块自身的点按路径，直接进入 EXIF 详情。</summary>
+    internal void TapExifGroup() => _exifGroup?.Tap();
 
     /// <summary>是否提供该命令的入口：本壳全部共享命令都有原生实现。</summary>
     /// <param name="command">共享命令标识。</param>
@@ -73,11 +73,8 @@ internal sealed class iOSToolbarView : UIView
         var entries = main.ControlVM.EnabledExifItems;
         if (entries.Count > 0)
         {
-            var exif = new UIView(CGRect.Empty) { BackgroundColor = UIColor.Clear };
-            foreach (var entry in entries) exif.AddSubview(new ExifTile(entry));
-            exif.AddGestureRecognizer(new UITapGestureRecognizer(_ => TapExifGroup()));
-            exif.UserInteractionEnabled = true;
-            exif.AccessibilityLabel = "EXIF 信息，点击查看详情";
+            var exif = new iOSExifBlock { Tapped = () => _openExif?.Invoke() };
+            exif.SetEntries(entries);
             _exifGroup = exif;
             AddGroup(exif, ControlBarGroupKind.Exif, entries.Count);
         }
@@ -190,7 +187,7 @@ internal sealed class iOSToolbarView : UIView
         return new CGSize(document.Width, document.Height);
     }
 
-    /// <summary>按分组类型求共享尺寸：EXIF 沿旧块口径、星级按可用主轴、命令按圆按钮数与间距。</summary>
+    /// <summary>按分组类型求共享尺寸：EXIF 按块尺寸、星级按可用主轴、命令按圆按钮数与间距。</summary>
     /// <param name="availableMain">扣掉外边距后的主轴可用长度。</param>
     /// <returns>与分组顺序一致的尺寸。</returns>
     private List<ToolbarGroupSize> Sizes(double availableMain)
@@ -208,7 +205,7 @@ internal sealed class iOSToolbarView : UIView
         return sizes;
     }
 
-    /// <summary>分组内子控件落位：EXIF 小块取旧偏移，命令圆按钮按共享偏移排在主轴、交叉轴居中。</summary>
+    /// <summary>分组内子控件落位：EXIF 块与星级控件就是分组视图，命令圆按钮按共享偏移排在主轴、交叉轴居中。</summary>
     /// <param name="index">分组顺序索引。</param>
     /// <param name="horizontal">是否横向排列。</param>
     /// <param name="lineCross">所在行的交叉轴长度。</param>
@@ -216,26 +213,14 @@ internal sealed class iOSToolbarView : UIView
     {
         var kind = _groupSpecs[index].Kind;
         var group = _groupViews[index];
-        if (kind == ControlBarGroupKind.Rating)
+        if (kind is ControlBarGroupKind.Rating or ControlBarGroupKind.Exif)
         {
-            // 星级控件就是分组视图，按整组矩形自绘胶囊与星排。
-            _ratingControl.Horizontal = horizontal;
+            // EXIF 块按整组矩形排项、星级控件自绘胶囊与星排：分组视图自己消费方向，不再有子控件偏移。
+            if (kind == ControlBarGroupKind.Rating) _ratingControl.Horizontal = horizontal;
+            else ((iOSExifBlock)group).Horizontal = horizontal;
             return;
         }
         var children = group.Subviews;
-        if (kind == ControlBarGroupKind.Exif)
-        {
-            var spec = new ControlBarLayout.GroupSpec(kind, _groupSpecs[index].Count);
-            var offsets = ControlBarLayout.ChildOffsets(spec, horizontal, lineCross);
-            var metrics = ControlBarLayout.GetMetrics(kind);
-            for (int child = 0; child < children.Length && child < offsets.Length; child++)
-            {
-                children[child].Frame = horizontal
-                    ? new CGRect(offsets[child].Main, offsets[child].Cross, metrics.Width, metrics.Height)
-                    : new CGRect(offsets[child].Cross, offsets[child].Main, metrics.Width, metrics.Height);
-            }
-            return;
-        }
         double size = ToolbarFlowLayout.CommandSize;
         for (int child = 0; child < children.Length; child++)
         {
@@ -297,39 +282,5 @@ internal sealed class iOSToolbarView : UIView
             SizeToFit();
             Center = new CGPoint(buttonSize / 2, buttonSize / 2);
         }
-    }
-
-    /// <summary>EXIF 小块（50×40）：次要标签 + 强调值，超宽内容尾部截断。</summary>
-    private sealed class ExifTile : UIView
-    {
-        /// <summary>以 50×40 参考规模创建信息块。</summary>
-        /// <param name="entry">共享 EXIF 展示条目。</param>
-        internal ExifTile(ExifDisplayEntry entry)
-            : base(new CGRect(0, 0, DesignTokens.ToolbarExifBlockWidth, DesignTokens.ToolbarExifBlockHeight))
-        {
-            BackgroundColor = iOSColors.FromToken(DesignTokens.ColorToolbarBlockBackground);
-            Layer.CornerRadius = (nfloat)DesignTokens.ToolbarCornerRadius;
-            AccessibilityLabel = $"{entry.DisplayName} {entry.DisplayValue}";
-            AddSubview(Text(entry.DisplayName, new CGRect(0, 4, DesignTokens.ToolbarExifBlockWidth, 13),
-                DesignTokens.ToolbarExifLabelFontSize, false));
-            AddSubview(Text(entry.DisplayValue, new CGRect(0, 19, DesignTokens.ToolbarExifBlockWidth, 17),
-                DesignTokens.ToolbarExifValueFontSize, true));
-        }
-
-        /// <summary>生成居中原生标签，值使用较高字重。</summary>
-        /// <param name="value">文本。</param>
-        /// <param name="frame">frame。</param>
-        /// <param name="size">字号。</param>
-        /// <param name="emphasized">是否强调（数值）。</param>
-        /// <returns>配置完成的标签。</returns>
-        private static UILabel Text(string value, CGRect frame, double size, bool emphasized) => new(frame)
-        {
-            Text = value,
-            Font = emphasized ? UIFont.BoldSystemFontOfSize((nfloat)size) : UIFont.SystemFontOfSize((nfloat)size),
-            TextColor = emphasized ? UIColor.Label : UIColor.SecondaryLabel,
-            TextAlignment = UITextAlignment.Center,
-            LineBreakMode = UILineBreakMode.TailTruncation,
-            BackgroundColor = UIColor.Clear,
-        };
     }
 }

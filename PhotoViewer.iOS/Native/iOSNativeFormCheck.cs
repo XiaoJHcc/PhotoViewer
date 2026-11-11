@@ -19,6 +19,7 @@ namespace PhotoViewer.iOS.Native;
 /// 1/3、1/2、2/3 限宽分屏（舞台容器 + 紧凑尺寸类别覆盖），每个配置遍历栏位显隐组合，断言：
 /// 形态判定、手机槽位与实际视图 frame、主图适应区内边距与满舞台、适应区与可见控件/栏背景不相交、
 /// 按钮命中区、圆角与刘海安全区（控件不贴近该带安全区）、胶片条两端停靠与横屏滚动边缘效果、
+/// 胶片条两档选档 / 带厚 / 可见容量（记录实际值，不足 5 张按停止规则记 NOTE）与小档星级角标与抖动点、EXIF 块项数与启用显示项一致、
 /// 横屏镜像与控制列次序、旋转前后控制列到屏幕边的距离不变、筛选与更多菜单结构、切换保持当前照片与缩放位置、
 /// 放大后照片垫在栏位下方。带 <c>--pv-native-ui-snapshots</c> 时把阶段名写入
 /// <c>Documents/PhotoViewer/native-ui-snapshot-stage.txt</c> 并停留供外部截图。
@@ -155,12 +156,13 @@ internal static class iOSNativeFormCheck
                 await ApplyConfigAsync(root, main, config);
                 lines.Add($"PASS 配置 {config.Name}：形态 {root.Form}，窗口 {Size(root.Stage.Bounds.Size)}，" +
                     $"方向 {CurrentOrientation(root)}，刘海在左={root.NotchOnLeft}");
+                if (root.Form != ScreenForm.Wide) await VerifyFilmTierAsync(root, main, config.Name, lines);
                 foreach (var combo in Combos)
                 {
                     await ApplyComboAsync(root, main, combo, workingExif);
                     var scope = $"{config.Name}/{combo.Name}";
                     VerifyForm(root, config, scope);
-                    VerifyGeometry(root, scope);
+                    VerifyGeometry(root, main, scope);
                     VerifyMenus(root, main, scope);
                     if (IsLandscapeForm(root) && combo.Name is "all" or "no-navigation")
                         VerifyControlColumn(root, combo.Name, scope);
@@ -385,15 +387,146 @@ internal static class iOSNativeFormCheck
                 $"{scope} 刘海方向与界面方向不符：方向 {CurrentOrientation(root)}，刘海在左={root.NotchOnLeft}");
     }
 
+    /// <summary>
+    /// 手机形态胶片条两档（[FILM-05]）：按胶片条主轴长度复核共享选档、槽位输入里的带厚与可见容量（记录实际值），
+    /// 首个可见卡片的 frame 尺寸等于该档卡片尺寸；小档卡片必须带星级角标与抖动点，0 星且无冲突时角标隐藏。
+    /// 可见容量不足 5 张时按计划停止规则记 NOTE（配置、方向、窗口、主轴长度、容量与差值），不调整档位尺寸。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="scope">报告范围名。</param>
+    /// <param name="lines">报告行。</param>
+    private static async Task VerifyFilmTierAsync(iOSNativeRootViewController root, MainViewModel main, string scope,
+        List<string> lines)
+    {
+        var film = root.Filmstrip;
+        bool portrait = root.Form == ScreenForm.PhonePortrait;
+        var stage = root.Stage.Bounds;
+        double mainLength = portrait ? (double)stage.Width : (double)stage.Height;
+        var tier = FilmCardGeometry.ResolveTier(mainLength, portrait);
+        if (film.Tier != tier)
+            throw new InvalidOperationException(
+                $"{scope} 卡片档位 {film.Tier} 与共享选档 {tier} 不一致（胶片条主轴 {mainLength:0.##}）");
+        if (film.Horizontal != portrait)
+            throw new InvalidOperationException($"{scope} 胶片条轴向 {(film.Horizontal ? "横" : "纵")} 与形态 {root.Form} 不符");
+        double band = FilmCardGeometry.BandThickness(tier, portrait);
+        if (Math.Abs((double)root.PhoneSlotsInput.FilmBand - band) > Tolerance)
+            throw new InvalidOperationException(
+                $"{scope} 槽位输入带厚 {root.PhoneSlotsInput.FilmBand:0.##} ≠ 共享带厚 {band:0.##}（{tier}）");
+        int capacity = FilmCardGeometry.VisibleCapacity(mainLength, tier, portrait);
+        bool enough = capacity >= FilmCardGeometry.MinVisible;
+        if (!enough)
+        {
+            // 计划停止规则：某一配置放不下 5 张时记录设备/方向/主轴长度/容量/差值，不改档位尺寸。
+            lines.Add(
+                $"NOTE {scope} 胶片条可见容量 {capacity} 少于 {FilmCardGeometry.MinVisible} 张：窗口 {Size(stage.Size)}、" +
+                $"{(portrait ? "竖屏" : "横屏")}、胶片条主轴 {mainLength:0.##}、{tier} 步长 {FilmCardGeometry.Step(tier, portrait):0.##}、" +
+                $"差 {FilmCardGeometry.MinVisible * FilmCardGeometry.Step(tier, portrait) - mainLength:0.##} 点（按计划停止规则不改档位尺寸，留作者裁定）");
+        }
+        await SettleAsync(root);
+        var collection = film.Collection;
+        collection.LayoutIfNeeded();
+        var visible = collection.IndexPathsForVisibleItems.Select(path => (int)path.Item).Order().ToArray();
+        if (visible.Length == 0) throw new InvalidOperationException($"{scope} 胶片条没有可见卡片");
+        int firstIndex = visible[0];
+        double cardWidth = FilmCardGeometry.Width(tier), cardHeight = FilmCardGeometry.Height(tier);
+        var frame = film.FrameAt(firstIndex)
+            ?? throw new InvalidOperationException($"{scope} 首个可见卡片 {firstIndex} 缺少布局几何");
+        if (Math.Abs((double)frame.Width - cardWidth) > Tolerance || Math.Abs((double)frame.Height - cardHeight) > Tolerance)
+            throw new InvalidOperationException(
+                $"{scope} 首个可见卡片尺寸 {Size(frame)} ≠ {tier} 档 {cardWidth:0.##}×{cardHeight:0.##}");
+        if (Math.Abs((double)(portrait ? film.Frame.Height : film.Frame.Width) - band) > Tolerance)
+            throw new InvalidOperationException(
+                $"{scope} 胶片条交叉轴 {(portrait ? (double)film.Frame.Height : (double)film.Frame.Width):0.##} ≠ 带厚 {band:0.##}");
+        // 卡片视图（复用池里可能还没建好）：等首个可见卡片的实例出现再核对档位内部视图。
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        iOSThumbnailCard? card;
+        while ((card = film.CardAt(firstIndex)) == null)
+        {
+            if (DateTime.UtcNow > deadline)
+                throw new TimeoutException($"{scope} 首个可见卡片视图未创建（索引 {firstIndex}）");
+            await Task.Delay(25);
+            collection.LayoutIfNeeded();
+        }
+        string detail;
+        if (tier == FilmCardTier.Small)
+        {
+            // 逐个核对小档外观：角标/抖动点存在、六格星排隐藏、角标只在有星级或有冲突时可见。
+            void RequireSmallLook(iOSThumbnailCard target, string where)
+            {
+                if (target.SmallRatingBadge.Superview == null || target.ShakeDot.Superview == null)
+                    throw new InvalidOperationException($"{scope} {where} 未带星级角标与抖动点");
+                if (target.StarViews.Any(star => !star.Hidden))
+                    throw new InvalidOperationException($"{scope} {where} 仍显示六格星排");
+                var bound = target.BoundFile ?? throw new InvalidOperationException($"{scope} {where} 未绑定照片");
+                bool visible = Math.Max(0, bound.Rating) > 0 || bound.HasRatingConflict;
+                if (target.SmallRatingBadge.Hidden == visible)
+                    throw new InvalidOperationException(
+                        $"{scope} {where} 星级角标可见性不符：Hidden={target.SmallRatingBadge.Hidden}，星级 {bound.Rating}、冲突 {bound.HasRatingConflict}");
+                if (visible && Math.Abs((double)target.SmallRatingBadge.Frame.Height - DesignTokens.FilmCardSmallBadgeHeight) > Tolerance)
+                    throw new InvalidOperationException($"{scope} {where} 星级角标高度 {target.SmallRatingBadge.Frame.Height} 不是 12 点");
+            }
+            async Task<iOSThumbnailCard> WaitForIndexAsync(int index)
+            {
+                var watch = DateTime.UtcNow.AddSeconds(5);
+                while (true)
+                {
+                    collection.LayoutIfNeeded();
+                    if (film.CardAt(index) is { BoundFile: not null } created) return created;
+                    if (DateTime.UtcNow > watch)
+                        throw new TimeoutException($"{scope} 卡片视图未创建（索引 {index}）");
+                    await Task.Delay(25);
+                }
+            }
+
+            RequireSmallLook(card, $"首个可见卡片 {firstIndex}");
+            bool sawZero = false;
+            foreach (var index in visible)
+            {
+                if (film.CardAt(index) is not { BoundFile: { } bound } candidate) continue;
+                RequireSmallLook(candidate, $"卡片 {index}");
+                sawZero |= Math.Max(0, bound.Rating) == 0 && !bound.HasRatingConflict;
+            }
+            if (!sawZero)
+            {
+                // 可见范围里没有 0 星照片时滚到一张 0 星（无冲突）卡片上，明确观察"角标隐藏"。
+                var files = main.FileVM.ThumbnailList.FilteredFiles;
+                int zeroIndex = -1;
+                for (int index = 0; index < files.Count; index++)
+                {
+                    if (files[index].Rating <= 0 && !files[index].HasRatingConflict) { zeroIndex = index; break; }
+                }
+                if (zeroIndex >= 0)
+                {
+                    collection.ScrollToItem(NSIndexPath.FromItemSection(zeroIndex, 0), UICollectionViewScrollPosition.None, false);
+                    RequireSmallLook(await WaitForIndexAsync(zeroIndex), $"0 星卡片 {zeroIndex}");
+                    sawZero = true;
+                }
+            }
+            if (!sawZero) lines.Add($"NOTE {scope} 夹具内没有 0 星且无冲突的照片，未能观察小档角标隐藏");
+            detail = sawZero ? "小档 64×76，0 星时角标隐藏、抖动点存在" : "小档 64×76，星级角标与抖动点可见";
+        }
+        else
+        {
+            if (!card.SmallRatingBadge.Hidden || !card.ShakeDot.Hidden)
+                throw new InvalidOperationException($"{scope} 大档卡片显示了小档角标/抖动点");
+            if (main.Settings.ShowRating && card.StarViews.All(star => star.Hidden))
+                throw new InvalidOperationException($"{scope} 大档卡片显示评分时星排却全部隐藏");
+            detail = "大档 96×144，六格星排";
+        }
+        lines.Add($"PASS {scope} 胶片条：主轴 {mainLength:0.##} → {tier}（可见容量 {capacity}、带厚 {band:0.##}），" +
+            $"首个可见卡片 {Size(frame)}、{detail}");
+    }
+
     /// <summary>核对槽位/分区避让、主图满舞台、适应区不相交、命中区、圆角安全区与胶片条两端。</summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="combo">组合。</param>
     /// <param name="scope">报告范围名。</param>
-    private static void VerifyGeometry(iOSNativeRootViewController root, string scope)
+    private static void VerifyGeometry(iOSNativeRootViewController root, MainViewModel main, string scope)
     {
         if (root.Form != ScreenForm.Wide)
         {
-            VerifyPhoneGeometry(root, scope);
+            VerifyPhoneGeometry(root, main, scope);
             VerifyCornerRegion(root, scope);
             VerifyFilmstripEdges(root, scope);
         }
@@ -406,10 +539,10 @@ internal static class iOSNativeFormCheck
         if (root.Form != ScreenForm.Wide) VerifyHitTargets(root, scope);
     }
 
-    /// <summary>手机形态：槽位与实际视图 frame 逐项一致、空槽位视图隐藏、槽位输入可复算、主图满舞台。</summary>
+    /// <summary>手机形态：槽位与实际视图 frame 逐项一致、EXIF 块与启用显示项一致、空槽位视图隐藏、槽位输入可复算、主图满舞台。</summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="scope">报告范围名。</param>
-    private static void VerifyPhoneGeometry(iOSNativeRootViewController root, string scope)
+    private static void VerifyPhoneGeometry(iOSNativeRootViewController root, MainViewModel main, string scope)
     {
         bool portrait = root.Form == ScreenForm.PhonePortrait;
         var slots = root.PhoneSlots;
@@ -424,7 +557,7 @@ internal static class iOSNativeFormCheck
             ("Filter", slots.Filter, portrait ? root.PhoneFilterButton : root.PhoneFilterSegment),
             ("More", slots.More, portrait ? root.PhoneMoreButton : root.PhoneMoreSegment),
             ("FilterMoreGroup", slots.FilterMoreGroup, root.PhoneFilterMoreGroup),
-            ("Exif", slots.Exif, root.PhoneExifPlaceholder),
+            ("Exif", slots.Exif, root.PhoneExifBlock),
             ("Navigation", slots.Navigation, root.PhoneNavigationGroup),
             ("Rating", slots.Rating, root.PhoneRatingControl),
             ("FitEnhance", slots.FitEnhance, root.PhoneFitEnhanceGroup),
@@ -445,6 +578,19 @@ internal static class iOSNativeFormCheck
             if (Math.Abs((double)actual.X - slot.X) > Tolerance || Math.Abs((double)actual.Y - slot.Y) > Tolerance
                 || Math.Abs((double)actual.Width - slot.Width) > Tolerance || Math.Abs((double)actual.Height - slot.Height) > Tolerance)
                 throw new InvalidOperationException($"{scope} {name} frame {CGRect(actual)} 与槽位 {Rect(slot)} 不一致");
+        }
+        // EXIF 块与设置里的启用项逐项一致：槽位宽度就是按同一份项数算出的，隐藏时块内不再留旧项。
+        var enabledExif = main.ControlVM.EnabledExifItems;
+        if (root.PhoneExifBlock.ItemLabels.Count != enabledExif.Count)
+            throw new InvalidOperationException(
+                $"{scope} EXIF 块项数 {root.PhoneExifBlock.ItemLabels.Count} ≠ 启用显示项 {enabledExif.Count}");
+        for (int index = 0; index < enabledExif.Count; index++)
+        {
+            if (root.PhoneExifBlock.ItemLabels[index].Text != enabledExif[index].DisplayName
+                || root.PhoneExifBlock.ItemValues[index].Text != enabledExif[index].DisplayValue)
+                throw new InvalidOperationException(
+                    $"{scope} EXIF 块第 {index + 1} 项与共享条目不一致：{root.PhoneExifBlock.ItemLabels[index].Text} " +
+                    $"{root.PhoneExifBlock.ItemValues[index].Text}");
         }
         if (portrait)
         {
@@ -477,7 +623,7 @@ internal static class iOSNativeFormCheck
             targets.Add(("Navigation", root.PhoneNavigationGroup, string.Empty));
             targets.Add(("FitEnhance", root.PhoneFitEnhanceGroup, string.Empty));
             targets.Add(("Rating", root.PhoneRatingControl, string.Empty));
-            targets.Add(("Exif", root.PhoneExifPlaceholder, string.Empty));
+            targets.Add(("Exif", root.PhoneExifBlock, string.Empty));
         }
         else
         {
@@ -487,7 +633,7 @@ internal static class iOSNativeFormCheck
             targets.Add(("Navigation", root.PhoneNavigationGroup, notchSide));
             targets.Add(("FitEnhance", root.PhoneFitEnhanceGroup, chinSide));
             targets.Add(("Rating", root.PhoneRatingControl, chinSide));
-            targets.Add(("Exif", root.PhoneExifPlaceholder, chinSide));
+            targets.Add(("Exif", root.PhoneExifBlock, chinSide));
         }
 
         void Verify(string name, CGRect frame, string allowed, string edge, double required, double distance)
@@ -686,7 +832,7 @@ internal static class iOSNativeFormCheck
             var portrait = root.Form == ScreenForm.PhonePortrait;
             Add("Filter", portrait ? root.PhoneFilterButton : root.PhoneFilterSegment);
             Add("More", portrait ? root.PhoneMoreButton : root.PhoneMoreSegment);
-            Add("Exif", root.PhoneExifPlaceholder);
+            Add("Exif", root.PhoneExifBlock);
             Add("Navigation", root.PhoneNavigationGroup);
             Add("Rating", root.PhoneRatingControl);
             Add("FitEnhance", root.PhoneFitEnhanceGroup);
@@ -1425,6 +1571,11 @@ internal static class iOSNativeFormCheck
     /// <param name="size">尺寸。</param>
     /// <returns>文本。</returns>
     private static string Size(CGSize size) => FormattableString.Invariant($"{size.Width:0.#}×{size.Height:0.#}");
+
+    /// <summary>原生矩形尺寸格式化。</summary>
+    /// <param name="rect">原生矩形。</param>
+    /// <returns>文本。</returns>
+    private static string Size(CGRect rect) => FormattableString.Invariant($"{rect.Width:0.#}×{rect.Height:0.#}");
 
     /// <summary>矩形格式化。</summary>
     /// <param name="rect">共享矩形。</param>

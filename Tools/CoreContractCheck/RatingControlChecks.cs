@@ -18,6 +18,7 @@ internal static class RatingControlChecks
         RunCompactCluster(c);
         RunPopupDirection(c);
         RunPopupPlacement(c);
+        RunExternalInBand(c);
         RunGesture(c);
         RunPopupLayout(c);
         RunIntegration(c);
@@ -234,6 +235,52 @@ internal static class RatingControlChecks
                 && rect.MaxX <= bounds.MaxX + Epsilon && rect.MaxY <= bounds.MaxY + Epsilon;
         }
         c.True("四向落位在边界容得下时始终留在边界内", inside);
+    }
+
+    private static void RunExternalInBand(Checks c)
+    {
+        c.Section("弹窗外起手的取消带");
+
+        // 行布局控制栏的紧凑胶囊：弹窗在其上方，星排横排。
+        var anchor = new LayoutRect(100, 300, 88, 44);
+        var panel = new LayoutRect(40, 200, 200, 92);
+        var row = new LayoutRect(48, 230, 264, 44);
+        c.True("横排星排：带内起点可继续预览",
+            RatingControlGeometry.ExternalInBand(150, 250, anchor, panel, row, true));
+        c.True("横排星排：交叉轴越出取消阈值即取消",
+            !RatingControlGeometry.ExternalInBand(150, 389, anchor, panel, row, true)
+            && !RatingControlGeometry.ExternalInBand(150, 155, anchor, panel, row, true));
+        c.True("横排星排：主轴恰好落在星排端点外半格仍可预览",
+            RatingControlGeometry.ExternalInBand(334, 250, anchor, panel, row, true)
+            && RatingControlGeometry.ExternalInBand(26, 250, anchor, panel, row, true));
+        c.True("横排星排：主轴越出星排两端半格即无预览",
+            !RatingControlGeometry.ExternalInBand(334.01, 250, anchor, panel, row, true)
+            && !RatingControlGeometry.ExternalInBand(25.99, 250, anchor, panel, row, true));
+
+        // 列布局控制栏：弹窗在控件左侧，星排竖排。
+        var columnAnchor = new LayoutRect(300, 100, 44, 224);
+        var columnPanel = new LayoutRect(180, 51, 112, 322);
+        var columnRow = new LayoutRect(214, 101, 44, 264);
+        c.True("竖排星排向左弹窗：带内起点可继续预览",
+            RatingControlGeometry.ExternalInBand(320, 200, columnAnchor, columnPanel, columnRow, false));
+        c.True("竖排星排向左弹窗：交叉轴两侧越界即取消",
+            !RatingControlGeometry.ExternalInBand(100, 200, columnAnchor, columnPanel, columnRow, false)
+            && !RatingControlGeometry.ExternalInBand(400, 200, columnAnchor, columnPanel, columnRow, false));
+        c.True("竖排星排向左弹窗：主轴越出星列两端半格即无预览",
+            !RatingControlGeometry.ExternalInBand(320, 78.9, columnAnchor, columnPanel, columnRow, false)
+            && !RatingControlGeometry.ExternalInBand(320, 387.5, columnAnchor, columnPanel, columnRow, false)
+            && RatingControlGeometry.ExternalInBand(320, 79, columnAnchor, columnPanel, columnRow, false));
+
+        // 卡片长按：卡片在胶片栏内，弹窗在其右侧且被边界夹到上缘，星排因此比卡片更靠下。
+        var cardAnchor = new LayoutRect(400, 10, 96, 144);
+        var cardPanel = new LayoutRect(504, 0, 112, 322);
+        var cardRow = new LayoutRect(538, 50, 44, 264);
+        c.True("卡片上缘的手指不再被夹成 5 星预览",
+            !RatingControlGeometry.ExternalInBand(450, 25, cardAnchor, cardPanel, cardRow, false));
+        c.True("横向落到星列范围内的手指照常预览",
+            RatingControlGeometry.ExternalInBand(450, 100, cardAnchor, cardPanel, cardRow, false));
+        c.True("侧向弹窗远端越界即取消",
+            !RatingControlGeometry.ExternalInBand(700, 100, cardAnchor, cardPanel, cardRow, false));
     }
 
     private static void RunGesture(Checks c)

@@ -195,23 +195,49 @@ internal static class iOSNativeEditionCheck
         lines.Add($"PASS 发行版：{iOSAppCapabilities.EditionName}，诊断页 = {iOSAppCapabilities.DiagnosticName}");
     }
 
+    /// <summary>
+    /// 核对宽形态筛选控件（FILTER-07）：AI 版有相似聚类开关且可见、标准版不创建该控件；
+    /// 行布局只显示一段形态——三段合体（恰好三个段按钮）或放不下时的单胶囊，主轴长度固定为 44 + 2 × 外边距，
+    /// 没有计数、也没有空槽。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="lines">报告行。</param>
     private static void VerifyFilterBar(iOSNativeRootViewController root, List<string> lines)
     {
         var bar = root.FilterBar;
+        var frames = bar.Frames;
+        int segmentButtons = bar.SegmentedContainer.ContentView.Subviews.OfType<UIButton>().Count();
+        if (segmentButtons != 3)
+            throw new InvalidOperationException($"筛选控件三段容器内不是恰好三个段按钮：{segmentButtons}");
 #if PHOTOVIEWER_DINO
         if (bar.SimilarityToggle is not { } toggle || toggle.Hidden)
-            throw new InvalidOperationException("AI 版筛选条缺少相似聚类 toggle");
-        lines.Add("PASS 筛选条：3 个下拉 + 计数 + 相似聚类 toggle，共五项");
+            throw new InvalidOperationException("AI 版筛选控件缺少相似聚类开关");
+        if (Math.Abs((double)toggle.Frame.X - (double)frames.Toggle.X) > 1 || Math.Abs((double)toggle.Frame.Width - (double)frames.Toggle.Width) > 1)
+            throw new InvalidOperationException($"AI 版相似聚类开关未按共享矩形落位：{toggle.Frame} vs {frames.Toggle}");
 #else
         if (bar.SimilarityToggle != null)
-            throw new InvalidOperationException("标准版筛选条不应创建相似聚类 toggle");
-        if (bar.Subviews.OfType<UIButton>().Count() != 3)
-            throw new InvalidOperationException($"标准版筛选条只应有三个下拉按钮，实际 {bar.Subviews.OfType<UIButton>().Count()}");
-        double expected = MainScreenLayout.FilterBarMainLength(true, 0, false);
-        if (Math.Abs((double)bar.Frame.Height - expected) > 1)
-            throw new InvalidOperationException($"标准版行布局筛选条高度 {bar.Frame.Height} 未按四项重算（期望 {expected}）");
-        lines.Add("PASS 筛选条：3 个下拉 + 计数，共四项；无 toggle、无空槽");
+            throw new InvalidOperationException("标准版筛选控件不应创建相似聚类开关");
+        if (frames.Toggle.Width > 0 || frames.Toggle.Height > 0)
+            throw new InvalidOperationException($"标准版筛选控件不应为相似聚类开关保留矩形：{frames.Toggle}");
 #endif
+        if (frames.Mode == FilterControlMode.Segmented)
+        {
+            if (bar.SegmentedContainer.Hidden || !bar.CapsuleButton.Hidden)
+                throw new InvalidOperationException($"三段形态下可见性不符：容器 Hidden={bar.SegmentedContainer.Hidden}，胶囊 Hidden={bar.CapsuleButton.Hidden}");
+        }
+        else
+        {
+            if (!bar.SegmentedContainer.Hidden || bar.CapsuleButton.Hidden)
+                throw new InvalidOperationException($"胶囊形态下可见性不符：容器 Hidden={bar.SegmentedContainer.Hidden}，胶囊 Hidden={bar.CapsuleButton.Hidden}");
+        }
+        double expected = WideFilterLayout.Height + WideFilterLayout.Margin * 2;
+        if (Math.Abs((double)bar.Frame.Height - expected) > 1)
+            throw new InvalidOperationException($"行布局筛选控件高度 {bar.Frame.Height:0.##} ≠ {expected:0.##}");
+        if (Math.Abs(bar.MainLength(true, 0) - expected) > 1)
+            throw new InvalidOperationException($"行布局筛选控件主轴长度 {bar.MainLength(true, 0):0.##} ≠ {expected:0.##}");
+        lines.Add($"PASS 筛选控件：{iOSAppCapabilities.EditionName} 版{(iOSAppCapabilities.HasDino ? "含" : "无")}相似聚类开关，" +
+            $"{(frames.Mode == FilterControlMode.Segmented ? "三段合体（排序 / 方向 / 星级）" : "单胶囊")}，" +
+            $"行布局主轴 {expected:0.##} 点（无计数、无空槽）");
     }
 
 #if PHOTOVIEWER_DINO

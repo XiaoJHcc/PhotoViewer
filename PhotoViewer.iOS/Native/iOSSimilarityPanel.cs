@@ -16,9 +16,10 @@ namespace PhotoViewer.iOS.Native;
 /// 外框 <c>#1E1E1E</c> 底、<c>#404040</c> 1 点描边 + 圆角 6、最小 106×154（右侧 4 点外边距由调用方摆放时留出）。
 /// 无相似项时占位文字与动作区整体居中（间距 8、四周 4 点）；有相似项时动作区按布局方向停靠
 /// （行布局停靠在右、列布局停靠在底），其余区域为单轴列表。
-/// 列表复用 <see cref="iOSFilmstripLayout"/> 与 <see cref="iOSThumbnailCard"/> 卡片，卡片第二行换成
-/// 相似度百分比与 75%~100% 映射的柱状条（与旧壳两个相似度转换器同口径）；
+/// 列表复用 <see cref="iOSFilmstripLayout"/> 与 <see cref="iOSThumbnailCard"/> 卡片并恒用大档（第二行换成
+/// 相似度百分比与 75%~100% 映射的柱状条，与旧壳两个相似度转换器同口径）；
 /// 点击卡片走 <see cref="SimilarityPanelViewModel.SelectItemCommand"/>，不直接切当前图，保留聚类锚点。
+/// 卡片长按与冲突三角经 <see cref="CardLongPress"/> / <see cref="RatingPopupRequested"/> 交给宿主打开星级弹窗。
 /// </summary>
 internal sealed class iOSSimilarityPanel : UIView
 {
@@ -78,8 +79,10 @@ internal sealed class iOSSimilarityPanel : UIView
     private double _crossSize = SimilarityPanelGeometry.MinHeight;
     private bool _disposed;
 
-    /// <summary>卡片 0 号冲突三角入口：目标照片与整张卡片（弹窗锚点）。</summary>
+    /// <summary>卡片冲突三角/指针辅助点按入口：目标照片与整张卡片（弹窗锚点）。</summary>
     internal event Action<ImageFile, UIView>? RatingPopupRequested;
+    /// <summary>卡片长按：卡片、手势状态与卡片坐标中的触点（宿主把同一次触摸延续到弹窗星排上）。</summary>
+    internal event Action<iOSThumbnailCard, UIGestureRecognizerState, CGPoint>? CardLongPress;
     internal event Action? RatingAnchorMoved;
 
     /// <summary>相似项原生列表，供验收读取真实卡片与几何。</summary>
@@ -139,6 +142,8 @@ internal sealed class iOSSimilarityPanel : UIView
         _listDock.AddSubview(_unindexed);
         _listDock.AddSubview(_dockAction);
         _layout.Horizontal = true;
+        // 相似面板沿用大档：第二行百分比与柱状条只在大档排得下。
+        _layout.Tier = FilmCardTier.Large;
         _layout.CountProvider = () => _items.Count;
         _collection = new UICollectionView(CGRect.Empty, _layout)
         {
@@ -586,10 +591,12 @@ internal sealed class iOSSimilarityPanel : UIView
         {
             var card = (iOSThumbnailCard)collectionView.DequeueReusableCell(CellId, indexPath);
             var similar = owner._items[(int)indexPath.Item];
+            card.Tier = FilmCardTier.Large;
             card.Bind(similar.File, owner._main.Settings.ShowRating, _ => owner._panel.SelectItemCommand(similar),
                 (file, rating) => _ = owner._main.SetRatingAsync(file, rating), ScoreText(similar.Score), ScoreFraction(similar.Score),
                 selectByDisplayedImage: true,
-                showSources: (file, _) => owner.RatingPopupRequested?.Invoke(file, card));
+                ratingPopup: (file, _) => owner.RatingPopupRequested?.Invoke(file, card),
+                longPress: (target, state, point) => owner.CardLongPress?.Invoke(target, state, point));
             owner._main.FileVM.ThumbnailList.QueueThumbnailLoad(similar.File, true);
             return card;
         }

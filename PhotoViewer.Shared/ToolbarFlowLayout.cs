@@ -55,17 +55,17 @@ public static class ToolbarFlowLayout
         return new ToolbarGroupSize(ControlBarGroupKind.Rating, main, RatingControlGeometry.Thickness);
     }
 
-    /// <summary>EXIF 分组：暂沿旧控制栏的 EXIF 块尺寸与内边距口径。</summary>
-    /// <param name="count">EXIF 块数。</param>
+    /// <summary>EXIF 分组：整块尺寸取自 <see cref="ExifBlockGeometry"/>（横排为主轴取块宽，竖排取块高）。</summary>
+    /// <param name="count">EXIF 项数。</param>
     /// <param name="horizontal">EXIF 块是否横排。</param>
     /// <returns>EXIF 分组尺寸。</returns>
     public static ToolbarGroupSize Exif(int count, bool horizontal)
     {
-        var spec = new ControlBarLayout.GroupSpec(ControlBarGroupKind.Exif, count);
+        var (width, height) = ExifBlockGeometry.Size(count, horizontal);
         return new ToolbarGroupSize(
             ControlBarGroupKind.Exif,
-            ControlBarLayout.MainLength(spec, horizontal),
-            ControlBarLayout.CrossLength(spec, horizontal));
+            horizontal ? width : height,
+            horizontal ? height : width);
     }
 
     /// <summary>整组沿主轴排布，空间不足时换行/换列；单个超长分组保持整体不被拆开。</summary>

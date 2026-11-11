@@ -17,7 +17,7 @@ namespace PhotoViewer.iOS.Native;
 
 /// <summary>
 /// 验收专用（非产品行为，测试钩子）：<c>--pv-native-input-check &lt;目录&gt;</c> 在模拟器/真机上程序化核对 iPad 输入层——
-/// 主图与卡片上下文菜单内容与回调、卡片评分菜单写回且不切主图、适应态轻扫翻页与放大态不翻页、HID 键码映射表与
+/// 主图上下文菜单内容与回调、适应态轻扫翻页与放大态不翻页、HID 键码映射表与
 /// 合成派发（UIPress 不可合成，直接注入与 <see cref="iOSNativeRootViewController.PressesBegan"/> 共用的派发入口）、
 /// INPUT-01 守卫、拖入走共享外部打开路径，以及设置页关闭回写后各分类在主屏的即时传播。
 /// 素材要求：目录内 ≥2 张自有 jpg 夹具（含可写 XMP），且目录必须位于本 App 沙盒内 —— 不写用户照片或 TestCase。
@@ -112,7 +112,6 @@ internal static class iOSNativeInputCheck
 
                 await VerifyPhotoContextMenuAsync(root, main, session, lines);
                 await VerifyStatusToastAsync(root, lines);
-                await VerifyCardContextMenuAsync(root, main, lines, workspace);
                 await VerifySwipeAsync(root, main, lines);
                 await VerifyKeyboardAsync(root, main, lines);
                 await VerifyDropAsync(root, main, lines, workspace);
@@ -230,68 +229,6 @@ internal static class iOSNativeInputCheck
             throw new InvalidOperationException("STATE-03：提示条不应拦截手势");
         await UiDispatcher.InvokeAsync(() => root.Toast.Hide());
         lines.Add("PASS STATE-03：提示条显示、新替旧且不拦触摸（4 s 自动消失由 NSTimer 驱动）");
-    }
-
-    /// <summary>
-    /// 卡片上下文菜单：菜单标题承载完整文件名与拍摄时间，评分子菜单 0–5 且勾选当前星级；
-    /// 调用评分回调后文件读回一致、主图身份不变（[FILM-06]）。
-    /// </summary>
-    /// <param name="root">原生根控制器。</param>
-    /// <param name="main">共享主 VM。</param>
-    /// <param name="lines">报告行。</param>
-    /// <param name="directory">自有夹具目录。</param>
-    private static async Task VerifyCardContextMenuAsync(iOSNativeRootViewController root, MainViewModel main, List<string> lines, string directory)
-    {
-        var list = main.FileVM.ThumbnailList;
-        var current = main.CurrentFile ?? throw new InvalidOperationException("卡片菜单核对缺少当前照片");
-        string currentPath = current.File.RequireLocalPath();
-        if (!Path.GetFullPath(currentPath).StartsWith(Path.GetFullPath(directory), StringComparison.Ordinal))
-            throw new InvalidOperationException($"卡片菜单核对不在自有夹具目录内：{currentPath}");
-        var entryRatings = main.FolderVM.AllFiles.ToDictionary(file => file, file => file.Rating);
-        try
-        {            int index = Math.Min(2, list.FilteredFiles.Count - 1);
-            var file = list.FilteredFiles[index];
-            var card = await WaitForCardAsync(root, list.FilteredFiles, index, "卡片菜单");
-            var interaction = card.Surface.Interactions.OfType<UIContextMenuInteraction>().SingleOrDefault()
-                ?? throw new InvalidOperationException("卡片未挂上下文菜单交互");
-            var delegateForCard = card.MenuDelegate ?? throw new InvalidOperationException("卡片缺少上下文菜单委托");
-            var configuration = delegateForCard.GetConfigurationForMenu(interaction, new CGPoint(45, 69));
-            if (configuration == null) throw new InvalidOperationException("卡片上下文菜单未给出配置");
-            var built = delegateForCard.Menu ?? throw new InvalidOperationException("卡片上下文菜单未构建菜单");
-            if (!built.Menu.Title.Contains(file.Name, StringComparison.Ordinal))
-                throw new InvalidOperationException($"卡片菜单标题未包含完整文件名：{built.Menu.Title} / {file.Name}");
-            if (file.PhotoDate is { } date && !built.Menu.Title.Contains(date.ToString("yyyy-MM-dd HH:mm:ss"), StringComparison.Ordinal))
-                throw new InvalidOperationException($"卡片菜单标题未包含拍摄时间：{built.Menu.Title}");
-            var ratingMenu = built.Menu.Children.OfType<UIMenu>().SingleOrDefault(menu => menu.Title == "评分")
-                ?? throw new InvalidOperationException("卡片菜单缺少评分分组");
-            var ratings = ratingMenu.Children.OfType<UIAction>().ToArray();
-            if (ratings.Length != 6) throw new InvalidOperationException($"评分子菜单应为 0–5 六项，实际 {ratings.Length}");
-            int checkedIndex = Array.FindIndex(ratings, action => action.State == UIMenuElementState.On);
-            if (checkedIndex != file.Rating) throw new InvalidOperationException($"评分子菜单勾选 {checkedIndex} 星与卡片 {file.Rating} 星不一致");
-            lines.Add($"PASS 卡片上下文菜单：标题「{built.Menu.Title}」含完整文件名与拍摄时间，评分子菜单 0–5 且勾选当前 {file.Rating} 星");
-
-            int target = file.Rating == 3 ? 2 : 3;
-            string id = $"card.rating.{target}";
-            built.Handlers[id]();
-            await WaitAsync(() => file.Rating == target, $"卡片菜单写回 {target} 星");
-            var written = await ExifLoader.LoadExifDataAsync(file.File);
-            if (written?.Rating != target) throw new InvalidOperationException($"卡片菜单星级未写回文件：memory={file.Rating}, file={written?.Rating}");
-            if (!ReferenceEquals(main.CurrentFile, current)) throw new InvalidOperationException("卡片菜单评分改变了当前主图身份");
-            delegateForCard.GetConfigurationForMenu(interaction, new CGPoint(45, 69));
-            var again = delegateForCard.Menu ?? throw new InvalidOperationException("写回后菜单未重建");
-            var againRatings = again.Menu.Children.OfType<UIMenu>().Single(menu => menu.Title == "评分").Children.OfType<UIAction>().ToArray();
-            if (againRatings[target].State != UIMenuElementState.On)
-                throw new InvalidOperationException("重新弹出卡片菜单后星级勾选未更新");
-            lines.Add($"PASS 卡片菜单评分：自有副本读回 {target} 星、主图身份不变、重新弹出时勾选同步（[FILM-06] 暂留由共享列表负责）");
-        }
-        finally
-        {
-            foreach (var pair in entryRatings)
-            {
-                if (pair.Key.Rating != pair.Value) await main.SetRatingAsync(pair.Key, pair.Value);
-            }
-            if (main.CurrentFile?.File.StorageId != current.File.StorageId) await main.FolderVM.OpenImageAsync(current.File);
-        }
     }
 
     /// <summary>

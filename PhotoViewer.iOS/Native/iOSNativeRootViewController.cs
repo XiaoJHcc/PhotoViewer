@@ -68,7 +68,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private readonly iOSToolbarView _controlBar;
     /// <summary>星级弹窗：窗口内玻璃面板，挂在根视图上（视图树就绪后创建）。</summary>
     private iOSRatingPopup _ratingPopup = null!;
-    private readonly iOSFilterBar _filterBar;
+    private readonly iOSFilterControl _filterBar;
     private readonly iOSFilmstripView _filmstrip;
     private readonly iOSAnalysisPanel _analysisPane;
     private UIButton _phoneFilter = null!;
@@ -80,7 +80,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private iOSGlassButtonGroup _phoneFitEnhance = null!;
     private UIButton _phoneEnhanceSegment = null!;
     private iOSRatingControl _phoneRating = null!;
-    private iOSSlotPlaceholder _phoneExifSlot = null!;
+    private iOSExifBlock _phoneExif = null!;
 #if PHOTOVIEWER_DINO
     private readonly iOSSimilarityPanel _similarityPane;
 #endif
@@ -158,8 +158,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
     internal iOSToolbarView ControlBar => _controlBar;
     /// <summary>星级弹窗（验收读取打开态、内容与落位）。</summary>
     internal iOSRatingPopup RatingPopup => _ratingPopup;
-    /// <summary>筛选条（验收读取筛选控件几何）。</summary>
-    internal iOSFilterBar FilterBar => _filterBar;
+    /// <summary>宽形态筛选控件（验收读取形态与各矩形）。</summary>
+    internal iOSFilterControl FilterBar => _filterBar;
     /// <summary>文件栏背景视图。</summary>
     internal UIView FileBarView => _fileBar;
     /// <summary>主图分区视图。</summary>
@@ -263,8 +263,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
     internal iOSGlassButtonGroup PhoneFitEnhanceGroup => _phoneFitEnhance;
     /// <summary>手机形态星级控件（与宽形态控制栏共用同一实现）。</summary>
     internal iOSRatingControl PhoneRatingControl => _phoneRating;
-    /// <summary>手机形态 EXIF 占位。</summary>
-    internal iOSSlotPlaceholder PhoneExifPlaceholder => _phoneExifSlot;
+    /// <summary>手机形态 EXIF 块（验收读取项数、标签与几何）。</summary>
+    internal iOSExifBlock PhoneExifBlock => _phoneExif;
     /// <summary>手机形态四条栏背景。</summary>
     internal (UIVisualEffectView Top, UIVisualEffectView Bottom, UIVisualEffectView Leading, UIVisualEffectView Trailing) PhoneBarBackgrounds
         => (_phoneTopBar, _phoneBottomBar, _phoneLeadingBar, _phoneTrailingBar);
@@ -330,7 +330,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _session = session;
         _openBridge = openBridge;
         _automatedValidation = automatedValidation;
-        _filterBar = new iOSFilterBar(main);
+        _filterBar = new iOSFilterControl(main);
         _filmstrip = new iOSFilmstripView(main);
         // iOS 26 滚动边缘效果：横屏胶片条从筛选/更多与上下张控件下方滚过时由系统给出边缘效果，不手调模糊。
         // 两个交互对象只建一次，按形态挂到对应控件上或摘下（一个交互对象同一时刻只能属于一个视图）。
@@ -377,9 +377,11 @@ internal sealed class iOSNativeRootViewController : UIViewController
 #endif
         _filmstrip.RateRequested += OnRateRequested;
         _filmstrip.RatingPopupRequested += OpenCardPopup;
+        _filmstrip.CardLongPress += OnCardLongPress;
         _filmstrip.RatingAnchorMoved += CloseCardPopup;
 #if PHOTOVIEWER_DINO
         _similarityPane.RatingPopupRequested += OpenCardPopup;
+        _similarityPane.CardLongPress += OnCardLongPress;
         _similarityPane.RatingAnchorMoved += CloseCardPopup;
 #endif
         // STATE-03：评分写回失败统一由共享事件驱动提示条（共享层只对 RolledBack/Partial/异常发事件，
@@ -675,9 +677,11 @@ internal sealed class iOSNativeRootViewController : UIViewController
 #endif
             _filmstrip.RateRequested -= OnRateRequested;
             _filmstrip.RatingPopupRequested -= OpenCardPopup;
+            _filmstrip.CardLongPress -= OnCardLongPress;
             _filmstrip.RatingAnchorMoved -= CloseCardPopup;
 #if PHOTOVIEWER_DINO
             _similarityPane.RatingPopupRequested -= OpenCardPopup;
+            _similarityPane.CardLongPress -= OnCardLongPress;
             _similarityPane.RatingAnchorMoved -= CloseCardPopup;
 #endif
             _main.RatingWriteFailedDetailed -= OnRatingWriteFailed;
@@ -774,7 +778,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         HidePhoneLayers();
         bool row = _main.IsRowLayout;
         double leadingInset = (double)safe.Top + MainScreenLayout.FilterMargin;
-        double filterMain = MainScreenLayout.FilterBarMainLength(row, leadingInset, iOSFilterBar.ShowsSimilarityToggle);
+        double filterMain = _filterBar.MainLength(row, leadingInset);
         bool filmVisible = _main.IsThumbnailViewVisible;
         bool controlVisible = _main.IsControlViewVisible;
         double availableMain = row
@@ -783,7 +787,6 @@ internal sealed class iOSNativeRootViewController : UIViewController
 #if PHOTOVIEWER_DINO
         // 相似聚类：行布局从胶片栏右侧切出一段（含旧壳 MaxWidth 规则），列布局扩宽文件栏。
         bool similarityOpen = filmVisible && _main.FileVM.FilterBar.IsSimilarityPanelOpen;
-        if (similarityOpen) _similarityPane.SetLayout(row, row ? MainScreenLayout.FilmstripBand : availableMain);
         var similarityPanel = _main.FileVM.SimilarityPanel;
         // SIM-07：列表态右侧停靠区（未提取计数 / 按钮 / 进度 / 错误）要一起预留，否则 1–2 项列表会被挤成零宽。
         double similarityColumn = similarityOpen
@@ -792,13 +795,27 @@ internal sealed class iOSNativeRootViewController : UIViewController
                     similarityPanel.HasItems && similarityPanel.ShowActionArea ? _similarityPane.DockMeasureWidth() : 0)
                 : _similarityPane.CrossSize + SimilarityPanelGeometry.Margin)
             : 0;
-        _similarityPane.Hidden = !similarityOpen;
 #else
         // 标准版不创建相似面板，也不为它预留任何柱宽或高度。
         const double similarityColumn = 0;
 #endif
+        // 选档（[FILM-05]）：胶片条主轴扣掉相似聚类柱后还能放下 5 张大档才用大档。
+        // 相似聚类面板打开时恒用大档——面板列表本身沿用大档，胶片栏与其同档，同一屏不并排两种卡片。
+        double filmstripMain = row
+            ? Math.Max(1, width - (double)safe.Left - (double)safe.Right - similarityColumn)
+            : Math.Max(1, height - (double)safe.Top - (double)safe.Bottom - filterMain);
+        var tier = FilmCardGeometry.ResolveTier(filmstripMain, row);
+#if PHOTOVIEWER_DINO
+        if (similarityOpen) tier = FilmCardTier.Large;
+        if (similarityOpen) _similarityPane.SetLayout(row, row ? FilmCardGeometry.BandThickness(tier, true) : availableMain);
+        _similarityPane.Hidden = !similarityOpen;
+#endif
+        // 文件栏主轴长度按带厚给出：行布局 = 筛选条 + 带 + 分隔线；列布局 = 带 + 分隔线 + 安全区前导 + 相似聚类柱。
         double fileMain = filmVisible
-            ? MainScreenLayout.FileBarMainLength(row, filterMain, row ? 0 : (double)safe.Left + similarityColumn)
+            ? (row
+                ? filterMain + FilmCardGeometry.BandThickness(tier, true) + MainScreenLayout.Divider
+                : FilmCardGeometry.BandThickness(tier, false) + MainScreenLayout.Divider
+                    + (double)safe.Left + similarityColumn)
             : 0;
         var measure = controlVisible ? _controlBar.Measure(row, availableMain) : CGSize.Empty;
         double controlMain = controlVisible ? MainScreenLayout.ControlBarMainLength(row ? (double)measure.Height : (double)measure.Width) : 0;
@@ -840,9 +857,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
         if (filmVisible)
         {
             var content = _panes.FileContent;
-            double contentWidth = row ? content.Width : MainScreenLayout.FileBarContentWidth;
+            // 列布局的文件栏内容宽就是卡片带厚（筛选条与胶片条同宽），行布局沿用内容区宽度。
+            double contentWidth = row ? content.Width : FilmCardGeometry.BandThickness(tier, false);
             _filterBar.Frame = new CGRect(content.X, content.Y, contentWidth, filterMain);
-            _filterBar.Arrange(row, contentWidth, leadingInset);
+            _filterBar.Arrange(row, contentWidth, FilmCardGeometry.Width(tier), leadingInset);
             double filmWidth = row ? Math.Max(1, contentWidth - similarityColumn) : contentWidth;
             var nextFilmstripFrame = new CGRect(content.X, content.Y + filterMain, filmWidth, Math.Max(1, content.Height - filterMain));
             if (_filmstrip.Frame != nextFilmstripFrame) _ratingPopup.CloseIfAnchoredTo(RatingPopupAnchor.Card);
@@ -853,7 +871,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
                 var nextSimilarityFrame = row
                     ? new CGRect(content.X + contentWidth - similarityColumn, content.Y + filterMain,
                         Math.Max(1, similarityColumn - SimilarityPanelGeometry.Margin), (nfloat)_similarityPane.CrossSize)
-                    : new CGRect(content.X + MainScreenLayout.FileBarContentWidth, content.Y + filterMain,
+                    : new CGRect(content.X + FilmCardGeometry.BandThickness(tier, false), content.Y + filterMain,
                         (nfloat)_similarityPane.CrossSize, Math.Max(1, content.Height - filterMain));
                 if (_similarityPane.Frame != nextSimilarityFrame) _ratingPopup.CloseIfAnchoredTo(RatingPopupAnchor.Card);
                 _similarityPane.Frame = nextSimilarityFrame;
@@ -863,6 +881,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         }
         bool axisChanged = _filmstrip.Horizontal != row;
         _filmstrip.SetAxis(row);
+        _filmstrip.SetTier(tier);
         // 宽形态胶片条贯穿栏位内容区，两端不额外留白；手机形态才有的滚动边缘效果在这里一律摘掉。
         _filmstrip.SetEdgePadding(0, 0);
         SetFilmstripEdgeEffects(false);
@@ -906,6 +925,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
         double button = DesignTokens.ShellGlassButtonSize;
         double rowInset = _avoidanceTuning ?? DesignTokens.ShellPhoneRowInset;
         _notchOnLeft = ResolveNotchOnLeft();
+        // 选档（[FILM-05]）：胶片条贯穿整个主轴，按整条主轴长度选档；带厚随之决定栏位厚度与横屏卡片列宽。
+        var tier = FilmCardGeometry.ResolveTier(portrait ? width : height, portrait);
+        double filmBand = FilmCardGeometry.BandThickness(tier, portrait);
         var plain = new EdgeInsets(safe.Left, safe.Top, safe.Right, safe.Bottom);
         EdgeInsets lead, control;
         string controlOrigin;
@@ -926,7 +948,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         else
         {
             // 横屏刘海侧按钮列：整列探测，只取上下两侧适应值（左右由系统安全区给出）。
-            double column = plain.Left + MainScreenLayout.FileBarContentWidth;
+            double column = plain.Left + filmBand;
             var leadProbe = ProbeBand(new CGRect(_notchOnLeft ? 0 : width - column, 0, column, height),
                 UIViewLayoutRegionAdaptivityAxis.Vertical);
             lead = new EdgeInsets(plain.Left, leadProbe.Top, plain.Right, leadProbe.Bottom);
@@ -954,21 +976,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
         bool filmVisible = _main.IsThumbnailViewVisible;
         bool controlVisible = _main.IsControlViewVisible;
         bool analysisVisible = _main.IsAnalysisViewVisible;
-        int exifCount = _main.ControlVM.EnabledExifItems.Count;
-        double exifWidth = 0, exifHeight = 0;
-        if (exifCount > 0)
-        {
-            if (portrait)
-            {
-                exifWidth = ControlBarLayout.MainLength(new ControlBarLayout.GroupSpec(ControlBarGroupKind.Exif, exifCount), true);
-                exifHeight = button;
-            }
-            else
-            {
-                exifWidth = DesignTokens.ToolbarExifBlockWidth + 2 * DesignTokens.ToolbarExifInset;
-                exifHeight = ControlBarLayout.MainLength(new ControlBarLayout.GroupSpec(ControlBarGroupKind.Exif, exifCount), false);
-            }
-        }
+        // EXIF 块尺寸取共享几何：竖屏横排为「块宽 × 44」，横屏竖排为「64 × 块高」。
+        var (exifWidth, exifHeight) = ExifBlockGeometry.Size(_main.ControlVM.EnabledExifItems.Count, portrait);
         var input = new PhoneLayoutInput(
             Landscape: !portrait,
             NotchOnLeft: _notchOnLeft,
@@ -982,7 +991,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
             AnalysisVisible: analysisVisible,
             ShowNavigation: _main.Settings.ShowNavigationButtons,
             FilterWidth: button,
-            FilmBand: portrait ? MainScreenLayout.FilmstripBand : MainScreenLayout.FileBarContentWidth,
+            FilmBand: filmBand,
             AnalysisCross: _analysisPane.CrossSize(analysisMain),
             ExifWidth: exifWidth,
             ExifHeight: exifHeight,
@@ -1022,17 +1031,18 @@ internal sealed class iOSNativeRootViewController : UIViewController
         {
             bool axisChanged = _filmstrip.Horizontal != portrait;
             _filmstrip.SetAxis(portrait);
+            _filmstrip.SetTier(tier);
             if (axisChanged)
             {
                 _ratingPopup.CloseIfAnchoredTo(RatingPopupAnchor.Card);
                 _filmstrip.ScrollToCurrent();
             }
         }
-        // 胶片条贯穿整个主轴，卡片停在栏位内缘：把「停靠线 − 共享内边距」交给布局当额外的两端主轴留白。
+        // 胶片条贯穿整个主轴，卡片停在栏位内缘：把「停靠线 − 该档主轴内边距」交给布局当额外的两端主轴留白。
         var padding = slots.FilmstripPadding;
         _filmstrip.SetEdgePadding(
-            Math.Max(0, (portrait ? padding.Left : padding.Top) - (portrait ? FilmstripGeometry.HorizontalPadding : FilmstripGeometry.TopPadding)),
-            Math.Max(0, (portrait ? padding.Right : padding.Bottom) - (portrait ? FilmstripGeometry.HorizontalPadding : FilmstripGeometry.BottomPadding)));
+            Math.Max(0, (portrait ? padding.Left : padding.Top) - FilmCardGeometry.MainLead(tier, portrait)),
+            Math.Max(0, (portrait ? padding.Right : padding.Bottom) - FilmCardGeometry.MainTrail(tier, portrait)));
         // 横屏胶片条从筛选/更多与上下张两组控件下方滚过，由系统滚动边缘效果压暗，不手调模糊。
         SetFilmstripEdgeEffects(!portrait);
 
@@ -1072,8 +1082,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _phoneRating.Horizontal = portrait;
         _phoneRating.Hidden = !Has(slots.Rating) || !_main.Settings.ShowRating;
         _phoneRating.Frame = ToFrame(slots.Rating);
-        _phoneExifSlot.Hidden = !Has(slots.Exif);
-        _phoneExifSlot.Frame = ToFrame(slots.Exif);
+        _phoneExif.Horizontal = portrait;
+        _phoneExif.Hidden = !Has(slots.Exif);
+        _phoneExif.Frame = ToFrame(slots.Exif);
     }
 
     /// <summary>隐藏全部手机形态浮层（宽形态路径）。</summary>
@@ -1089,7 +1100,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _phoneNavigation.Hidden = true;
         _phoneFitEnhance.Hidden = true;
         _phoneRating.Hidden = true;
-        _phoneExifSlot.Hidden = true;
+        _phoneExif.Hidden = true;
     }
 
     /// <summary>
@@ -1228,7 +1239,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
                 hotkey.SecondaryHotkey == null ? null : hotkey.SecondaryHotkeyText);
     }
 
-    /// <summary>建立手机形态的固定操作控件：单圆筛选/更多、横屏合体、上下张、缩放增强与两个占位槽位。</summary>
+    /// <summary>建立手机形态的固定操作控件：单圆筛选/更多、横屏合体、上下张、缩放增强、星级控件与 EXIF 块。</summary>
     /// <param name="host">主屏舞台。</param>
     private void BuildPhoneControls(UIView host)
     {
@@ -1255,11 +1266,11 @@ internal sealed class iOSNativeRootViewController : UIViewController
             AppleSymbolNames.ForCommand("ToggleEnhance")!, CommandLabel("ToggleEnhance"), () => Execute("ToggleEnhance"));
 
         _phoneRating = new iOSRatingControl();
-        _phoneExifSlot = iOSSlotPlaceholder.Exif();
+        _phoneExif = new iOSExifBlock { Tapped = ShowExifTools };
 
         foreach (var view in new UIView[]
         {
-            _phoneFilter, _phoneMore, _phoneFilterMore, _phoneNavigation, _phoneFitEnhance, _phoneRating, _phoneExifSlot,
+            _phoneFilter, _phoneMore, _phoneFilterMore, _phoneNavigation, _phoneFitEnhance, _phoneRating, _phoneExif,
         })
         {
             view.Hidden = true;
@@ -1267,6 +1278,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         }
         _phoneControlsBuilt = true;
         RefreshPhoneMenus();
+        UpdatePhoneExif();
         UpdatePhoneEnhanceState();
     }
 
@@ -1277,20 +1289,15 @@ internal sealed class iOSNativeRootViewController : UIViewController
         var menu = iOSFilterMenu.Build(_main.FileVM.FilterBar, RefreshPhoneMenus).Menu;
         _phoneFilter.Menu = menu;
         _phoneFilterSegment.Menu = menu;
-        UpdateVisibleMenu(_phoneFilter);
-        UpdateVisibleMenu(_phoneFilterSegment);
+        iOSFilterMenu.UpdateVisibleMenu(_phoneFilter);
+        iOSFilterMenu.UpdateVisibleMenu(_phoneFilterSegment);
     }
 
-    /// <summary>菜单正在显示时用系统入口就地替换，保持展开态并刷新勾选。</summary>
-    /// <param name="button">带菜单的按钮。</param>
-    private static void UpdateVisibleMenu(UIButton button)
+    /// <summary>把控制栏当前的 EXIF 显示项同步到手机形态的 EXIF 块（项数不变只改文本）。</summary>
+    private void UpdatePhoneExif()
     {
-        foreach (var interaction in button.Interactions)
-        {
-            if (interaction is not UIContextMenuInteraction menuInteraction) continue;
-            menuInteraction.UpdateVisibleMenu(_ => button.Menu!);
-            return;
-        }
+        if (!_phoneControlsBuilt) return;
+        _phoneExif.SetEntries(_main.ControlVM.EnabledExifItems);
     }
 
     /// <summary>更多菜单：每次弹出时现建主图菜单内容，勾选态为当时状态。</summary>
@@ -1509,6 +1516,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _controlsBuilt = true;
         _controlBar.Rebuild(_main, Execute, ShowExifTools);
         UpdateRatingControls();
+        UpdatePhoneExif();
         Layout();
     }
 
@@ -1600,6 +1608,35 @@ internal sealed class iOSNativeRootViewController : UIViewController
 
     /// <summary>卡片入口所在列表滚动：只关闭卡片锚定的弹窗。</summary>
     private void CloseCardPopup() => _ratingPopup.CloseIfAnchoredTo(RatingPopupAnchor.Card);
+
+    /// <summary>
+    /// 卡片长按（两档共用）：起手打开该卡片的星级弹窗并把同一次触摸延续到弹窗星排上，
+    /// 之后的移动、抬手与取消一一转发——抬手提交后由共享真值驱动收起，点按则保持弹窗。
+    /// </summary>
+    /// <param name="card">发起长按的卡片（弹窗锚点）。</param>
+    /// <param name="state">手势状态。</param>
+    /// <param name="point">卡片坐标中的触点。</param>
+    private void OnCardLongPress(iOSThumbnailCard card, UIGestureRecognizerState state, CGPoint point)
+    {
+        if (card.BoundFile is not { } file) return;
+        switch (state)
+        {
+            case UIGestureRecognizerState.Began:
+                OpenCardPopup(file, card);
+                _ratingPopup.BeginExternal(card, point);
+                break;
+            case UIGestureRecognizerState.Changed:
+                _ratingPopup.MoveExternal(card, point);
+                break;
+            case UIGestureRecognizerState.Ended:
+                _ratingPopup.EndExternal(card, point);
+                break;
+            case UIGestureRecognizerState.Cancelled:
+            case UIGestureRecognizerState.Failed:
+                _ratingPopup.CancelExternal();
+                break;
+        }
+    }
 
     private sealed class ControlScrollObserver(iOSNativeRootViewController owner) : UIScrollViewDelegate
     {
@@ -2031,7 +2068,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <summary>显式定位请求（上一张/下一张、打开文件、外部打开）。</summary>
     private void OnScrollToCurrentRequested() => _filmstrip.ScrollToCurrent();
 
-    /// <summary>刷新筛选控件、计数与几何（计数文本宽度参与筛选条布局）。</summary>
+    /// <summary>刷新筛选控件与手机筛选菜单，并按最新状态重排几何。</summary>
     private void RefreshScreen()
     {
         if (!IsViewLoaded) return;

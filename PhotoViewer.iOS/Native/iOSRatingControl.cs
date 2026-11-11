@@ -26,7 +26,7 @@ internal sealed class iOSRatingControl : UIView
     private int _value;
     private bool _conflict;
     private bool _enabled = true;
-    private iOSRatingRow? _forwardingRow;
+    private iOSRatingPopup? _forwardingPopup;
 
     /// <summary>建立玻璃胶囊、展开态星排与紧凑星簇。</summary>
     internal iOSRatingControl() : base(CGRect.Empty)
@@ -191,38 +191,32 @@ internal sealed class iOSRatingControl : UIView
     /// <param name="pointInControl">控件坐标中的触点。</param>
     internal void TrackBegan(CGPoint pointInControl)
     {
-        _forwardingRow = null;
+        _forwardingPopup = null;
         if (!_enabled || _form != RatingControlForm.Compact) return;
         PopupRequested?.Invoke();
-        if (Popup is not { IsOpen: true, Mode: iOSRatingPopup.RatingPopupMode.Single, TrackingRow: { } row }) return;
-        _forwardingRow = row;
-        row.TrackBegan(row.ConvertPointFromView(pointInControl, this), deferPreview: true);
+        if (Popup is not { IsOpen: true } popup) return;
+        if (popup.BeginExternal(this, pointInControl)) _forwardingPopup = popup;
     }
 
     /// <summary>紧凑态移动：按手势在弹窗坐标中的位置取值（手指不必移进弹窗）。</summary>
     /// <param name="pointInControl">控件坐标中的触点。</param>
     internal void TrackMoved(CGPoint pointInControl)
-    {
-        if (_forwardingRow is not { } row) return;
-        row.TrackMoved(row.ConvertPointFromView(pointInControl, this), InBandFor(pointInControl));
-    }
+        => _forwardingPopup?.MoveExternal(this, pointInControl);
 
     /// <summary>紧凑态抬手：写回由弹窗接管；越界不写时收起弹窗，点按保持弹窗。</summary>
     /// <param name="pointInControl">控件坐标中的触点。</param>
     internal void TrackEnded(CGPoint pointInControl)
     {
-        if (_forwardingRow is not { } row) return;
-        _forwardingRow = null;
-        var result = row.TrackEnded(row.ConvertPointFromView(pointInControl, this), InBandFor(pointInControl));
-        if (result.Outcome == RatingGestureOutcome.None) Popup?.Close();
+        var popup = _forwardingPopup;
+        _forwardingPopup = null;
+        popup?.EndExternal(this, pointInControl);
     }
 
     /// <summary>紧凑态取消（系统打断）：清掉预览并收起弹窗。</summary>
     internal void TrackCancelled()
     {
-        _forwardingRow?.TrackCancelled();
-        _forwardingRow = null;
-        Popup?.Close();
+        _forwardingPopup?.CancelExternal();
+        _forwardingPopup = null;
     }
 
     /// <summary>按槽位主轴长度判定形态并落位胶囊、星排与紧凑星簇。</summary>
@@ -315,30 +309,6 @@ internal sealed class iOSRatingControl : UIView
         AccessibilityTraits = compact
             ? UIAccessibilityTrait.Adjustable | UIAccessibilityTrait.Button
             : UIAccessibilityTrait.Adjustable;
-    }
-
-    /// <summary>
-    /// 取消带：胶囊与弹窗交叉轴范围的并集各外扩取消阈值。在弹窗宿主坐标里计算，
-    /// 这样手指不必移进弹窗也能判断是否越界。
-    /// </summary>
-    /// <param name="pointInControl">控件坐标中的触点。</param>
-    /// <returns>是否仍在取消带内；弹窗未打开时返回 null（由弹窗星排自身判定）。</returns>
-    private bool? InBandFor(CGPoint pointInControl)
-    {
-        if (Popup is not { IsOpen: true } popup) return null;
-        var host = popup.Host;
-        var capsule = _capsule.ConvertRectToView(_capsule.Bounds, host);
-        var panel = popup.PanelFrame;
-        var point = ConvertPointToView(pointInControl, host);
-        if (_horizontal)
-        {
-            double start = Math.Min((double)capsule.Y, panel.Y);
-            double end = Math.Max((double)capsule.GetMaxY(), panel.MaxY);
-            return RatingControlGeometry.InBand((double)point.Y, start, end);
-        }
-        double startX = Math.Min((double)capsule.X, panel.X);
-        double endX = Math.Max((double)capsule.GetMaxX(), panel.MaxX);
-        return RatingControlGeometry.InBand((double)point.X, startX, endX);
     }
 
     /// <summary>紧凑态零时长长按识别器：按下打开弹窗并开始转发，移动/抬手/取消映射到跟踪接缝。</summary>
