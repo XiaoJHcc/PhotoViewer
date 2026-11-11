@@ -47,6 +47,18 @@ internal static class SettingsChecks
             && independentJson.Contains("\"analysisImmediateCompute\": true", StringComparison.Ordinal)
             && independentJson.Contains("\"analysisImmediateCvCompute\": false", StringComparison.Ordinal));
 
+        c.True("默认显示上下张按钮", defaults.ShowNavigationButtons);
+        var navigationJson = SettingsDocumentCodec.Serialize(defaults with { ShowNavigationButtons = false });
+        var navigationRoundtrip = SettingsDocumentCodec.Read(navigationJson, defaults).Settings!;
+        c.True("显示上下张按钮往返", !navigationRoundtrip.ShowNavigationButtons
+            && navigationJson.Contains("\"showNavigationButtons\": false", StringComparison.Ordinal));
+
+        var phoneSettings = defaults with { LayoutMode = LayoutMode.Phone };
+        var phoneRoundtrip = SettingsDocumentCodec.Read(SettingsDocumentCodec.Serialize(phoneSettings), defaults).Settings!;
+        c.Equal("手机布局模式文档往返保留", LayoutMode.Phone, phoneRoundtrip.LayoutMode);
+        c.Equal("平台未实现手机布局时保留原值", LayoutMode.Phone,
+            SettingsDocumentCodec.Normalize(phoneSettings).LayoutMode);
+
         var path = Path.Combine(root, "settings.json");
         for (var index = 0; index < 5; index++)
         {

@@ -8,6 +8,8 @@ public sealed record AppSettings
 {
     public LayoutMode LayoutMode { get; init; } = LayoutMode.Auto;
 
+    public bool ShowNavigationButtons { get; init; } = true;
+
     public bool ShowZoomIndicator { get; init; } = true;
 
     /// <summary>缩放预设倍率（0.125 表示 12.5%）。</summary>
@@ -64,6 +66,7 @@ public sealed record AppSettings
         if (ReferenceEquals(this, other)) return true;
 
         return LayoutMode == other.LayoutMode
+            && ShowNavigationButtons == other.ShowNavigationButtons
             && ShowZoomIndicator == other.ShowZoomIndicator
             && SequenceEquals(ScalePresets, other.ScalePresets)
             && ShowRating == other.ShowRating

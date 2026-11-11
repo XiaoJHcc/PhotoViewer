@@ -83,6 +83,7 @@ internal static class Program
         problems += Require(needed <= settings.BitmapCacheMaxCount, "前后预载 + 当前 + 对比超过缓存张数");
         problems += Require(settings.BitmapCacheCountInfoLevel == PerfInfoLevel.Normal,
             $"提示级别为 {settings.BitmapCacheCountInfoLevel}");
+        problems += Require(settings.ShowNavigationButtons, "显示上下张按钮默认关闭");
 
         if (settings.BitmapCacheMaxCount >= 30)
         {
@@ -114,6 +115,7 @@ internal static class Program
             PreloadBackwardCount = 3,
             VisibleCenterPreloadCount = 4,
             BitmapCacheMaxMemory = 3000,
+            ShowNavigationButtons = false,
             Hotkeys = [new HotkeySetting("ToggleEnhance", true)],
         };
 
@@ -131,6 +133,7 @@ internal static class Program
         problems += Require(settings.PreloadForwardCount == 7, "已保存前预载被改写");
         problems += Require(settings.PreloadBackwardCount == 3, "已保存后预载被改写");
         problems += Require(settings.VisibleCenterPreloadCount == 4, "已保存列表滚动预载被改写");
+        problems += Require(!settings.ShowNavigationButtons, "已保存的显示上下张按钮被改写");
         problems += Require(settings.Hotkeys[0].Name == "雾天增强", "快捷键名称未按 Command 取当前命令目录");
         problems += Require(settings.Hotkeys[0].Tooltip == "雾天增强", "快捷键提示未按 Command 取当前命令目录");
         problems += Require(settings.Hotkeys[0].DisplaySymbol == "\uf406", "雾天增强图标未按命令目录恢复为对比度半圆");

@@ -23,5 +23,6 @@
 | [InMemorySettingsStore.cs](InMemorySettingsStore.cs) / [InMemorySettingsDocumentStore.cs](InMemorySettingsDocumentStore.cs) | 内存载体 | 隔离验收、工具与不需要落盘的场景；前者同时实现 `IViewStateStore`。 |
 | [IViewStateStore.cs](IViewStateStore.cs) | 轻量视图状态 | 跨会话保留但不属于设置文档的布尔状态（当前为 `SimilarityPanelExpanded`）；Apple 用独立偏好键、Android 用壳偏好、Windows 用状态文件，缺失键与显式 false 区分。 |
 | [NativeSettingsPresenter.cs](NativeSettingsPresenter.cs) | 原生设置展示器 | `INativeSettingsPresenter` 接口 + `TryPresent` 静态入口；macOS / iOS / Windows / Android 各实现原生弹窗或窗口，未注入时返回 false（不再有 Avalonia 模态回退）。 |
-| [LayoutMode.cs](LayoutMode.cs) | 布局模式枚举 | `Auto` / `Row` / `Col`，对应设置页三选一与主屏分区。 |
+| [LayoutMode.cs](LayoutMode.cs) | 布局模式枚举 | `Row` / `Col` / `Auto` / `Phone`，对应设置页四选一与主屏分区；「手机」只在实现了手机形态的平台出现在选项里，其他平台读到该值按自动处理。 |
+| [LayoutCapabilities.cs](LayoutCapabilities.cs) | 平台布局能力开关 | `PhoneLayoutSupported` 静态属性，启动期由平台壳注入（默认 false）；设置页据此决定是否提供「手机」选项。 |
 | [SettingsPathHelper.cs](SettingsPathHelper.cs) | 默认数据目录 | Windows `%LOCALAPPDATA%`、Apple 沙盒 `Documents`、macOS `SpecialFolder.ApplicationData`、其他 XDG/`~/.config`；`photos.db` 与设置共用该基准目录。 |

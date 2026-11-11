@@ -3,6 +3,11 @@ namespace PhotoViewer.Shared;
 /// <summary>
 /// 照片视口的平台中立数学：适应缩放、锚点缩放、平移钳制、导航图几何与 100% 细节判定。
 /// 只处理 double 与像素/点尺寸；宿主视图负责把结果换算成原生坐标类型并驱动重绘。
+///
+/// <para>视图区与适应区分离：照片始终可绘制在整个视图区上，<see cref="FitInsets"/> 在四边避让出
+/// <b>适应区</b>——适应态照片只放进适应区、放大后的平移边界取适应区边缘（照片边缘最多拖到适应区边缘，
+/// 与 <c>UIScrollView.contentInset</c> 同义），视口中心语义也一律取适应区中心。
+/// 四边内边距为零时适应区就是整个视图，全部公式退化为引入适应区之前的写法。</para>
 /// </summary>
 public sealed class PhotoViewport
 {
@@ -16,6 +21,8 @@ public sealed class PhotoViewport
     public double ViewWidth { get; private set; }
     /// <summary>视图可用高度（逻辑点）。</summary>
     public double ViewHeight { get; private set; }
+    /// <summary>主图适应区相对视图四边的内边距（逻辑点，非负）。</summary>
+    public EdgeInsets FitInsets { get; private set; }
     /// <summary>视图物理倍率（Retina 2.0 等）。</summary>
     public double BackingScale { get; private set; } = 1;
     /// <summary>源像素宽度（未应用 EXIF 方向）。</summary>
@@ -28,9 +35,9 @@ public sealed class PhotoViewport
     public int TextureWidth { get; private set; }
     /// <summary>图像像素到视图点的当前缩放（点/像素）。</summary>
     public double Scale { get; private set; } = 1;
-    /// <summary>照片中心相对视口中心的横向偏移（逻辑点）。</summary>
+    /// <summary>照片中心相对视图中心的横向偏移（逻辑点）。</summary>
     public double PanX { get; private set; }
-    /// <summary>照片中心相对视口中心的纵向偏移（逻辑点）。</summary>
+    /// <summary>照片中心相对视图中心的纵向偏移（逻辑点）。</summary>
     public double PanY { get; private set; }
     /// <summary>是否处于适应状态。</summary>
     public bool IsFit { get; private set; } = true;
@@ -47,22 +54,34 @@ public sealed class PhotoViewport
     public double ImageHeight => Orientation >= 5 ? SourceWidth : SourceHeight;
     /// <summary>源像素对屏幕物理像素的倍率。</summary>
     public double PhysicalScale => Scale * BackingScale;
-    /// <summary>当前视图尺寸下照片恰好放满的缩放（逻辑点/图像像素）。</summary>
+    /// <summary>适应区宽（逻辑点）：视图宽减去左右内边距；内边距为零时等于视图宽，下限 1 点。</summary>
+    public double FitWidth => FitInsets.Left + FitInsets.Right > 0
+        ? Math.Max(1, ViewWidth - FitInsets.Left - FitInsets.Right)
+        : ViewWidth;
+    /// <summary>适应区高（逻辑点）：视图高减去上下内边距；内边距为零时等于视图高，下限 1 点。</summary>
+    public double FitHeight => FitInsets.Top + FitInsets.Bottom > 0
+        ? Math.Max(1, ViewHeight - FitInsets.Top - FitInsets.Bottom)
+        : ViewHeight;
+    /// <summary>适应区中心相对视图中心的横向偏移（左内边距大于右时为正）。</summary>
+    public double FitCenterX => (FitInsets.Left - FitInsets.Right) / 2;
+    /// <summary>适应区中心相对视图中心的纵向偏移（上内边距大于下时为正）。</summary>
+    public double FitCenterY => (FitInsets.Top - FitInsets.Bottom) / 2;
+    /// <summary>当前视图尺寸下照片恰好放进适应区的缩放（逻辑点/图像像素）。</summary>
     public double FitScale => ImageWidth > 0 && ImageHeight > 0
-        ? Math.Min(ViewWidth / ImageWidth, ViewHeight / ImageHeight)
+        ? Math.Min(FitWidth / ImageWidth, FitHeight / ImageHeight)
         : 1;
     /// <summary>当前全分辨率细节需求，包括代理覆盖不足的放大。</summary>
     public bool NeedsFull => !IsFit && (PhysicalScale >= 1
         || (TextureWidth > 0 && PhysicalScale > (double)TextureWidth / Math.Max(1, SourceWidth)));
 
-    /// <summary>视口中心对应的归一化图像点（显示朝向 0–1 区间）；无图像时为视口中心。</summary>
+    /// <summary>视口中心（适应区中心）对应的归一化图像点（显示朝向 0–1 区间）；无图像时为视口中心。</summary>
     public (double U, double V) CenterUV
     {
         get
         {
             double width = ImageWidth * Scale, height = ImageHeight * Scale;
             if (width <= 0 || height <= 0) return (.5, .5);
-            return (.5 - PanX / width, .5 - PanY / height);
+            return (.5 - (PanX - FitCenterX) / width, .5 - (PanY - FitCenterY) / height);
         }
     }
 
@@ -93,17 +112,29 @@ public sealed class PhotoViewport
         }
     }
 
-    /// <summary>导航图内的可见区域（导航图逻辑点坐标）；缩放小于适应时退化为整幅照片。</summary>
+    /// <summary>导航图内的可见区域（导航图逻辑点坐标）：可见范围取适应区；缩放小于适应时退化为整幅照片。</summary>
     public (double X, double Y, double Width, double Height) NavigationViewport
     {
         get
         {
             var (navigationWidth, navigationHeight) = NavigationSize;
             double displayedWidth = Math.Max(1, ImageWidth * Scale), displayedHeight = Math.Max(1, ImageHeight * Scale);
-            var horizontal = NavigationAxis(navigationWidth, ViewWidth / displayedWidth, .5 - PanX / displayedWidth);
-            var vertical = NavigationAxis(navigationHeight, ViewHeight / displayedHeight, .5 - PanY / displayedHeight);
+            var (u, v) = CenterUV;
+            var horizontal = NavigationAxis(navigationWidth, FitWidth / displayedWidth, u);
+            var vertical = NavigationAxis(navigationHeight, FitHeight / displayedHeight, v);
             return (horizontal.Offset, vertical.Offset, horizontal.Extent, vertical.Extent);
         }
+    }
+
+    /// <summary>记录适应区四边内边距；只记录几何，不改变缩放与平移，由调用方随后选择重新适应或钳制平移。</summary>
+    /// <param name="insets">四边内边距（逻辑点，负值按 0）。</param>
+    public void SetFitInsets(EdgeInsets insets)
+    {
+        FitInsets = new EdgeInsets(
+            Math.Max(0, insets.Left),
+            Math.Max(0, insets.Top),
+            Math.Max(0, insets.Right),
+            Math.Max(0, insets.Bottom));
     }
 
     /// <summary>设置有对焦点的归一化位置；两个分量都传 null 表示当前照片没有对焦点。</summary>
@@ -127,11 +158,11 @@ public sealed class PhotoViewport
         ViewHeight = height;
     }
 
-    /// <summary>替换照片纹理前记录相对平移，供新纹理就绪后还原视口位置。</summary>
+    /// <summary>替换照片纹理前记录相对平移（以适应区中心为基准），供新纹理就绪后还原视口位置。</summary>
     public void BeginImageChange()
     {
-        _relativePanX = PanX / Math.Max(1, ImageWidth);
-        _relativePanY = PanY / Math.Max(1, ImageHeight);
+        _relativePanX = (PanX - FitCenterX) / Math.Max(1, ImageWidth);
+        _relativePanY = (PanY - FitCenterY) / Math.Max(1, ImageHeight);
     }
 
     /// <summary>应用新照片的源尺寸、方向与纹理宽度，并按当前状态归位：适应 / 跟随对焦 / 还原相对平移。</summary>
@@ -149,8 +180,8 @@ public sealed class PhotoViewport
         else if (FollowsFocus && FocusX.HasValue && FocusY.HasValue) CenterFocus();
         else
         {
-            PanX = _relativePanX * ImageWidth;
-            PanY = _relativePanY * ImageHeight;
+            PanX = FitCenterX + _relativePanX * ImageWidth;
+            PanY = FitCenterY + _relativePanY * ImageHeight;
             ClampPan();
         }
     }
@@ -162,22 +193,22 @@ public sealed class PhotoViewport
     /// <summary>纹理被移除（无照片）时清除纹理宽度；保留上一次源尺寸供导航图占位，与移除前的行为一致。</summary>
     public void ClearTexture() => TextureWidth = 0;
 
-    /// <summary>适应视口，保持照片比例并在物理像素超采样代理上绘制。</summary>
+    /// <summary>适应适应区，保持照片比例并在物理像素超采样代理上绘制。</summary>
     public void FitToView()
     {
         IsFit = true;
         FollowsFocus = false;
         if (ImageWidth > 0 && ImageHeight > 0) Scale = FitScale;
-        PanX = 0;
-        PanY = 0;
+        PanX = FitCenterX;
+        PanY = FitCenterY;
     }
 
     /// <summary>
     /// 在适应与物理 100% 间切换（旧壳 <c>ToggleFit</c> 语义）：已放大 → 回适应；
     /// 处于适应态时无锚点且照片有对焦点 → 以对焦点为中心放大到物理 100% 并开启跟随对焦，
-    /// 否则以锚点（无锚点取视口中心）为不动点放大到物理 100%。
+    /// 否则以锚点（无锚点取适应区中心）为不动点放大到物理 100%。
     /// </summary>
-    /// <param name="anchor">视图坐标锚点；null 表示使用对焦点或视口中心。</param>
+    /// <param name="anchor">视图坐标锚点；null 表示使用对焦点或适应区中心。</param>
     public void ToggleFit((double X, double Y)? anchor)
     {
         if (!IsFit)
@@ -199,7 +230,7 @@ public sealed class PhotoViewport
             CenterFocus();
             return;
         }
-        var point = anchor ?? (ViewWidth / 2, ViewHeight / 2);
+        var point = anchor ?? (ViewWidth / 2 + FitCenterX, ViewHeight / 2 + FitCenterY);
         ZoomTo(1 / BackingScale, point.X, point.Y);
     }
 
@@ -212,8 +243,8 @@ public sealed class PhotoViewport
         Scale = physicalScale / BackingScale;
         IsFit = false;
         FollowsFocus = false;
-        PanX = (.5 - u) * ImageWidth * Scale;
-        PanY = (.5 - v) * ImageHeight * Scale;
+        PanX = FitCenterX + (.5 - u) * ImageWidth * Scale;
+        PanY = FitCenterY + (.5 - v) * ImageHeight * Scale;
         ClampPan();
     }
 
@@ -230,21 +261,22 @@ public sealed class PhotoViewport
             return;
         }
 
-        PanX = (.5 - u) * ImageWidth * Scale;
-        PanY = (.5 - v) * ImageHeight * Scale;
+        PanX = FitCenterX + (.5 - u) * ImageWidth * Scale;
+        PanY = FitCenterY + (.5 - v) * ImageHeight * Scale;
         ClampPan();
         FollowsFocus = IsViewCenteredOnFocusPoint;
     }
 
     /// <summary>按比例放大或缩小，锚定指针或视口中心。</summary>
     /// <param name="factor">缩放倍率。</param>
-    /// <param name="anchor">视图坐标锚点；null 表示视口中心。</param>
+    /// <param name="anchor">视图坐标锚点；null 表示适应区中心。</param>
     public void ZoomBy(double factor, (double X, double Y)? anchor)
-        => ZoomTo(Scale * factor, anchor?.X ?? ViewWidth / 2, anchor?.Y ?? ViewHeight / 2);
+        => ZoomTo(Scale * factor, anchor?.X ?? (ViewWidth / 2 + FitCenterX), anchor?.Y ?? (ViewHeight / 2 + FitCenterY));
 
     /// <summary>跳到预设物理倍率，避免 Retina 下将 100% 解释为 2×2 屏幕像素。</summary>
     /// <param name="scale">目标物理倍率。</param>
-    public void ZoomToPhysical(double scale) => ZoomTo(scale / BackingScale, ViewWidth / 2, ViewHeight / 2);
+    public void ZoomToPhysical(double scale)
+        => ZoomTo(scale / BackingScale, ViewWidth / 2 + FitCenterX, ViewHeight / 2 + FitCenterY);
 
     /// <summary>按视图点位移平移照片（拖动/触控板），跟随对焦在移动后按 5% UV 容差重算并保持边缘钳制。</summary>
     /// <param name="deltaX">横向位移（逻辑点）。</param>
@@ -263,8 +295,8 @@ public sealed class PhotoViewport
     /// 跟随对焦在每帧手势后按 5% UV 容差重算（与旧壳每次移动/缩放后的重估同口径）。
     /// </summary>
     /// <param name="scale">图像像素到逻辑点的缩放。</param>
-    /// <param name="panX">照片中心相对视口中心的横向偏移（逻辑点）。</param>
-    /// <param name="panY">照片中心相对视口中心的纵向偏移（逻辑点）。</param>
+    /// <param name="panX">照片中心相对视图中心的横向偏移（逻辑点）。</param>
+    /// <param name="panY">照片中心相对视图中心的纵向偏移（逻辑点）。</param>
     /// <param name="interactive">
     /// 是否来自用户手势（拖动/捏合）。只有用户移动/缩放才按 5% UV 重估跟随对焦；
     /// 程序化缩放/切图重建派生出的状态不得清掉 <see cref="ToggleFit"/> 或 <see cref="ApplyImage"/> 刚做出的跟随决定
@@ -280,13 +312,15 @@ public sealed class PhotoViewport
         if (interactive) FollowsFocus = IsViewCenteredOnFocusPoint;
     }
 
-    /// <summary>使至少一部分照片保持在视口中；小于视口的轴居中。</summary>
+    /// <summary>
+    /// 使照片边缘最多落在适应区边缘；小于适应区的轴居中于适应区。
+    /// 两端内边距分别为 a/b 时，显示尺寸大于适应区的轴允许范围是 <c>[V/2−b−D/2, a−V/2+D/2]</c>，
+    /// 即照片左/右（上/下）边缘正好被拖到适应区边缘。
+    /// </summary>
     public void ClampPan()
     {
-        double maxX = Math.Max(0, (ImageWidth * Scale - ViewWidth) / 2);
-        double maxY = Math.Max(0, (ImageHeight * Scale - ViewHeight) / 2);
-        PanX = Math.Clamp(PanX, -maxX, maxX);
-        PanY = Math.Clamp(PanY, -maxY, maxY);
+        PanX = ClampAxis(PanX, ImageWidth * Scale, ViewWidth, FitInsets.Left, FitInsets.Right, FitWidth);
+        PanY = ClampAxis(PanY, ImageHeight * Scale, ViewHeight, FitInsets.Top, FitInsets.Bottom, FitHeight);
     }
 
     /// <summary>把显示朝向的归一化图像点换算成视图坐标（逻辑点，顶边为原点）。</summary>
@@ -315,13 +349,27 @@ public sealed class PhotoViewport
         FollowsFocus = IsViewCenteredOnFocusPoint;
     }
 
-    /// <summary>以显示朝向的归一化对焦位置为视口中心，并约束边缘平移。</summary>
+    /// <summary>以显示朝向的归一化对焦位置为视口中心（适应区中心），并约束边缘平移。</summary>
     private void CenterFocus()
     {
         if (FocusX is not { } focusX || FocusY is not { } focusY) return;
-        PanX = (.5 - focusX) * ImageWidth * Scale;
-        PanY = (.5 - focusY) * ImageHeight * Scale;
+        PanX = FitCenterX + (.5 - focusX) * ImageWidth * Scale;
+        PanY = FitCenterY + (.5 - focusY) * ImageHeight * Scale;
         ClampPan();
+    }
+
+    /// <summary>单轴平移钳制：显示尺寸不大于适应区时居中于适应区，否则两端极限让照片边缘落在适应区边缘。</summary>
+    /// <param name="pan">当前平移（相对视图中心）。</param>
+    /// <param name="displayed">该轴显示尺寸。</param>
+    /// <param name="viewLength">该轴视图长度。</param>
+    /// <param name="leading">前导内边距（左/上）。</param>
+    /// <param name="trailing">尾随内边距（右/下）。</param>
+    /// <param name="fitLength">该轴适应区长度。</param>
+    /// <returns>钳制后的平移。</returns>
+    private static double ClampAxis(double pan, double displayed, double viewLength, double leading, double trailing, double fitLength)
+    {
+        if (displayed <= fitLength) return (leading - trailing) / 2;
+        return Math.Clamp(pan, viewLength / 2 - trailing - displayed / 2, leading - viewLength / 2 + displayed / 2);
     }
 
     /// <summary>把一条轴上的可见比例与中心比例换算成导航图内的偏移和长度，并钳制在导航图范围内。</summary>

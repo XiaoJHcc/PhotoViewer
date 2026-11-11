@@ -46,6 +46,7 @@ public partial class SettingsViewModel
         return propertyName switch
         {
             nameof(LayoutMode) => SettingsChangeImpact.Layout,
+            nameof(ShowNavigationButtons) => SettingsChangeImpact.Layout,
             nameof(ShowZoomIndicator) => SettingsChangeImpact.Navigator,
             nameof(ShowRating) => SettingsChangeImpact.Rating,
             nameof(EnabledExifItems) => SettingsChangeImpact.Exif,

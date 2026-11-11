@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using PhotoViewer.Core.Settings;
 using ReactiveUI;
 
@@ -18,6 +18,14 @@ public partial class SettingsViewModel
         set => this.RaiseAndSetIfChanged(ref _layoutMode, value);
     }
 
+    private bool _showNavigationButtons = true;
+    /// <summary>手机形态底部行是否显示上一张/下一张合体按钮。</summary>
+    public bool ShowNavigationButtons
+    {
+        get => _showNavigationButtons;
+        set => this.RaiseAndSetIfChanged(ref _showNavigationButtons, value);
+    }
+
     // 布局模式选项
     public ObservableCollection<LayoutModeItem> LayoutModes { get; } = new();
 
@@ -26,6 +34,8 @@ public partial class SettingsViewModel
         LayoutModes.Add(new LayoutModeItem(LayoutMode.Row, "上下", "缩略图和控制栏位于上下侧，适合竖屏"));
         LayoutModes.Add(new LayoutModeItem(LayoutMode.Col, "左右", "缩略图和控制栏位于左右侧，适合横屏"));
         LayoutModes.Add(new LayoutModeItem(LayoutMode.Auto, "自动", "根据屏幕方向自动选择空间较多两侧"));
+        if (LayoutCapabilities.PhoneLayoutSupported)
+            LayoutModes.Add(new LayoutModeItem(LayoutMode.Phone, "手机", "按手机屏幕排布，操作区靠近手指"));
     }
 
     public class LayoutModeItem

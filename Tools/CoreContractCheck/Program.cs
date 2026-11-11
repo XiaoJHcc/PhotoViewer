@@ -68,6 +68,9 @@ internal static class Program
             PhotoHintTextChecks.Run(checks);
             RatingSourcesLayoutChecks.Run(checks);
             TitleBarLayoutChecks.Run(checks);
+            ScreenFormChecks.Run(checks);
+            PhoneScreenLayoutChecks.Run(checks);
+            PhotoViewportChecks.Run(checks);
             MemoryAdmissionChecks.Run(checks);
             AnalysisEditionChecks.RunAsync(checks, root).GetAwaiter().GetResult();
         }

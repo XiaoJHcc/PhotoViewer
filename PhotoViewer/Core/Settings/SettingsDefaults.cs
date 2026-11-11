@@ -66,6 +66,7 @@ public static class SettingsDefaults
         return new AppSettings
         {
             LayoutMode = LayoutMode.Auto,
+            ShowNavigationButtons = true,
             ShowZoomIndicator = true,
             ScalePresets = SettingsCatalog.DefaultScalePresets,
             ShowRating = true,

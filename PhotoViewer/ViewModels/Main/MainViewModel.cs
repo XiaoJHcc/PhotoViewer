@@ -285,7 +285,7 @@ public class MainViewModel : ViewModelBase, IDisposable
         {
             LayoutMode.Col => false,
             LayoutMode.Row => true,
-            LayoutMode.Auto => !IsScreenLandscape,
+            LayoutMode.Phone or LayoutMode.Auto => !IsScreenLandscape,
             _ => true
         };
 
@@ -310,8 +310,8 @@ public class MainViewModel : ViewModelBase, IDisposable
         {
             IsScreenLandscape = newIsLandscape;
             
-            // 如果是智能模式，屏幕方向变化会触发布局更新
-            if (Settings.LayoutMode == LayoutMode.Auto)
+            // 智能模式与手机形态都跟随屏幕方向变化
+            if (Settings.LayoutMode is LayoutMode.Auto or LayoutMode.Phone)
             {
                 UpdateLayoutFromSettings();
             }

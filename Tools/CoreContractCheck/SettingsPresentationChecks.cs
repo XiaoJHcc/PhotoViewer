@@ -33,6 +33,7 @@ internal static class SettingsPresentationChecks
         try
         {
             RunMappingChecks(c);
+            RunLayoutModeOptionChecks(c);
             RunPresentationChecks(c);
             RunPeriodicProbeCheck(c);
             RunMainViewModelChecks(c);
@@ -49,6 +50,8 @@ internal static class SettingsPresentationChecks
         c.Equal("空字符串按全部刷新", SettingsChangeImpact.All, SettingsViewModel.GetPresentationImpact(string.Empty));
         c.Equal("布局映射", SettingsChangeImpact.Layout,
             SettingsViewModel.GetPresentationImpact(nameof(SettingsViewModel.LayoutMode)));
+        c.Equal("上下张开关映射", SettingsChangeImpact.Layout,
+            SettingsViewModel.GetPresentationImpact(nameof(SettingsViewModel.ShowNavigationButtons)));
         c.Equal("导航器映射", SettingsChangeImpact.Navigator,
             SettingsViewModel.GetPresentationImpact(nameof(SettingsViewModel.ShowZoomIndicator)));
         c.Equal("星级映射", SettingsChangeImpact.Rating,
@@ -110,6 +113,37 @@ internal static class SettingsPresentationChecks
             SettingsViewModel.GetPresentationImpact(nameof(SettingsViewModel.ScalePresets)));
     }
 
+    private static void RunLayoutModeOptionChecks(Checks c)
+    {
+        using (var unsupported = new SettingsViewModel())
+        {
+            c.True("未实现手机形态时不提供手机选项",
+                unsupported.LayoutModes.All(item => item.Value != LayoutMode.Phone));
+        }
+
+        LayoutCapabilities.PhoneLayoutSupported = true;
+        try
+        {
+            using var supported = new SettingsViewModel();
+            var phone = supported.LayoutModes.LastOrDefault();
+            c.True("实现手机形态时选项追加在自动之后",
+                supported.LayoutModes.Count == 4
+                    && supported.LayoutModes[2].Value == LayoutMode.Auto
+                    && phone is { Value: LayoutMode.Phone },
+                string.Join(" / ", supported.LayoutModes.Select(item => item.DisplayName)));
+            c.True("手机选项文案",
+                phone is { DisplayName: "手机", Description: "按手机屏幕排布，操作区靠近手指" },
+                phone is null ? "未找到手机选项" : phone.DisplayName + "：" + phone.Description);
+
+            supported.LayoutMode = LayoutMode.Phone;
+            c.Equal("手机选项可取值为手机模式", LayoutMode.Phone, supported.LayoutMode);
+        }
+        finally
+        {
+            LayoutCapabilities.PhoneLayoutSupported = false;
+        }
+    }
+
     private static void RunPresentationChecks(Checks c)
     {
         using var settings = new SettingsViewModel();
@@ -123,6 +157,9 @@ internal static class SettingsPresentationChecks
 
         settings.LayoutMode = settings.LayoutMode == LayoutMode.Col ? LayoutMode.Row : LayoutMode.Col;
         Single(c, "布局模式发布 Layout", recorder, SettingsChangeImpact.Layout);
+
+        settings.ShowNavigationButtons = !settings.ShowNavigationButtons;
+        Single(c, "上下张开关发布 Layout", recorder, SettingsChangeImpact.Layout);
 
         settings.ShowZoomIndicator = !settings.ShowZoomIndicator;
         Single(c, "缩放指示发布 Navigator", recorder, SettingsChangeImpact.Navigator);
@@ -224,6 +261,7 @@ internal static class SettingsPresentationChecks
         var updated = current with
         {
             LayoutMode = current.LayoutMode == LayoutMode.Col ? LayoutMode.Auto : LayoutMode.Col,
+            ShowNavigationButtons = !current.ShowNavigationButtons,
             ShowRating = !current.ShowRating,
             SimilarityThreshold = current.SimilarityThreshold >= 0.9 ? 0.8 : 0.9,
             AnalysisImmediateCompute = !current.AnalysisImmediateCompute,
@@ -279,6 +317,11 @@ internal static class SettingsPresentationChecks
         recorder.Reset();
         settings.ApplySnapshot(zoomOnly with { ShowZoomIndicator = !zoomOnly.ShowZoomIndicator });
         Single(c, "仅缩放指示变更精确 Navigator", recorder, SettingsChangeImpact.Navigator);
+
+        var navigationOnly = settings.CreateSnapshot();
+        recorder.Reset();
+        settings.ApplySnapshot(navigationOnly with { ShowNavigationButtons = !navigationOnly.ShowNavigationButtons });
+        Single(c, "仅上下张开关变更精确 Layout", recorder, SettingsChangeImpact.Layout);
 
         var hotkeyOnly = settings.CreateSnapshot();
         recorder.Reset();

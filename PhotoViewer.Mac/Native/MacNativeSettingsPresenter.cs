@@ -215,11 +215,9 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
     internal MacSettingsStateDto BuildState()
     {
         var settings = Settings;
-        int layoutIndex = 0;
-        for (int index = 0; index < settings.LayoutModes.Count; index++)
-        {
-            if (settings.LayoutModes[index].Value == settings.LayoutMode) { layoutIndex = index; break; }
-        }
+        int layoutIndex = IndexOfLayoutMode(settings, settings.LayoutMode);
+        if (layoutIndex < 0) layoutIndex = IndexOfLayoutMode(settings, LayoutMode.Auto);
+        if (layoutIndex < 0) layoutIndex = 0;
         return new MacSettingsStateDto
         {
             Category = _category,
@@ -312,6 +310,17 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
     {
         PerfInfoLevel.Warning => "warning", PerfInfoLevel.Error => "error", _ => "normal",
     };
+
+    /// <summary>布局模式在选项列表中的索引；当前值不在列表里（例如未实现手机形态的平台读到）返回 -1。</summary>
+    private static int IndexOfLayoutMode(SettingsViewModel settings, LayoutMode mode)
+    {
+        for (int index = 0; index < settings.LayoutModes.Count; index++)
+        {
+            if (settings.LayoutModes[index].Value == mode) return index;
+        }
+
+        return -1;
+    }
 
     /// <summary>处理 SwiftUI 回传动作；录制事件返回消费标记，其余返回 0。</summary>
     private int HandleAction(string json)

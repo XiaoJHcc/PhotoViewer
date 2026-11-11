@@ -158,6 +158,7 @@ public static class SettingsDocumentCodec
         return defaults with
         {
             LayoutMode = ParseEnum(document.LayoutMode, defaults.LayoutMode),
+            ShowNavigationButtons = document.ShowNavigationButtons ?? defaults.ShowNavigationButtons,
             ShowZoomIndicator = document.ShowZoomIndicator ?? defaults.ShowZoomIndicator,
             ScalePresets = document.ScalePresets is null
                 ? defaults.ScalePresets
@@ -432,6 +433,7 @@ public static class SettingsDocumentCodec
         {
             SchemaVersion = SchemaVersion,
             LayoutMode = settings.LayoutMode.ToString(),
+            ShowNavigationButtons = settings.ShowNavigationButtons,
             ShowZoomIndicator = settings.ShowZoomIndicator,
             ScalePresets = [.. settings.ScalePresets],
             ShowRating = settings.ShowRating,

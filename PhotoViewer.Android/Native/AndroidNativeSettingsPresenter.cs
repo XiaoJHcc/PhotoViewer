@@ -770,6 +770,8 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     {
         foreach (var item in Settings.LayoutModes)
             if (item.Value == Settings.LayoutMode) return item.DisplayName;
+        foreach (var item in Settings.LayoutModes)
+            if (item.Value == LayoutMode.Auto) return item.DisplayName;
         return Settings.LayoutMode.ToString();
     }
 
@@ -777,6 +779,8 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     {
         foreach (var item in Settings.LayoutModes)
             if (item.Value == Settings.LayoutMode) return item.Description;
+        foreach (var item in Settings.LayoutModes)
+            if (item.Value == LayoutMode.Auto) return item.Description;
         return string.Empty;
     }
 

@@ -33,13 +33,14 @@ internal sealed partial class WindowsSettingsPages
             combo.Items.Add(new ComboBoxItem { Content = mode.DisplayName, Tag = mode.Value });
         }
 
-        var initial = FindLayoutIndex();
-        combo.SelectedIndex = initial;
+        var initial = DisplayLayoutIndex();
         var description = WindowsSettingsCard.RowDescription(
             initial >= 0 ? _settings.LayoutModes[initial].Description : string.Empty);
 
+        var syncing = true;
         combo.SelectionChanged += (_, _) =>
         {
+            if (syncing) return;
             if (combo.SelectedItem is ComboBoxItem item && item.Tag is LayoutMode mode
                 && combo.SelectedIndex >= 0)
             {
@@ -47,10 +48,14 @@ internal sealed partial class WindowsSettingsPages
                 description.Text = _settings.LayoutModes[combo.SelectedIndex].Description;
             }
         };
+        combo.SelectedIndex = initial;
+        syncing = false;
         OnSetting(nameof(SettingsViewModel.LayoutMode), () =>
         {
-            var index = FindLayoutIndex();
+            var index = DisplayLayoutIndex();
+            syncing = true;
             combo.SelectedIndex = index;
+            syncing = false;
             if (index >= 0)
             {
                 description.Text = _settings.LayoutModes[index].Description;
@@ -77,6 +82,24 @@ internal sealed partial class WindowsSettingsPages
             layoutCard,
             WindowsSettingsCard.SectionHeader("控制栏功能与快捷键"),
             WindowsSettingsCard.Card(hotkeys, new Thickness(4)));
+    }
+
+    /// <summary>当前布局模式用于显示的索引；当前值不在选项里（例如未实现手机形态的平台读到）回落到「自动」项，不改写设置值。</summary>
+    /// <returns>索引;列表为空返回 -1</returns>
+    private int DisplayLayoutIndex()
+    {
+        var index = FindLayoutIndex();
+        if (index >= 0) return index;
+
+        for (var candidate = 0; candidate < _settings.LayoutModes.Count; candidate++)
+        {
+            if (_settings.LayoutModes[candidate].Value == LayoutMode.Auto)
+            {
+                return candidate;
+            }
+        }
+
+        return _settings.LayoutModes.Count > 0 ? 0 : -1;
     }
 
     /// <summary>当前布局模式在选项里的索引。</summary>

@@ -9,6 +9,8 @@ internal sealed class SettingsDocumentDto
 
     public string? LayoutMode { get; set; }
 
+    public bool? ShowNavigationButtons { get; set; }
+
     public bool? ShowZoomIndicator { get; set; }
 
     public List<double>? ScalePresets { get; set; }

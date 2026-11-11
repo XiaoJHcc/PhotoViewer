@@ -14,6 +14,7 @@ public partial class SettingsViewModel
     private static readonly HashSet<string> PersistedPropertyNames = new(StringComparer.Ordinal)
     {
         nameof(LayoutMode),
+        nameof(ShowNavigationButtons),
         nameof(ShowZoomIndicator),
         nameof(ScalePresets),
         nameof(ShowRating),
@@ -161,6 +162,7 @@ public partial class SettingsViewModel
         return new AppSettings
         {
             LayoutMode = LayoutMode,
+            ShowNavigationButtons = ShowNavigationButtons,
             ShowZoomIndicator = ShowZoomIndicator,
             ScalePresets = ScalePresets.Select(preset => preset.Value).ToImmutableArray(),
             ShowRating = ShowRating,
@@ -208,6 +210,7 @@ public partial class SettingsViewModel
         try
         {
             LayoutMode = settings.LayoutMode;
+            ShowNavigationButtons = settings.ShowNavigationButtons;
             ShowZoomIndicator = settings.ShowZoomIndicator;
             ResetScalePresets(
                 settings.ScalePresets.IsDefaultOrEmpty
