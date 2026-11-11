@@ -47,6 +47,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private readonly iOSPhotoView _photo = new(CGRect.Empty);
     /// <summary>主屏舞台：产品运行时恒等于根视图 bounds；验收可限制宽度模拟分屏，全部主屏内容都挂在它下面。</summary>
     private readonly UIView _stage = new();
+    /// <summary>手机形态逐带安全区探针：只写 frame、只读安全区内边距，不绘制、不响应触摸，挂在舞台最底层。</summary>
+    private readonly UIView _bandProbe = new();
     private readonly UIView _photoPane = new();
     private readonly UIVisualEffectView _fileBar = BarBackground();
     private readonly UIView _fileDivider = new();
@@ -122,12 +124,18 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private PhoneLayout _phoneSlots;
     private PhoneLayoutInput _phoneSlotsInput;
     private bool _notchOnLeft = true;
-    private (double BareGap, double RowInset)? _avoidanceTuning;
+    private double? _avoidanceTuning;
     private UIEdgeInsets? _fitInsetsOverride;
     private UIEdgeInsets _formFitInsets;
     private double? _stageWidthFraction;
     private UIInterfaceOrientationMask? _supportedOrientations;
-    private string _phoneSafeSummary = string.Empty;
+    private string _phoneBandSummary = string.Empty;
+    /// <summary>竖屏底行在设备竖屏口径下的窗口缘距离；横屏控制列沿用同一份值，旋转时控制列不移动。</summary>
+    private EdgeInsets? _portraitControlBand;
+    /// <summary>胶片条顶端滚动边缘元素（横屏筛选/更多合体；只建一次，进出横屏时挂接/摘下）。</summary>
+    private readonly UIScrollEdgeElementContainerInteraction _filmstripTopEdge;
+    /// <summary>胶片条底端滚动边缘元素（横屏上下张合体）。</summary>
+    private readonly UIScrollEdgeElementContainerInteraction _filmstripBottomEdge;
     private ImageFile? _observedFile;
     private ImageFile[] _displayedFiles = [];
     private bool _sessionStarted;
@@ -168,15 +176,15 @@ internal sealed class iOSNativeRootViewController : UIViewController
     internal ScreenForm Form => _form;
     /// <summary>最近一次布局算出的手机形态槽位（宽形态下保留上一次手机形态的结果）。</summary>
     internal PhoneLayout PhoneSlots => _phoneSlots;
-    /// <summary>最近一次手机形态槽位的输入（含两组安全区、显隐与固有尺寸）。</summary>
+    /// <summary>最近一次手机形态槽位的输入（含系统安全区、两条贴角带、显隐与固有尺寸）。</summary>
     internal PhoneLayoutInput PhoneSlotsInput => _phoneSlotsInput;
     /// <summary>手机横屏时刘海是否在左（左为 <c>LandscapeRight</c>，其余按在左处理）。</summary>
     internal bool NotchOnLeft => _notchOnLeft;
     /// <summary>
-    /// 验收缝：非空时以其中的裸按钮避让与行内间距替代两个设计令牌值并立即重排，
-    /// 供主图避让候选组截图比较；为空时一律取令牌。
+    /// 验收缝：非空时以其中的行内间距替代 <c>shell.phone.rowInset</c> 并立即重排
+    /// （行到安全区的间距，同时决定栏缘与主图避让）；为空时一律取令牌。
     /// </summary>
-    internal (double BareGap, double RowInset)? AvoidanceTuningOverride
+    internal double? AvoidanceTuningOverride
     {
         get => _avoidanceTuning;
         set
@@ -258,6 +266,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <summary>手机形态四条栏背景。</summary>
     internal (UIVisualEffectView Top, UIVisualEffectView Bottom, UIVisualEffectView Leading, UIVisualEffectView Trailing) PhoneBarBackgrounds
         => (_phoneTopBar, _phoneBottomBar, _phoneLeadingBar, _phoneTrailingBar);
+    /// <summary>胶片条顶端的滚动边缘交互（横屏挂接在筛选/更多合体上）。</summary>
+    internal UIScrollEdgeElementContainerInteraction FilmstripTopEdgeInteraction => _filmstripTopEdge;
+    /// <summary>胶片条底端的滚动边缘交互（横屏挂接在上下张合体上）。</summary>
+    internal UIScrollEdgeElementContainerInteraction FilmstripBottomEdgeInteraction => _filmstripBottomEdge;
     /// <summary>分析栏栏位背景（宽形态与手机横屏共用）。</summary>
     internal UIVisualEffectView AnalysisBarBackground => _analysisBackground;
     /// <summary>更多菜单展开时取用的主图菜单子项（与主图长按菜单同一入口）。</summary>
@@ -318,6 +330,18 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _automatedValidation = automatedValidation;
         _filterBar = new iOSFilterBar(main);
         _filmstrip = new iOSFilmstripView(main);
+        // iOS 26 滚动边缘效果：横屏胶片条从筛选/更多与上下张控件下方滚过时由系统给出边缘效果，不手调模糊。
+        // 两个交互对象只建一次，按形态挂到对应控件上或摘下（一个交互对象同一时刻只能属于一个视图）。
+        _filmstripTopEdge = new UIScrollEdgeElementContainerInteraction
+        {
+            ScrollView = _filmstrip.Collection,
+            Edge = UIRectEdge.Top,
+        };
+        _filmstripBottomEdge = new UIScrollEdgeElementContainerInteraction
+        {
+            ScrollView = _filmstrip.Collection,
+            Edge = UIRectEdge.Bottom,
+        };
         _analysisPane = new iOSAnalysisPanel(main, session);
         _analysisPane.DetailHighlight = UpdateDetailHighlight;
         _analysisPane.DetailFocusRequested = FocusDetailPoint;
@@ -439,6 +463,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
         // 主图恒铺满舞台，栏位背景作为浮层压在照片上：栏背景统一取系统深色模糊材质。
         root.AddSubview(_stage);
         _stage.AddSubview(_photoPane);
+        // 探针压在舞台最底层：不可见、不拦触摸，只用来读取不同元素带各自的安全区适应值。
+        _bandProbe.UserInteractionEnabled = false;
+        _bandProbe.BackgroundColor = UIColor.Clear;
+        _stage.InsertSubview(_bandProbe, 0);
         _stage.AddSubview(_phoneTopBar);
         _stage.AddSubview(_phoneBottomBar);
         _stage.AddSubview(_phoneLeadingBar);
@@ -818,6 +846,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
         }
         bool axisChanged = _filmstrip.Horizontal != row;
         _filmstrip.SetAxis(row);
+        // 宽形态胶片条贯穿栏位内容区，两端不额外留白；手机形态才有的滚动边缘效果在这里一律摘掉。
+        _filmstrip.SetEdgePadding(0, 0);
+        SetFilmstripEdgeEffects(false);
         // 方向变化属于显式定位条件（[FILM-04] 登记的原生增强），普通尺寸变化只约束偏移。
         if (axisChanged)
         {
@@ -845,22 +876,64 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <summary>
     /// 手机形态：按共享槽位铺四个栏背景、胶片条、分析栏与固定操作行；宽形态专属控件全部隐藏。
     /// 轴向只由形态决定（竖屏横向、横屏纵向），不读用户以前选过的上下/左右模式。
+    /// <para>安全区分三层：系统安全区原样交给共享几何；贴角元素带（竖屏顶行、竖屏底行、横屏刘海侧列）各用一块等大探针
+    /// 按自身位置取圆角与窗口控件适应值，横屏控制列沿用同一份竖屏底行数值，旋转时控制列不移动。</para>
     /// </summary>
     /// <param name="width">窗口宽。</param>
     /// <param name="height">窗口高。</param>
-    /// <param name="safe">真实安全区。</param>
+    /// <param name="safe">舞台内的系统安全区。</param>
     private void LayoutPhone(double width, double height, UIEdgeInsets safe)
     {
         bool portrait = _form == ScreenForm.PhonePortrait;
+        bool phone = UIDevice.CurrentDevice.UserInterfaceIdiom == UIUserInterfaceIdiom.Phone;
         double button = DesignTokens.ShellGlassButtonSize;
-        double rowInset = _avoidanceTuning?.RowInset ?? DesignTokens.ShellPhoneRowInset;
-        double bareGap = _avoidanceTuning?.BareGap ?? DesignTokens.ShellPhotoBareGap;
+        double rowInset = _avoidanceTuning ?? DesignTokens.ShellPhoneRowInset;
         _notchOnLeft = ResolveNotchOnLeft();
-        var phoneSafe = PhoneSafeInsets(portrait, safe);
+        var plain = new EdgeInsets(safe.Left, safe.Top, safe.Right, safe.Bottom);
+        EdgeInsets lead, control;
+        string controlOrigin;
+        if (portrait)
+        {
+            // 顶行：贴顶带只借左右两侧的适应值，上边仍是系统安全区。
+            var leadProbe = ProbeBand(new CGRect(0, (double)safe.Top + rowInset, width, button),
+                UIViewLayoutRegionAdaptivityAxis.Horizontal);
+            lead = new EdgeInsets(leadProbe.Left, plain.Top, leadProbe.Right, 0);
+            var controlProbe = ProbeBand(
+                new CGRect(0, height - Math.Max((double)safe.Bottom, rowInset) - button, width, button),
+                UIViewLayoutRegionAdaptivityAxis.Horizontal);
+            control = new EdgeInsets(controlProbe.Left, 0, controlProbe.Right, plain.Bottom);
+            // 竖屏底行是横屏控制列的同一排按钮（旋转后仍贴着屏幕同一条边），保存下来直接复用。
+            if (phone) _portraitControlBand = control;
+            controlOrigin = phone ? "竖屏底行（已存为横屏控制列基准）" : "竖屏底行探测";
+        }
+        else
+        {
+            // 横屏刘海侧按钮列：整列探测，只取上下两侧适应值（左右由系统安全区给出）。
+            double column = plain.Left + MainScreenLayout.FileBarContentWidth;
+            var leadProbe = ProbeBand(new CGRect(_notchOnLeft ? 0 : width - column, 0, column, height),
+                UIViewLayoutRegionAdaptivityAxis.Vertical);
+            lead = new EdgeInsets(plain.Left, leadProbe.Top, plain.Right, leadProbe.Bottom);
+            if (phone && _portraitControlBand is { } portraitControl)
+            {
+                control = portraitControl;
+                controlOrigin = "竖屏底行缓存";
+            }
+            else
+            {
+                // 尚未见过竖屏（真机只在横屏启动）或 iPad 手机模式：按下巴侧整列现探一次，底边取系统安全区。
+                double chinSafe = plain.Right;
+                double strip = Math.Max(chinSafe, rowInset) + button;
+                var chinProbe = ProbeBand(new CGRect(_notchOnLeft ? width - strip : 0, 0, strip, height),
+                    UIViewLayoutRegionAdaptivityAxis.Vertical);
+                control = new EdgeInsets(chinProbe.Bottom, 0, chinProbe.Top, phone ? plain.Bottom : chinSafe);
+                controlOrigin = "下巴侧列探测";
+            }
+        }
+        LogPhoneBands(plain, lead, control, controlOrigin);
         // 分析栏瓦片从安全区前导边起排，主轴长度必须扣掉起点与末端安全区，否则末端瓦片会被屏幕边缘截掉。
         double analysisMain = portrait
-            ? Math.Max(1, width - phoneSafe.Left - phoneSafe.Right)
-            : Math.Max(1, height - phoneSafe.Top - phoneSafe.Bottom);
+            ? Math.Max(1, width - plain.Left - plain.Right)
+            : Math.Max(1, height - plain.Top - plain.Bottom);
         bool filmVisible = _main.IsThumbnailViewVisible;
         bool controlVisible = _main.IsControlViewVisible;
         bool analysisVisible = _main.IsAnalysisViewVisible;
@@ -884,7 +957,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
             NotchOnLeft: _notchOnLeft,
             Width: width,
             Height: height,
-            Safe: phoneSafe,
+            Safe: plain,
+            LeadBand: lead,
+            ControlBand: control,
             FilmVisible: filmVisible,
             ControlVisible: controlVisible,
             AnalysisVisible: analysisVisible,
@@ -897,8 +972,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
             ButtonSize: button,
             EdgeMargin: DesignTokens.ShellPhoneEdgeMargin,
             RowInset: rowInset,
-            GroupGap: DesignTokens.ShellGlassGroupGap,
-            BareGap: bareGap);
+            GroupGap: DesignTokens.ShellGlassGroupGap);
         _phoneSlotsInput = input;
         var slots = PhoneScreenLayout.Compute(in input);
         _phoneSlots = slots;
@@ -937,10 +1011,17 @@ internal sealed class iOSNativeRootViewController : UIViewController
                 _filmstrip.ScrollToCurrent();
             }
         }
+        // 胶片条贯穿整个主轴，卡片停在栏位内缘：把「停靠线 − 共享内边距」交给布局当额外的两端主轴留白。
+        var padding = slots.FilmstripPadding;
+        _filmstrip.SetEdgePadding(
+            Math.Max(0, (portrait ? padding.Left : padding.Top) - (portrait ? FilmstripGeometry.HorizontalPadding : FilmstripGeometry.TopPadding)),
+            Math.Max(0, (portrait ? padding.Right : padding.Bottom) - (portrait ? FilmstripGeometry.HorizontalPadding : FilmstripGeometry.BottomPadding)));
+        // 横屏胶片条从筛选/更多与上下张两组控件下方滚过，由系统滚动边缘效果压暗，不手调模糊。
+        SetFilmstripEdgeEffects(!portrait);
 
         _analysisPane.Frame = ToFrame(slots.Analysis);
         _analysisPane.Hidden = !analysisVisible;
-        if (analysisVisible) _analysisPane.Arrange(portrait, analysisMain, portrait ? phoneSafe.Left : phoneSafe.Top);
+        if (analysisVisible) _analysisPane.Arrange(portrait, analysisMain, portrait ? plain.Left : plain.Top);
         else
         {
             _analysisPane.ClearDetailHighlight();
@@ -1046,40 +1127,73 @@ internal sealed class iOSNativeRootViewController : UIViewController
     }
 
     /// <summary>
-    /// 手机形态安全区：真实安全区与「带圆角适应的安全区」逐边取大，横竖屏各取对应轴。
-    /// 两组值变化时打一行控制台日志，便于核对刘海、圆角与 Home 指示条的避让。
+    /// 探测一条贴边元素带必须保持的<b>绝对舞台缘距离</b>：把探针放进该带的舞台矩形，读它在
+    /// <paramref name="axis"/> 轴上的安全区内边距（含圆角、刘海与窗口控件适应），再加上探针自身到各舞台边的距离。
+    /// 探针就挂在舞台上，分屏/限宽舞台因此自动按真实舞台边界计算。
     /// </summary>
-    /// <param name="portrait">是否竖屏排布。</param>
-    /// <param name="safe">真实安全区。</param>
-    /// <returns>逐边取大的安全区。</returns>
-    private EdgeInsets PhoneSafeInsets(bool portrait, UIEdgeInsets safe)
+    /// <param name="frameInStage">探针在舞台坐标中的矩形（取该带实际占据的一行或一列）。</param>
+    /// <param name="axis">带的延伸轴：横带取水平适应值，竖列取垂直适应值。</param>
+    /// <returns>四边到舞台缘的绝对距离。</returns>
+    private EdgeInsets ProbeBand(CGRect frameInStage, UIViewLayoutRegionAdaptivityAxis axis)
     {
-        var region = UIViewLayoutRegion.CreateSafeAreaLayoutRegion(portrait
-            ? UIViewLayoutRegionAdaptivityAxis.Horizontal
-            : UIViewLayoutRegionAdaptivityAxis.Vertical);
-        var adapted = View!.GetEdgeInsets(region);
-        // 圆角适应值按根视图给出；分屏舞台未覆盖的边（例如右缘被舞台截断）同样要扣除。
-        var stage = _stage.Frame;
-        var rootBounds = View!.Bounds;
-        var adaptedVisible = new UIEdgeInsets(
-            (nfloat)Math.Max(0, (double)adapted.Top - (double)stage.Y),
-            (nfloat)Math.Max(0, (double)adapted.Left - (double)stage.X),
-            (nfloat)Math.Max(0, (double)adapted.Bottom - ((double)rootBounds.Height - (double)stage.GetMaxY())),
-            (nfloat)Math.Max(0, (double)adapted.Right - ((double)rootBounds.Width - (double)stage.GetMaxX())));
-        adapted = adaptedVisible;
-        string summary = FormattableString.Invariant(
-            $"safe(T{(double)safe.Top:0.##} L{(double)safe.Left:0.##} B{(double)safe.Bottom:0.##} R{(double)safe.Right:0.##}) corner(T{(double)adapted.Top:0.##} L{(double)adapted.Left:0.##} B{(double)adapted.Bottom:0.##} R{(double)adapted.Right:0.##})");
-        if (!string.Equals(summary, _phoneSafeSummary, StringComparison.Ordinal))
-        {
-            _phoneSafeSummary = summary;
-            Console.WriteLine($"[Native] 手机形态安全区 {summary}");
-        }
-
+        var insets = ProbeInsets(frameInStage, axis);
+        var stage = _stage.Bounds;
         return new EdgeInsets(
-            Math.Max((double)safe.Left, (double)adapted.Left),
-            Math.Max((double)safe.Top, (double)adapted.Top),
-            Math.Max((double)safe.Right, (double)adapted.Right),
-            Math.Max((double)safe.Bottom, (double)adapted.Bottom));
+            (double)frameInStage.X + (double)insets.Left,
+            (double)frameInStage.Y + (double)insets.Top,
+            (double)stage.Width - (double)frameInStage.GetMaxX() + (double)insets.Right,
+            (double)stage.Height - (double)frameInStage.GetMaxY() + (double)insets.Bottom);
+    }
+
+    /// <summary>
+    /// 把探针放到舞台上的指定矩形，读取带圆角/刘海适应的相对内边距（未换算成舞台缘距离）。
+    /// 供元素带探测与验收的「控件完全落在安全区内」核对共用。
+    /// </summary>
+    /// <param name="frameInStage">探针在舞台坐标中的矩形。</param>
+    /// <param name="axis">适应轴。</param>
+    /// <returns>相对探针自身的内边距。</returns>
+    internal UIEdgeInsets ProbeInsets(CGRect frameInStage, UIViewLayoutRegionAdaptivityAxis axis)
+    {
+        _bandProbe.Frame = frameInStage;
+        _bandProbe.LayoutIfNeeded();
+        return _bandProbe.GetEdgeInsets(UIViewLayoutRegion.CreateSafeAreaLayoutRegion(axis));
+    }
+
+    /// <summary>三条贴边带的取值变化时打一行控制台日志，便于核对刘海、圆角与 Home 指示条的避让来源。</summary>
+    /// <param name="plain">系统安全区。</param>
+    /// <param name="lead">贴角前导带。</param>
+    /// <param name="control">控制带。</param>
+    /// <param name="controlOrigin">控制带的来源说明。</param>
+    private void LogPhoneBands(EdgeInsets plain, EdgeInsets lead, EdgeInsets control, string controlOrigin)
+    {
+        string summary = FormattableString.Invariant(
+            $"safe(T{plain.Top:0.##} L{plain.Left:0.##} B{plain.Bottom:0.##} R{plain.Right:0.##}) lead(T{lead.Top:0.##} L{lead.Left:0.##} B{lead.Bottom:0.##} R{lead.Right:0.##}) control(T{control.Top:0.##} L{control.Left:0.##} B{control.Bottom:0.##} R{control.Right:0.##}) 控制带={controlOrigin}");
+        if (string.Equals(summary, _phoneBandSummary, StringComparison.Ordinal)) return;
+        _phoneBandSummary = summary;
+        Console.WriteLine($"[Native] 手机形态安全区 {summary}");
+    }
+
+    /// <summary>
+    /// 胶片条的滚动边缘效果（iOS 26 原生）：手机横屏时把顶端筛选/更多合体与底端上下张登记为滚动边缘元素，
+    /// 卡片从它们下方滚过时由系统给出边缘效果；其它形态摘下同一批交互对象。
+    /// </summary>
+    /// <param name="landscape">是否手机横屏。</param>
+    private void SetFilmstripEdgeEffects(bool landscape)
+    {
+        AttachEdgeInteraction(_phoneFilterMore, _filmstripTopEdge, landscape);
+        AttachEdgeInteraction(_phoneNavigation, _filmstripBottomEdge, landscape);
+    }
+
+    /// <summary>把滚动边缘交互挂到元素上或摘下（只在状态变化时动视图）。</summary>
+    /// <param name="host">元素视图。</param>
+    /// <param name="interaction">滚动边缘交互。</param>
+    /// <param name="attached">是否应挂接。</param>
+    private static void AttachEdgeInteraction(UIView host, IUIInteraction interaction, bool attached)
+    {
+        bool present = host.Interactions.Contains(interaction);
+        if (attached == present) return;
+        if (attached) host.AddInteraction(interaction);
+        else host.RemoveInteraction(interaction);
     }
 
     /// <summary>命令的读屏名称：取共享命令表名称与主/次绑定（与桌面悬停提示同一文案）。</summary>

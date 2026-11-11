@@ -18,7 +18,8 @@ namespace PhotoViewer.iOS.Native;
 /// iPhone 竖屏与两种横屏刘海方向（真实 <c>RequestGeometryUpdate</c> 旋转）、iPad 四种布局模式与
 /// 1/3、1/2、2/3 限宽分屏（舞台容器 + 紧凑尺寸类别覆盖），每个配置遍历栏位显隐组合，断言：
 /// 形态判定、手机槽位与实际视图 frame、主图适应区内边距与满舞台、适应区与可见控件/栏背景不相交、
-/// 按钮命中区、圆角安全区、横屏镜像与控制列次序、筛选与更多菜单结构、切换保持当前照片与缩放位置、
+/// 按钮命中区、圆角与刘海安全区（控件不贴近该带安全区）、胶片条两端停靠与横屏滚动边缘效果、
+/// 横屏镜像与控制列次序、旋转前后控制列到屏幕边的距离不变、筛选与更多菜单结构、切换保持当前照片与缩放位置、
 /// 放大后照片垫在栏位下方。带 <c>--pv-native-ui-snapshots</c> 时把阶段名写入
 /// <c>Documents/PhotoViewer/native-ui-snapshot-stage.txt</c> 并停留供外部截图。
 /// 需要与 <c>--pv-open &lt;同一目录&gt;</c> 一起使用；所有临时设置、栏位显隐、方向与覆盖在收尾还原。
@@ -165,7 +166,7 @@ internal static class iOSNativeFormCheck
                         VerifyControlColumn(root, combo.Name, scope);
                     if (config.Kind == SetupKind.Split && combo.Name == "all")
                         VerifySplitStage(root, config, scope);
-                    lines.Add($"PASS {scope}：形态/槽位/避让/可见性/命中区/安全区/菜单结构通过" +
+                    lines.Add($"PASS {scope}：形态/槽位/避让/可见性/命中区/圆角安全区/胶片条两端/菜单结构通过" +
                         $"（胶片{OnOff(combo.Film)} 控制{OnOff(combo.Control)} 分析{OnOff(combo.Analysis)}" +
                         $"{(combo.ShowNavigation ? " 有导航" : " 无导航")}{(combo.NoExif ? " 无EXIF" : "")}）");
                     if (snapshots && combo.Name == "all") await HoldAsync(config.Name, lines);
@@ -185,6 +186,7 @@ internal static class iOSNativeFormCheck
                 }
             }
 
+            if (phoneDevice) await VerifyRotationInvarianceAsync(root, main, workingExif, lines);
             await VerifySwitchKeepsPhotoAsync(root, main, configs);
             await VerifyZoomedAsync(root, lines);
             if (!filterMutationChecked) await VerifyFilterMutationAsync(root, main, lines);
@@ -383,14 +385,22 @@ internal static class iOSNativeFormCheck
                 $"{scope} 刘海方向与界面方向不符：方向 {CurrentOrientation(root)}，刘海在左={root.NotchOnLeft}");
     }
 
-    /// <summary>核对槽位/分区避让、主图满舞台、适应区不相交、命中区与安全区。</summary>
+    /// <summary>核对槽位/分区避让、主图满舞台、适应区不相交、命中区、圆角安全区与胶片条两端。</summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="combo">组合。</param>
     /// <param name="scope">报告范围名。</param>
     private static void VerifyGeometry(iOSNativeRootViewController root, string scope)
     {
-        if (root.Form != ScreenForm.Wide) VerifyPhoneGeometry(root, scope);
-        else VerifyWideGeometry(root, scope);
+        if (root.Form != ScreenForm.Wide)
+        {
+            VerifyPhoneGeometry(root, scope);
+            VerifyCornerRegion(root, scope);
+            VerifyFilmstripEdges(root, scope);
+        }
+        else
+        {
+            VerifyWideGeometry(root, scope);
+        }
         VerifyFitPlacement(root, scope);
         VerifyFitAvoidance(root, scope);
         if (root.Form != ScreenForm.Wide) VerifyHitTargets(root, scope);
@@ -447,6 +457,177 @@ internal static class iOSNativeFormCheck
         }
     }
 
+    /// <summary>
+    /// 圆角与刘海安全区：按每个可见手机控件的舞台矩形分别探测水平、垂直两种安全区布局区域——
+    /// 探测到的相对内边距就是该带必须保持的窗口缘距离，核对控件自身到对应舞台边的距离不小于它，
+    /// 控件因此不会压进圆角与刘海的裁切区。横屏例外只落在贴边的那一侧：刘海侧按钮列（筛选/更多合体、
+    /// 上下张）允许刘海侧贴近，下巴侧控制列（缩放增强、星级、EXIF）允许下巴侧贴近；竖屏任何一侧都不允许。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="scope">报告范围名。</param>
+    private static void VerifyCornerRegion(iOSNativeRootViewController root, string scope)
+    {
+        bool portrait = root.Form == ScreenForm.PhonePortrait;
+        var stage = root.Stage.Bounds;
+        var targets = new List<(string Name, UIView View, string Allowed)>();
+        if (portrait)
+        {
+            targets.Add(("Filter", root.PhoneFilterButton, string.Empty));
+            targets.Add(("More", root.PhoneMoreButton, string.Empty));
+            targets.Add(("Navigation", root.PhoneNavigationGroup, string.Empty));
+            targets.Add(("FitEnhance", root.PhoneFitEnhanceGroup, string.Empty));
+            targets.Add(("Rating", root.PhoneRatingPlaceholder, string.Empty));
+            targets.Add(("Exif", root.PhoneExifPlaceholder, string.Empty));
+        }
+        else
+        {
+            string notchSide = root.NotchOnLeft ? "Left" : "Right";
+            string chinSide = root.NotchOnLeft ? "Right" : "Left";
+            targets.Add(("FilterMore", root.PhoneFilterMoreGroup, notchSide));
+            targets.Add(("Navigation", root.PhoneNavigationGroup, notchSide));
+            targets.Add(("FitEnhance", root.PhoneFitEnhanceGroup, chinSide));
+            targets.Add(("Rating", root.PhoneRatingPlaceholder, chinSide));
+            targets.Add(("Exif", root.PhoneExifPlaceholder, chinSide));
+        }
+
+        void Verify(string name, CGRect frame, string allowed, string edge, double required, double distance)
+        {
+            if (required <= Tolerance) return;
+            if (distance >= required - Tolerance) return;
+            if (string.Equals(edge, allowed, StringComparison.Ordinal)) return;
+            throw new InvalidOperationException(
+                $"{scope} 控件 {name} {CGRect(frame)} 距{edge}边 {distance:0.##} 小于该带安全区 {required:0.##}" +
+                $"（本方向只允许 {(allowed.Length == 0 ? "无" : allowed)} 侧贴近）");
+        }
+
+        foreach (var (name, view, allowed) in targets)
+        {
+            if (!IsVisible(root, view)) continue;
+            var frame = FrameInStage(root, view);
+            var horizontal = root.ProbeInsets(frame, UIViewLayoutRegionAdaptivityAxis.Horizontal);
+            var vertical = root.ProbeInsets(frame, UIViewLayoutRegionAdaptivityAxis.Vertical);
+            Verify(name, frame, allowed, "Left", (double)horizontal.Left, (double)frame.X);
+            Verify(name, frame, allowed, "Right", (double)horizontal.Right, (double)stage.Width - (double)frame.GetMaxX());
+            Verify(name, frame, allowed, "Top", (double)vertical.Top, (double)frame.Y);
+            Verify(name, frame, allowed, "Bottom", (double)vertical.Bottom, (double)stage.Height - (double)frame.GetMaxY());
+        }
+    }
+
+    /// <summary>
+    /// 胶片条两端：主轴贯穿整个舞台、卡片停在栏位内缘的停靠线上；横屏把顶端筛选/更多与底端上下张登记为滚动边缘元素，
+    /// 竖屏不挂接。检查过程会滚到两端再还原原偏移。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="scope">报告范围名。</param>
+    private static void VerifyFilmstripEdges(iOSNativeRootViewController root, string scope)
+    {
+        var film = root.Filmstrip;
+        var collection = film.Collection;
+        var stage = root.Stage.Bounds;
+        bool portrait = root.Form == ScreenForm.PhonePortrait;
+
+        var top = root.FilmstripTopEdgeInteraction;
+        var bottom = root.FilmstripBottomEdgeInteraction;
+        bool topAttached = root.PhoneFilterMoreGroup.Interactions.Contains(top);
+        bool bottomAttached = root.PhoneNavigationGroup.Interactions.Contains(bottom);
+        if (portrait)
+        {
+            if (topAttached || bottomAttached)
+                throw new InvalidOperationException($"{scope} 竖屏仍挂接胶片条滚动边缘效果");
+        }
+        else
+        {
+            if (!topAttached || !bottomAttached)
+                throw new InvalidOperationException(
+                    $"{scope} 横屏未挂接胶片条滚动边缘效果（顶部={topAttached}，底部={bottomAttached}）");
+            if (!ReferenceEquals(top.ScrollView, collection) || !ReferenceEquals(bottom.ScrollView, collection))
+                throw new InvalidOperationException($"{scope} 滚动边缘效果没有指向胶片条集合视图");
+        }
+
+        if (!IsVisible(root, film) || film.DisplayCount == 0) return;
+        // 手机控件必须压在胶片条之上：横屏胶片条从筛选/更多与上下张两组控件下方滚过。
+        var subviews = root.Stage.Subviews;
+        int filmIndex = Array.IndexOf(subviews, film);
+        int topIndex = Array.IndexOf(subviews, root.PhoneFilterMoreGroup);
+        int bottomIndex = Array.IndexOf(subviews, root.PhoneNavigationGroup);
+        if (filmIndex < 0 || topIndex < filmIndex || bottomIndex < filmIndex)
+            throw new InvalidOperationException(
+                $"{scope} 手机控件未压在胶片条之上（胶片 {filmIndex}，筛选更多 {topIndex}，上下张 {bottomIndex}）");
+        var filmFrame = FrameInStage(root, film);
+        if (portrait)
+        {
+            if (Math.Abs((double)filmFrame.X) > Tolerance || Math.Abs((double)filmFrame.GetMaxX() - (double)stage.Width) > Tolerance)
+                throw new InvalidOperationException(
+                    $"{scope} 竖屏胶片条未横贯舞台：{CGRect(filmFrame)}，舞台宽 {stage.Width:0.#}");
+        }
+        else if (Math.Abs((double)filmFrame.Y) > Tolerance || Math.Abs((double)filmFrame.GetMaxY() - (double)stage.Height) > Tolerance)
+        {
+            throw new InvalidOperationException(
+                $"{scope} 横屏胶片条未纵贯舞台：{CGRect(filmFrame)}，舞台高 {stage.Height:0.#}");
+        }
+
+        var padding = root.PhoneSlots.FilmstripPadding;
+        double lead = portrait ? padding.Left : padding.Top;
+        double trail = portrait ? padding.Right : padding.Bottom;
+        var document = film.DocumentSize;
+        var viewport = collection.Bounds.Size;
+        double mainDocument = portrait ? (double)document.Width : (double)document.Height;
+        double mainViewport = portrait ? (double)viewport.Width : (double)viewport.Height;
+        double limit = portrait ? (double)stage.Width : (double)stage.Height;
+        var saved = collection.ContentOffset;
+        try
+        {
+            SetMainOffset(collection, portrait, 0);
+            var first = CardStageFrame(root, 0)
+                ?? throw new InvalidOperationException($"{scope} 胶片条滚动到起点后没有首张卡片几何");
+            double start = portrait ? (double)first.X : (double)first.Y;
+            if (start < lead - 1)
+                throw new InvalidOperationException(
+                    $"{scope} 首张卡片起点 {start:0.#} 越过前导停靠线 {lead:0.#}（即将滚入栏位下方）");
+
+            SetMainOffset(collection, portrait, Math.Max(0, mainDocument - mainViewport));
+            var last = CardStageFrame(root, film.DisplayCount - 1)
+                ?? throw new InvalidOperationException($"{scope} 胶片条滚动到末端后没有末张卡片几何");
+            double end = portrait ? (double)last.GetMaxX() : (double)last.GetMaxY();
+            if (end > limit - trail + 1)
+                throw new InvalidOperationException(
+                    $"{scope} 末张卡片末端 {end:0.#} 越过末端停靠线 {limit - trail:0.#}（{(portrait ? "右侧" : "下方")}留白 {trail:0.#}）");
+        }
+        finally
+        {
+            collection.SetContentOffset(saved, false);
+            collection.LayoutIfNeeded();
+        }
+    }
+
+    /// <summary>把胶片条主轴滚到指定偏移（交叉轴保持不变）。</summary>
+    /// <param name="collection">胶片条集合视图。</param>
+    /// <param name="portrait">是否竖屏（横向胶片条）。</param>
+    /// <param name="offset">主轴偏移。</param>
+    private static void SetMainOffset(UICollectionView collection, bool portrait, double offset)
+    {
+        var current = collection.ContentOffset;
+        var target = portrait ? new CGPoint(offset, current.Y) : new CGPoint(current.X, offset);
+        collection.SetContentOffset(target, false);
+        collection.LayoutIfNeeded();
+    }
+
+    /// <summary>卡片在舞台坐标中的矩形：胶片条 frame 原点 + 布局给出的文档坐标 − 当前内容偏移。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="index">显示快照索引。</param>
+    /// <returns>舞台坐标矩形；索引越界返回 null。</returns>
+    private static CGRect? CardStageFrame(iOSNativeRootViewController root, int index)
+    {
+        var film = root.Filmstrip;
+        if (film.FrameAt(index) is not { } card) return null;
+        var frame = FrameInStage(root, film);
+        var offset = film.ContentOffset;
+        return new CGRect(
+            (double)frame.X + (double)card.X - (double)offset.X,
+            (double)frame.Y + (double)card.Y - (double)offset.Y,
+            (double)card.Width, (double)card.Height);
+    }
+
     /// <summary>宽形态：主图满舞台、分区避让作为适应区内边距。</summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="scope">报告范围名。</param>
@@ -471,7 +652,7 @@ internal static class iOSNativeFormCheck
 
     /// <summary>
     /// 适应区与其他元素：可见控件/占位/胶片条/分析栏/栏背景都不与适应区相交；
-    /// 不在栏背景内的裸控件按 BareGap 外扩后也不相交；适应态照片落在适应区内并至少一轴贴边。
+    /// 不在栏背景内的裸控件按行内间距（透明栏规则）外扩后也不相交；适应态照片落在适应区内并至少一轴贴边。
     /// </summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="scope">报告范围名。</param>
@@ -524,10 +705,10 @@ internal static class iOSNativeFormCheck
             if (Intersects(fit, frame))
                 throw new InvalidOperationException($"{scope} {name} {CGRect(frame)} 与适应区 {CGRect(fit)} 相交");
             if (bars.Any(bar => Contains(bar, frame))) continue;
-            double bare = phone ? root.PhoneSlotsInput.BareGap : 0;
+            double bare = phone ? root.PhoneSlotsInput.RowInset : 0;
             if (Intersects(fit, Expand(frame, bare)))
                 throw new InvalidOperationException(
-                    $"{scope} 裸控件 {name} {CGRect(frame)} 按 BareGap {bare:0.#} 外扩后与适应区 {CGRect(fit)} 相交");
+                    $"{scope} 裸控件 {name} {CGRect(frame)} 按行内间距 {bare:0.#} 外扩后与适应区 {CGRect(fit)} 相交");
         }
         foreach (var bar in bars)
         {
@@ -887,6 +1068,58 @@ internal static class iOSNativeFormCheck
         lines.Add($"PASS {scope}：刘海左/右两组槽位与主图避让互为水平镜像（宽 {width:0.#}）");
     }
 
+    /// <summary>
+    /// 旋转不变性（iPhone）：竖屏底行与横屏控制列是同一排按钮，旋转后离屏幕边等距。
+    /// 关闭上下张后记录竖屏基准，再旋转到横屏核对：下巴侧间距 = 竖屏底部间距、
+    /// 控制列上间距 = 竖屏右侧间距、星级末端间距 = 竖屏星级起点（±0.5）。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="workingExif">当前启用的 EXIF 显示项。</param>
+    /// <param name="lines">报告行。</param>
+    private static async Task VerifyRotationInvarianceAsync(iOSNativeRootViewController root, MainViewModel main,
+        HashSet<string> workingExif, List<string> lines)
+    {
+        var configs = BuildConfigs(phoneDevice: true);
+        var combo = new Combo("rotation-invariance", true, true, false, false, false);
+        await ApplyConfigAsync(root, main, configs[0]);
+        await ApplyComboAsync(root, main, combo, workingExif);
+        var portrait = root.PhoneSlots;
+        double portraitWidth = (double)root.Stage.Bounds.Width;
+        double portraitHeight = (double)root.Stage.Bounds.Height;
+        if (!Has(portrait.FitEnhance) || !Has(portrait.Rating))
+            throw new InvalidOperationException("旋转不变性：竖屏缺少缩放增强或星级槽位");
+        double portraitBottom = portraitHeight - portrait.FitEnhance.MaxY;
+        double portraitRight = portraitWidth - portrait.FitEnhance.MaxX;
+        double portraitRatingStart = portrait.Rating.X;
+
+        await ApplyConfigAsync(root, main, configs[1]);
+        await ApplyComboAsync(root, main, combo, workingExif);
+        var landscape = root.PhoneSlots;
+        double stageWidth = (double)root.Stage.Bounds.Width;
+        double stageHeight = (double)root.Stage.Bounds.Height;
+        if (Math.Abs(stageWidth - portraitHeight) > Tolerance || Math.Abs(stageHeight - portraitWidth) > Tolerance)
+            throw new InvalidOperationException(
+                $"旋转不变性：横屏舞台 {stageWidth:0.#}×{stageHeight:0.#} 不是竖屏 {portraitWidth:0.#}×{portraitHeight:0.#} 的转置");
+        if (!Has(landscape.FitEnhance) || !Has(landscape.Rating))
+            throw new InvalidOperationException("旋转不变性：横屏缺少缩放增强或星级槽位");
+
+        double chinGap = root.NotchOnLeft ? stageWidth - landscape.FitEnhance.MaxX : landscape.FitEnhance.X;
+        if (Math.Abs(chinGap - portraitBottom) > Tolerance)
+            throw new InvalidOperationException(
+                $"旋转不变性：控制列下巴间距 {chinGap:0.##} ≠ 竖屏底部间距 {portraitBottom:0.##}");
+        double topGap = landscape.FitEnhance.Y;
+        if (Math.Abs(topGap - portraitRight) > Tolerance)
+            throw new InvalidOperationException(
+                $"旋转不变性：控制列上间距 {topGap:0.##} ≠ 竖屏右侧间距 {portraitRight:0.##}");
+        double ratingEndGap = stageHeight - landscape.Rating.MaxY;
+        if (Math.Abs(ratingEndGap - portraitRatingStart) > Tolerance)
+            throw new InvalidOperationException(
+                $"旋转不变性：星级末端间距 {ratingEndGap:0.##} ≠ 竖屏星级起点 {portraitRatingStart:0.##}");
+        lines.Add($"PASS 旋转不变性：控制列下巴间距 {chinGap:0.##}=竖屏底部 {portraitBottom:0.##}，" +
+            $"上间距 {topGap:0.##}=竖屏右侧 {portraitRight:0.##}，星级末端 {ratingEndGap:0.##}=竖屏星级起点 {portraitRatingStart:0.##}");
+    }
+
     /// <summary>三个指定配置在各避让参数下的截图候选（全部显示 / 分析栏隐藏）。</summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="main">共享主 VM。</param>
@@ -906,7 +1139,7 @@ internal static class iOSNativeFormCheck
                 {
                     var combo = new Combo(analysis ? "tuning-all" : "tuning-analysis-off", true, true, analysis, true, false);
                     await ApplyComboAsync(root, main, combo, workingExif);
-                    await UiDispatcher.InvokeAsync(() => root.AvoidanceTuningOverride = (tuning, tuning));
+                    await UiDispatcher.InvokeAsync(() => root.AvoidanceTuningOverride = tuning);
                     await SettleAsync(root);
                     string state = analysis ? "all" : "analysis-off";
                     await HoldAsync($"{config.Name}-tuning-{tuning:0}-{state}", lines);

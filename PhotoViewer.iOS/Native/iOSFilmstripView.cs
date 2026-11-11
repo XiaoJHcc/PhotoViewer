@@ -12,12 +12,21 @@ namespace PhotoViewer.iOS.Native;
 /// <summary>
 /// 单轴胶片栏布局（UICollectionViewLayout）：几何全部取自共享 <see cref="FilmstripGeometry"/>——
 /// 96×144 卡片、10/5/10 内边距、横向首项居中、文档主轴长度与可见项范围；索引顺序就是屏幕顺序。
-/// 宿主只决定主轴方向与视口，本类不重复任何尺寸常量。
+/// 宿主只决定主轴方向、视口与两端的主轴内容留白，本类不重复任何尺寸常量。
+/// <para>主轴内容留白（<see cref="MainLead"/>/<see cref="MainTrail"/>）把共享几何整体内缩到「内视口」上：
+/// 文档主轴长度 = 共享文档长度（按视口减去两端留白算）+ 两端留白，每张卡片再沿主轴后移前导留白，
+/// 因此短列表仍不滚动、横向短列表在内视口里居中。默认 0 时与不带留白逐位一致。</para>
 /// </summary>
 internal sealed class iOSFilmstripLayout : UICollectionViewLayout
 {
     /// <summary>行布局为横向单行，列布局为纵向单列。</summary>
     internal bool Horizontal { get; set; } = true;
+
+    /// <summary>主轴前导内容留白：卡片停靠线到视口前导边的距离（宽形态与相似面板保持 0）。</summary>
+    internal double MainLead { get; set; }
+
+    /// <summary>主轴末端内容留白。</summary>
+    internal double MainTrail { get; set; }
 
     /// <summary>
     /// 项目数来源（宿主显示快照）。必须由宿主提供：UICollectionView 在 reloadData 之后、
@@ -32,13 +41,29 @@ internal sealed class iOSFilmstripLayout : UICollectionViewLayout
     /// <summary>滚动视口尺寸（iOS 上集合视图本身就是滚动视图）。</summary>
     private CGSize Viewport => CollectionView?.Bounds.Size ?? CGSize.Empty;
 
-    /// <summary>文档尺寸：主轴按项目数延伸，空列表与短列表至少覆盖视口，避免多余空白与无法滚动。</summary>
+    /// <summary>主轴内视口长度：视口减去两端内容留白，共享几何的居中与文档延伸都按这段长度计算。</summary>
+    private double InnerMain => Math.Max(1, (Horizontal ? (double)Viewport.Width : (double)Viewport.Height) - MainLead - MainTrail);
+
+    /// <summary>共享几何使用的文档宽（横向为内视口上的文档主轴长度，纵向只用于跨轴居中）。</summary>
+    private double SharedContentWidth
+        => Horizontal ? (double)CollectionViewContentSize.Width - MainLead - MainTrail : (double)Viewport.Width;
+
+    /// <summary>
+    /// 文档尺寸：主轴按项目数延伸（共享文档长度 + 两端留白），空列表与短列表至少覆盖视口，避免多余空白与无法滚动。
+    /// </summary>
     public override CGSize CollectionViewContentSize
     {
         get
         {
-            var content = FilmstripGeometry.ContentSize(Horizontal, (double)Viewport.Width, (double)Viewport.Height, Count);
-            return new CGSize(content.Width, content.Height);
+            var viewport = Viewport;
+            var inner = FilmstripGeometry.ContentSize(
+                Horizontal,
+                Horizontal ? InnerMain : (double)viewport.Width,
+                Horizontal ? (double)viewport.Height : InnerMain,
+                Count);
+            return Horizontal
+                ? new CGSize((double)inner.Width + MainLead + MainTrail, inner.Height)
+                : new CGSize(inner.Width, (double)inner.Height + MainLead + MainTrail);
         }
     }
 
@@ -46,7 +71,7 @@ internal sealed class iOSFilmstripLayout : UICollectionViewLayout
     public override void PrepareLayout() { }
 
     /// <summary>
-    /// 单个卡片的固定几何，索引顺序即屏幕顺序。
+    /// 单个卡片的固定几何，索引顺序即屏幕顺序：共享矩形按内视口算出后再沿主轴后移前导留白。
     /// UIKit 只在数据源合法范围内查询；越界（数据源刚替换、旧索引尚未失效的防御路径）返回零尺寸属性，
     /// 既不给 UIKit 空引用，也不让越界索引落进任何卡片位置。
     /// </summary>
@@ -56,20 +81,31 @@ internal sealed class iOSFilmstripLayout : UICollectionViewLayout
     {
         var attributes = UICollectionViewLayoutAttributes.CreateForCell(indexPath);
         if (indexPath.Section != 0 || indexPath.Item < 0 || indexPath.Item >= Count) return attributes;
-        var card = FilmstripGeometry.ItemFrame(Horizontal, (int)indexPath.Item, Count, (double)CollectionViewContentSize.Width);
-        attributes.Frame = new CGRect(card.X, card.Y, card.Width, card.Height);
+        attributes.Frame = ItemFrame((int)indexPath.Item);
         return attributes;
     }
 
-    /// <summary>只创建与可见矩形相交的属性，保留 UICollectionView 的原生复用。</summary>
+    /// <summary>卡片在文档坐标中的矩形（已含主轴前导留白）。</summary>
+    /// <param name="index">项目索引。</param>
+    /// <returns>卡片矩形。</returns>
+    private CGRect ItemFrame(int index)
+    {
+        var card = FilmstripGeometry.ItemFrame(Horizontal, index, Count, SharedContentWidth);
+        return Horizontal
+            ? new CGRect(card.X + MainLead, card.Y, card.Width, card.Height)
+            : new CGRect(card.X, card.Y + MainLead, card.Width, card.Height);
+    }
+
+    /// <summary>只创建与可见矩形相交的属性，保留 UICollectionView 的原生复用；查询矩形先扣掉前导留白再交给共享范围计算。</summary>
     /// <param name="rect">可见矩形（文档坐标）</param>
     /// <returns>相交项目的布局属性。</returns>
     public override UICollectionViewLayoutAttributes[] LayoutAttributesForElementsInRect(CGRect rect)
     {
         if (Count <= 0) return [];
-        double contentWidth = (double)CollectionViewContentSize.Width;
-        var range = FilmstripGeometry.VisibleRange(Count, FilmstripGeometry.ItemStart(Horizontal, contentWidth, Count),
-            FilmstripGeometry.Step(Horizontal), Horizontal ? (double)rect.X : (double)rect.Y, Horizontal ? (double)rect.Width : (double)rect.Height);
+        var range = FilmstripGeometry.VisibleRange(Count, FilmstripGeometry.ItemStart(Horizontal, SharedContentWidth, Count),
+            FilmstripGeometry.Step(Horizontal),
+            (Horizontal ? (double)rect.X : (double)rect.Y) - MainLead,
+            Horizontal ? (double)rect.Width : (double)rect.Height);
         if (range.Last < range.First) return [];
         var attributes = new List<UICollectionViewLayoutAttributes>(range.Last - range.First + 1);
         for (int index = range.First; index <= range.Last; index++)
@@ -174,6 +210,25 @@ internal sealed class iOSFilmstripView : UIView
         _collection.ShowsVerticalScrollIndicator = !horizontal;
         _layout.InvalidateLayout();
         SetNeedsLayout();
+    }
+
+    /// <summary>
+    /// 设置主轴两端的内容留白：手机形态的胶片条贯穿整个主轴，卡片停在栏位内缘，两端留白因此由形态几何给出。
+    /// 留白改变会重算文档长度与卡片位置，随后把滚动偏移夹到新的合法范围；宽形态与相似面板保持 0。
+    /// </summary>
+    /// <param name="lead">主轴前导留白（点）。</param>
+    /// <param name="trail">主轴末端留白（点）。</param>
+    internal void SetEdgePadding(double lead, double trail)
+    {
+        lead = Math.Max(0, lead);
+        trail = Math.Max(0, trail);
+        if (Math.Abs(_layout.MainLead - lead) < .01 && Math.Abs(_layout.MainTrail - trail) < .01) return;
+        _layout.MainLead = lead;
+        _layout.MainTrail = trail;
+        _layout.InvalidateLayout();
+        _collection.LayoutIfNeeded();
+        ClampOffset();
+        ReportVisibleRange();
     }
 
     /// <summary>
@@ -299,7 +354,8 @@ internal sealed class iOSFilmstripView : UIView
     }
 
     /// <summary>
-    /// 把某一项居中（不含动画决策）：目标偏移由共享 <see cref="FilmstripGeometry.CenterOffset"/> 给出。
+    /// 把某一项居中（不含动画决策）：目标偏移由共享 <see cref="FilmstripGeometry.CenterOffset"/> 给出，
+    /// 卡片起点取布局属性（已含主轴前导留白）、文档长度取含留白的实际文档尺寸。
     /// 索引按显示快照取：快照里找不到当前照片时宁可不居中，也不把 live 列表的索引用到旧布局上。
     /// </summary>
     private void CenterOnCurrent()
