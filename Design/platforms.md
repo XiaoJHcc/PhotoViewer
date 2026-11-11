@@ -58,7 +58,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - iOS：`PhotoViewer.iOS/Native/iOSThumbnailCard.cs` 的 `iOSThumbnailCard`（几何、文件名 / 第二行 / 星级）。
   - Windows：`PhotoViewer.Windows/Native/WindowsThumbnailCard.cs`（`_name` 文件名、`_secondLine` 第二行与相似度条），`WindowsLayout` 转接共享 `FilmstripGeometry` 与 `film.*` / `color.*` 令牌。
   - Android：`PhotoViewer.Android/Native/AndroidThumbnailCard.cs` 的 `OnDraw`（圆角缩略图、第二行）与 `ShowCardMenu`（卡片菜单）。
-  - **FILM-05@ios / @android**：卡片星级 14 点不放大，触控评分由卡片上下文菜单补足。
+  - **FILM-05@ios / @android**：卡片星级不放大；直接触摸不响应星，评分由卡片长按的星级弹窗承担（RATING-07），两档卡片与长按入口的实现待替换。
 - **FILM-06**：评分与筛选连续性由共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs`（评分回填、暂留与筛选刷新）与各端评分写回路径承担；写回作用于组的全部实际来源（RATING-01/03），来源冲突的指示与浮窗见 [rating](#rating)（RATING-04）；写回失败一律走 [state](#state) 的 4 s 非模态提示条（macOS `PhotoViewer.Mac/Native/MacStatusToast.cs`、iOS `PhotoViewer.iOS/Native/iOSStatusToast.cs`）。
 - **追溯**：旧壳定位/动画的冻结几何与截图见 `Design/baseline/avalonia/`（旧视图源码只存在于 tag `avalonia-final` 之前的历史）；现行触发与定位逻辑在共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs`、`PhotoViewer/ViewModels/Main/ControlViewModel.cs`、`PhotoViewer/ViewModels/Main/FolderViewModel.cs`；iPad 侧在 `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs`、`PhotoViewer.iOS/Native/iOSPhotoView.cs`、`PhotoViewer.iOS/Native/iOSFilmstripView.cs`。
 
@@ -100,6 +100,11 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - **SHELL-04@mac / @ios**：偏好存储承载栏位显隐与窗口帧；Windows 走 `PhotoViewer.Windows/Native/WindowsNativePreferences.cs`、Android 走 `PhotoViewer.Android/Native/AndroidShellPreferences.cs`，键名与 macOS/iOS 相同。
 - **SHELL-05**：跨屏与显示变化。macOS `DidChangeBackingProperties`；iPad 旋转/分屏重建滚动基准；Windows `XamlRoot`/DPI 变化；Android `OnSizeChanged`/`SurfaceChanged`。
 - **SHELL-06**：窗口级输入边界。macOS 系统交通灯；Windows 系统标题栏与窗口按钮；触屏由长按菜单承担。
+- **SHELL-07、SHELL-08、SHELL-09、SHELL-11**：形态判定与手机槽位。共享 `PhotoViewer/Core/Settings/ScreenFormResolver.cs`（判定表）、`PhotoViewer.Shared/PhoneScreenLayout.cs`（竖横屏槽位与避让矩形）、`PhotoViewer.Shared/PhotoViewport.cs` 的 `SetFitInsets`（视图矩形与适应矩形分离）；iOS 侧在 `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs` 的手机槽位布局与旋转/分屏响应。
+  - **SHELL-07@ios**：尺寸类别取 `UITraitCollection.HorizontalSizeClass` / `VerticalSizeClass`，设备取 `UserInterfaceIdiom == Phone`，与用户布局模式一并交给共享判定函数；横屏的刘海侧按界面方向判定（`LandscapeRight` 为刘海在左），其他方向镜像。iPhone 上隐藏布局模式分组（SETTINGS-08@ios）。
+  - **SHELL-07@android**：尺寸类别映射到 `WindowSizeClass`（目标）。
+- **SHELL-10@ios**：贴角带各自放一块与该带等大的不可见探针视图，按它自身位置的带圆角适应安全区布局区域读取避让量——该接口按视图自身位置计算，整窗或屏幕中部的值不能套到每一条带。竖屏顶部行、竖屏底部行各取本行探针值，两行左右不强行对齐。横屏控制列沿用进程内缓存的竖屏底部行值（旋转后按钮原地不动）；若应用从横屏启动、尚未经历过竖屏布局，先按下巴侧列探针的现值落位，第一次竖屏布局之后改用竖屏底行值。
+- **SHELL-12@ios**：栏背景用 `UIVisualEffectView` + `UIBlurEffectStyle.SystemMaterialDark`；圆按钮用 `GlassButtonConfiguration`（`iOSGlassButtons.Round`）；合体按钮是一个 `UIGlassEffect` 交互胶囊容器加无底色分段（`iOSGlassButtonGroup`）；横屏两组按钮用 `UIScrollEdgeElementContainerInteraction` 登记为滚动边缘元素，胶片栏从其下方滚过时由系统出模糊。定制组件限于 RATING-07 控件、EXIF 块、卡片与筛选控件，其余不手调圆角、阴影、模糊半径或着色。
 - **SHELL-02@web**：浏览器标签页没有窗口装饰、隐藏标题栏、拖动区与标题栏双击；`?platform=mac` 配置档只用于与 macOS 几何比对。
 - **SHELL-03@web**：浏览器视口即窗口，允许小于 `shell.window.min.*`，布局按实际尺寸计算（主图至少 1 点）；不提供应用内全屏入口。
 - **SHELL-04@web**：栏位显隐与设置文档写 `localStorage`（键名同四端偏好存储）。
@@ -119,7 +124,8 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - **FILTER-07@win**：筛选条自带 `StackPanel` + 外边距 10，不消费共享 `FilterBarFrames`；几何值与令牌一致。
   - **FILTER-07@android**：手机窄屏使用紧凑控件宽；容纳时与 iPad 一样按版本实际项数整组居中，只有自然宽度超出安全内容区时才从前导 10 起排并横向滚动，控件宽度不压缩。列布局首控件只保留普通 `filter.margin`（10），不使用 macOS 的 42 点标题栏让位。
 - **FILTER-08**：菜单交互。macOS/iOS 用系统菜单；Windows 原生 `ComboBox`；Android 自绘菜单（行高约 40）。
-  - **FILTER-08@ios / @android**：触控下拉可点区 90×32，低于 44 点建议。
+  - **FILTER-08@ios**：手机单胶囊的菜单由 `PhotoViewer.iOS/Native/iOSFilterMenu.cs` 构建三个 `DisplayInline | SingleSelection` 分组，选项设 `KeepsMenuPresented`，点选后写回共享筛选状态、不关闭菜单；写回后就地重赋同一菜单并用 `UpdateVisibleMenu` 刷新勾选态，失焦才关闭（`iOSNativeRootViewController.RefreshPhoneMenus`）。
+  - **FILTER-08@ios / @android**：宽形态触控入口不足 44 点时按旧可点区登记为输入方式差异；手机形态入口按 SHELL-10 不小于 44×44。
 - **FILTER-07@web / FILTER-08@web**：无交通灯，列布局首控件从 `filter.margin` 起排；浏览器无原生下拉弹层，三个下拉按 FILTER-08 自绘外观（旧壳 Avalonia Fluent 深色），菜单与 MENU-03 共用同一自绘弹层组件。
 
 ## image
@@ -173,7 +179,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - Windows：`PhotoViewer.Windows/Native/WindowsControlBar.cs`（`Grid` + `WindowsWrapPanel`），控制栏自带 `ScrollViewer`（`_scroll`）保存并夹取偏移。
   - Android：`PhotoViewer.Android/Native/AndroidControlBar.cs`（单个自绘 `View`），置于 `AndroidControlBarScrollHost`（`AndroidNativeRootView._controlScrollHost`）滚动。
 - **TOOLBAR-03**：评分组。自绘控件禁用不换底色、只降内容强调；原生控件可用系统禁用外观但保持可辨、不近似隐藏（与 TOOLBAR-10 同一口径）；评分快捷命令统一画数字（0=叉）。冲突时 0 号换警示三角，字形、浮窗宿主与整组写入见 [rating](#rating)（RATING-04）。
-  - **TOOLBAR-03@ios**：评分按钮 30×30 低于 44 点，接受为平台差异，不做长按补偿。
+  - **TOOLBAR-03@ios**：评分组由 RATING-07 的自定义控件承担，不再按 30×30 按钮口径；宽形态当前仍为旧控件，手机槽位为占位视图。
 - **TOOLBAR-04**：命令组。桌面 tooltip 与移动端命令读屏名称统一为 `命令名（主 / 次）`，四端 C# 壳共用 `PhotoViewer/Core/Input/CommandTooltipText.cs` 拼接，键名仍由各端输入映射格式化；Web 在 `src/core/input.js` 实现同一文案。INPUT-13 只控制设置中的键鼠配置可见性；移动端不另造长按浮层。
   - 图标基准为 `icon.font`（uicons Regular Rounded）/ `icon.fontSolid`（实心星）与 `icon.*` 码位；Android 与 Web 直接使用该字体（Android `AndroidUiTheme.IconFontAsset`；Web 由 `PhotoViewer.Web/tools/subset-icons.py` 按令牌码位生成 woff2 子集）。
   - **TOOLBAR-04@mac / @ios**：命令图标与评分星用 SF Symbols（`PhotoViewer.Apple/AppleSymbolNames.cs`），语义同 `icon.command.*`。评分快捷命令为 `star.fill` 内叠数字（`PhotoViewer.Mac/Native/MacControlBar.cs`、`PhotoViewer.iOS/Native/iOSControlBar.cs` 的 `RatingDigitLabel`），0 为 `xmark`。
@@ -215,17 +221,18 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - Android：`PhotoViewer.Android/Native/AndroidNativeRootView.cs` 的 `ShowPhotoMenu`（自绘 `PopupWindow`）。
 - **MENU-03、MENU-04**：弹出与收回。macOS/iOS/Windows 用系统菜单；Android 自绘并夹取到屏幕内（`ShowPhotoMenu`）。
   - **MENU-03@android**：自绘弹层，定位与夹取自实现。
-  - **MENU-04@ios**：卡片菜单保留系统抬升，不移动列表布局。
-- **MENU-05**：卡片菜单。iOS `iOSContextMenus.Card`；Android `AndroidThumbnailCard.ShowCardMenu`；桌面无卡片菜单，用 tooltip + 星级按钮。
-  - **MENU-05@android**：标题与时间拆成两行原生外观；标题行不可点击。完整拍摄时间格式四端共用 `ShotTimeText.Format`（`PhotoViewer/Core/Platform/PhotoHintText.cs`）。
+  - **MENU-04@ios**：卡片星级弹窗不抬升卡片、不移动列表布局。
+- **MENU-05**：卡片入口。卡片菜单按修订后的 MENU-05 退役，改为长按/辅助点按打开星级弹窗（RATING-07）；当前实现仍在 iOS `iOSContextMenus.Card`、Android `AndroidThumbnailCard.ShowCardMenu`，桌面用 tooltip + 星级按钮。
+  - **MENU-05@android**：现有卡片菜单的标题与时间拆成两行原生外观；完整拍摄时间格式四端共用 `ShotTimeText.Format`（`PhotoViewer/Core/Platform/PhotoHintText.cs`），该格式沿用为星级弹窗条目。
 - **MENU-06**：主图菜单与 macOS 系统菜单栏均有前置图标。
   - **MENU-06@mac / @ios**：使用 SF Symbols，共用 `PhotoViewer.Apple/AppleSymbolNames.cs` 的 `Menu` 映射；Mac 独有「打开文件…」用 `doc`、应用菜单「退出 PhotoViewer」用 `power`，系统菜单栏与右键菜单一样显示图标。
   - **MENU-06@win**：`WindowsIcons` 提供同语义 Segoe Fluent 字形，普通项与勾选项都保留图标和原生勾选态。
   - **MENU-06@android / @web**：自绘菜单在勾选列后使用 `icon.menu.*` 的 uicons 字形，增强复用 `icon.command.toggleEnhance`，几何取 `menu.icon.*`。
 - **MENU-07**：不可用项由 `PhotoMenuCatalog` 按当前照片给出（无照片时「雾天增强」置灰，工具可打开空态）；macOS 关闭 `NSMenu` 自动启用，显示前同步。
+- **MENU-08**：手机形态「更多」按钮的菜单。iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs` 的 `BuildMoreMenu` 用 `UIDeferredMenuElement` 延迟构建，内容直接取共享 `PhotoMenuCatalog`，与主图长按菜单同源；每次展开重建并按共享状态刷新勾选。
 - **MENU-01@web**：不实现设置与工具窗口，主图菜单不生成「工具…/设置…」及其分组，其余项、顺序与勾选语义不变（SCOPE-01）。
 - **MENU-03@web**：主图菜单与卡片菜单为自绘弹层（MENU-03 自绘外观），夹在窗口内，键盘语义按 MENU-03；悬停提示同样自绘（`tooltip.*`）。
-- **MENU-05@web**：触屏（`pointerType=touch`）长按卡片弹卡片菜单；桌面右键卡片仍弹主图菜单。
+- **MENU-05@web**：触屏（`pointerType=touch`）长按卡片按旧规则弹卡片菜单，待随修订后的 MENU-05 替换为星级弹窗；桌面右键卡片仍弹主图菜单。
 
 ## input
 
@@ -236,14 +243,14 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
 - **INPUT-07@android**：长按候选由平台手势提前登记，按住时长从本轮 Down 真正送达视图起算；最终确认延到下一帧输入处理之后，并核对触摸轮次与活动状态（`AndroidPhotoView`）。正常静止按住的阈值不变。
 - **INPUT-07、INPUT-08**：菜单与录制。macOS 真实 `NSEvent` 录制；Windows `WindowsHotkeyRecorder`；触控优先设备在连接键盘/鼠标/触控板时使用同一录制语义。
 - **INPUT-13**：外设能力与快捷键控件可见性。桌面始终完整；触控优先设备按系统报告的连接状态增删键鼠专用控件。
-  - **INPUT-13@ios**：键盘/鼠标/触控板连接状态取系统通知；连接任一完整显示主/次绑定、录制、清空与冲突，仅直接触控隐藏全部键鼠相关控件但保留模型中的绑定配置；断开最后一个外设取消未完成录制并保留原绑定。Apple 修饰键映射在同一可见条件下显示。
+  - **INPUT-13@ios**：键盘/鼠标/触控板连接状态取系统通知；宽形态连接任一即完整显示主/次绑定、录制、清空与冲突，仅直接触控隐藏全部键鼠相关控件但保留模型中的绑定配置；断开最后一个外设取消未完成录制并保留原绑定。Apple 修饰键映射在同一可见条件下显示。手机形态按修订后的 INPUT-13 隐藏控制栏功能自定义与快捷键编辑，既有绑定照常生效（`PhotoViewer.iOS/Core/iOSNativeSettingsPresenter.cs` 待接）。
   - **INPUT-13@android**：连接状态取 `InputManager` 的设备增删；可见性与录制语义同 iOS，动态连接不重置工作副本、不弹软键盘。
   - **INPUT-13@mac / @win**：桌面保持完整快捷键设置；Apple 修饰键映射只在 macOS 且外设可见条件满足时显示（`PhotoViewer.Apple/AppleInputMapping.cs`）。
   - 直接触控的手势入口（按压显示绿框、长按菜单、单指轻扫翻页）按实际事件类型处理；连接鼠标或触控板后仍可使用悬停，不能把“触控平台”视为无悬停能力。具体事件映射见各端入口；键鼠设置可见性独立按 INPUT-13 的外设连接状态决定。
 - **INPUT-09**：预设/比例缩放入口同 IMAGE-04（各端 `ZoomPreset`）。
 - **INPUT-10**：无照片时按钮禁用不隐藏、打开类命令始终可用；入口由各端控制栏与空态命中层实现。
 - **INPUT-11**：Android `OnBackPressedCallback` 先关设置/工具 sheet 与菜单。
-- **INPUT-12**：触屏等价入口。卡片评分由卡片菜单补足（iOS `iOSContextMenus.Card`、Android `AndroidThumbnailCard.ShowCardMenu`）；焦点顺序无专项实现。
+- **INPUT-12**：触屏等价入口。卡片评分按修订后的 FILM-05 由长按星级弹窗补足（RATING-07），当前实现仍走卡片菜单（iOS `iOSContextMenus.Card`、Android `AndroidThumbnailCard.ShowCardMenu`）；焦点顺序无专项实现。
 - **INPUT-01@web**：浏览器保留 Ctrl/⌘+N，「打开文件」主绑定不可用，次绑定 Ctrl+O 与空态点击、菜单为等价入口。
 - **INPUT-04@web**：`WheelEvent` 没有精确/离散标志：`deltaMode` 为行/页，或像素模式下 `wheelDeltaY` 为 120 的整数倍且增量足够大时视为离散，其余为精确；Chromium/Safari 把触控板捏合投递为 ctrl+wheel，未按下物理 Ctrl 时按捏合处理。
 

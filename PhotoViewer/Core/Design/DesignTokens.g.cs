@@ -543,13 +543,13 @@ public static class DesignTokens
     public const double ShellFilebarContentWidth = 116.0;
     /// <summary>shell.filter.leadingInset（pt） SHELL-02：仅 macOS 列布局筛选条首控件顶边让位 = shell.titlebar.height + filter.margin（避开标题栏与交通灯）；iOS/Android 使用真实安全区与普通 filter.margin。行布局整组居中，Android 仅在自然宽度溢出时前导起排并滚动。</summary>
     public const double ShellFilterLeadingInset = 42.0;
-    /// <summary>shell.glass.button.size（pt） SHELL-01：圆玻璃按钮与合体按钮每段的边长；同时保证 44×44 的最小命中区。</summary>
+    /// <summary>shell.glass.button.size（pt） SHELL-08：圆玻璃按钮与合体按钮每段的边长；同时保证 44×44 的最小命中区。</summary>
     public const double ShellGlassButtonSize = 44.0;
-    /// <summary>shell.glass.group.gap（pt） SHELL-01：相邻按钮组（筛选、星级、缩放适应等）之间的间距。</summary>
+    /// <summary>shell.glass.group.gap（pt） SHELL-08：相邻按钮组（筛选、星级、缩放适应等）之间的间距。</summary>
     public const double ShellGlassGroupGap = 8.0;
-    /// <summary>shell.phone.edgeMargin（pt） SHELL-01：手机形态行/列元素到安全区边缘的横向边距。</summary>
+    /// <summary>shell.phone.edgeMargin（pt） SHELL-08：手机形态行/列元素到安全区边缘的横向边距。</summary>
     public const double ShellPhoneEdgeMargin = 16.0;
-    /// <summary>shell.phone.rowInset（pt） SHELL-01：手机形态行到安全区/栏缘的间距，也是栏背景超出元素的余量。</summary>
+    /// <summary>shell.phone.rowInset（pt） SHELL-11：手机形态行到安全区/栏缘的间距，也是栏背景超出元素的余量。</summary>
     public const double ShellPhoneRowInset = 8.0;
     /// <summary>shell.titlebar.backdrop.blurAmount（pt） SHELL-02：Windows 主图渲染器在标题栏下绘制亚克力时的高斯模糊标准差（与 WinUI AcrylicBrush 的 BlurAmount 同值，按物理倍率换算到像素）。</summary>
     public const double ShellTitlebarBackdropBlurAmount = 30.0;
