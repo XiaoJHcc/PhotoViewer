@@ -8,7 +8,7 @@ public enum RatingControlForm
     /// <summary>展开态：六格星排，沿槽位主轴居中。</summary>
     Expanded,
 
-    /// <summary>紧凑态：五颗叠压星铺满槽位主轴。</summary>
+    /// <summary>紧凑态：五颗星沿铺满槽位主轴的胶囊均匀分布，短时互相叠压。</summary>
     Compact,
 }
 
@@ -62,10 +62,7 @@ public static class RatingControlGeometry
     /// <summary>紧凑态胶囊最短主轴长度（88 点）。</summary>
     public static double CompactMinLength => DesignTokens.RatingCompactMinLength;
 
-    /// <summary>紧凑态相邻叠压星的中心距（9 点）。</summary>
-    public static double CompactStep => DesignTokens.RatingCompactStep;
-
-    /// <summary>紧凑态叠压星字号（16 点）。</summary>
+    /// <summary>紧凑态叠压星字号（18 点）。</summary>
     public static double CompactGlyph => DesignTokens.RatingCompactGlyphFontSize;
 
     /// <summary>紧凑态/卡片长按起手后视为点按、不预览的位移阈值（8 点）。</summary>
@@ -178,30 +175,38 @@ public static class RatingControlGeometry
         return main >= mainStart - halfPitch && main <= mainEnd + halfPitch;
     }
 
+    /// <summary>紧凑星簇的条目数：五颗星，冲突时另加最前的警示三角。</summary>
+    /// <param name="conflict">是否为冲突态。</param>
+    /// <returns>簇内条目数。</returns>
+    public static int CompactItemCount(bool conflict) => conflict ? SlotCount : SlotCount - 1;
+
     /// <summary>
-    /// 紧凑星簇中单个字形中心相对胶囊中心的主轴偏移。1–5 为星，0 为冲突警示三角
-    /// （仅在冲突时有效）；无冲突时星 k 中心为 (k−3)×步长，有冲突时三角在最前，
-    /// 之后空一格再接 1–5 星。横排向右为正（星 1 在左），竖排取反（星 1 在下，三角在最下）。
+    /// 紧凑星簇相邻条目的中心距：首末条目中心落在胶囊两端半圆的圆心（距端点半个控件厚度），
+    /// 其间均匀分布；胶囊越短步长越小、条目允许互相叠压，最长不超过展开态的格宽。
+    /// </summary>
+    /// <param name="capsuleMain">胶囊沿主轴的长度。</param>
+    /// <param name="conflict">是否为冲突态（多一个条目）。</param>
+    /// <returns>相邻条目中心距（不小于 0）。</returns>
+    public static double CompactStep(double capsuleMain, bool conflict)
+        => Math.Min(Slot, Math.Max(0, capsuleMain - Thickness) / (CompactItemCount(conflict) - 1));
+
+    /// <summary>
+    /// 紧凑星簇中单个字形中心相对胶囊中心的主轴偏移。1–5 为星，0 为冲突警示三角（仅在冲突时有效）；
+    /// 条目按 <see cref="CompactStep"/> 等距排开并整体居中，冲突时三角占最前一格。
+    /// 横排向右为正（三角、星 1 在左），竖排取反（三角、星 1 在下）。
     /// </summary>
     /// <param name="item">簇内条目：1–5 星，0 为冲突三角。</param>
-    /// <param name="conflict">是否为冲突态（决定三角与空格是否参与）。</param>
+    /// <param name="conflict">是否为冲突态（决定三角是否参与）。</param>
     /// <param name="horizontal">胶囊主轴是否为水平方向。</param>
+    /// <param name="capsuleMain">胶囊沿主轴的长度。</param>
     /// <returns>沿主轴的中心偏移；无冲突时的 0 号条目返回 0。</returns>
-    public static double CompactOffset(int item, bool conflict, bool horizontal)
+    public static double CompactOffset(int item, bool conflict, bool horizontal, double capsuleMain)
     {
-        double offset;
-        if (item <= 0)
-            offset = conflict ? -3 : 0;
-        else
-            offset = conflict ? item - 2 : item - 3;
-        offset *= CompactStep;
+        if (item <= 0 && !conflict) return 0;
+        int index = conflict ? Math.Clamp(item, 0, SlotCount - 1) : Math.Clamp(item, 1, SlotCount - 1) - 1;
+        double offset = (index - (CompactItemCount(conflict) - 1) / 2.0) * CompactStep(capsuleMain, conflict);
         return horizontal ? offset : -offset;
     }
-
-    /// <summary>紧凑星簇沿主轴的内容长度：字形宽加星间跨度（冲突时多出三角与一格空格）。</summary>
-    /// <param name="conflict">是否为冲突态。</param>
-    /// <returns>簇内容的主轴长度。</returns>
-    public static double CompactContentLength(bool conflict) => CompactGlyph + (conflict ? 6 : 4) * CompactStep;
 
     /// <summary>
     /// 星级弹窗的展开方向表：一律朝主图内侧。控件入口竖屏向上、横屏向刘海对侧、宽形态行布局向上列布局向左；

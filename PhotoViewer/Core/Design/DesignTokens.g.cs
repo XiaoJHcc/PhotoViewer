@@ -553,8 +553,6 @@ public static class DesignTokens
     public const double RatingCompactGlyphFontSize = 18.0;
     /// <summary>rating.compact.minLength（pt） RATING-07：紧凑态胶囊最短主轴长度。</summary>
     public const double RatingCompactMinLength = 88.0;
-    /// <summary>rating.compact.step（pt） RATING-07：紧凑态相邻叠压星中心距。</summary>
-    public const double RatingCompactStep = 11.0;
     /// <summary>rating.control.clearGlyph.fontSize（pt） RATING-07：控件清零叉字号。</summary>
     public const double RatingControlClearGlyphFontSize = 15.0;
     /// <summary>rating.control.endInset（pt） RATING-07：展开态星排两端到胶囊端的留白；固有长度 = 6×slot + 2×endInset。</summary>
@@ -613,6 +611,8 @@ public static class DesignTokens
     public const double ShellFilterLeadingInset = 42.0;
     /// <summary>shell.glass.button.size（pt） SHELL-08：圆玻璃按钮与合体按钮每段的边长；同时保证 44×44 的最小命中区。</summary>
     public const double ShellGlassButtonSize = 44.0;
+    /// <summary>shell.glass.container.spacing（pt） SHELL-12：相邻玻璃控件开始液态融合的距离（系统玻璃容器的融合距离）；取值与按钮组间距相同，静止时各自独立，按压放大时与相邻玻璃相连。</summary>
+    public const double ShellGlassContainerSpacing = 8.0;
     /// <summary>shell.glass.group.gap（pt） SHELL-08：相邻按钮组（筛选、星级、缩放适应等）之间的间距。</summary>
     public const double ShellGlassGroupGap = 8.0;
     /// <summary>shell.phone.edgeMargin（pt） SHELL-08：手机形态行/列元素到安全区边缘的横向边距。</summary>

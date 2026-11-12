@@ -604,8 +604,9 @@ internal static class iOSNativeLayoutCheck
             if (Math.Abs((row ? capsuleWidth : capsuleHeight) - expectedMain) > Exact)
                 throw new InvalidOperationException(
                     $"{scope} 星级胶囊主轴 {(row ? capsuleWidth : capsuleHeight):0.##} 与 {form} 形态预期 {expectedMain:0.##} 不一致");
-            if (control.Row.Frame != control.Capsule.Frame)
-                throw new InvalidOperationException($"{scope} 展开态星排未铺满胶囊：{control.Row.Frame}/{control.Capsule.Frame}");
+            var rowFrame = control.Row.ConvertRectToView(control.Row.Bounds, control);
+            if (rowFrame != control.Capsule.Frame || !ReferenceEquals(control.Row.Superview, control.Capsule.ContentView))
+                throw new InvalidOperationException($"{scope} 展开态星排未铺满玻璃胶囊内容区：{rowFrame}/{control.Capsule.Frame}");
             ratingSummary = $"{form} 胶囊 {(int)capsuleWidth}×{(int)capsuleHeight}";
         }
         // 命令圆按钮：44×44，沿命令组主轴按共享偏移排布。

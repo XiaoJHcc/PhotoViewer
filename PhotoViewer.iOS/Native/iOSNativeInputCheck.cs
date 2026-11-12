@@ -841,11 +841,14 @@ internal static class iOSNativeInputCheck
             + (main.ControlVM.EnabledControls.Count(hotkey => AppleSymbolNames.ForCommand(hotkey.Command) != null) > 0 ? 1 : 0);
         if (groups.Length != expected)
             throw new InvalidOperationException($"{label} 控制栏分组数 {groups.Length} != 期望 {expected}");
-        if (bar.Subviews.Length != groups.Length)
-            throw new InvalidOperationException($"{label} 控制栏残留旧分组：子视图 {bar.Subviews.Length} 个 / 分组 {groups.Length} 个");
+        // EXIF 块直接挂在文档上，星级控件与命令组在文档的玻璃容器内：两处子视图合计必须恰好等于分组数。
+        var glass = bar.GlassContainer.ContentView;
+        int attached = bar.Subviews.Count(view => !ReferenceEquals(view, bar.GlassContainer)) + glass.Subviews.Length;
+        if (attached != groups.Length)
+            throw new InvalidOperationException($"{label} 控制栏残留旧分组：子视图 {attached} 个 / 分组 {groups.Length} 个");
         foreach (var group in groups)
         {
-            if (!ReferenceEquals(group.Superview, bar))
+            if (!ReferenceEquals(group.Superview, bar) && !ReferenceEquals(group.Superview, glass))
                 throw new InvalidOperationException($"{label} 分组不在控制栏视图树内：{group.Frame}");
             var children = group.Subviews;
             foreach (var child in children)

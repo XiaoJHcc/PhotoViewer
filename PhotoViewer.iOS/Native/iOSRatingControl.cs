@@ -8,17 +8,15 @@ namespace PhotoViewer.iOS.Native;
 
 /// <summary>
 /// 星级控件（RATING-07）：手机形态与宽形态控制栏共用的常驻实例。
-/// 槽位主轴放得下固有长度时展开为玻璃胶囊内的六格星排（自绘、逐格命中），否则压成紧凑胶囊
-/// 并把五颗星叠压成一簇；紧凑态按下即由宿主朝主图内侧弹出星级弹窗，同一次手势的落点继续在弹窗星排上取值。
+/// 槽位主轴放得下固有长度时展开为交互式玻璃胶囊内的六格星排（自绘、逐格命中），否则压成紧凑胶囊
+/// 并把五颗星沿胶囊均匀排开（胶囊短时互相叠压）；紧凑态按下即由宿主朝主图内侧弹出星级弹窗，同一次手势的落点继续在弹窗星排上取值。
 /// 形态、胶囊矩形、格子矩形与紧凑簇偏移全部取共享 <see cref="RatingControlGeometry"/>。
 /// </summary>
 internal sealed class iOSRatingControl : UIView
 {
     private readonly UIVisualEffectView _capsule;
     private readonly iOSRatingRow _row;
-    private readonly UIView _cluster;
-    private readonly UIImageView _triangle;
-    private readonly UIImageView[] _clusterStars = new UIImageView[RatingControlGeometry.SlotCount - 1];
+    private readonly iOSRatingCluster _cluster = new();
     private readonly UILongPressGestureRecognizer _press;
     private readonly UIPointerInteraction _capsulePointer;
     private RatingControlForm _form = RatingControlForm.Compact;
@@ -50,34 +48,9 @@ internal sealed class iOSRatingControl : UIView
         _row.AccessibilityElementsHidden = true;
         _row.Committed += value => CommitRequested?.Invoke(value);
         _row.ZeroTapped += () => PopupRequested?.Invoke();
-        AddSubview(_row);
-
-        _cluster = new UIView(CGRect.Empty)
-        {
-            BackgroundColor = UIColor.Clear,
-            UserInteractionEnabled = false,
-        };
-        // 5 号星先加、1 号星最后：叠压时 1 号在最前，冲突三角再压在整簇之上。
-        for (int value = _clusterStars.Length; value >= 1; value--)
-        {
-            var star = new UIImageView(CGRect.Empty)
-            {
-                ContentMode = UIViewContentMode.Center,
-                UserInteractionEnabled = false,
-                BackgroundColor = UIColor.Clear,
-            };
-            _clusterStars[value - 1] = star;
-            _cluster.AddSubview(star);
-        }
-        _triangle = new UIImageView(CGRect.Empty)
-        {
-            ContentMode = UIViewContentMode.Center,
-            UserInteractionEnabled = false,
-            BackgroundColor = UIColor.Clear,
-            Hidden = true,
-        };
-        _cluster.AddSubview(_triangle);
-        AddSubview(_cluster);
+        // 星排与星簇都放在交互式玻璃胶囊的内容区：两种形态按压时都随玻璃放大、回弹、高亮，并与相邻玻璃融合。
+        _capsule.ContentView.AddSubview(_row);
+        _capsule.ContentView.AddSubview(_cluster);
 
         _press = new UILongPressGestureRecognizer(OnPress)
         {
@@ -103,14 +76,8 @@ internal sealed class iOSRatingControl : UIView
     /// <summary>展开态星排（验收读取格子与手势状态）。</summary>
     internal iOSRatingRow Row => _row;
 
-    /// <summary>紧凑星簇容器。</summary>
-    internal UIView Cluster => _cluster;
-
-    /// <summary>紧凑星簇的五颗星，索引 0 即 1 号星。</summary>
-    internal IReadOnlyList<UIImageView> ClusterStars => _clusterStars;
-
-    /// <summary>紧凑星簇的冲突警示三角。</summary>
-    internal UIImageView ClusterTriangle => _triangle;
+    /// <summary>紧凑星簇（玻璃胶囊内容区内）。</summary>
+    internal iOSRatingCluster Cluster => _cluster;
 
     /// <summary>玻璃胶囊（当前锚点、紧凑态指针高亮）。</summary>
     internal UIVisualEffectView Capsule => _capsule;
@@ -227,13 +194,11 @@ internal sealed class iOSRatingControl : UIView
         if (form != _form)
         {
             _form = form;
-            _capsule.Effect = new UIGlassEffect { Interactive = form == RatingControlForm.Compact };
-            _capsule.CornerConfiguration = UICornerConfiguration.CreateCapsule();
             ApplyForm();
         }
         var capsule = CapsuleFrame;
         _capsule.Frame = new CGRect(capsule.X, capsule.Y, capsule.Width, capsule.Height);
-        _row.Frame = _capsule.Frame;
+        _row.Frame = new CGRect(0, 0, capsule.Width, capsule.Height);
         _row.Horizontal = _horizontal;
         LayoutCluster();
     }
@@ -255,37 +220,18 @@ internal sealed class iOSRatingControl : UIView
         return true;
     }
 
-    /// <summary>紧凑星簇：五颗星与冲突三角沿主轴按共享偏移叠压，交叉轴居中。</summary>
+    /// <summary>紧凑星簇铺满玻璃胶囊内容区，字形位置由星簇按共享偏移自行计算。</summary>
     private void LayoutCluster()
     {
         var capsule = _capsule.Frame;
-        _cluster.Frame = capsule;
-        double glyph = DesignTokens.RatingCompactGlyphFontSize;
-        var center = new CGPoint((double)capsule.Width / 2, (double)capsule.Height / 2);
-        void Place(UIImageView view, int item)
-        {
-            double offset = RatingControlGeometry.CompactOffset(item, _conflict, _horizontal);
-            double x = _horizontal ? (double)center.X + offset : (double)center.X;
-            double y = _horizontal ? (double)center.Y : (double)center.Y + offset;
-            view.Frame = new CGRect(x - glyph / 2, y - glyph / 2, glyph, glyph);
-        }
-        for (int value = 1; value <= _clusterStars.Length; value++) Place(_clusterStars[value - 1], value);
-        Place(_triangle, 0);
+        _cluster.Frame = new CGRect(0, 0, capsule.Width, capsule.Height);
+        _cluster.Update(_value, _conflict, _horizontal);
     }
 
-    /// <summary>重画星簇与展开态星排：点亮取金色等宽星，未点亮取三级标签色。</summary>
+    /// <summary>刷新星簇与展开态星排的显示值、冲突与可用态。</summary>
     private void Render()
     {
-        for (int value = 1; value <= _clusterStars.Length; value++)
-        {
-            bool lit = value <= Math.Max(0, _value);
-            var star = _clusterStars[value - 1];
-            star.Image = iOSSymbols.Symbol(lit ? "star.fill" : "star", DesignTokens.RatingCompactGlyphFontSize);
-            star.TintColor = lit ? iOSColors.FromToken(DesignTokens.ColorStarOn) : UIColor.TertiaryLabel;
-        }
-        _triangle.Image = iOSSymbols.Symbol("exclamationmark.triangle.fill", DesignTokens.RatingCompactGlyphFontSize);
-        _triangle.TintColor = iOSColors.FromToken(DesignTokens.ColorStarConflict);
-        _triangle.Hidden = !_conflict;
+        _cluster.Update(_value, _conflict, _horizontal);
         _cluster.Alpha = _enabled ? 1 : (nfloat)DesignTokens.ColorToolbarDisabledContentAlpha;
         _row.Value = _value;
         _row.Conflict = _conflict;

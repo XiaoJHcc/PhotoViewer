@@ -692,10 +692,10 @@ internal static class iOSNativeFormCheck
 
         if (!IsVisible(root, film) || film.DisplayCount == 0) return;
         // 手机控件必须压在胶片条之上：横屏胶片条从筛选/更多与上下张两组控件下方滚过。
-        var subviews = root.Stage.Subviews;
-        int filmIndex = Array.IndexOf(subviews, film);
-        int topIndex = Array.IndexOf(subviews, root.PhoneFilterMoreGroup);
-        int bottomIndex = Array.IndexOf(subviews, root.PhoneNavigationGroup);
+        // 手机玻璃控件同在一个玻璃容器内，按容器在舞台中的层级比较。
+        int filmIndex = StageIndex(root, film);
+        int topIndex = StageIndex(root, root.PhoneFilterMoreGroup);
+        int bottomIndex = StageIndex(root, root.PhoneNavigationGroup);
         if (filmIndex < 0 || topIndex < filmIndex || bottomIndex < filmIndex)
             throw new InvalidOperationException(
                 $"{scope} 手机控件未压在胶片条之上（胶片 {filmIndex}，筛选更多 {topIndex}，上下张 {bottomIndex}）");
@@ -1466,6 +1466,17 @@ internal static class iOSNativeFormCheck
     /// <returns>舞台坐标矩形。</returns>
     private static CGRect FrameInStage(iOSNativeRootViewController root, UIView view)
         => view.ConvertRectToView(view.Bounds, root.Stage);
+
+    /// <summary>视图在舞台子视图中的层级序号：取视图所在的那个舞台直接子视图（手机玻璃控件在玻璃容器里）。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="view">目标视图。</param>
+    /// <returns>舞台子视图序号，不在舞台内时为 -1。</returns>
+    private static int StageIndex(iOSNativeRootViewController root, UIView view)
+    {
+        UIView? current = view;
+        while (current != null && !ReferenceEquals(current.Superview, root.Stage)) current = current.Superview;
+        return current == null ? -1 : Array.IndexOf(root.Stage.Subviews, current);
+    }
 
     /// <summary>视图自身与全部祖先都未隐藏。</summary>
     /// <param name="root">原生根控制器。</param>

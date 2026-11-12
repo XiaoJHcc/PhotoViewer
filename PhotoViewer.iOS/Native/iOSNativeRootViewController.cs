@@ -81,6 +81,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private UIButton _phoneEnhanceSegment = null!;
     private iOSRatingControl _phoneRating = null!;
     private iOSExifBlock _phoneExif = null!;
+    private iOSGlassContainer _phoneGlass = null!;
 #if PHOTOVIEWER_DINO
     private readonly iOSSimilarityPanel _similarityPane;
 #endif
@@ -265,6 +266,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
     internal iOSRatingControl PhoneRatingControl => _phoneRating;
     /// <summary>手机形态 EXIF 块（验收读取项数、标签与几何）。</summary>
     internal iOSExifBlock PhoneExifBlock => _phoneExif;
+    /// <summary>手机形态玻璃控件的共同容器（铺满舞台，只命中内部控件）。</summary>
+    internal iOSGlassContainer PhoneGlassContainer => _phoneGlass;
     /// <summary>手机形态四条栏背景。</summary>
     internal (UIVisualEffectView Top, UIVisualEffectView Bottom, UIVisualEffectView Leading, UIVisualEffectView Trailing) PhoneBarBackgrounds
         => (_phoneTopBar, _phoneBottomBar, _phoneLeadingBar, _phoneTrailingBar);
@@ -921,6 +924,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private void LayoutPhone(double width, double height, UIEdgeInsets safe)
     {
         bool portrait = _form == ScreenForm.PhonePortrait;
+        _phoneGlass.Frame = _stage.Bounds;
         bool phone = UIDevice.CurrentDevice.UserInterfaceIdiom == UIUserInterfaceIdiom.Phone;
         double button = DesignTokens.ShellGlassButtonSize;
         double rowInset = _avoidanceTuning ?? DesignTokens.ShellPhoneRowInset;
@@ -1239,7 +1243,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
                 hotkey.SecondaryHotkey == null ? null : hotkey.SecondaryHotkeyText);
     }
 
-    /// <summary>建立手机形态的固定操作控件：单圆筛选/更多、横屏合体、上下张、缩放增强、星级控件与 EXIF 块。</summary>
+    /// <summary>建立手机形态的固定操作控件：单圆筛选/更多、横屏合体、上下张、缩放增强、星级控件（同一玻璃容器内）与 EXIF 块。</summary>
     /// <param name="host">主屏舞台。</param>
     private void BuildPhoneControls(UIView host)
     {
@@ -1268,14 +1272,17 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _phoneRating = new iOSRatingControl();
         _phoneExif = new iOSExifBlock { Tapped = ShowExifTools };
 
-        foreach (var view in new UIView[]
-        {
-            _phoneFilter, _phoneMore, _phoneFilterMore, _phoneNavigation, _phoneFitEnhance, _phoneRating, _phoneExif,
-        })
+        // 全部玻璃控件放进同一个玻璃容器：同一取样区域渲染，按压放大时与相邻玻璃按系统液态效果融合。
+        // EXIF 块是模糊材质，不进玻璃容器。
+        _phoneGlass = new iOSGlassContainer(DesignTokens.ShellGlassContainerSpacing);
+        foreach (var view in new UIView[] { _phoneFilter, _phoneMore, _phoneFilterMore, _phoneNavigation, _phoneFitEnhance, _phoneRating })
         {
             view.Hidden = true;
-            host.AddSubview(view);
+            _phoneGlass.ContentView.AddSubview(view);
         }
+        _phoneExif.Hidden = true;
+        host.AddSubview(_phoneGlass);
+        host.AddSubview(_phoneExif);
         _phoneControlsBuilt = true;
         RefreshPhoneMenus();
         UpdatePhoneExif();

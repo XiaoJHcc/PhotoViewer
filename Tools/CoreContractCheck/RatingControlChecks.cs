@@ -33,7 +33,6 @@ internal static class RatingControlChecks
         c.Equal("星排端留白 4", 4d, RatingControlGeometry.EndInset);
         c.Equal("展开态固有长度 224", 224d, RatingControlGeometry.ExpandedLength);
         c.Equal("紧凑态最短长度 88", 88d, RatingControlGeometry.CompactMinLength);
-        c.Equal("紧凑星中心距 11", 11d, RatingControlGeometry.CompactStep);
         c.Equal("紧凑星字号 18", 18d, RatingControlGeometry.CompactGlyph);
         c.Equal("点按阈值 8", 8d, RatingControlGeometry.TapSlop);
         c.Equal("取消阈值 44", 44d, RatingControlGeometry.CancelSlop);
@@ -145,21 +144,41 @@ internal static class RatingControlChecks
     private static void RunCompactCluster(Checks c)
     {
         c.Section("紧凑星簇");
-        c.True("无冲突时星 1 在最左（-22）", Near(RatingControlGeometry.CompactOffset(1, false, true), -22));
-        c.True("无冲突时星簇中心为 0", Near(RatingControlGeometry.CompactOffset(3, false, true), 0));
-        c.True("无冲突时星 5 在最右（22）", Near(RatingControlGeometry.CompactOffset(5, false, true), 22));
-        c.True("无冲突时两端对称",
-            Near(RatingControlGeometry.CompactOffset(1, false, true)
-                + RatingControlGeometry.CompactOffset(5, false, true), 0));
-        c.True("冲突时三角在最前（-33）", Near(RatingControlGeometry.CompactOffset(0, true, true), -33));
-        c.True("冲突时星 1 让出一格（-11）", Near(RatingControlGeometry.CompactOffset(1, true, true), -11));
-        c.True("冲突时星 5 在最后（33）", Near(RatingControlGeometry.CompactOffset(5, true, true), 33));
+        c.Equal("无冲突五个条目", 5, RatingControlGeometry.CompactItemCount(false));
+        c.Equal("冲突时加三角共六个条目", 6, RatingControlGeometry.CompactItemCount(true));
+
+        c.True("165 胶囊无冲突步长 = (165 − 44) / 4", Near(RatingControlGeometry.CompactStep(165, false), 30.25));
+        c.True("165 胶囊冲突步长 = (165 − 44) / 5", Near(RatingControlGeometry.CompactStep(165, true), 24.2));
+        c.True("88 胶囊无冲突步长 11（字形互相叠压）", Near(RatingControlGeometry.CompactStep(88, false), 11));
+        c.True("步长不超过展开态格宽 36", Near(RatingControlGeometry.CompactStep(223, false), 36));
+        c.True("胶囊短于控件厚度时步长为 0", Near(RatingControlGeometry.CompactStep(30, false), 0));
+
+        c.True("165 无冲突星 1 中心落在左端半圆圆心",
+            Near(165 / 2.0 + RatingControlGeometry.CompactOffset(1, false, true, 165), 22));
+        c.True("165 无冲突星 5 中心落在右端半圆圆心",
+            Near(165 / 2.0 + RatingControlGeometry.CompactOffset(5, false, true, 165), 165 - 22));
+        c.True("无冲突星 3 在胶囊中心", Near(RatingControlGeometry.CompactOffset(3, false, true, 165), 0));
+        var even = true;
+        for (int item = 1; item < 5; item++)
+            even &= Near(RatingControlGeometry.CompactOffset(item + 1, false, true, 120)
+                - RatingControlGeometry.CompactOffset(item, false, true, 120), RatingControlGeometry.CompactStep(120, false));
+        c.True("无冲突相邻星等距", even);
+        c.True("无冲突时 0 号条目偏移为 0", Near(RatingControlGeometry.CompactOffset(0, false, true, 165), 0));
+
+        c.True("165 冲突时三角在左端半圆圆心",
+            Near(165 / 2.0 + RatingControlGeometry.CompactOffset(0, true, true, 165), 22));
+        c.True("冲突时星 1 紧随三角一个步长",
+            Near(RatingControlGeometry.CompactOffset(1, true, true, 165) - RatingControlGeometry.CompactOffset(0, true, true, 165),
+                RatingControlGeometry.CompactStep(165, true)));
+        c.True("165 冲突时星 5 在右端半圆圆心",
+            Near(165 / 2.0 + RatingControlGeometry.CompactOffset(5, true, true, 165), 165 - 22));
+        c.True("223 胶囊步长封顶后整簇居中",
+            Near(RatingControlGeometry.CompactOffset(1, false, true, 223) + RatingControlGeometry.CompactOffset(5, false, true, 223), 0)
+            && Near(RatingControlGeometry.CompactOffset(5, false, true, 223), 72));
         c.True("竖排偏移取反（星 1 在底部）",
-            Near(RatingControlGeometry.CompactOffset(1, false, false), 22));
+            Near(RatingControlGeometry.CompactOffset(1, false, false, 165), 165 / 2.0 - 22));
         c.True("竖排冲突时三角在最底部",
-            Near(RatingControlGeometry.CompactOffset(0, true, false), 33));
-        c.Equal("无冲突簇内容长 62", 62d, RatingControlGeometry.CompactContentLength(false));
-        c.Equal("冲突簇内容长 84", 84d, RatingControlGeometry.CompactContentLength(true));
+            Near(RatingControlGeometry.CompactOffset(0, true, false, 165), 165 / 2.0 - 22));
     }
 
     private static void RunPopupDirection(Checks c)

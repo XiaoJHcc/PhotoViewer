@@ -57,7 +57,8 @@ internal sealed class iOSGlassButtonGroup : UIVisualEffectView
     /// <returns>该段按钮，供宿主设显隐与强调色。</returns>
     internal UIButton Add(string symbolName, string label, Action? action)
     {
-        var button = iOSGlassButtons.Segment(symbolName, label, action);        ContentView.AddSubview(button);
+        var button = iOSGlassButtons.Segment(symbolName, label, action);
+        ContentView.AddSubview(button);
         _buttons.Add(button);
         SetNeedsLayout();
         return button;
@@ -133,5 +134,37 @@ internal static class iOSGlassButtons
         if (configuration == null) return;
         configuration.BaseForegroundColor = emphasized ? accent : UIColor.Label;
         button.Configuration = configuration;
+    }
+}
+
+/// <summary>
+/// 一组相邻玻璃控件的共同容器：系统 <see cref="UIGlassContainerEffect"/> 让内容区里的玻璃元素在同一取样区域内渲染，
+/// 按压放大或彼此靠近到融合距离以内时按系统液态效果相连，静止时各自独立。容器铺满宿主但自身不拦截触摸，
+/// 只把命中交给内容区里的控件。
+/// </summary>
+internal sealed class iOSGlassContainer : UIVisualEffectView
+{
+    /// <summary>建立玻璃容器。</summary>
+    /// <param name="spacing">相邻玻璃元素开始融合的距离。</param>
+    internal iOSGlassContainer(double spacing) : base(new UIGlassContainerEffect { Spacing = (nfloat)spacing })
+    {
+        BackgroundColor = UIColor.Clear;
+    }
+
+    /// <summary>只命中内容区里的控件；落在控件之外时穿透到下层（主图、胶片条）。</summary>
+    /// <param name="point">本视图坐标中的触点。</param>
+    /// <param name="uievent">触摸事件。</param>
+    /// <returns>命中的控件，或 null。</returns>
+    public override UIView? HitTest(CGPoint point, UIEvent? uievent)
+    {
+        if (Hidden || !UserInteractionEnabled || Alpha < 0.01f) return null;
+        var children = ContentView.Subviews;
+        for (int index = children.Length - 1; index >= 0; index--)
+        {
+            var child = children[index];
+            var hit = child.HitTest(child.ConvertPointFromView(point, this), uievent);
+            if (hit != null) return hit;
+        }
+        return null;
     }
 }

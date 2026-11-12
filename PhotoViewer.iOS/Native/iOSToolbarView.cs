@@ -14,7 +14,7 @@ namespace PhotoViewer.iOS.Native;
 /// 本类只把结果落成 UIKit frame。文档本身透明，底色由宿主栏位模糊材质承担。
 /// <para>EXIF 信息块点按直达 EXIF 详情（无可用 EXIF 时由宿主回退工具列表，[TOOLS-01]）；
 /// 星级组是常驻的 <see cref="iOSRatingControl"/>（评分变化只刷新显示值，不重建控制栏）；
-/// 命令换 44 点圆形玻璃按钮，评分快捷命令保留星心叠数字，读屏名称取共享
+/// 命令换 44 点圆形玻璃按钮，与星级控件同在一个系统玻璃容器内（静止分离、按压融合），评分快捷命令保留星心叠数字，读屏名称取共享
 /// <see cref="CommandTooltipText"/> 的「名称（主 / 次）」。</para>
 /// </summary>
 internal sealed class iOSToolbarView : UIView
@@ -25,6 +25,7 @@ internal sealed class iOSToolbarView : UIView
     private readonly List<SettingsViewModel.HotkeyItem> _hotkeys = [];
     private readonly Dictionary<string, UIButton> _commands = new(StringComparer.Ordinal);
     private readonly iOSRatingControl _ratingControl = new();
+    private readonly iOSGlassContainer _glass = new(DesignTokens.ShellGlassContainerSpacing);
     private iOSExifBlock? _exifGroup;
     private Action? _openExif;
     private bool _horizontal;
@@ -37,6 +38,7 @@ internal sealed class iOSToolbarView : UIView
         _changed = changed;
         BackgroundColor = UIColor.Clear;
         _ratingControl.Hidden = true;
+        AddSubview(_glass);
     }
 
     /// <summary>业务分组视图（EXIF / 星级 / 命令，按顺序）。</summary>
@@ -50,6 +52,9 @@ internal sealed class iOSToolbarView : UIView
 
     /// <summary>常驻星级控件（三个槽位共用同一实现；宽形态控制栏始终是同一个实例）。</summary>
     internal iOSRatingControl RatingControl => _ratingControl;
+
+    /// <summary>星级控件与命令圆按钮共用的玻璃容器（铺满文档，只命中内部控件）。</summary>
+    internal iOSGlassContainer GlassContainer => _glass;
 
     /// <summary>本次重建是否包含星级分组（「显示评分」关闭时整组移除）。</summary>
     internal bool HasRatingGroup => _hasRatingGroup;
@@ -124,6 +129,14 @@ internal sealed class iOSToolbarView : UIView
         Frame = new CGRect(0, 0,
             Math.Max((double)viewport.Width, (double)measured.Width),
             Math.Max((double)viewport.Height, (double)measured.Height));
+        _glass.Frame = Bounds;
+    }
+
+    /// <summary>玻璃容器始终铺满文档。</summary>
+    public override void LayoutSubviews()
+    {
+        base.LayoutSubviews();
+        _glass.Frame = Bounds;
     }
 
     /// <summary>
@@ -154,7 +167,9 @@ internal sealed class iOSToolbarView : UIView
     {
         _groupViews.Add(group);
         _groupSpecs.Add((kind, count));
-        AddSubview(group);
+        // 星级控件与命令圆按钮同在玻璃容器内（按压时相互融合）；EXIF 块是模糊材质，直接挂在文档上。
+        if (kind == ControlBarGroupKind.Exif) AddSubview(group);
+        else _glass.ContentView.AddSubview(group);
     }
 
     /// <summary>按方向求分组尺寸、整组换行并把分组与子控件落成 frame，返回文档尺寸。</summary>

@@ -126,7 +126,9 @@
 **几何与令牌**
 
 - 控件交叉轴取 `shell.glass.button.size`。展开态固有长度 = 6 × `rating.control.slot` + 2 × `rating.control.endInset`，沿槽位主轴居中；紧凑态铺满槽位主轴，宽形态控制栏里放不下展开态时取 `rating.compact.minLength`。字形取 `rating.control.glyph.fontSize` / `rating.control.clearGlyph.fontSize`（展开态）与 `rating.compact.glyph.fontSize`（紧凑态）。
-- 紧凑态内容是五颗星叠压成的一簇（中心距 `rating.compact.step`），点亮的在前；冲突时簇前加警示三角。横排 1 号星在左，竖排 1 号星在下。
+- 紧凑态内容是沿胶囊均匀分布的五颗星，冲突时最前加警示三角（与展开态 0 号格同位）：首末字形中心落在胶囊两端半圆的圆心（距端点 `shell.glass.button.size` 的一半），其间等距，步长不超过 `rating.control.slot`；胶囊短时步长随之缩小、字形允许叠压，不另设最小间距。横排三角与 1 号星在左，竖排在下。
+- 叠压次序：警示三角在最上，其后 1 号星在 2 号星之上，依次到 5 号星在最下（点亮的星因此总在未点亮的之上）。下层字形被上层字形实心轮廓盖住的部分降为半透明并向外羽化，空心星的线条不在上层星内部交叉；不叠压时没有附加效果。
+- 控件胶囊在展开态与紧凑态都按平台交互式玻璃响应按压（放大、回弹、高亮），星排与星簇随玻璃一同缩放，并与相邻玻璃控件按 SHELL-12 融合；展开态被按住的格另按 `motion.rating.press.scale` 放大。
 - 弹窗星排每格 `rating.popup.slot`，可用空间不足时按六格均分收窄，不小于 `rating.popup.minSlot`；字形 `rating.popup.glyph.fontSize` / `rating.popup.clearGlyph.fontSize`；与入口相距 `rating.popup.gap`，圆角 `rating.popup.cornerRadius`，整体夹在窗口安全区内缩 `popup.ratingSources.edgeMargin` 的范围里。竖排控件打开的非冲突弹窗宽 `rating.popup.columnWidth`，文件名与拍摄时间各占一行，下方是竖排星列（5→0 自上而下）；冲突来源条目恒为横排星排。
 
 **展开方向**（一律朝主图内侧）：
