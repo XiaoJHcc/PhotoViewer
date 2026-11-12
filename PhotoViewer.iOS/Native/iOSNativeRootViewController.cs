@@ -132,8 +132,6 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private double? _stageWidthFraction;
     private UIInterfaceOrientationMask? _supportedOrientations;
     private string _phoneBandSummary = string.Empty;
-    /// <summary>竖屏底行在设备竖屏口径下的窗口缘距离；横屏控制列沿用同一份值，旋转时控制列不移动。</summary>
-    private EdgeInsets? _portraitControlBand;
     /// <summary>胶片条顶端滚动边缘元素（横屏筛选/更多合体；只建一次，进出横屏时挂接/摘下）。</summary>
     private readonly UIScrollEdgeElementContainerInteraction _filmstripTopEdge;
     /// <summary>胶片条底端滚动边缘元素（横屏上下张合体）。</summary>
@@ -915,8 +913,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <summary>
     /// 手机形态：按共享槽位铺四个栏背景、胶片条、分析栏与固定操作行；宽形态专属控件全部隐藏。
     /// 轴向只由形态决定（竖屏横向、横屏纵向），不读用户以前选过的上下/左右模式。
-    /// <para>安全区分三层：系统安全区原样交给共享几何；贴角元素带（竖屏顶行、竖屏底行、横屏刘海侧列）各用一块等大探针
-    /// 按自身位置取圆角与窗口控件适应值，横屏控制列沿用同一份竖屏底行数值，旋转时控制列不移动。</para>
+    /// <para>安全区分三层：系统安全区原样交给共享几何；贴角元素带按元素在窗口中的实际位置单独探测——
+    /// 竖屏顶行在共享 <see cref="PhoneScreenLayout.TopRowY"/> 给出的行位置上分左右两半探测（整条横带会跨过灵动岛），
+    /// 竖屏底行、横屏刘海侧列与横屏下巴侧控制栏各探自己那一条，互不沿用。</para>
     /// </summary>
     /// <param name="width">窗口宽。</param>
     /// <param name="height">窗口高。</param>
@@ -925,7 +924,6 @@ internal sealed class iOSNativeRootViewController : UIViewController
     {
         bool portrait = _form == ScreenForm.PhonePortrait;
         _phoneGlass.Frame = _stage.Bounds;
-        bool phone = UIDevice.CurrentDevice.UserInterfaceIdiom == UIUserInterfaceIdiom.Phone;
         double button = DesignTokens.ShellGlassButtonSize;
         double rowInset = _avoidanceTuning ?? DesignTokens.ShellPhoneRowInset;
         _notchOnLeft = ResolveNotchOnLeft();
@@ -933,56 +931,12 @@ internal sealed class iOSNativeRootViewController : UIViewController
         var tier = FilmCardGeometry.ResolveTier(portrait ? width : height, portrait);
         double filmBand = FilmCardGeometry.BandThickness(tier, portrait);
         var plain = new EdgeInsets(safe.Left, safe.Top, safe.Right, safe.Bottom);
-        EdgeInsets lead, control;
-        string controlOrigin;
-        if (portrait)
-        {
-            // 顶行：贴顶带只借左右两侧的适应值，上边仍是系统安全区。
-            var leadProbe = ProbeBand(new CGRect(0, (double)safe.Top + rowInset, width, button),
-                UIViewLayoutRegionAdaptivityAxis.Horizontal);
-            lead = new EdgeInsets(leadProbe.Left, plain.Top, leadProbe.Right, 0);
-            var controlProbe = ProbeBand(
-                new CGRect(0, height - Math.Max((double)safe.Bottom, rowInset) - button, width, button),
-                UIViewLayoutRegionAdaptivityAxis.Horizontal);
-            control = new EdgeInsets(controlProbe.Left, 0, controlProbe.Right, plain.Bottom);
-            // 竖屏底行是横屏控制列的同一排按钮（旋转后仍贴着屏幕同一条边），保存下来直接复用。
-            if (phone) _portraitControlBand = control;
-            controlOrigin = phone ? "竖屏底行（已存为横屏控制列基准）" : "竖屏底行探测";
-        }
-        else
-        {
-            // 横屏刘海侧按钮列：整列探测，只取上下两侧适应值（左右由系统安全区给出）。
-            double column = plain.Left + filmBand;
-            var leadProbe = ProbeBand(new CGRect(_notchOnLeft ? 0 : width - column, 0, column, height),
-                UIViewLayoutRegionAdaptivityAxis.Vertical);
-            lead = new EdgeInsets(plain.Left, leadProbe.Top, plain.Right, leadProbe.Bottom);
-            if (phone && _portraitControlBand is { } portraitControl)
-            {
-                control = portraitControl;
-                controlOrigin = "竖屏底行缓存";
-            }
-            else
-            {
-                // 尚未见过竖屏（真机只在横屏启动）或 iPad 手机模式：按下巴侧整列现探一次，底边取系统安全区。
-                double chinSafe = plain.Right;
-                double strip = Math.Max(chinSafe, rowInset) + button;
-                var chinProbe = ProbeBand(new CGRect(_notchOnLeft ? width - strip : 0, 0, strip, height),
-                    UIViewLayoutRegionAdaptivityAxis.Vertical);
-                control = new EdgeInsets(chinProbe.Bottom, 0, chinProbe.Top, phone ? plain.Bottom : chinSafe);
-                controlOrigin = "下巴侧列探测";
-            }
-        }
-        LogPhoneBands(plain, lead, control, controlOrigin);
-        // 分析栏瓦片从安全区前导边起排，主轴长度必须扣掉起点与末端安全区，否则末端瓦片会被屏幕边缘截掉。
-        double analysisMain = portrait
-            ? Math.Max(1, width - plain.Left - plain.Right)
-            : Math.Max(1, height - plain.Top - plain.Bottom);
-        bool filmVisible = _main.IsThumbnailViewVisible;
-        bool controlVisible = _main.IsControlViewVisible;
-        bool analysisVisible = _main.IsAnalysisViewVisible;
-        // EXIF 块尺寸取共享几何：竖屏横排为「块宽 × 44」，横屏竖排为「64 × 块高」。
-        var (exifWidth, exifHeight) = ExifBlockGeometry.Size(_main.ControlVM.EnabledExifItems.Count, portrait);
-        var input = new PhoneLayoutInput(
+        // EXIF 块尺寸取共享几何：竖屏横排为带衬底的横排块，横屏竖排为无衬底的纵排列（只剩项目与项距）。
+        var enabledExif = _main.ControlVM.EnabledExifItems;
+        var (exifWidth, exifHeight) = portrait
+            ? ExifBlockGeometry.Size(enabledExif.Count, horizontal: true)
+            : ExifBlockGeometry.Size(enabledExif.Count, horizontal: false, bare: true);
+        PhoneLayoutInput Input(EdgeInsets lead, EdgeInsets control) => new(
             Landscape: !portrait,
             NotchOnLeft: _notchOnLeft,
             Width: width,
@@ -990,19 +944,68 @@ internal sealed class iOSNativeRootViewController : UIViewController
             Safe: plain,
             LeadBand: lead,
             ControlBand: control,
-            FilmVisible: filmVisible,
-            ControlVisible: controlVisible,
-            AnalysisVisible: analysisVisible,
+            FilmVisible: _main.IsThumbnailViewVisible,
+            ControlVisible: _main.IsControlViewVisible,
+            ExifVisible: _main.IsExifViewVisible,
+            AnalysisVisible: _main.IsAnalysisViewVisible,
             ShowNavigation: _main.Settings.ShowNavigationButtons,
             FilterWidth: button,
             FilmBand: filmBand,
-            AnalysisCross: _analysisPane.CrossSize(analysisMain),
+            FilmOuterPad: FilmCardGeometry.CrossLead(tier, portrait),
+            AnalysisCross: 0,
+            ExifCount: enabledExif.Count,
             ExifWidth: exifWidth,
             ExifHeight: exifHeight,
+            ExifItemSpacing: ExifBlockGeometry.ItemSpacing,
+            RatingMinLength: RatingControlGeometry.CompactMinLength,
             ButtonSize: button,
             EdgeMargin: DesignTokens.ShellPhoneEdgeMargin,
             RowInset: rowInset,
             GroupGap: DesignTokens.ShellGlassGroupGap);
+
+        // 先按系统安全区搭一份输入：贴角带的探测位置只取决于窗口、安全区与显隐（不依赖带本身）。
+        var provisional = Input(plain, plain);
+        EdgeInsets lead, control;
+        string controlOrigin;
+        if (portrait)
+        {
+            // 顶行：贴角带只借左右两侧的适应值，上边仍是系统安全区。整条横带会跨过灵动岛，
+            // 左右两半分别探测，按钮各自贴自己那一侧的圆角与显示区。
+            double rowTop = PhoneScreenLayout.TopRowY(in provisional);
+            var leftProbe = ProbeBand(new CGRect(0, rowTop, width / 2, button),
+                UIViewLayoutRegionAdaptivityAxis.Horizontal);
+            var rightProbe = ProbeBand(new CGRect(width / 2, rowTop, width / 2, button),
+                UIViewLayoutRegionAdaptivityAxis.Horizontal);
+            lead = new EdgeInsets(leftProbe.Left, plain.Top, rightProbe.Right, 0);
+            // 底行：Home 指示条的安全内缩自带一份行内间距的视觉余量，行位置按这份余量压进安全区。
+            double bottomTop = height - Math.Max(plain.Bottom - rowInset, rowInset) - button;
+            var controlProbe = ProbeBand(new CGRect(0, bottomTop, width, button),
+                UIViewLayoutRegionAdaptivityAxis.Horizontal);
+            control = new EdgeInsets(controlProbe.Left, 0, controlProbe.Right, plain.Bottom);
+            controlOrigin = "竖屏底行";
+        }
+        else
+        {
+            // 横屏刘海侧列：在共享给出的列宽上整列探测，只取上下两侧适应值（左右由系统安全区给出）。
+            double leadStrip = PhoneScreenLayout.LeadStripWidth(in provisional);
+            var leadProbe = ProbeBand(new CGRect(_notchOnLeft ? 0 : width - leadStrip, 0, leadStrip, height),
+                UIViewLayoutRegionAdaptivityAxis.Vertical);
+            lead = new EdgeInsets(plain.Left, leadProbe.Top, plain.Right, leadProbe.Bottom);
+            // 横屏控制栏：下巴侧对称的安全内缩不是实物遮挡，控制栏不避让；在自身的列宽上取上下带圆角适应值。
+            double controlStrip = PhoneScreenLayout.ControlStripWidth(in provisional);
+            var controlProbe = ProbeBand(new CGRect(_notchOnLeft ? width - controlStrip : 0, 0, controlStrip, height),
+                UIViewLayoutRegionAdaptivityAxis.Vertical);
+            control = new EdgeInsets(0, controlProbe.Top, 0, controlProbe.Bottom);
+            controlOrigin = "下巴侧控制栏列";
+        }
+        LogPhoneBands(plain, lead, control, controlOrigin);
+        // 分析栏瓦片从安全区前导边起排，主轴长度必须扣掉起点与末端安全区，否则末端瓦片会被屏幕边缘截掉。
+        double analysisMain = portrait
+            ? Math.Max(1, width - plain.Left - plain.Right)
+            : Math.Max(1, height - plain.Top - plain.Bottom);
+        bool filmVisible = _main.IsThumbnailViewVisible;
+        bool analysisVisible = _main.IsAnalysisViewVisible;
+        var input = Input(lead, control) with { AnalysisCross = _analysisPane.CrossSize(analysisMain) };
         _phoneSlotsInput = input;
         var slots = PhoneScreenLayout.Compute(in input);
         _phoneSlots = slots;
@@ -1059,16 +1062,19 @@ internal sealed class iOSNativeRootViewController : UIViewController
             HideDetailHighlight();
         }
 
-        _phoneFilter.Hidden = !portrait || !Has(slots.Filter);
-        _phoneMore.Hidden = !portrait || !Has(slots.More);
+        // 筛选与更多在手机形态常驻：竖屏顶行耳区各一个圆按钮；横屏有胶片栏时为刘海侧合体按钮的两段，
+        // 胶片栏关闭让出整列后拆成刘海上下两耳区的独立圆按钮（与竖屏耳区同一口径）。
+        bool filterMoreGroup = !portrait && Has(slots.FilterMoreGroup);
+        _phoneFilter.Hidden = filterMoreGroup || !Has(slots.Filter);
+        _phoneMore.Hidden = filterMoreGroup || !Has(slots.More);
         _phoneFilter.Frame = ToFrame(slots.Filter);
         _phoneMore.Frame = ToFrame(slots.More);
-        _phoneFilterSegment.Hidden = !Has(slots.Filter);
-        _phoneMoreSegment.Hidden = !Has(slots.More);
+        _phoneFilterSegment.Hidden = !filterMoreGroup;
+        _phoneMoreSegment.Hidden = !filterMoreGroup;
         _phoneFilterMore.Mirrored = !portrait && !_notchOnLeft;
         // 段的显隐变化不会自动让容器重排，显式登记一次；镜像段序同样在容器内重新计算。
         _phoneFilterMore.SetNeedsLayout();
-        _phoneFilterMore.Hidden = portrait || !Has(slots.FilterMoreGroup);
+        _phoneFilterMore.Hidden = !filterMoreGroup;
         _phoneFilterMore.Frame = ToFrame(slots.FilterMoreGroup);
         _phoneFilterMore.LayoutIfNeeded();
 
@@ -1086,9 +1092,13 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _phoneRating.Horizontal = portrait;
         _phoneRating.Hidden = !Has(slots.Rating) || !_main.Settings.ShowRating;
         _phoneRating.Frame = ToFrame(slots.Rating);
+        // EXIF：竖屏是顶行中间的带衬底块；横屏是控制栏顶端的无衬底列，只显示放得下的前几项。
         _phoneExif.Horizontal = portrait;
+        _phoneExif.Bare = !portrait;
+        _phoneExif.VisibleCount = slots.ExifItems;
         _phoneExif.Hidden = !Has(slots.Exif);
         _phoneExif.Frame = ToFrame(slots.Exif);
+        _phoneExif.LayoutIfNeeded();
     }
 
     /// <summary>隐藏全部手机形态浮层（宽形态路径）。</summary>
@@ -1193,10 +1203,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
         return _bandProbe.GetEdgeInsets(UIViewLayoutRegion.CreateSafeAreaLayoutRegion(axis));
     }
 
-    /// <summary>三条贴边带的取值变化时打一行控制台日志，便于核对刘海、圆角与 Home 指示条的避让来源。</summary>
+    /// <summary>系统安全区与两条贴角带的取值变化时打一行控制台日志，便于核对刘海、圆角与 Home 指示条的避让来源。</summary>
     /// <param name="plain">系统安全区。</param>
-    /// <param name="lead">贴角前导带。</param>
-    /// <param name="control">控制带。</param>
+    /// <param name="lead">贴角前导带（竖屏顶行 / 横屏刘海侧列）。</param>
+    /// <param name="control">控制带（竖屏底行 / 横屏下巴侧控制栏列）。</param>
     /// <param name="controlOrigin">控制带的来源说明。</param>
     private void LogPhoneBands(EdgeInsets plain, EdgeInsets lead, EdgeInsets control, string controlOrigin)
     {
@@ -1762,15 +1772,18 @@ internal sealed class iOSNativeRootViewController : UIViewController
     }
 
     /// <summary>
-    /// 主图上下文菜单（长按 / 辅助点按）：每次弹出时现读共享状态，勾选态与栏位显隐/增强开关一致；
-    /// 分析栏、增强预览与工具页都是真实入口。
+    /// 主图上下文菜单（长按 / 辅助点按）：每次弹出时现读共享状态，勾选态与栏位显隐/增强/EXIF 开关一致；
+    /// 分析栏、增强预览与工具页都是真实入口。EXIF 开关只在手机形态出现（MENU-01）。
     /// </summary>
     /// <returns>菜单构建产物。</returns>
     internal iOSContextMenus.MenuResult BuildPhotoMenu() => iOSContextMenus.Photo(
         _main.IsThumbnailViewVisible, _main.IsControlViewVisible, _main.IsAnalysisViewVisible, _session.IsEnhanced,
         _main.CurrentFile != null,
         () => _ = OpenFolderPickerAsync(), _main.ToggleThumbnailView, _main.ToggleControlView, _main.ToggleAnalysisView,
-        () => _session.ToggleEnhanced(), ShowTools, _main.OpenSettingWindow);
+        () => _session.ToggleEnhanced(), ShowTools, _main.OpenSettingWindow,
+        exifVisible: _main.IsExifViewVisible,
+        includeExif: _form != ScreenForm.Wide,
+        toggleExif: _main.ToggleExifView);
 
     /// <summary>
     /// 打开/前置原生工具页（主图菜单入口）。
@@ -1917,7 +1930,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
             return;
         }
         if (args.PropertyName is not (nameof(MainViewModel.IsRowLayout) or nameof(MainViewModel.IsThumbnailViewVisible)
-            or nameof(MainViewModel.IsControlViewVisible) or nameof(MainViewModel.IsAnalysisViewVisible))) return;
+            or nameof(MainViewModel.IsControlViewVisible) or nameof(MainViewModel.IsAnalysisViewVisible)
+            or nameof(MainViewModel.IsExifViewVisible))) return;
         UiDispatcher.Post(() =>
         {
             _ratingPopup?.Close();
@@ -2241,6 +2255,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         var defaults = NSUserDefaults.StandardUserDefaults;
         if (defaults["PhotoViewer.Native.ShowFilm"] != null) _main.IsThumbnailViewVisible = defaults.BoolForKey("PhotoViewer.Native.ShowFilm");
         if (defaults["PhotoViewer.Native.ShowControls"] != null) _main.IsControlViewVisible = defaults.BoolForKey("PhotoViewer.Native.ShowControls");
+        if (defaults["PhotoViewer.Native.ShowExif"] != null) _main.IsExifViewVisible = defaults.BoolForKey("PhotoViewer.Native.ShowExif");
     }
 
     /// <summary>保存栏位显隐偏好（验收会话不写用户偏好）。</summary>
@@ -2250,6 +2265,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         var defaults = NSUserDefaults.StandardUserDefaults;
         defaults.SetBool(_main.IsThumbnailViewVisible, "PhotoViewer.Native.ShowFilm");
         defaults.SetBool(_main.IsControlViewVisible, "PhotoViewer.Native.ShowControls");
+        defaults.SetBool(_main.IsExifViewVisible, "PhotoViewer.Native.ShowExif");
     }
 
     /// <summary>

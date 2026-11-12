@@ -16,14 +16,16 @@ namespace PhotoViewer.iOS.Native;
 /// <summary>
 /// 验收专用（非产品行为，测试钩子）：<c>--pv-native-form-check &lt;目录&gt;</c> 核对主屏形态骨架——
 /// iPhone 竖屏与两种横屏刘海方向（真实 <c>RequestGeometryUpdate</c> 旋转）、iPad 四种布局模式与
-/// 1/3、1/2、2/3 限宽分屏（舞台容器 + 紧凑尺寸类别覆盖），每个配置遍历栏位显隐组合，断言：
+/// 1/3、1/2、2/3 限宽分屏（舞台容器 + 紧凑尺寸类别覆盖），每个配置遍历栏位显隐组合（含手机 EXIF 开关），断言：
 /// 形态判定、手机槽位与实际视图 frame、主图适应区内边距与满舞台、适应区与可见控件/栏背景不相交、
-/// 按钮命中区、圆角与刘海安全区（控件不贴近该带安全区）、胶片条两端停靠与横屏滚动边缘效果、
-/// 胶片条两档选档 / 带厚 / 可见容量（记录实际值，不足 5 张按停止规则记 NOTE）与小档星级角标与抖动点、EXIF 块项数与启用显示项一致、
-/// 横屏镜像与控制列次序、旋转前后控制列到屏幕边的距离不变、筛选与更多菜单结构、切换保持当前照片与缩放位置、
-/// 放大后照片垫在栏位下方。带 <c>--pv-native-ui-snapshots</c> 时把阶段名写入
+/// 按钮命中区、圆角与刘海安全区（贴角耳区按设计允许伸进刘海旁的显示区）、胶片条两端停靠与横屏滚动边缘效果、
+/// 胶片条两档选档 / 带厚 / 可见容量（记录实际值，不足 5 张按停止规则记 NOTE）与小档星级角标与抖动点、
+/// 筛选与更多常驻（竖屏顶行耳区 vs 带 EXIF 的行位置、横屏合体 vs 胶片栏关闭后的上下耳区）、
+/// EXIF 块（竖屏带衬底整块、横屏无衬底且只显示放得下的前几项）、横屏控制栏（外缘 EdgeMargin、次序 EXIF→星级→缩放增强、
+/// 几何与胶片栏/上下张开关无关）、横屏镜像、筛选与更多菜单结构（手机形态含 EXIF 开关）、
+/// 切换保持当前照片与缩放位置、放大后照片垫在栏位下方。带 <c>--pv-native-ui-snapshots</c> 时把阶段名写入
 /// <c>Documents/PhotoViewer/native-ui-snapshot-stage.txt</c> 并停留供外部截图。
-/// 需要与 <c>--pv-open &lt;同一目录&gt;</c> 一起使用；所有临时设置、栏位显隐、方向与覆盖在收尾还原。
+/// 需要与 <c>--pv-open &lt;同一目录&gt;</c> 一起使用；所有临时设置、栏位显隐、EXIF 开关、方向与覆盖在收尾还原。
 /// 报告写 Documents/PhotoViewer/native-form-checks.txt，打印 <c>[NativeSmoke] PASS form (n checks)</c> / FAIL。
 /// </summary>
 internal static class iOSNativeFormCheck
@@ -54,25 +56,27 @@ internal static class iOSNativeFormCheck
     private sealed record Config(string Name, SetupKind Kind, UIInterfaceOrientationMask Mask, LayoutMode Mode,
         double StageFraction, ScreenForm Expected);
 
-    /// <summary>一个栏位显隐组合。</summary>
-    private sealed record Combo(string Name, bool Film, bool Control, bool Analysis, bool ShowNavigation, bool NoExif);
+    /// <summary>一个栏位显隐组合：栏位开关、上下张、手机 EXIF 开关与"清空 EXIF 显示项"。</summary>
+    private sealed record Combo(string Name, bool Film, bool Control, bool Analysis, bool ShowNavigation, bool Exif, bool NoExif);
 
     private static readonly Combo[] Combos =
     [
-        new("all", true, true, false, true, false),
-        new("film-hidden", false, true, false, true, false),
-        new("control-hidden", true, false, false, true, false),
-        new("analysis-shown", true, true, true, true, false),
-        new("no-navigation", true, true, false, false, false),
-        new("no-exif", true, true, false, true, true),
+        new("all", true, true, false, true, true, false),
+        new("film-hidden", false, true, false, true, true, false),
+        new("control-hidden", true, false, false, true, true, false),
+        new("analysis-shown", true, true, true, true, true, false),
+        new("no-navigation", true, true, false, false, true, false),
+        new("no-exif", true, true, false, true, true, true),
+        new("exif-hidden", true, true, false, true, false, false),
+        new("all-hidden", false, false, false, true, false, false),
     ];
 
-    private static readonly Combo ShownCombo = new("all-shown", true, true, true, true, false);
+    private static readonly Combo ShownCombo = new("all-shown", true, true, true, true, true, false);
 
     /// <summary>iPhone 横屏刘海在左时的槽位（供另一方向做镜像比对）。</summary>
     private static PhoneLayout? notchLeftSlots;
     private static double notchLeftWidth;
-    /// <summary>横屏控制列的基准槽位（上下张开启时），供关闭态比对。</summary>
+    /// <summary>横屏控制栏的基准槽位（胶片栏、上下张与 EXIF 全开时），供各开关关闭态比对。</summary>
     private static PhoneLayout? controlColumnSlots;
     /// <summary>筛选菜单写回只做一次（其余组合只核对菜单结构）。</summary>
     private static bool filterMutationChecked;
@@ -112,6 +116,7 @@ internal static class iOSNativeFormCheck
         string report = Path.Combine(output, "native-form-checks.txt");
         AppSettings? settings = null;
         bool entryFilm = true, entryControl = true, entryAnalysis = false;
+        bool entryExifVisible = true;
         var entryExif = new HashSet<string>(StringComparer.Ordinal);
         var entryOrientation = UIInterfaceOrientation.Unknown;
         var entrySort = SortMode.Name;
@@ -128,6 +133,9 @@ internal static class iOSNativeFormCheck
             entryFilm = main.IsThumbnailViewVisible;
             entryControl = main.IsControlViewVisible;
             entryAnalysis = main.IsAnalysisViewVisible;
+            entryExifVisible = main.IsExifViewVisible;
+            // 本轮规则以 EXIF 开关打开为默认核对态（竖屏顶行带 EXIF、横屏控制栏带 EXIF 列），收尾还原进入时的值。
+            await UiDispatcher.InvokeAsync(() => main.IsExifViewVisible = true);
             foreach (var item in main.Settings.ExifDisplayItems)
                 if (item.IsEnabled) entryExif.Add(item.PropertyName);
             // 进入时可能没有任何 EXIF 显示项（历史验收会话留下的隔离设置）：临时启用默认项核对 EXIF 列，
@@ -163,14 +171,14 @@ internal static class iOSNativeFormCheck
                     var scope = $"{config.Name}/{combo.Name}";
                     VerifyForm(root, config, scope);
                     VerifyGeometry(root, main, scope);
+                    VerifyFilters(root, scope);
                     VerifyMenus(root, main, scope);
-                    if (IsLandscapeForm(root) && combo.Name is "all" or "no-navigation")
-                        VerifyControlColumn(root, combo.Name, scope);
+                    if (IsLandscapeForm(root) && combo.Control) VerifyControlBar(root, combo, scope);
                     if (config.Kind == SetupKind.Split && combo.Name == "all")
                         VerifySplitStage(root, config, scope);
-                    lines.Add($"PASS {scope}：形态/槽位/避让/可见性/命中区/圆角安全区/胶片条两端/菜单结构通过" +
+                    lines.Add($"PASS {scope}：形态/槽位/避让/可见性/命中区/圆角安全区/胶片条两端/筛选与更多常驻/菜单结构通过" +
                         $"（胶片{OnOff(combo.Film)} 控制{OnOff(combo.Control)} 分析{OnOff(combo.Analysis)}" +
-                        $"{(combo.ShowNavigation ? " 有导航" : " 无导航")}{(combo.NoExif ? " 无EXIF" : "")}）");
+                        $"{(combo.ShowNavigation ? " 有导航" : " 无导航")} EXIF开关{OnOff(combo.Exif)}{(combo.NoExif ? " 无EXIF项" : "")}）");
                     if (snapshots && combo.Name == "all") await HoldAsync(config.Name, lines);
                 }
                 if (IsLandscapeForm(root))
@@ -188,17 +196,16 @@ internal static class iOSNativeFormCheck
                 }
             }
 
-            if (phoneDevice) await VerifyRotationInvarianceAsync(root, main, workingExif, lines);
             await VerifySwitchKeepsPhotoAsync(root, main, configs);
             await VerifyZoomedAsync(root, lines);
             if (!filterMutationChecked) await VerifyFilterMutationAsync(root, main, lines);
 
-            if (snapshots) await CaptureTuningShotsAsync(root, main, configs, workingExif, lines);
+            if (snapshots && phoneDevice) await CaptureStateShotsAsync(root, main, workingExif, lines);
             if (snapshots && phoneDevice) await CaptureZoomedShotAsync(root, main, workingExif, lines);
 
-            await RestoreAsync(root, main, settings, entryFilm, entryControl, entryAnalysis, entryExif, entryOrientation,
-                entrySort, entryOrder, entryRatingFilter);
-            lines.Add("PASS 收尾还原：方向、舞台、尺寸类别覆盖、布局模式、栏位显隐、EXIF 显示项、筛选回到进入本检查时的状态");
+            await RestoreAsync(root, main, settings, entryFilm, entryControl, entryAnalysis, entryExifVisible, entryExif,
+                entryOrientation, entrySort, entryOrder, entryRatingFilter);
+            lines.Add("PASS 收尾还原：方向、舞台、尺寸类别覆盖、布局模式、栏位显隐、EXIF 开关、EXIF 显示项、筛选回到进入本检查时的状态");
             if (snapshots) await WriteStageAsync("done");
             await File.WriteAllLinesAsync(report, lines);
             Console.WriteLine($"[NativeSmoke] PASS form ({lines.Count} checks)");
@@ -213,8 +220,8 @@ internal static class iOSNativeFormCheck
             {
                 try
                 {
-                    await RestoreAsync(root, main, settings, entryFilm, entryControl, entryAnalysis, entryExif,
-                        entryOrientation, entrySort, entryOrder, entryRatingFilter);
+                    await RestoreAsync(root, main, settings, entryFilm, entryControl, entryAnalysis, entryExifVisible,
+                        entryExif, entryOrientation, entrySort, entryOrder, entryRatingFilter);
                 }
                 catch (Exception restoreFailure)
                 {
@@ -329,7 +336,7 @@ internal static class iOSNativeFormCheck
         await SettleAsync(root);
     }
 
-    /// <summary>应用一个栏位显隐组合（含临时清空 EXIF 显示项）并等待布局落地。</summary>
+    /// <summary>应用一个栏位显隐组合（含手机 EXIF 开关与临时清空 EXIF 显示项）并等待布局落地。</summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="main">共享主 VM。</param>
     /// <param name="combo">组合。</param>
@@ -342,6 +349,7 @@ internal static class iOSNativeFormCheck
             main.IsThumbnailViewVisible = combo.Film;
             main.IsControlViewVisible = combo.Control;
             main.IsAnalysisViewVisible = combo.Analysis;
+            main.IsExifViewVisible = combo.Exif;
             foreach (var item in main.Settings.ExifDisplayItems)
             {
                 bool enabled = !combo.NoExif && entryExif.Contains(item.PropertyName);
@@ -352,7 +360,8 @@ internal static class iOSNativeFormCheck
         await WaitAsync(() =>
         {
             if (main.IsThumbnailViewVisible != combo.Film || main.IsControlViewVisible != combo.Control
-                || main.IsAnalysisViewVisible != combo.Analysis || main.Settings.ShowNavigationButtons != combo.ShowNavigation)
+                || main.IsAnalysisViewVisible != combo.Analysis || main.Settings.ShowNavigationButtons != combo.ShowNavigation
+                || main.IsExifViewVisible != combo.Exif)
                 return false;
             if (combo.NoExif ? main.ControlVM.EnabledExifItems.Count != 0 : entryExif.Count > 0 && main.ControlVM.EnabledExifItems.Count == 0)
                 return false;
@@ -362,6 +371,7 @@ internal static class iOSNativeFormCheck
             return root.PhoneSlotsInput.FilmVisible == combo.Film && root.PhoneSlotsInput.ControlVisible == combo.Control
                 && root.PhoneSlotsInput.AnalysisVisible == combo.Analysis
                 && root.PhoneSlotsInput.ShowNavigation == combo.ShowNavigation
+                && root.PhoneSlotsInput.ExifVisible == combo.Exif
                 && root.AnalysisPane.Hidden == !combo.Analysis;
         }, "栏位显隐落地");
         await SettleAsync(root);
@@ -401,6 +411,12 @@ internal static class iOSNativeFormCheck
     {
         var film = root.Filmstrip;
         bool portrait = root.Form == ScreenForm.PhonePortrait;
+        // 胶片条只在可见时跟随形态换轴与换档：上一条组合可能刚把胶片栏关掉，这里先恢复再核对。
+        if (!main.IsThumbnailViewVisible)
+        {
+            await UiDispatcher.InvokeAsync(() => main.IsThumbnailViewVisible = true);
+            await SettleAsync(root);
+        }
         var stage = root.Stage.Bounds;
         double mainLength = portrait ? (double)stage.Width : (double)stage.Height;
         var tier = FilmCardGeometry.ResolveTier(mainLength, portrait);
@@ -539,8 +555,12 @@ internal static class iOSNativeFormCheck
         if (root.Form != ScreenForm.Wide) VerifyHitTargets(root, scope);
     }
 
-    /// <summary>手机形态：槽位与实际视图 frame 逐项一致、EXIF 块与启用显示项一致、空槽位视图隐藏、槽位输入可复算、主图满舞台。</summary>
+    /// <summary>
+    /// 手机形态：槽位与实际视图 frame 逐项一致、筛选/更多常驻与合体/单按钮切换、EXIF 块（项数、衬底与整项裁剪）、
+    /// 空槽位视图隐藏、槽位输入可复算、主图满舞台。
+    /// </summary>
     /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM。</param>
     /// <param name="scope">报告范围名。</param>
     private static void VerifyPhoneGeometry(iOSNativeRootViewController root, MainViewModel main, string scope)
     {
@@ -552,10 +572,12 @@ internal static class iOSNativeFormCheck
         if (root.Photo.Frame != root.Stage.Bounds)
             throw new InvalidOperationException($"{scope} 主图视图未铺满舞台：{CGRect(root.Photo.Frame)} vs {CGRect(root.Stage.Bounds)}");
         var bars = root.PhoneBarBackgrounds;
+        // 横屏有胶片栏时筛选与更多是合体按钮的两段，胶片栏关闭后是上下耳区的独立圆按钮。
+        bool group = !portrait && Has(slots.FilterMoreGroup);
         var entries = new (string Name, LayoutRect Slot, UIView View)[]
         {
-            ("Filter", slots.Filter, portrait ? root.PhoneFilterButton : root.PhoneFilterSegment),
-            ("More", slots.More, portrait ? root.PhoneMoreButton : root.PhoneMoreSegment),
+            ("Filter", slots.Filter, group ? root.PhoneFilterSegment : root.PhoneFilterButton),
+            ("More", slots.More, group ? root.PhoneMoreSegment : root.PhoneMoreButton),
             ("FilterMoreGroup", slots.FilterMoreGroup, root.PhoneFilterMoreGroup),
             ("Exif", slots.Exif, root.PhoneExifBlock),
             ("Navigation", slots.Navigation, root.PhoneNavigationGroup),
@@ -579,35 +601,110 @@ internal static class iOSNativeFormCheck
                 || Math.Abs((double)actual.Width - slot.Width) > Tolerance || Math.Abs((double)actual.Height - slot.Height) > Tolerance)
                 throw new InvalidOperationException($"{scope} {name} frame {CGRect(actual)} 与槽位 {Rect(slot)} 不一致");
         }
-        // EXIF 块与设置里的启用项逐项一致：槽位宽度就是按同一份项数算出的，隐藏时块内不再留旧项。
+        // 筛选与更多常驻：合体模式用两段，单按钮模式用圆按钮，二者不会同时出现。
+        if (group)
+        {
+            if (!root.PhoneFilterButton.Hidden || !root.PhoneMoreButton.Hidden)
+                throw new InvalidOperationException($"{scope} 横屏合体模式下仍显示独立筛选/更多圆按钮");
+        }
+        else
+        {
+            if (!root.PhoneFilterMoreGroup.Hidden || !root.PhoneFilterSegment.Hidden || !root.PhoneMoreSegment.Hidden)
+                throw new InvalidOperationException($"{scope} 合体按钮隐藏时其容器或段仍可见");
+            if (root.PhoneFilterButton.Hidden || root.PhoneMoreButton.Hidden)
+                throw new InvalidOperationException($"{scope} 筛选/更多未常驻：筛选隐藏={root.PhoneFilterButton.Hidden}，更多隐藏={root.PhoneMoreButton.Hidden}");
+        }
+
+        VerifyPhoneExif(root, main, slots, portrait, scope);
+    }
+
+    /// <summary>
+    /// EXIF 块：项数等于设置里的启用显示项；竖屏是带衬底的整块、横屏是无衬底列且只显示放得下的前几项
+    /// （末尾项隐藏，增加一项就会压到星级）；显示与否按共享 <see cref="PhoneScreenLayout.PortraitExifShown"/> 与
+    /// <see cref="PhoneScreenLayout.LandscapeExifShown"/>。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="slots">当前槽位。</param>
+    /// <param name="portrait">是否竖屏。</param>
+    /// <param name="scope">报告范围名。</param>
+    private static void VerifyPhoneExif(iOSNativeRootViewController root, MainViewModel main, PhoneLayout slots,
+        bool portrait, string scope)
+    {
+        var input = root.PhoneSlotsInput;
+        var block = root.PhoneExifBlock;
         var enabledExif = main.ControlVM.EnabledExifItems;
-        if (root.PhoneExifBlock.ItemLabels.Count != enabledExif.Count)
+        if (block.ItemLabels.Count != enabledExif.Count)
             throw new InvalidOperationException(
-                $"{scope} EXIF 块项数 {root.PhoneExifBlock.ItemLabels.Count} ≠ 启用显示项 {enabledExif.Count}");
+                $"{scope} EXIF 块项数 {block.ItemLabels.Count} ≠ 启用显示项 {enabledExif.Count}");
         for (int index = 0; index < enabledExif.Count; index++)
         {
-            if (root.PhoneExifBlock.ItemLabels[index].Text != enabledExif[index].DisplayName
-                || root.PhoneExifBlock.ItemValues[index].Text != enabledExif[index].DisplayValue)
+            if (block.ItemLabels[index].Text != enabledExif[index].DisplayName
+                || block.ItemValues[index].Text != enabledExif[index].DisplayValue)
                 throw new InvalidOperationException(
-                    $"{scope} EXIF 块第 {index + 1} 项与共享条目不一致：{root.PhoneExifBlock.ItemLabels[index].Text} " +
-                    $"{root.PhoneExifBlock.ItemValues[index].Text}");
+                    $"{scope} EXIF 块第 {index + 1} 项与共享条目不一致：{block.ItemLabels[index].Text} " +
+                    $"{block.ItemValues[index].Text}");
         }
+        bool expectedShown = portrait
+            ? PhoneScreenLayout.PortraitExifShown(in input)
+            : PhoneScreenLayout.LandscapeExifShown(in input);
+        if (Has(slots.Exif) != expectedShown)
+            throw new InvalidOperationException(
+                $"{scope} EXIF 槽位可见性 {Has(slots.Exif)} 与共享判定 {expectedShown} 不一致（开关={input.ExifVisible}，项数={input.ExifCount}）");
+        if (!expectedShown)
+        {
+            if (!block.Hidden)
+                throw new InvalidOperationException($"{scope} EXIF 不显示时块仍可见");
+            return;
+        }
+        if (block.ShownItemCount != slots.ExifItems)
+            throw new InvalidOperationException(
+                $"{scope} EXIF 实际显示 {block.ShownItemCount} 项 ≠ 槽位放得下的 {slots.ExifItems} 项");
+        for (int index = 0; index < block.ItemLabels.Count; index++)
+        {
+            bool visible = index < block.ShownItemCount;
+            if (block.ItemLabels[index].Hidden == visible)
+                throw new InvalidOperationException(
+                    $"{scope} EXIF 第 {index + 1} 项可见性 {!block.ItemLabels[index].Hidden} 与显示项数 {block.ShownItemCount} 不符");
+        }
+        if (block.Bare == portrait)
+            throw new InvalidOperationException($"{scope} EXIF 块衬底模式 {block.Bare} 与形态 {(portrait ? "竖屏" : "横屏")} 不符");
         if (portrait)
         {
-            if (!root.PhoneFilterMoreGroup.Hidden)
-                throw new InvalidOperationException($"{scope} 竖屏仍显示横屏筛选更多合体");
+            var intrinsic = ExifBlockGeometry.Size(enabledExif.Count, horizontal: true);
+            if (slots.Exif.Width > intrinsic.Width + Tolerance)
+                throw new InvalidOperationException(
+                    $"{scope} 竖屏 EXIF 块宽 {slots.Exif.Width:0.#} 超过固有宽 {intrinsic.Width:0.#}");
+            if (block.Background.Hidden)
+                throw new InvalidOperationException($"{scope} 竖屏 EXIF 块缺少模糊衬底");
+            if (Math.Abs((double)block.Layer.CornerRadius - ExifBlockGeometry.CornerRadius) > Tolerance)
+                throw new InvalidOperationException($"{scope} 竖屏 EXIF 块圆角 {block.Layer.CornerRadius} ≠ {ExifBlockGeometry.CornerRadius:0.#}");
         }
-        else if (!root.PhoneFilterButton.Hidden || !root.PhoneMoreButton.Hidden)
+        else
         {
-            throw new InvalidOperationException($"{scope} 横屏仍显示竖屏筛选/更多圆按钮");
+            var bare = ExifBlockGeometry.Size(enabledExif.Count, horizontal: false, bare: true);
+            if (Math.Abs(slots.Exif.Width - bare.Width) > Tolerance)
+                throw new InvalidOperationException($"{scope} 横屏无衬底 EXIF 列宽 {slots.Exif.Width:0.#} ≠ {bare.Width:0.#}（52）");
+            if (!block.Background.Hidden || (double)block.Layer.CornerRadius > Tolerance)
+                throw new InvalidOperationException($"{scope} 横屏 EXIF 列仍带衬底或圆角");
+            double pitch = (bare.Height + ExifBlockGeometry.ItemSpacing) / Math.Max(1, enabledExif.Count);
+            double expectedHeight = slots.ExifItems * pitch - ExifBlockGeometry.ItemSpacing;
+            if (Math.Abs(slots.Exif.Height - expectedHeight) > Tolerance)
+                throw new InvalidOperationException(
+                    $"{scope} 横屏 EXIF 列高 {slots.Exif.Height:0.#} ≠ {slots.ExifItems} 项整项高 {expectedHeight:0.#}");
+            if (slots.ExifItems < enabledExif.Count && Has(slots.Rating)
+                && slots.Rating.Y - slots.Exif.MaxY > pitch + Tolerance)
+                throw new InvalidOperationException(
+                    $"{scope} 横屏 EXIF 裁掉末尾项后仍有空隙 {slots.Rating.Y - slots.Exif.MaxY:0.#} 点可再放一项（整项 {pitch:0.#}）");
         }
     }
 
     /// <summary>
     /// 圆角与刘海安全区：按每个可见手机控件的舞台矩形分别探测水平、垂直两种安全区布局区域——
-    /// 探测到的相对内边距就是该带必须保持的窗口缘距离，核对控件自身到对应舞台边的距离不小于它，
-    /// 控件因此不会压进圆角与刘海的裁切区。横屏例外只落在贴边的那一侧：刘海侧按钮列（筛选/更多合体、
-    /// 上下张）允许刘海侧贴近，下巴侧控制列（缩放增强、星级、EXIF）允许下巴侧贴近；竖屏任何一侧都不允许。
+    /// 探测到的相对内边距就是该带必须保持的窗口缘距离，核对控件自身到对应舞台边的距离不小于它。
+    /// 例外只落在设计明确要求的贴边侧：横屏刘海侧按钮列（合体或上下耳区单按钮、上下张）允许刘海侧贴近，
+    /// 下巴侧控制栏（缩放增强、星级、EXIF）允许下巴侧贴近；竖屏无 EXIF 时筛选与更多伸进刘海/灵动岛两旁的
+    /// 显示区（上缘贴安全区、两侧贴耳区），只有下缘仍按该带安全区核对。
     /// </summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="scope">报告范围名。</param>
@@ -615,11 +712,16 @@ internal static class iOSNativeFormCheck
     {
         bool portrait = root.Form == ScreenForm.PhonePortrait;
         var stage = root.Stage.Bounds;
+        bool group = !portrait && Has(root.PhoneSlots.FilterMoreGroup);
         var targets = new List<(string Name, UIView View, string Allowed)>();
         if (portrait)
         {
-            targets.Add(("Filter", root.PhoneFilterButton, string.Empty));
-            targets.Add(("More", root.PhoneMoreButton, string.Empty));
+            // 无 EXIF 时顶行上移进刘海两旁的显示区：上、左、右三边由耳区规则接管，只核对下缘。
+            string ears = PhoneScreenLayout.TopRowY(root.PhoneSlotsInput) < root.PhoneSlotsInput.Safe.Top - Tolerance
+                ? "Top,Left,Right"
+                : string.Empty;
+            targets.Add(("Filter", root.PhoneFilterButton, ears));
+            targets.Add(("More", root.PhoneMoreButton, ears));
             targets.Add(("Navigation", root.PhoneNavigationGroup, string.Empty));
             targets.Add(("FitEnhance", root.PhoneFitEnhanceGroup, string.Empty));
             targets.Add(("Rating", root.PhoneRatingControl, string.Empty));
@@ -629,9 +731,14 @@ internal static class iOSNativeFormCheck
         {
             string notchSide = root.NotchOnLeft ? "Left" : "Right";
             string chinSide = root.NotchOnLeft ? "Right" : "Left";
-            targets.Add(("FilterMore", root.PhoneFilterMoreGroup, notchSide));
+            if (group) targets.Add(("FilterMore", root.PhoneFilterMoreGroup, notchSide));
+            else
+            {
+                targets.Add(("Filter", root.PhoneFilterButton, notchSide + ",Top,Bottom"));
+                targets.Add(("More", root.PhoneMoreButton, notchSide + ",Top,Bottom"));
+            }
             targets.Add(("Navigation", root.PhoneNavigationGroup, notchSide));
-            targets.Add(("FitEnhance", root.PhoneFitEnhanceGroup, chinSide));
+            targets.Add(("FitEnhance", root.PhoneFitEnhanceGroup, chinSide + ",Top,Bottom"));
             targets.Add(("Rating", root.PhoneRatingControl, chinSide));
             targets.Add(("Exif", root.PhoneExifBlock, chinSide));
         }
@@ -640,10 +747,10 @@ internal static class iOSNativeFormCheck
         {
             if (required <= Tolerance) return;
             if (distance >= required - Tolerance) return;
-            if (string.Equals(edge, allowed, StringComparison.Ordinal)) return;
+            if (allowed.Split(',').Contains(edge, StringComparer.Ordinal)) return;
             throw new InvalidOperationException(
                 $"{scope} 控件 {name} {CGRect(frame)} 距{edge}边 {distance:0.##} 小于该带安全区 {required:0.##}" +
-                $"（本方向只允许 {(allowed.Length == 0 ? "无" : allowed)} 侧贴近）");
+                $"（本形态只允许 {(allowed.Length == 0 ? "无" : allowed)} 侧贴近）");
         }
 
         foreach (var (name, view, allowed) in targets)
@@ -830,8 +937,9 @@ internal static class iOSNativeFormCheck
         if (phone)
         {
             var portrait = root.Form == ScreenForm.PhonePortrait;
-            Add("Filter", portrait ? root.PhoneFilterButton : root.PhoneFilterSegment);
-            Add("More", portrait ? root.PhoneMoreButton : root.PhoneMoreSegment);
+            bool group = !portrait && Has(root.PhoneSlots.FilterMoreGroup);
+            Add("Filter", group ? root.PhoneFilterSegment : root.PhoneFilterButton);
+            Add("More", group ? root.PhoneMoreSegment : root.PhoneMoreButton);
             Add("Exif", root.PhoneExifBlock);
             Add("Navigation", root.PhoneNavigationGroup);
             Add("Rating", root.PhoneRatingControl);
@@ -913,61 +1021,174 @@ internal static class iOSNativeFormCheck
         }
     }
 
-    /// <summary>横屏控制列：次序 分析栏 → EXIF 列 → 控制列，上下张不落在控制列内，且不随上下张开关变化。</summary>
+    /// <summary>
+    /// 筛选与更多在手机形态常驻：竖屏顶行（带 EXIF 时三者同行贴安全区，不带 EXIF 时上移进刘海两旁的耳区）；
+    /// 横屏有胶片栏时是刘海侧列顶端的合体按钮，胶片栏关闭后拆成刘海上下两旁的独立圆按钮（同一耳区口径）。
+    /// 两种位置都核对与共享 <see cref="PhoneScreenLayout.TopRowY"/> 的对应关系与菜单入口可用。
+    /// </summary>
     /// <param name="root">原生根控制器。</param>
-    /// <param name="comboName">组合名。</param>
     /// <param name="scope">报告范围名。</param>
-    private static void VerifyControlColumn(iOSNativeRootViewController root, string comboName, string scope)
+    private static void VerifyFilters(iOSNativeRootViewController root, string scope)
+    {
+        if (root.Form == ScreenForm.Wide) return;
+        var slots = root.PhoneSlots;
+        var input = root.PhoneSlotsInput;
+        bool portrait = root.Form == ScreenForm.PhonePortrait;
+        bool group = !portrait && Has(slots.FilterMoreGroup);
+        if (!Has(slots.Filter) || !Has(slots.More))
+            throw new InvalidOperationException(
+                $"{scope} 筛选/更多未常驻：Filter={Rect(slots.Filter)}，More={Rect(slots.More)}");
+        var filterOwner = group ? root.PhoneFilterSegment : root.PhoneFilterButton;
+        var moreOwner = group ? root.PhoneMoreSegment : root.PhoneMoreButton;
+        if (filterOwner.Menu == null) throw new InvalidOperationException($"{scope} 筛选入口没有菜单");
+        if (moreOwner.Menu == null) throw new InvalidOperationException($"{scope} 更多入口没有菜单");
+        if (!portrait)
+        {
+            string notchSide = root.NotchOnLeft ? "Left" : "Right";
+            double notchGap = group
+                ? (root.NotchOnLeft ? slots.FilterMoreGroup.X : root.Stage.Bounds.Width - slots.FilterMoreGroup.MaxX)
+                : (root.NotchOnLeft ? slots.Filter.X : root.Stage.Bounds.Width - slots.More.MaxX);
+            double leadTop = Math.Max(input.Safe.Top, input.LeadBand.Top) + input.RowInset;
+            double leadBottom = input.Height
+                - Math.Max(Math.Max(input.Safe.Bottom, input.LeadBand.Bottom), input.RowInset);
+            if (notchGap > (root.NotchOnLeft ? input.Safe.Left : input.Safe.Right) + Tolerance)
+                throw new InvalidOperationException(
+                    $"{scope} 筛选/更多未贴{notchSide}侧安全区：距窗口缘 {notchGap:0.#}（安全区 " +
+                    $"{(root.NotchOnLeft ? input.Safe.Left : input.Safe.Right):0.#}）");
+            if (notchGap < Math.Min(root.NotchOnLeft ? input.Safe.Left : input.Safe.Right, input.EdgeMargin) - Tolerance)
+                throw new InvalidOperationException($"{scope} 筛选/更多过于贴近{notchSide}窗口缘：{notchGap:0.#}");
+            if (group)
+            {
+                if (Math.Abs(slots.FilterMoreGroup.Y - leadTop) > Tolerance)
+                    throw new InvalidOperationException(
+                        $"{scope} 合体按钮未在{notchSide}侧列顶端：Y {slots.FilterMoreGroup.Y:0.#} ≠ {leadTop:0.#}");
+                if (!Contains(ToCGRect(slots.FilterMoreGroup), ToCGRect(slots.Filter))
+                    || !Contains(ToCGRect(slots.FilterMoreGroup), ToCGRect(slots.More)))
+                    throw new InvalidOperationException(
+                        $"{scope} 筛选/更多槽位不在合体按钮内：组 {Rect(slots.FilterMoreGroup)}，筛选 {Rect(slots.Filter)}，更多 {Rect(slots.More)}");
+            }
+            else
+            {
+                if (Math.Abs(slots.Filter.Y - leadTop) > Tolerance)
+                    throw new InvalidOperationException(
+                        $"{scope} 胶片栏关闭后筛选未移到{notchSide}上耳区：Y {slots.Filter.Y:0.#} ≠ {leadTop:0.#}");
+                if (Math.Abs(slots.More.MaxY - leadBottom) > Tolerance)
+                    throw new InvalidOperationException(
+                        $"{scope} 胶片栏关闭后更多未落在{notchSide}下耳区：末端 {slots.More.MaxY:0.#} ≠ {leadBottom:0.#}");
+                if (Math.Abs(slots.Filter.X - slots.More.X) > Tolerance)
+                    throw new InvalidOperationException(
+                        $"{scope} 上下耳区按钮未对齐同一列：筛选 X {slots.Filter.X:0.#}，更多 X {slots.More.X:0.#}");
+                if (slots.More.Y <= slots.Filter.Y + Tolerance)
+                    throw new InvalidOperationException(
+                        $"{scope} 上下耳区次序不符：筛选 Y {slots.Filter.Y:0.#}，更多 Y {slots.More.Y:0.#}");
+            }
+            return;
+        }
+        // 竖屏：两条顶行信息都与共享行位置一致。
+        double rowTop = PhoneScreenLayout.TopRowY(in input);
+        double exifRow = Math.Max(input.Safe.Top, input.RowInset);
+        if (Math.Abs(slots.Filter.Y - rowTop) > Tolerance || Math.Abs(slots.More.Y - rowTop) > Tolerance)
+            throw new InvalidOperationException(
+                $"{scope} 竖屏顶行 Y {slots.Filter.Y:0.#}/{slots.More.Y:0.#} ≠ 共享行位置 {rowTop:0.#}");
+        bool withExif = PhoneScreenLayout.PortraitExifShown(in input);
+        if (withExif)
+        {
+            if (!Has(slots.Exif))
+                throw new InvalidOperationException($"{scope} 带 EXIF 的顶行缺少 EXIF 块");
+            if (rowTop < exifRow - Tolerance)
+                throw new InvalidOperationException(
+                    $"{scope} 带 EXIF 的顶行 {rowTop:0.#} 高于安全区行 {exifRow:0.#}");
+            double rowCenter = rowTop + input.ButtonSize / 2;
+            if (Math.Abs(slots.Exif.Y + slots.Exif.Height / 2 - rowCenter) > Tolerance)
+                throw new InvalidOperationException(
+                    $"{scope} EXIF 块未与顶行按钮同排居中：块中心 {slots.Exif.Y + slots.Exif.Height / 2:0.#} ≠ 行中心 {rowCenter:0.#}");
+        }
+        else
+        {
+            if (rowTop > exifRow + Tolerance)
+                throw new InvalidOperationException(
+                    $"{scope} 无 EXIF 时顶行 {rowTop:0.#} 未上移进耳区（带 EXIF 行 {exifRow:0.#}）");
+            if (input.Safe.Top > input.EdgeMargin && slots.Filter.Y < input.EdgeMargin - Tolerance)
+                throw new InvalidOperationException(
+                    $"{scope} 耳区按钮上缘距窗口缘 {slots.Filter.Y:0.#} 小于 edgeMargin {input.EdgeMargin:0.#}");
+        }
+    }
+
+    /// <summary>
+    /// 横屏下巴侧控制栏（桌面式）：按钮外缘距下巴窗口缘 <c>EdgeMargin</c>（不避让系统对称安全内缩），
+    /// 自上而下为 EXIF 列 → 星级控件 → 缩放适应/雾天增强竖排合体，EXIF 与按钮同一中轴；上下张不在控制栏内。
+    /// 几何与胶片栏、上下张开关无关（作废"旋转保持一致"），只有 EXIF 开关改变星级起点。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="combo">当前组合。</param>
+    /// <param name="scope">报告范围名。</param>
+    private static void VerifyControlBar(iOSNativeRootViewController root, Combo combo, string scope)
     {
         var slots = root.PhoneSlots;
-        double controlX = Math.Min(slots.FitEnhance.X, slots.Rating.X);
-        // 刘海在左时自内向外为分析栏 → EXIF 列 → 控制列；刘海在右时整体镜像，次序反向。
-        bool notchLeft = root.NotchOnLeft;
-        if (Has(slots.Exif))
-        {
-            bool exifBeforeControl = notchLeft ? slots.Exif.X < controlX - Tolerance : slots.Exif.X > controlX + Tolerance;
-            if (!exifBeforeControl)
-                throw new InvalidOperationException($"{scope} EXIF 列 X {slots.Exif.X:0.#} 与控制列 {controlX:0.#} 次序不符（刘海在左={notchLeft}）");
-            if (Has(slots.Analysis))
-            {
-                bool analysisBeforeExif = notchLeft
-                    ? slots.Analysis.X < slots.Exif.X - Tolerance
-                    : slots.Analysis.X > slots.Exif.X + Tolerance;
-                if (!analysisBeforeExif)
-                    throw new InvalidOperationException(
-                        $"{scope} 分析栏 X {slots.Analysis.X:0.#} 与 EXIF 列 {slots.Exif.X:0.#} 次序不符（刘海在左={notchLeft}）");
-            }
-        }
-        else if (Has(slots.Analysis))
-        {
-            bool separated = notchLeft ? slots.Analysis.MaxX <= controlX + Tolerance : slots.Analysis.X >= controlX - Tolerance;
-            if (!separated)
-                throw new InvalidOperationException($"{scope} 分析栏 {Rect(slots.Analysis)} 与无 EXIF 时的控制列 {controlX:0.#} 重叠");
-        }
+        var input = root.PhoneSlotsInput;
+        if (!Has(slots.FitEnhance) || !Has(slots.Rating))
+            throw new InvalidOperationException($"{scope} 控制栏可见时缺少缩放增强或星级槽位");
+        double chinEdge = root.NotchOnLeft ? root.Stage.Bounds.Width - slots.FitEnhance.MaxX : slots.FitEnhance.X;
+        if (Math.Abs(chinEdge - input.EdgeMargin) > Tolerance)
+            throw new InvalidOperationException(
+                $"{scope} 控制栏外缘距下巴窗口缘 {chinEdge:0.#} ≠ EdgeMargin {input.EdgeMargin:0.#}");
+        double chinSafe = root.NotchOnLeft ? input.Safe.Right : input.Safe.Left;
+        if (chinSafe > input.EdgeMargin + Tolerance && chinEdge >= chinSafe - Tolerance)
+            throw new InvalidOperationException(
+                $"{scope} 控制栏仍避让对称安全内缩：外缘 {chinEdge:0.#}，安全区 {chinSafe:0.#}");
+        if (Math.Abs(slots.Rating.X - slots.FitEnhance.X) > Tolerance)
+            throw new InvalidOperationException(
+                $"{scope} 星级与缩放增强不在同一列：{slots.Rating.X:0.#} vs {slots.FitEnhance.X:0.#}");
+        double axis = slots.FitEnhance.X + input.ButtonSize / 2;
+        if (Has(slots.Exif) && Math.Abs(slots.Exif.X + slots.Exif.Width / 2 - axis) > Tolerance)
+            throw new InvalidOperationException(
+                $"{scope} EXIF 列中轴 {slots.Exif.X + slots.Exif.Width / 2:0.#} ≠ 按钮中轴 {axis:0.#}");
+        // 次序：EXIF（放得下时）→ 星级 → 缩放增强，项间为组间距。
+        double ratingTop = Has(slots.Exif) ? slots.Exif.MaxY + input.GroupGap : double.NaN;
+        if (Has(slots.Exif) && Math.Abs(slots.Rating.Y - ratingTop) > Tolerance)
+            throw new InvalidOperationException(
+                $"{scope} 星级未紧接 EXIF 列：星级 Y {slots.Rating.Y:0.#} ≠ {ratingTop:0.#}");
+        if (Math.Abs(slots.FitEnhance.Y - (slots.Rating.MaxY + input.GroupGap)) > Tolerance)
+            throw new InvalidOperationException(
+                $"{scope} 缩放增强未紧接星级：Y {slots.FitEnhance.Y:0.#} ≠ 星级末端 {slots.Rating.MaxY:0.#} + {input.GroupGap:0.#}");
         if (Has(slots.Navigation))
         {
             var navigation = ToCGRect(slots.Navigation);
             foreach (var (name, target) in new (string, LayoutRect)[]
             {
-                ("缩放增强", slots.FitEnhance), ("星级", slots.Rating), ("EXIF", slots.Exif), ("分析栏", slots.Analysis),
+                ("缩放增强", slots.FitEnhance), ("星级", slots.Rating), ("EXIF", slots.Exif),
             })
             {
                 if (Has(target) && Intersects(navigation, ToCGRect(target)))
-                    throw new InvalidOperationException($"{scope} 上下张 {Rect(slots.Navigation)} 落在{name} {Rect(target)} 内");
+                    throw new InvalidOperationException($"{scope} 上下张 {Rect(slots.Navigation)} 落在控制栏{name} {Rect(target)} 内");
             }
         }
-        if (comboName == "all")
+        if (!Has(slots.Exif))
+        {
+            // 没有 EXIF（开关关或显示项为空）：控制栏背景收起，星级从列顶端起、取全部剩余长度。
+            if (Has(slots.TrailingBar))
+                throw new InvalidOperationException($"{scope} 无 EXIF 时仍绘制控制栏背景 {Rect(slots.TrailingBar)}");
+            double columnTop = Math.Max(input.Safe.Top, input.ControlBand.Top) + input.RowInset;
+            if (Math.Abs(slots.Rating.Y - columnTop) > Tolerance)
+                throw new InvalidOperationException(
+                    $"{scope} 无 EXIF 时星级未从列顶端起：{slots.Rating.Y:0.#} ≠ {columnTop:0.#}");
+        }
+        if (combo.Name == "all")
         {
             controlColumnSlots = slots;
             return;
         }
         if (controlColumnSlots is not { } reference)
-            throw new InvalidOperationException($"{scope} 缺少上下张开启时的控制列基准");
-        if (!SameRect(reference.FitEnhance, slots.FitEnhance) || !SameRect(reference.Rating, slots.Rating)
-            || !SameRect(reference.Exif, slots.Exif))
+            throw new InvalidOperationException($"{scope} 缺少 EXIF 全开时的控制栏基准");
+        // 缩放增强与所有开关无关；星级与 EXIF 只在 EXIF 仍显示时与基准一致（EXIF 关掉本就会变长）。
+        if (!SameRect(reference.FitEnhance, slots.FitEnhance))
             throw new InvalidOperationException(
-                $"{scope} 关闭上下张后控制列几何变化：FitEnhance {Rect(reference.FitEnhance)}→{Rect(slots.FitEnhance)}，" +
-                $"Rating {Rect(reference.Rating)}→{Rect(slots.Rating)}");
+                $"{scope} 缩放增强几何随开关变化：{Rect(reference.FitEnhance)} → {Rect(slots.FitEnhance)}");
+        if (Has(slots.Exif)
+            && (!SameRect(reference.Rating, slots.Rating) || !SameRect(reference.Exif, slots.Exif)))
+            throw new InvalidOperationException(
+                $"{scope} 控制栏几何随胶片栏/上下张开关变化：Rating {Rect(reference.Rating)}→{Rect(slots.Rating)}，" +
+                $"Exif {Rect(reference.Exif)}→{Rect(slots.Exif)}");
     }
 
     /// <summary>核对分屏窗口的舞台宽度、右安全区扣除与主图宽度。</summary>
@@ -988,14 +1209,21 @@ internal static class iOSNativeFormCheck
             throw new InvalidOperationException($"{scope} 主图宽度 {(double)root.Photo.Bounds.Width:0.#} ≠ 舞台宽 {(double)root.Stage.Bounds.Width:0.#}");
     }
 
-    /// <summary>核对更多菜单与筛选菜单的结构，以及主图菜单的勾选态。</summary>
+    /// <summary>
+    /// 核对更多菜单与筛选菜单的结构，以及主图菜单的勾选态：手机形态的栏位组末尾多一项 EXIF（与长按菜单同序同源），
+    /// 宽形态不含该项；筛选与更多两个入口在合体与单按钮两种形态下都必须带菜单。
+    /// </summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="main">共享主 VM。</param>
     /// <param name="scope">报告范围名。</param>
     private static void VerifyMenus(iOSNativeRootViewController root, MainViewModel main, string scope)
     {
-        var moreMenu = root.PhoneMoreButton.Menu
-            ?? throw new InvalidOperationException($"{scope} 更多按钮没有菜单");
+        bool phoneForm = root.Form != ScreenForm.Wide;
+        var moreOwner = !phoneForm || Has(root.PhoneSlots.FilterMoreGroup)
+            ? root.PhoneMoreSegment
+            : root.PhoneMoreButton;
+        var moreMenu = moreOwner.Menu
+            ?? throw new InvalidOperationException($"{scope} 更多入口没有菜单");
         if (moreMenu.Children.Length != 1 || moreMenu.Children[0] is not UIDeferredMenuElement)
             throw new InvalidOperationException($"{scope} 更多菜单应为单个延迟元素，实际 {moreMenu.Children.Length} 项");
         var fromSource = Flatten(root.PhotoMenuItems());
@@ -1009,10 +1237,31 @@ internal static class iOSNativeFormCheck
             ["photo.control"] = main.IsControlViewVisible,
             ["photo.analysis"] = main.IsAnalysisViewVisible,
         };
+        if (phoneForm) expected["photo.exif"] = main.IsExifViewVisible;
+        else if (states.ContainsKey("photo.exif"))
+            throw new InvalidOperationException($"{scope} 宽形态主图菜单仍含 EXIF 开关");
         foreach (var (identifier, value) in expected)
         {
             if (states.TryGetValue(identifier, out bool actual) && actual != value)
                 throw new InvalidOperationException($"{scope} 主图菜单 {identifier} 勾选 {actual} ≠ 状态 {value}");
+        }
+        // 手机形态：栏位组 = 胶片栏 / 分析栏 / 控制栏 / EXIF 四项，EXIF 在控制栏之后。
+        var titles = Flatten(root.PhotoMenuItems());
+        int filmIndex = titles.IndexOf("胶片栏"), controlIndex = titles.IndexOf("控制栏");
+        int exifIndex = titles.IndexOf("EXIF");
+        if (filmIndex < 0 || controlIndex < 0)
+            throw new InvalidOperationException($"{scope} 主图菜单缺少栏位组：{string.Join(" / ", titles)}");
+        if (phoneForm)
+        {
+            if (exifIndex < 0)
+                throw new InvalidOperationException($"{scope} 手机形态主图菜单缺少 EXIF 开关：{string.Join(" / ", titles)}");
+            if (exifIndex != controlIndex + 1)
+                throw new InvalidOperationException(
+                    $"{scope} EXIF 开关未紧随控制栏：{string.Join(" / ", titles)}");
+        }
+        else if (exifIndex >= 0)
+        {
+            throw new InvalidOperationException($"{scope} 宽形态主图菜单含 EXIF 开关");
         }
         foreach (var button in new[] { root.PhoneFilterButton, root.PhoneFilterSegment })
         {
@@ -1215,86 +1464,34 @@ internal static class iOSNativeFormCheck
     }
 
     /// <summary>
-    /// 旋转不变性（iPhone）：竖屏底行与横屏控制列是同一排按钮，旋转后离屏幕边等距。
-    /// 关闭上下张后记录竖屏基准，再旋转到横屏核对：下巴侧间距 = 竖屏底部间距、
-    /// 控制列上间距 = 竖屏右侧间距、星级末端间距 = 竖屏星级起点（±0.5）。
+    /// 本轮手机布局的定版截图：竖屏带 EXIF / EXIF 关闭（耳区）/ 四开关全关，
+    /// 横屏刘海在左（胶片栏与 EXIF 开）/ 胶片栏关闭（上下耳区单按钮）/ 控制栏关闭，刘海在右各一张。
     /// </summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="main">共享主 VM。</param>
     /// <param name="workingExif">当前启用的 EXIF 显示项。</param>
     /// <param name="lines">报告行。</param>
-    private static async Task VerifyRotationInvarianceAsync(iOSNativeRootViewController root, MainViewModel main,
+    private static async Task CaptureStateShotsAsync(iOSNativeRootViewController root, MainViewModel main,
         HashSet<string> workingExif, List<string> lines)
     {
         var configs = BuildConfigs(phoneDevice: true);
-        var combo = new Combo("rotation-invariance", true, true, false, false, false);
-        await ApplyConfigAsync(root, main, configs[0]);
-        await ApplyComboAsync(root, main, combo, workingExif);
-        var portrait = root.PhoneSlots;
-        double portraitWidth = (double)root.Stage.Bounds.Width;
-        double portraitHeight = (double)root.Stage.Bounds.Height;
-        if (!Has(portrait.FitEnhance) || !Has(portrait.Rating))
-            throw new InvalidOperationException("旋转不变性：竖屏缺少缩放增强或星级槽位");
-        double portraitBottom = portraitHeight - portrait.FitEnhance.MaxY;
-        double portraitRight = portraitWidth - portrait.FitEnhance.MaxX;
-        double portraitRatingStart = portrait.Rating.X;
-
-        await ApplyConfigAsync(root, main, configs[1]);
-        await ApplyComboAsync(root, main, combo, workingExif);
-        var landscape = root.PhoneSlots;
-        double stageWidth = (double)root.Stage.Bounds.Width;
-        double stageHeight = (double)root.Stage.Bounds.Height;
-        if (Math.Abs(stageWidth - portraitHeight) > Tolerance || Math.Abs(stageHeight - portraitWidth) > Tolerance)
-            throw new InvalidOperationException(
-                $"旋转不变性：横屏舞台 {stageWidth:0.#}×{stageHeight:0.#} 不是竖屏 {portraitWidth:0.#}×{portraitHeight:0.#} 的转置");
-        if (!Has(landscape.FitEnhance) || !Has(landscape.Rating))
-            throw new InvalidOperationException("旋转不变性：横屏缺少缩放增强或星级槽位");
-
-        double chinGap = root.NotchOnLeft ? stageWidth - landscape.FitEnhance.MaxX : landscape.FitEnhance.X;
-        if (Math.Abs(chinGap - portraitBottom) > Tolerance)
-            throw new InvalidOperationException(
-                $"旋转不变性：控制列下巴间距 {chinGap:0.##} ≠ 竖屏底部间距 {portraitBottom:0.##}");
-        double topGap = landscape.FitEnhance.Y;
-        if (Math.Abs(topGap - portraitRight) > Tolerance)
-            throw new InvalidOperationException(
-                $"旋转不变性：控制列上间距 {topGap:0.##} ≠ 竖屏右侧间距 {portraitRight:0.##}");
-        double ratingEndGap = stageHeight - landscape.Rating.MaxY;
-        if (Math.Abs(ratingEndGap - portraitRatingStart) > Tolerance)
-            throw new InvalidOperationException(
-                $"旋转不变性：星级末端间距 {ratingEndGap:0.##} ≠ 竖屏星级起点 {portraitRatingStart:0.##}");
-        lines.Add($"PASS 旋转不变性：控制列下巴间距 {chinGap:0.##}=竖屏底部 {portraitBottom:0.##}，" +
-            $"上间距 {topGap:0.##}=竖屏右侧 {portraitRight:0.##}，星级末端 {ratingEndGap:0.##}=竖屏星级起点 {portraitRatingStart:0.##}");
-    }
-
-    /// <summary>三个指定配置在各避让参数下的截图候选（全部显示 / 分析栏隐藏）。</summary>
-    /// <param name="root">原生根控制器。</param>
-    /// <param name="main">共享主 VM。</param>
-    /// <param name="configs">配置清单。</param>
-    /// <param name="entryExif">进入检查时启用的 EXIF 项。</param>
-    /// <param name="lines">报告行。</param>
-    private static async Task CaptureTuningShotsAsync(iOSNativeRootViewController root, MainViewModel main, Config[] configs,
-        HashSet<string> workingExif, List<string> lines)
-    {
-        var targets = configs.Where(config => config.Name is "iphone-portrait" or "iphone-landscape-notch-left" or "ipad-phone").ToArray();
-        foreach (var config in targets)
+        var stages = new (Config Config, Combo Combo, string Stage)[]
+        {
+            (configs[0], new Combo("shot-portrait-exif", true, true, false, true, true, false), "u3-portrait-exif"),
+            (configs[0], new Combo("shot-portrait-ear", true, true, false, true, false, false), "u3-portrait-ear"),
+            (configs[0], new Combo("shot-portrait-all-off", false, false, false, true, false, false), "u3-portrait-all-off"),
+            (configs[1], new Combo("shot-landscape-exif", true, true, false, true, true, false), "u3-landscape-notch-left-exif"),
+            (configs[1], new Combo("shot-landscape-film-off", false, true, false, true, true, false), "u3-landscape-notch-left-film-off"),
+            (configs[1], new Combo("shot-landscape-control-off", true, false, false, true, true, false), "u3-landscape-notch-left-control-off"),
+            (configs[2], new Combo("shot-landscape-notch-right", true, true, false, true, true, false), "u3-landscape-notch-right-exif"),
+        };
+        foreach (var (config, combo, stage) in stages)
         {
             await ApplyConfigAsync(root, main, config);
-            foreach (double tuning in new[] { 8.0, 12.0, 16.0 })
-            {
-                foreach (bool analysis in new[] { true, false })
-                {
-                    var combo = new Combo(analysis ? "tuning-all" : "tuning-analysis-off", true, true, analysis, true, false);
-                    await ApplyComboAsync(root, main, combo, workingExif);
-                    await UiDispatcher.InvokeAsync(() => root.AvoidanceTuningOverride = tuning);
-                    await SettleAsync(root);
-                    string state = analysis ? "all" : "analysis-off";
-                    await HoldAsync($"{config.Name}-tuning-{tuning:0}-{state}", lines);
-                }
-            }
-            await UiDispatcher.InvokeAsync(() => root.AvoidanceTuningOverride = null);
-            await SettleAsync(root);
+            await ApplyComboAsync(root, main, combo, workingExif);
+            await HoldAsync(stage, lines);
         }
-        lines.Add("PASS 避让候选组：iPhone 竖屏 / 横屏刘海在左 / iPad 手机模式各 8/12/16 两态截图");
+        lines.Add("PASS 定版截图：竖屏带 EXIF / 耳区 / 四开关全关，横屏刘海在左三态与刘海在右各一张");
     }
 
     /// <summary>iPhone 竖屏放大并平移到角落的截图（照片垫在栏位下方）。</summary>
@@ -1314,21 +1511,22 @@ internal static class iOSNativeFormCheck
         await SettleAsync(root);
     }
 
-    /// <summary>收尾还原：方向、舞台、尺寸类别、布局模式、栏位显隐、EXIF 显示项与筛选状态。</summary>
+    /// <summary>收尾还原：方向、舞台、尺寸类别、布局模式、栏位显隐、EXIF 开关、EXIF 显示项与筛选状态。</summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="main">共享主 VM。</param>
     /// <param name="settings">进入本检查时的不可变设置快照。</param>
     /// <param name="film">进入时的胶片栏显隐。</param>
     /// <param name="control">进入时的控制栏显隐。</param>
     /// <param name="analysis">进入时的分析栏显隐。</param>
+    /// <param name="exifVisible">进入时的手机 EXIF 开关。</param>
     /// <param name="entryExif">进入时启用的 EXIF 项。</param>
     /// <param name="orientation">进入时的界面方向。</param>
     /// <param name="sort">进入时的排序方式。</param>
     /// <param name="order">进入时的排序方向。</param>
     /// <param name="ratingFilter">进入时的星级筛选。</param>
     private static async Task RestoreAsync(iOSNativeRootViewController root, MainViewModel main, AppSettings settings,
-        bool film, bool control, bool analysis, HashSet<string> entryExif, UIInterfaceOrientation orientation,
-        SortMode sort, SortOrder order, string ratingFilter)
+        bool film, bool control, bool analysis, bool exifVisible, HashSet<string> entryExif,
+        UIInterfaceOrientation orientation, SortMode sort, SortOrder order, string ratingFilter)
     {
         await UiDispatcher.InvokeAsync(() =>
         {
@@ -1340,6 +1538,7 @@ internal static class iOSNativeFormCheck
             main.IsThumbnailViewVisible = film;
             main.IsControlViewVisible = control;
             main.IsAnalysisViewVisible = analysis;
+            main.IsExifViewVisible = exifVisible;
             foreach (var item in main.Settings.ExifDisplayItems)
             {
                 bool enabled = entryExif.Contains(item.PropertyName);

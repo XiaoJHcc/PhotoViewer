@@ -13,6 +13,8 @@ public enum PhotoMenuItemId
     Analysis,
     /// <summary>控制栏显隐（勾选）。</summary>
     ControlBar,
+    /// <summary>EXIF 显隐（勾选；仅手机形态）。</summary>
+    Exif,
     /// <summary>雾天增强（勾选；无当前照片时置灰）。</summary>
     Enhance,
     /// <summary>工具…。</summary>
@@ -27,12 +29,14 @@ public enum PhotoMenuItemId
 /// <param name="AnalysisVisible">分析栏是否可见。</param>
 /// <param name="ControlVisible">控制栏是否可见。</param>
 /// <param name="Enhanced">雾天增强是否开启。</param>
+/// <param name="ExifVisible">手机形态 EXIF 开关是否打开（只在含 EXIF 项时有意义）。</param>
 public readonly record struct PhotoMenuState(
     bool HasPhoto,
     bool FilmVisible,
     bool AnalysisVisible,
     bool ControlVisible,
-    bool Enhanced);
+    bool Enhanced,
+    bool ExifVisible = false);
 
 /// <summary>主图菜单的一项：固定文案、分组序号、勾选与可用性。</summary>
 /// <param name="Id">命令标识。</param>
@@ -51,7 +55,7 @@ public sealed record PhotoMenuItem(
 
 /// <summary>
 /// MENU-01/02/06/07 主图上下文菜单目录：四组固定顺序（打开 / 栏位 / 预览 / 窗口），
-/// 组内不重排、项集合不随照片或布局增删；勾选与置灰只取共享状态快照。
+/// 组内不重排、项集合不随照片增删（只有手机形态在栏位组末尾多一项 EXIF）；勾选与置灰只取共享状态快照。
 /// 各端按 <see cref="PhotoMenuItem.Id"/> 映射原生图标与执行入口，只负责插入原生分隔线与落位。
 /// </summary>
 public static class PhotoMenuCatalog
@@ -68,15 +72,17 @@ public static class PhotoMenuCatalog
     /// <summary>按固定顺序构建主图菜单。</summary>
     /// <param name="state">当前共享状态。</param>
     /// <param name="includeOpenFile">是否包含「打开文件…」（桌面为 true，触屏为 false）。</param>
+    /// <param name="includeExif">是否包含 EXIF 开关（只有手机形态为 true）。</param>
     /// <returns>按显示顺序排列的菜单项。</returns>
-    public static IReadOnlyList<PhotoMenuItem> Build(PhotoMenuState state, bool includeOpenFile)
+    public static IReadOnlyList<PhotoMenuItem> Build(PhotoMenuState state, bool includeOpenFile, bool includeExif = false)
     {
-        var items = new List<PhotoMenuItem>(includeOpenFile ? 8 : 7);
+        var items = new List<PhotoMenuItem>(9);
         if (includeOpenFile) items.Add(new PhotoMenuItem(PhotoMenuItemId.OpenFile, "打开文件…", OpenGroup, false, false, true));
         items.Add(new PhotoMenuItem(PhotoMenuItemId.OpenFolder, "打开文件夹…", OpenGroup, false, false, true));
         items.Add(new PhotoMenuItem(PhotoMenuItemId.Filmstrip, "胶片栏", PaneGroup, true, state.FilmVisible, true));
         items.Add(new PhotoMenuItem(PhotoMenuItemId.Analysis, "分析栏", PaneGroup, true, state.AnalysisVisible, true));
         items.Add(new PhotoMenuItem(PhotoMenuItemId.ControlBar, "控制栏", PaneGroup, true, state.ControlVisible, true));
+        if (includeExif) items.Add(new PhotoMenuItem(PhotoMenuItemId.Exif, "EXIF", PaneGroup, true, state.ExifVisible, true));
         // MENU-07：无当前照片时雾天增强置灰，其余项照常可用。
         items.Add(new PhotoMenuItem(PhotoMenuItemId.Enhance, "雾天增强", PreviewGroup, true, state.Enhanced, state.HasPhoto));
         items.Add(new PhotoMenuItem(PhotoMenuItemId.Tools, "工具…", WindowGroup, false, false, true));

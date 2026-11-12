@@ -11,6 +11,7 @@ public static class AppleSymbolNames
         public const string Filmstrip = "rectangle.stack";
         public const string Analysis = "square.grid.2x2";
         public const string Control = "slider.horizontal.3";
+        public const string Exif = "text.below.photo";
         public const string Enhance = "wand.and.stars";
         public const string Tools = "wrench.and.screwdriver";
         public const string Settings = "gearshape";

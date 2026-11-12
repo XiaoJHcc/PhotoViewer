@@ -138,6 +138,7 @@ internal static class iOSNativeRatingControlCheck
         private ConflictFixture? _conflict;
         private Action<ImageFile, int>? _onCommitted;
         private ImageFile _representative = null!;
+        private bool _entryExifVisible = true;
         private bool _restored;
 
         /// <summary>建立一次验收运行。</summary>
@@ -176,6 +177,7 @@ internal static class iOSNativeRatingControlCheck
             _entryFilm = _main.IsThumbnailViewVisible;
             _entryControl = _main.IsControlViewVisible;
             _entryAnalysis = _main.IsAnalysisViewVisible;
+            _entryExifVisible = _main.IsExifViewVisible;
             _popupReduceMotion = _root.RatingPopup.ReduceMotionProvider;
 
             _onCommitted = (file, value) => _commits.Add((file, value));
@@ -194,6 +196,8 @@ internal static class iOSNativeRatingControlCheck
                 _main.IsThumbnailViewVisible = true;
                 _main.IsControlViewVisible = true;
                 _main.IsAnalysisViewVisible = false;
+                // 本轮规则以手机 EXIF 开关打开为默认核对态（横屏控制栏带 EXIF 列），收尾还原进入时的值。
+                _main.IsExifViewVisible = true;
                 _main.FileVM.FilterBar.SelectedRatingFilter = "All";
                 foreach (var format in _main.Settings.FileFormats)
                     if (format.DisplayName == "JPG") format.IsEnabled = true;
@@ -250,6 +254,7 @@ internal static class iOSNativeRatingControlCheck
                 _main.IsThumbnailViewVisible = _entryFilm;
                 _main.IsControlViewVisible = _entryControl;
                 _main.IsAnalysisViewVisible = _entryAnalysis;
+                _main.IsExifViewVisible = _entryExifVisible;
                 _main.FileVM.FilterBar.SelectedRatingFilter = _entryFilter;
                 _root.SupportedOrientationsOverride = null;
                 _root.SetNeedsUpdateOfSupportedInterfaceOrientations();
@@ -1505,16 +1510,12 @@ internal static class iOSNativeRatingControlCheck
             await VerifyLandscapeControlAsync(fixture, RatingPopupDirection.Left, "rating-landscape-notch-left",
                 "rating-landscape-popup", suite: "横屏刘海在左");
 
-            // 弹窗打开状态下旋转到刘海在右：旋转收起弹窗，控件值仍等于文件真值
+            // 弹窗打开状态下旋转到刘海在右：旋转收起弹窗，控件值仍等于文件真值。
+            // 带 EXIF 时横屏星级是紧凑态，起手即打开弹窗（展开态星排此时隐藏，不接收手势）。
             var conflictFile = _main.CurrentFile ?? throw new InvalidOperationException("横屏旋转检查没有当前照片");
             await EnsurePopupClosedAsync();
-            row = phone.Row;
-            row.SetNeedsLayout();
-            row.LayoutIfNeeded();
-            zero = SlotCenter(row, 0);
-            row.TrackBegan(zero);
-            row.TrackEnded(zero);
-            if (!popup.IsOpen) throw new InvalidOperationException("旋转收起检查：来源弹窗未打开");
+            phone.TrackBegan(CapsuleCenter(phone));
+            if (!popup.IsOpen) throw new InvalidOperationException("旋转收起检查：弹窗未打开");
             await UiDispatcher.InvokeAsync(() =>
             {
                 _root.SupportedOrientationsOverride = UIInterfaceOrientationMask.LandscapeLeft;
@@ -1543,11 +1544,13 @@ internal static class iOSNativeRatingControlCheck
         }
 
         /// <summary>
-        /// 手机横屏一个刘海方向：控制列竖排次序与形态、竖排滑动 5→2、冲突三角弹窗方向与面板所在侧。
+        /// 手机横屏一个刘海方向：控制栏先保住星级紧凑长度、剩下才给 EXIF 列（EXIF 开 → 紧凑竖排胶囊），
+        /// 起手打开单条目弹窗（方向朝主图内侧）、点弹窗星排写回、冲突三角弹窗；EXIF 关闭后星级取回整列长度 →
+        /// 展开竖排（5 号在 0 号上方）并沿星列滑动 5→2。
         /// </summary>
         /// <param name="fixture">冲突夹具。</param>
         /// <param name="expected">该方向期望的弹窗方向。</param>
-        /// <param name="snapshot">控制列截图检查点（null 不截图）。</param>
+        /// <param name="snapshot">控制栏截图检查点（null 不截图）。</param>
         /// <param name="popupStage">弹窗截图检查点（null 不截图）。</param>
         /// <param name="suite">报告范围名。</param>
         /// <returns>任务。</returns>
@@ -1555,6 +1558,9 @@ internal static class iOSNativeRatingControlCheck
             string? snapshot, string? popupStage, string suite)
         {
             var phone = _root.PhoneRatingControl;
+            await EnsurePopupClosedAsync();
+            await UiDispatcher.InvokeAsync(() => _main.IsExifViewVisible = true);
+            await SettleAsync();
             var slot = _root.PhoneSlots.Rating;
             if (phone.Horizontal)
                 throw new InvalidOperationException($"{suite} 星级控件不是竖排");
@@ -1566,18 +1572,85 @@ internal static class iOSNativeRatingControlCheck
             if (phone.Form != RatingControlGeometry.ResolveForm(slot.Height))
                 throw new InvalidOperationException(
                     $"{suite} 槽位高 {slot.Height:0.#} 的形态 {phone.Form} 与 ResolveForm 不一致");
-            if (phone.Form != RatingControlForm.Expanded)
-                throw new InvalidOperationException($"{suite} 控制列星级槽位高 {slot.Height:0.#} 未达展开长度 224");
-            var row = phone.Row;
-            row.SetNeedsLayout();
-            row.LayoutIfNeeded();
-            if (row.SlotViews[5].Frame.Y >= row.SlotViews[0].Frame.Y)
-                throw new InvalidOperationException($"{suite} 竖排星列 5 号未排在 0 号上方");
+            bool exifShown = Has(_root.PhoneSlots.Exif);
+            if (!exifShown)
+                throw new InvalidOperationException($"{suite} 横屏控制栏缺少 EXIF 列（EXIF 开关打开且 AC 有显示项）");
+            // 本轮口径：控制栏先保住紧凑态最短长度，剩余长度才给 EXIF，因此带 EXIF 时星级是紧凑态。
+            if (phone.Form != RatingControlForm.Compact)
+                throw new InvalidOperationException(
+                    $"{suite} 带 EXIF 时星级槽位高 {slot.Height:0.#} 为 {phone.Form} ≠ Compact");
+            var capsuleFrame = phone.CapsuleFrame;
+            if (Math.Abs(capsuleFrame.Height - slot.Height) > Tolerance)
+                throw new InvalidOperationException($"{suite} 紧凑胶囊高 {capsuleFrame.Height:0.#} 未铺满槽位 {slot.Height:0.#}");
             if (snapshot != null) await HoldAsync(snapshot);
 
             await ResolveConflictAsync(fixture, 3);
             await SetRatingAsync(fixture.Photo, 3);
             int before = _commits.Count;
+            var capsule = CapsuleCenter(phone);
+            var popup = _root.RatingPopup;
+            phone.TrackBegan(capsule);
+            if (!popup.IsOpen) throw new InvalidOperationException($"{suite} 横屏紧凑控件没有打开弹窗");
+            if (popup.Mode != iOSRatingPopup.RatingPopupMode.Single)
+                throw new InvalidOperationException($"{suite} 紧凑弹窗形态为 {popup.Mode} ≠ Single");
+            if (popup.Direction != expected)
+                throw new InvalidOperationException($"{suite} 控件弹窗方向 {popup.Direction} ≠ 期望 {expected}");
+            var capsuleHost = FrameInHost(phone.Capsule);
+            RequirePanelOnSide(new LayoutRect(capsuleHost.X, capsuleHost.Y, capsuleHost.Width, capsuleHost.Height),
+                expected, suite);
+            if (popupStage != null) await HoldAsync(popupStage);
+            if (popup.TrackingRow is not { } tapRow)
+                throw new InvalidOperationException($"{suite} 紧凑弹窗没有可续接的星排");
+            var tap = SlotCenter(tapRow, 2);
+            tapRow.TrackBegan(tap);
+            tapRow.TrackEnded(tap);
+            phone.TrackCancelled();
+            await WaitAsync(() => _commits.Count == before + 1, $"{suite} 紧凑弹窗点选写回一次");
+            if (_commits[before].Value != 2)
+                throw new InvalidOperationException($"{suite} 紧凑弹窗点选写回 {_commits[before].Value} ≠ 2");
+            await WaitForFileRatingAsync(fixture.Photo, 2, $"{suite} 紧凑弹窗写回");
+            await WaitAsync(() => !popup.IsOpen && phone.Value == 2, $"{suite} 紧凑弹窗收起且控件显示 2");
+
+            // 冲突三角（0 号）：紧凑态只打开来源弹窗、不写值。
+            await RebuildConflictAsync(fixture);
+            await EnsurePopupClosedAsync();
+            int conflict = _commits.Count;
+            phone.TrackBegan(capsule);
+            if (!popup.IsOpen) throw new InvalidOperationException($"{suite} 冲突三角没有打开弹窗");
+            if (popup.Mode != iOSRatingPopup.RatingPopupMode.Sources)
+                throw new InvalidOperationException($"{suite} 冲突弹窗形态为 {popup.Mode} ≠ Sources");
+            if (popup.Direction != expected)
+                throw new InvalidOperationException($"{suite} 冲突弹窗方向 {popup.Direction} ≠ 期望 {expected}");
+            RequirePanelOnSide(new LayoutRect(capsuleHost.X, capsuleHost.Y, capsuleHost.Width, capsuleHost.Height),
+                expected, suite);
+            phone.TrackCancelled();
+            if (_commits.Count != conflict) throw new InvalidOperationException($"{suite} 冲突三角写回了星级");
+            popup.Close();
+            await WaitAsync(() => !popup.IsOpen, $"{suite} 冲突弹窗收起");
+            _lines.Add($"PASS RATING-07/04 {suite}：EXIF 列在控制栏顶端，星级槽位高 {slot.Height:0.#} → 紧凑竖排胶囊（宽 44、铺满槽位）；" +
+                $"起手打开单条目弹窗（方向 {expected}、面板落在该侧），点弹窗 2 号星写回 2，冲突三角打开来源弹窗且 0 次写回");
+
+            // EXIF 关闭：星级取回整列长度 → 展开竖排，保留展开态星列滑动覆盖。
+            await UiDispatcher.InvokeAsync(() => _main.IsExifViewVisible = false);
+            await SettleAsync();
+            if (Has(_root.PhoneSlots.Exif))
+                throw new InvalidOperationException($"{suite} EXIF 关闭后仍显示 EXIF 列");
+            slot = _root.PhoneSlots.Rating;
+            if (phone.Form != RatingControlForm.Expanded)
+                throw new InvalidOperationException(
+                    $"{suite} EXIF 关闭后槽位高 {slot.Height:0.#} 仍为 {phone.Form} ≠ Expanded");
+            if (phone.Form != RatingControlGeometry.ResolveForm(slot.Height))
+                throw new InvalidOperationException(
+                    $"{suite} EXIF 关闭后槽位高 {slot.Height:0.#} 的形态 {phone.Form} 与 ResolveForm 不一致");
+            var row = phone.Row;
+            row.SetNeedsLayout();
+            row.LayoutIfNeeded();
+            if (row.SlotViews[5].Frame.Y >= row.SlotViews[0].Frame.Y)
+                throw new InvalidOperationException($"{suite} 竖排星列 5 号未排在 0 号上方");
+
+            await ResolveConflictAsync(fixture, 3);
+            await SetRatingAsync(fixture.Photo, 3);
+            int slide = _commits.Count;
             row.TrackBegan(SlotCenter(row, 5));
             if (row.Preview != 5) throw new InvalidOperationException($"{suite} 竖排起手预览 {row.Preview} ≠ 5");
             var previews = new List<int> { 5 };
@@ -1588,34 +1661,17 @@ internal static class iOSNativeRatingControlCheck
                     throw new InvalidOperationException($"{suite} 竖排滑动到 {value} 时预览 {row.Preview} ≠ {value}");
                 previews.Add(value);
             }
-            if (_commits.Count != before)
-                throw new InvalidOperationException($"{suite} 竖排滑动过程中写回了 {_commits.Count - before} 次");
+            if (_commits.Count != slide)
+                throw new InvalidOperationException($"{suite} 竖排滑动过程中写回了 {_commits.Count - slide} 次");
             row.TrackEnded(SlotCenter(row, 2));
-            await WaitAsync(() => _commits.Count == before + 1, $"{suite} 竖排滑动写回一次");
-            if (_commits[before].Value != 2)
-                throw new InvalidOperationException($"{suite} 竖排滑动写回 {_commits[before].Value} ≠ 2");
+            await WaitAsync(() => _commits.Count == slide + 1, $"{suite} 竖排滑动写回一次");
+            if (_commits[slide].Value != 2)
+                throw new InvalidOperationException($"{suite} 竖排滑动写回 {_commits[slide].Value} ≠ 2");
             await WaitForFileRatingAsync(fixture.Photo, 2, $"{suite} 竖排滑动");
-
-            await RebuildConflictAsync(fixture);
-            await EnsurePopupClosedAsync();
-            var popup = _root.RatingPopup;
-            row.SetNeedsLayout();
-            row.LayoutIfNeeded();
-            var zero = SlotCenter(row, 0);
-            row.TrackBegan(zero);
-            row.TrackEnded(zero);
-            if (!popup.IsOpen) throw new InvalidOperationException($"{suite} 冲突三角没有打开弹窗");
-            if (popup.Mode != iOSRatingPopup.RatingPopupMode.Sources)
-                throw new InvalidOperationException($"{suite} 冲突弹窗形态为 {popup.Mode} ≠ Sources");
-            if (popup.Direction != expected)
-                throw new InvalidOperationException($"{suite} 控件弹窗方向 {popup.Direction} ≠ 期望 {expected}");
-            var capsuleHost = FrameInHost(phone.Capsule);
-            RequirePanelOnSide(new LayoutRect(capsuleHost.X, capsuleHost.Y, capsuleHost.Width, capsuleHost.Height),
-                expected, suite);
-            if (popupStage != null) await HoldAsync(popupStage);
-            _lines.Add($"PASS RATING-07/04 {suite}：控制列为竖排（宽 44、槽位高 {slot.Height:0.#} → 展开）、" +
-                $"星列 5 号在 0 号上方；竖排滑动预览 {string.Join("→", previews)} 后抬手写回 2；" +
-                $"冲突三角弹窗方向 {expected} 且面板落在该侧");
+            _lines.Add($"PASS RATING-07 {suite}：EXIF 关闭后槽位高 {slot.Height:0.#} → 展开竖排、星列 5 号在 0 号上方，" +
+                $"竖排滑动预览 {string.Join("→", previews)} 后抬手写回 2");
+            await UiDispatcher.InvokeAsync(() => _main.IsExifViewVisible = true);
+            await SettleAsync();
         }
 
         #endregion
@@ -1921,7 +1977,12 @@ internal static class iOSNativeRatingControlCheck
                     $"{context}：实际 {actual?.ToString() ?? "null"}，预期令牌 0x{token:X8}");
         }
 
-        /// <summary>两个 UIKit 矩形是否一致（±0.5）。</summary>
+        /// <summary>共享槽位矩形是否非空（空槽位宽高为 0）。</summary>
+        /// <param name="rect">共享矩形。</param>
+        /// <returns>宽高都大于 0 时为 true。</returns>
+        private static bool Has(LayoutRect rect) => rect.Width > 0 && rect.Height > 0;
+
+        /// <summary>两个原生矩形是否一致（±0.5）。</summary>
         /// <param name="left">矩形一。</param>
         /// <param name="right">矩形二。</param>
         /// <returns>一致时为 true。</returns>

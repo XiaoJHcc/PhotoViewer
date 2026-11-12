@@ -73,11 +73,14 @@ internal static class iOSNativeToolsCheck
             await WaitAsync(() => root.View!.Bounds.Width > 100 && root.Photo.Bounds.Width > 100, "主屏布局");
             var mainVm = main;
             bool entryFilm = mainVm.IsThumbnailViewVisible, entryControl = mainVm.IsControlViewVisible;
+            bool entryExifVisible = mainVm.IsExifViewVisible;
             bool[] entryExif = mainVm.Settings.ExifDisplayItems.Select(item => item.IsEnabled).ToArray();
             await UiDispatcher.InvokeAsync(() =>
             {
                 mainVm.IsThumbnailViewVisible = true;
                 mainVm.IsControlViewVisible = true;
+                // 手机形态的 EXIF 块只由手机 EXIF 开关与显示项共同决定：验收入口需要开关打开。
+                mainVm.IsExifViewVisible = true;
                 mainVm.Settings.SameNameAsOnePhoto = true;
                 foreach (var format in mainVm.Settings.FileFormats)
                     if (format.DisplayName is "JPG" or "RAW") format.IsEnabled = true;
@@ -359,6 +362,7 @@ internal static class iOSNativeToolsCheck
             {
                 mainVm.IsThumbnailViewVisible = entryFilm;
                 mainVm.IsControlViewVisible = entryControl;
+                mainVm.IsExifViewVisible = entryExifVisible;
                 for (int index = 0; index < entryExif.Length && index < mainVm.Settings.ExifDisplayItems.Count; index++)
                     mainVm.Settings.ExifDisplayItems[index].IsEnabled = entryExif[index];
             });

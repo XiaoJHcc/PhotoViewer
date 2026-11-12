@@ -99,15 +99,15 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - **SHELL-02@ios / @android**：无窗口装饰与标题栏双击语义，属平台差异。
 - **SHELL-03**：全屏与尺寸。macOS `MacMainWindow` 的 `IsFullScreen` / `DidEnterFullScreen` / `SaveFullscreen`，Windows `OverlappedPresenter` 四态，iOS/Android 无应用内全屏入口。
   - **SHELL-03@ios / @android**：不提供应用内全屏入口。
-- **SHELL-04**：持久化。四端栏位显隐都写平台偏好存储（键名 `PhotoViewer.Native.ShowFilm` / `ShowControls`），分析栏为会话态；窗口帧 macOS 用 `FrameAutosaveName`，iOS 用 `RestoreWindowPreferences`。
+- **SHELL-04**：持久化。四端栏位显隐都写平台偏好存储（键名 `PhotoViewer.Native.ShowFilm` / `ShowControls`），实现手机形态的平台另有手机形态 EXIF 开关（`PhotoViewer.Native.ShowExif`，默认开）；分析栏为会话态；窗口帧 macOS 用 `FrameAutosaveName`，iOS 用 `RestoreWindowPreferences`。
   - **SHELL-04@mac / @ios**：偏好存储承载栏位显隐与窗口帧；Windows 走 `PhotoViewer.Windows/Native/WindowsNativePreferences.cs`、Android 走 `PhotoViewer.Android/Native/AndroidShellPreferences.cs`，键名与 macOS/iOS 相同。
 - **SHELL-05**：跨屏与显示变化。macOS `DidChangeBackingProperties`；iPad 旋转/分屏重建滚动基准；Windows `XamlRoot`/DPI 变化；Android `OnSizeChanged`/`SurfaceChanged`。
 - **SHELL-06**：窗口级输入边界。macOS 系统交通灯；Windows 系统标题栏与窗口按钮；触屏由长按菜单承担。
 - **SHELL-07、SHELL-08、SHELL-09、SHELL-11**：形态判定与手机槽位。共享 `PhotoViewer/Core/Settings/ScreenFormResolver.cs`（判定表）、`PhotoViewer.Shared/PhoneScreenLayout.cs`（竖横屏槽位与避让矩形）、`PhotoViewer.Shared/PhotoViewport.cs` 的 `SetFitInsets`（视图矩形与适应矩形分离）；iOS 侧在 `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs` 的手机槽位布局与旋转/分屏响应。
   - **SHELL-07@ios**：尺寸类别取 `UITraitCollection.HorizontalSizeClass` / `VerticalSizeClass`，设备取 `UserInterfaceIdiom == Phone`，与用户布局模式一并交给共享判定函数；横屏的刘海侧按界面方向判定（`LandscapeRight` 为刘海在左），其他方向镜像。iPhone 上隐藏布局模式分组（SETTINGS-08@ios）。
   - **SHELL-07@android**：尺寸类别映射到 `WindowSizeClass`（目标）。
-- **SHELL-10@ios**：贴角带各自放一块与该带等大的不可见探针视图，按它自身位置的带圆角适应安全区布局区域读取避让量——该接口按视图自身位置计算，整窗或屏幕中部的值不能套到每一条带。竖屏顶部行、竖屏底部行各取本行探针值，两行左右不强行对齐。横屏控制列沿用进程内缓存的竖屏底部行值（旋转后按钮原地不动）；若应用从横屏启动、尚未经历过竖屏布局，先按下巴侧列探针的现值落位，第一次竖屏布局之后改用竖屏底行值。
-- **SHELL-12@ios**：栏背景用 `UIVisualEffectView` + `UIBlurEffectStyle.SystemMaterialDark`；圆按钮用 `GlassButtonConfiguration`（`iOSGlassButtons.Round`）；合体按钮是一个 `UIGlassEffect` 交互胶囊容器加无底色分段（`iOSGlassButtonGroup`）；手机形态的全部玻璃控件（含星级控件胶囊）同在一个铺满舞台、自身不拦截触摸的 `UIGlassContainerEffect` 容器内（`iOSGlassContainer`，`Spacing` 取 `shell.glass.container.spacing`），宽形态控制栏的星级控件与命令圆按钮同在文档内的另一个同类容器里（系统玻璃按钮配置的按钮同样参与融合），EXIF 块都留在容器外；横屏两组按钮用 `UIScrollEdgeElementContainerInteraction` 登记为滚动边缘元素，胶片栏从其下方滚过时由系统出模糊。定制组件限于 RATING-07 控件、EXIF 块、卡片与筛选控件，其余不手调圆角、阴影、模糊半径或着色。
+- **SHELL-10@ios**：贴角带在元素实际位置探测，不沿用其他带或旋转前的数值。竖屏顶行按共享 `PhoneScreenLayout.TopRowY` 给出的行位置、以左右两半各一块等大的不可见探针读取该半的左右适应值；竖屏底行在底行位置整行探测左右两侧；横屏刘海侧列按 `LeadStripWidth` 的列宽、下巴侧控制栏按 `ControlStripWidth` 的列宽，各整列探测上下两侧。带圆角适应安全区接口按视图自身位置计算，整窗或屏幕中部的值不能套到每一条带；每条带只取自身方向的适应值，其他方向交给系统安全区。横屏控制栏不再复用竖屏底行的探测值。
+- **SHELL-12@ios**：栏背景用 `UIVisualEffectView` + `UIBlurEffectStyle.SystemMaterialDark`；圆按钮用 `GlassButtonConfiguration`（`iOSGlassButtons.Round`）；合体按钮是一个 `UIGlassEffect` 交互胶囊容器加无底色分段（`iOSGlassButtonGroup`）；手机形态的全部玻璃控件（含星级控件胶囊）同在一个铺满舞台、自身不拦截触摸的 `UIGlassContainerEffect` 容器内（`iOSGlassContainer`，`Spacing` 取 `shell.glass.container.spacing`），宽形态控制栏的星级控件与命令圆按钮同在文档内的另一个同类容器里（系统玻璃按钮配置的按钮同样参与融合），EXIF 块都留在容器外；横屏两组按钮用 `UIScrollEdgeElementContainerInteraction` 登记为滚动边缘元素，胶片栏从其下方滚过时由系统出模糊。横屏控制栏的栏背景只在显示 EXIF 时铺在 `iOSExifBlock` 与按钮之后，无 EXIF 时不铺背景、按钮裸叠在照片上；无衬底 EXIF 变体自身不铺模糊材质。定制组件限于 RATING-07 控件、EXIF 块、卡片与筛选控件，其余不手调圆角、阴影、模糊半径或着色。
 - **SHELL-02@web**：浏览器标签页没有窗口装饰、隐藏标题栏、拖动区与标题栏双击；`?platform=mac` 配置档只用于与 macOS 几何比对。
 - **SHELL-03@web**：浏览器视口即窗口，允许小于 `shell.window.min.*`，布局按实际尺寸计算（主图至少 1 点）；不提供应用内全屏入口。
 - **SHELL-04@web**：栏位显隐与设置文档写 `localStorage`（键名同四端偏好存储）。
@@ -182,13 +182,13 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - Windows：`PhotoViewer.Windows/Native/WindowsControlBar.cs`（`Grid` + `WindowsWrapPanel`），控制栏自带 `ScrollViewer`（`_scroll`）保存并夹取偏移。
   - Android：`PhotoViewer.Android/Native/AndroidControlBar.cs`（单个自绘 `View`），置于 `AndroidControlBarScrollHost`（`AndroidNativeRootView._controlScrollHost`）滚动。
 - **TOOLBAR-03**：评分组。自绘控件禁用不换底色、只降内容强调；原生控件可用系统禁用外观但保持可辨、不近似隐藏（与 TOOLBAR-10 同一口径）；评分快捷命令统一画数字（0=叉）。冲突时 0 号换警示三角，字形、浮窗宿主与整组写入见 [rating](#rating)（RATING-04）。
-  - **TOOLBAR-03@ios**：评分组就是 RATING-07 的 `iOSRatingControl`（宽形态控制栏、手机竖屏底行与横屏控制列同一实例类型），不再按 30×30 按钮口径。
+  - **TOOLBAR-03@ios**：评分组就是 RATING-07 的 `iOSRatingControl`（宽形态控制栏、手机竖屏底行与横屏控制栏同一实例类型），不再按 30×30 按钮口径；横屏控制栏里它排在 EXIF 之下的剩余长度上。
 - **TOOLBAR-04**：命令组。桌面 tooltip 与移动端命令读屏名称统一为 `命令名（主 / 次）`，四端 C# 壳共用 `PhotoViewer/Core/Input/CommandTooltipText.cs` 拼接，键名仍由各端输入映射格式化；Web 在 `src/core/input.js` 实现同一文案。INPUT-13 只控制设置中的键鼠配置可见性；移动端不另造长按浮层。
   - 图标基准为 `icon.font`（uicons Regular Rounded）/ `icon.fontSolid`（实心星）与 `icon.*` 码位；Android 与 Web 直接使用该字体（Android `AndroidUiTheme.IconFontAsset`；Web 由 `PhotoViewer.Web/tools/subset-icons.py` 按令牌码位生成 woff2 子集）。
   - **TOOLBAR-04@mac / @ios**：命令图标与评分星用 SF Symbols（`PhotoViewer.Apple/AppleSymbolNames.cs`），语义同 `icon.command.*`。评分快捷命令为 `star.fill` 内叠数字（`PhotoViewer.Mac/Native/MacControlBar.cs`、`PhotoViewer.iOS/Native/iOSToolbarView.cs` 的 `RatingDigitLabel`；iOS 命令为 `GlassButtonConfiguration` 圆按钮），0 为 `xmark`。
   - **TOOLBAR-04@win**：命令图标用 Segoe Fluent Icons，评分快捷命令为实心星 FavoriteStarFill `E735` 内叠数字（0=清零叉）；显式映射在 `PhotoViewer.Windows/Native/WindowsIcons.cs`：打开=Folder `E8B7`、缩放适应=BackToWindow `E73F`（双对角箭头）、放大/缩小=Add `E710` / Remove `E738`、增强=Contrast `E7A1`。tooltip 绑定经 `WindowsInput.FormatGesture` 显示可读键名（`D2`→`2`、`Oem3`→`` ` ``，并补 Oem1–Oem8 别名），不再出现枚举名。
 - **TOOLBAR-05**：EXIF 摘要。桌面 tooltip `标签 · 值`；触屏完整值由 TOOLBAR-06 的详情页承担。
-  - **TOOLBAR-05@ios**：EXIF 块为 `PhotoViewer.iOS/Native/iOSExifBlock.cs`（`UIBlurEffectStyle.SystemThinMaterialDark` 衬底 + 令牌圆角），几何取共享 `PhotoViewer.Shared/ExifBlockGeometry.cs`；宽形态控制栏、手机竖屏顶行与横屏 EXIF 列共用。
+  - **TOOLBAR-05@ios**：EXIF 块为 `PhotoViewer.iOS/Native/iOSExifBlock.cs`（`UIBlurEffectStyle.SystemThinMaterialDark` 衬底 + 令牌圆角），几何取共享 `PhotoViewer.Shared/ExifBlockGeometry.cs`；宽形态控制栏与手机竖屏顶行用衬底块，横屏控制栏用 `Bare` 无衬底变体（`VisibleCount` 限定显示的整项数），三处同一实例类型。
   - **TOOLBAR-05@win**：值文本取 Bold（12 点 SemiBold 在 Windows 上肉眼与正文同重），标签保持 10 点次要色。
 - **TOOLBAR-06**：四端 EXIF 整组点击都直接选择同一工具单例的 EXIF 详情（已展示其他页也切到 EXIF）；主图菜单入口只前置已展示窗口并保留当前页。业务导航意图统一由 `PhotoViewer/ViewModels/Main/MainViewModel.cs` 收口，各端主窗口负责把控制栏与菜单接到不同入口，工具宿主同步当前选择；无 EXIF 按 TOOLS-02 回退。
 - **TOOLBAR-07**：重建。**TOOLBAR-07@ios**：先 `RemoveFromSuperview` 再 `Dispose`；**@win** 按影响范围合并 dispatcher turn；**@android** `MarkDirty` + `OnDraw` 补齐 `Arrange`。
@@ -218,7 +218,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
 
 ## menu
 
-- **MENU-01、MENU-02**：主图菜单的项、分组、文案、勾选与可用性由共享 `PhotoViewer/ViewModels/Main/PhotoMenuCatalog.cs` 给出（触屏平台不含「打开文件…」），各端只把条目映射为原生菜单项、组间分隔与平台图标，执行走同一命令入口。
+- **MENU-01、MENU-02**：主图菜单的项、分组、文案、勾选与可用性由共享 `PhotoViewer/ViewModels/Main/PhotoMenuCatalog.cs` 给出（`Build` 的 `includeOpenFile` 区分触屏，`includeExif` 只在手机形态为 true，在栏位组末尾多一项「EXIF」），各端只把条目映射为原生菜单项、组间分隔与平台图标，执行走同一命令入口。EXIF 项的勾选取共享 `MainViewModel.IsExifViewVisible`，执行 `ToggleExifView`，状态写 `PhotoViewer.Native.ShowExif`（SHELL-04）。
   - macOS：`PhotoViewer.Mac/Native/MacMainWindow.cs` 的 `ContextMenu`（`NSMenu`，`UpdateMenuChecks` 在 `menuWillOpen:` 同步勾选与可用性）；系统菜单栏由同文件 `BuildMenus` 建立，「显示」菜单复用目录中的栏位与预览两组，「操作」菜单按设置的完整命令集合和顺序生成。
   - iOS：`PhotoViewer.iOS/Native/iOSContextMenus.cs` 的 `Photo`（`UIMenu`，组用 `DisplayInline` 分段）。
   - Windows：`PhotoViewer.Windows/Native/WindowsMainWindow.cs` 的 `BuildContextMenu`（`MenuFlyout`，勾选项用 `ToggleMenuFlyoutItem`）。
@@ -233,7 +233,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - **MENU-06@win**：`WindowsIcons` 提供同语义 Segoe Fluent 字形，普通项与勾选项都保留图标和原生勾选态。
   - **MENU-06@android / @web**：自绘菜单在勾选列后使用 `icon.menu.*` 的 uicons 字形，增强复用 `icon.command.toggleEnhance`，几何取 `menu.icon.*`。
 - **MENU-07**：不可用项由 `PhotoMenuCatalog` 按当前照片给出（无照片时「雾天增强」置灰，工具可打开空态）；macOS 关闭 `NSMenu` 自动启用，显示前同步。
-- **MENU-08**：手机形态「更多」按钮的菜单。iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs` 的 `BuildMoreMenu` 用 `UIDeferredMenuElement` 延迟构建，内容直接取共享 `PhotoMenuCatalog`，与主图长按菜单同源；每次展开重建并按共享状态刷新勾选。
+- **MENU-08**：手机形态「更多」按钮的菜单。iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs` 的 `BuildMoreMenu` 用 `UIDeferredMenuElement` 延迟构建，内容直接取共享 `PhotoMenuCatalog`（手机形态 `includeExif: true`，与主图长按菜单同为栏位组末尾的「EXIF」），每次展开重建并按共享状态刷新勾选。
 - **MENU-01@web**：不实现设置与工具窗口，主图菜单不生成「工具…/设置…」及其分组，其余项、顺序与勾选语义不变（SCOPE-01）。
 - **MENU-03@web**：主图菜单与卡片菜单为自绘弹层（MENU-03 自绘外观），夹在窗口内，键盘语义按 MENU-03；悬停提示同样自绘（`tooltip.*`）。
 - **MENU-05@web**：触屏（`pointerType=touch`）长按卡片按旧规则弹卡片菜单，待随修订后的 MENU-05 替换为星级弹窗；桌面右键卡片仍弹主图菜单。

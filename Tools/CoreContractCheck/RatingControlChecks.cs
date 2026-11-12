@@ -475,6 +475,7 @@ internal static class RatingControlChecks
     private static void RunIntegration(Checks c)
     {
         c.Section("星级控件与手机竖屏槽位");
+        var exif = ExifBlockGeometry.Size(4, true);
         var input = new PhoneLayoutInput(
             Landscape: false,
             NotchOnLeft: true,
@@ -482,16 +483,21 @@ internal static class RatingControlChecks
             Height: 874,
             Safe: new EdgeInsets(0, 62, 0, 34),
             LeadBand: new EdgeInsets(0, 62, 0, 0),
-            ControlBand: new EdgeInsets(13.67, 0, 13.67, 34),
+            ControlBand: new EdgeInsets(6.33, 0, 6.33, 34),
             FilmVisible: true,
             ControlVisible: true,
+            ExifVisible: true,
             AnalysisVisible: true,
             ShowNavigation: true,
             FilterWidth: 120,
-            FilmBand: 116,
+            FilmBand: FilmCardGeometry.BandThickness(FilmCardTier.Small, true),
+            FilmOuterPad: FilmCardGeometry.CrossLead(FilmCardTier.Small, false),
             AnalysisCross: 96,
-            ExifWidth: 120,
-            ExifHeight: 44,
+            ExifCount: 4,
+            ExifWidth: exif.Width,
+            ExifHeight: exif.Height,
+            ExifItemSpacing: ExifBlockGeometry.ItemSpacing,
+            RatingMinLength: RatingControlGeometry.CompactMinLength,
             ButtonSize: DesignTokens.ShellGlassButtonSize,
             EdgeMargin: DesignTokens.ShellPhoneEdgeMargin,
             RowInset: DesignTokens.ShellPhoneRowInset,

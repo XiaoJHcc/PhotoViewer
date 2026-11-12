@@ -31,7 +31,7 @@ internal static class iOSContextMenus
     }
 
     /// <summary>
-    /// 主图上下文菜单：打开文件夹、胶片栏/分析栏/控制栏显隐（勾选态取当前共享状态）、增强预览、
+    /// 主图上下文菜单：打开文件夹、胶片栏/分析栏/控制栏/EXIF 显隐（勾选态取当前共享状态）、增强预览、
     /// 工具页与设置。分组用 <see cref="UIMenuOptions.DisplayInline"/> 形成系统分隔段。
     /// </summary>
     /// <param name="filmVisible">胶片栏当前是否可见。</param>
@@ -46,10 +46,13 @@ internal static class iOSContextMenus
     /// <param name="toggleEnhance">切换增强预览回调。</param>
     /// <param name="openTools">打开工具页回调。</param>
     /// <param name="openSettings">打开设置回调。</param>
+    /// <param name="exifVisible">手机形态 EXIF 开关当前是否打开（只在含 EXIF 项时参与勾选）。</param>
+    /// <param name="includeExif">是否含手机形态的 EXIF 开关（宽形态为 false）；需同时给出 <paramref name="toggleExif"/>。</param>
+    /// <param name="toggleExif">切换手机形态 EXIF 开关的回调。</param>
     /// <returns>菜单与同源回调。</returns>
     internal static MenuResult Photo(bool filmVisible, bool controlVisible, bool analysisVisible, bool enhanced, bool hasPhoto,
         Action openFolder, Action toggleFilm, Action toggleControl, Action toggleAnalysis, Action toggleEnhance,
-        Action openTools, Action openSettings)
+        Action openTools, Action openSettings, bool exifVisible = false, bool includeExif = false, Action? toggleExif = null)
     {
         var handlers = new Dictionary<string, Action>(StringComparer.Ordinal);
         var actions = new Dictionary<PhotoMenuItemId, Action>
@@ -58,11 +61,12 @@ internal static class iOSContextMenus
             [PhotoMenuItemId.Filmstrip] = toggleFilm,
             [PhotoMenuItemId.Analysis] = toggleAnalysis,
             [PhotoMenuItemId.ControlBar] = toggleControl,
+            [PhotoMenuItemId.Exif] = toggleExif ?? (() => { }),
             [PhotoMenuItemId.Enhance] = toggleEnhance,
             [PhotoMenuItemId.Tools] = openTools,
             [PhotoMenuItemId.Settings] = openSettings,
         };
-        var state = new PhotoMenuState(hasPhoto, filmVisible, analysisVisible, controlVisible, enhanced);
+        var state = new PhotoMenuState(hasPhoto, filmVisible, analysisVisible, controlVisible, enhanced, exifVisible);
         var elements = new List<UIMenuElement>();
         var groupItems = new List<UIMenuElement>();
         int currentGroup = -1;
@@ -86,7 +90,7 @@ internal static class iOSContextMenus
             groupItems.Clear();
         }
 
-        foreach (var item in PhotoMenuCatalog.Build(state, includeOpenFile: false))
+        foreach (var item in PhotoMenuCatalog.Build(state, includeOpenFile: false, includeExif))
         {
             if (item.Group != currentGroup)
             {
@@ -109,6 +113,7 @@ internal static class iOSContextMenus
         PhotoMenuItemId.Filmstrip => "photo.film",
         PhotoMenuItemId.Analysis => "photo.analysis",
         PhotoMenuItemId.ControlBar => "photo.control",
+        PhotoMenuItemId.Exif => "photo.exif",
         PhotoMenuItemId.Enhance => "photo.enhance",
         PhotoMenuItemId.Tools => "photo.tools",
         _ => "photo.settings.open",
@@ -122,6 +127,7 @@ internal static class iOSContextMenus
         PhotoMenuItemId.Filmstrip => AppleSymbolNames.Menu.Filmstrip,
         PhotoMenuItemId.Analysis => AppleSymbolNames.Menu.Analysis,
         PhotoMenuItemId.ControlBar => AppleSymbolNames.Menu.Control,
+        PhotoMenuItemId.Exif => AppleSymbolNames.Menu.Exif,
         PhotoMenuItemId.Enhance => AppleSymbolNames.Menu.Enhance,
         PhotoMenuItemId.Tools => AppleSymbolNames.Menu.Tools,
         _ => AppleSymbolNames.Menu.Settings,

@@ -104,6 +104,78 @@ internal static class ExifBlockGeometryChecks
             Near(outOfRange.Width, 0) && Near(negative.Width, 0) && Near(noItems.Width, 0),
             $"{Rect(outOfRange)} {Rect(negative)} {Rect(noItems)}");
 
+        var bareEmpty = ExifBlockGeometry.Size(0, false, bare: true);
+        c.True("无衬底变体无项时仍为零尺寸", Near(bareEmpty.Width, 0) && Near(bareEmpty.Height, 0),
+            $"{bareEmpty.Width}×{bareEmpty.Height}");
+
+        var bareRowSizes = new (int Count, double Width, double Height)[] { (1, 52, 44), (4, 214, 44), (7, 376, 44) };
+        bool bareRowOk = true;
+        foreach (var expected in bareRowSizes)
+        {
+            var size = ExifBlockGeometry.Size(expected.Count, true, bare: true);
+            bareRowOk &= Near(size.Width, expected.Width) && Near(size.Height, expected.Height);
+        }
+        c.True("无衬底横排 1/4/7 项尺寸 52/214/376 × 44", bareRowOk);
+
+        var bareColumnSizes = new (int Count, double Width, double Height)[] { (1, 52, 36), (4, 52, 150), (7, 52, 264) };
+        bool bareColumnOk = true;
+        foreach (var expected in bareColumnSizes)
+        {
+            var size = ExifBlockGeometry.Size(expected.Count, false, bare: true);
+            bareColumnOk &= Near(size.Width, expected.Width) && Near(size.Height, expected.Height);
+        }
+        c.True("无衬底竖排 1/4/7 项尺寸 52 × 36/150/264", bareColumnOk);
+
+        bool insetRemoved = true;
+        foreach (var count in new[] { 1, 4, 7 })
+        {
+            var paddedRow = ExifBlockGeometry.Size(count, true);
+            var bareRow = ExifBlockGeometry.Size(count, true, bare: true);
+            var paddedColumn = ExifBlockGeometry.Size(count, false);
+            var bareColumn = ExifBlockGeometry.Size(count, false, bare: true);
+            insetRemoved &= Near(paddedRow.Width - bareRow.Width, ExifBlockGeometry.Padding * 2)
+                && Near(paddedRow.Height, bareRow.Height)
+                && Near(paddedColumn.Width - bareColumn.Width, ExifBlockGeometry.Padding * 2)
+                && Near(paddedColumn.Height - bareColumn.Height, ExifBlockGeometry.Padding * 2);
+        }
+        c.True("无衬底变体只去掉两侧内边距，项目与项距不变", insetRemoved);
+
+        var bareRowRects = new List<string>();
+        bool bareRowIntrinsic = true;
+        for (int index = 0; index < 4; index++)
+        {
+            var rect = ExifBlockGeometry.ItemRect(index, 4, true, 214, bare: true);
+            bareRowIntrinsic &= Near(rect.X, index * 54) && Near(rect.Width, 52)
+                && Near(rect.Y, 0) && Near(rect.Height, 44);
+            bareRowRects.Add(Rect(rect));
+        }
+        c.True("无衬底横排从 0 起排、间距 2、末项贴住 214", bareRowIntrinsic
+            && Near(ExifBlockGeometry.ItemRect(3, 4, true, 214, bare: true).MaxX, 214),
+            string.Join(" ", bareRowRects));
+
+        var bareColumnRects = new List<string>();
+        bool bareColumnIntrinsic = true;
+        for (int index = 0; index < 4; index++)
+        {
+            var rect = ExifBlockGeometry.ItemRect(index, 4, false, 150, bare: true);
+            bareColumnIntrinsic &= Near(rect.Y, index * 38) && Near(rect.Height, 36)
+                && Near(rect.X, 0) && Near(rect.Width, 52);
+            bareColumnRects.Add(Rect(rect));
+        }
+        c.True("无衬底竖排从 0 起排、间距 2、末项贴住 150", bareColumnIntrinsic
+            && Near(ExifBlockGeometry.ItemRect(3, 4, false, 150, bare: true).MaxY, 150),
+            string.Join(" ", bareColumnRects));
+
+        var bareSqueezed = ExifBlockGeometry.ItemRect(1, 4, true, 100, bare: true);
+        var bareSqueezedLast = ExifBlockGeometry.ItemRect(3, 4, true, 100, bare: true);
+        c.True("无衬底横排挤压到 100 时每项等量收窄到 23.5 且末项贴住 100",
+            Near(bareSqueezed.X, 25.5) && Near(bareSqueezed.Width, 23.5) && Near(bareSqueezedLast.MaxX, 100),
+            Rect(bareSqueezed) + " " + Rect(bareSqueezedLast));
+
+        var bareCapped = ExifBlockGeometry.ItemRect(2, 4, true, 400, bare: true);
+        c.True("无衬底块长于固有长度时项目不拉伸、保持 52 宽",
+            Near(bareCapped.Width, 52) && Near(bareCapped.X, 108), Rect(bareCapped));
+
         var groupHorizontal = ToolbarFlowLayout.Exif(4, true);
         var groupVertical = ToolbarFlowLayout.Exif(4, false);
         c.True("工具栏 EXIF 分组取 226×44 / 64×162",

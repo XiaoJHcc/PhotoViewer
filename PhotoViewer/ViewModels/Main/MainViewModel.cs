@@ -355,6 +355,20 @@ public class MainViewModel : ViewModelBase, IDisposable
     {
         IsControlViewVisible = !IsControlViewVisible;
     }
+
+    private bool _isExifViewVisible = true;
+    /// <summary>手机形态的 EXIF 显隐（竖屏单独决定顶行 EXIF 块，横屏还要控制栏可见）；宽形态不读取。</summary>
+    public bool IsExifViewVisible
+    {
+        get => _isExifViewVisible;
+        set => this.RaiseAndSetIfChanged(ref _isExifViewVisible, value);
+    }
+
+    /// <summary>切换手机形态的 EXIF 显隐。</summary>
+    public void ToggleExifView()
+    {
+        IsExifViewVisible = !IsExifViewVisible;
+    }
     
     #endregion
 
