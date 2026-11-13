@@ -3,6 +3,7 @@ using CoreGraphics;
 using Foundation;
 using PhotoViewer.Apple;
 using PhotoViewer.Core.AI;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
@@ -91,14 +92,24 @@ internal sealed class iOSAnalysisPanel : UIView
         Sync();
     }
 
-    /// <summary>交叉轴尺寸（瓦片边长 + 两侧 10 点内边距）。</summary>
+    /// <summary>是否手机竖屏：分析栏接在顶行之下，不画顶部分隔线，交叉轴只留一份行内间距。</summary>
+    internal bool PhonePortrait { get; set; }
+
+    /// <summary>朝主图一侧的分隔线当前是否可见（手机竖屏不画）。</summary>
+    internal bool DividerVisible => !_divider.Hidden;
+
+    /// <summary>交叉轴尺寸：宽形态为瓦片边长 + 两侧 10 点内边距；手机竖屏只加两侧行内间距（8）。</summary>
     /// <param name="availableMain">主轴可用长度（不含安全区让位）。</param>
     /// <returns>需为面板分配的交叉轴长度。</returns>
-    internal double CrossSize(double availableMain) => AnalysisPanelGeometry.CrossSize(availableMain, _order.Count);
+    internal double CrossSize(double availableMain)
+        => PhonePortrait
+            ? AnalysisPanelGeometry.TileSize(availableMain, _order.Count) + DesignTokens.ShellPhoneRowInset * 2
+            : AnalysisPanelGeometry.CrossSize(availableMain, _order.Count);
 
     /// <summary>
     /// 按交叉轴可用长度摆放瓦片，并刷新朝主图一侧的分隔线。
-    /// 行布局瓦片横排、分隔线在顶边；列布局瓦片纵排、分隔线在左边。
+    /// 行布局瓦片横排、分隔线在顶边；列布局瓦片纵排、分隔线在左边；手机竖屏不画分隔线（顶行背景已给出边界），
+    /// 交叉轴起点取一份行内间距。
     /// </summary>
     /// <param name="horizontal">行布局（瓦片横排）为 true。</param>
     /// <param name="availableMain">主轴可用长度（已扣除安全区）。</param>
@@ -113,9 +124,10 @@ internal sealed class iOSAnalysisPanel : UIView
         {
             double offset = startInset + AnalysisPanelGeometry.TileOffset(i, tile);
             _views[_order[i]].Frame = horizontal
-                ? new CGRect(offset, AnalysisPanelGeometry.Padding, tile, tile)
+                ? new CGRect(offset, PhonePortrait ? DesignTokens.ShellPhoneRowInset : AnalysisPanelGeometry.Padding, tile, tile)
                 : new CGRect(AnalysisPanelGeometry.Padding, offset, tile, tile);
         }
+        _divider.Hidden = PhonePortrait;
         _divider.Frame = horizontal ? new CGRect(0, 0, Bounds.Width, 1) : new CGRect(0, 0, 1, Bounds.Height);
         foreach (var detail in _order)
             if (detail.Kind == AnalysisTileKind.Detail) UpdateDetailCrop(detail);

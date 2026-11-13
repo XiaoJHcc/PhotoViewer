@@ -410,6 +410,34 @@ EXIF 开关关闭时筛选与更多上移到灵动岛/刘海两旁的显示区�
 - 证据：CoreContractCheck 标准版 1839 / AI 版 1855 PASS、0 FAIL（手机槽位 204 项，含 iPhone 17 实值：竖屏顶行 62 / 耳区 18、底距 26，横屏卡片左缘 62、星级 102、六项 EXIF 裁到四项）；iOS 两版 Debug 构建 0 错误；form 检查 iPhone 17（48，含定版截图）、17e / 17 Pro Max（各 36）、iPad Pro 13（71）与 AI 版 iPhone 17（36）PASS；rating-control iPhone 17（23）、iPad Pro 13（20）PASS；tools（13）、layout（33）iPad Pro 13 PASS；input 只在既有的「控制栏重建」处失败，此前无新失败；Mac 两版构建、Windows 类型检查、令牌校验与 Web 单测（344）通过。截图与报告在 `artifacts/acceptance/new-ui/u3-tidy/`。
 - 未覆盖：真机观感与旋转、iOS Release 构建、Android（本机无 workload）。
 
+### U3 追加收尾：iPad 与手机栏位整理（U4 前）
+
+作者最新十项反馈取代本计划前文中与下列规则冲突的旧口径；本节不提前开始 U4/U5，不增加计数或设置功能。
+
+| 反馈 | 定位与处理 | 对应规范 |
+|---|---|---|
+| 1. iPad 左栏避让窗口交通灯 | 宽形态此前只用普通安全区，未沿左列探测窗口控件；筛选/更多组改按自身列的系统适应安全区向下让位，列表不跟着内缩 | SHELL-01、SHELL-10 |
+| 2. iPad 胶片上下贯通 | 列表此前从筛选条之后开始；改为全窗口高、首张靠内容留白停在按钮下方，滚动可经过按钮下方，使用 `UIScrollEdgeElementContainerInteraction` | FILM-07、SHELL-12 |
+| 3. 左右布局上下多余边距 | `iOSMainScreenLayout` 列布局把系统顶部/底部安全区扣进 FileContent/ControlContent；列布局改为 y=0、全高，上下布局保持 | SHELL-01 |
+| 4. iPad 左右布局 EXIF 无衬底 | `iOSToolbarView` 尺寸与视图同时采用既有 `ExifBlockGeometry` / `iOSExifBlock.Bare`；上下布局与桌面不变 | TOOLBAR-05、SHELL-12 |
+| 5. iPad 筛选与更多合体 | iOS 宽形态删除三段/单胶囊旧控件，使用两个 44 点按钮段（总宽 88）；AI 相似聚类开关仍独立、列布局 96 宽；桌面不变 | FILTER-07 |
+| 6. 手机竖屏胶片边距重复 | 列表已有交叉轴 8 点内边距，外壳又各加 8，左右停靠还借用了底部按钮贴角距离；删除外层叠加，左右停靠各为 8。卡片自身的占位内缩保留，不更改卡片内部设计 | FILM-07 |
+| 7. 手机横屏右栏背景缝与空缺 | 分析与控制此前使用两个独立模糊视图、各自判断显隐；改由单个连续右栏材质承载，有分析或实际 EXIF 即铺到窗口外缘、上下贯通，控制关闭则分析直接贴外缘；纯控制且无 EXIF 才透明 | SHELL-09、SHELL-12 |
+| 8. 竖屏分析栏无顶线、共享间距 | 删除外壳与面板各自叠加的间距，分析面板紧接顶行、瓦片上方只留 8 点，不画顶线 | SHELL-08、SHELL-12 |
+| 9. 竖屏胶片滚动指示器在上方 | **后置、未实现**。公开 `HorizontalScrollIndicatorInsets` 试验的属性读回不等于屏幕位置；默认/上移两组连续闪现截图均未捕获指示器，无法证明方案有效，试验代码与相应假通过断言已撤回。保留系统默认绘制，不引入自绘、私有 API 或翻转列表 | FILM-07 |
+| 10. 筛选菜单选后滚回顶部 | 每次选择此前整棵 Build 并重赋菜单；改为稳定菜单/action 标识、就地更新勾选，选项集合不变不替换对象 | FILTER-08 |
+
+**验收边界**：共享几何网格与 iOS form/layout/edition/rating-control/tools 套件覆盖落位、开关组合与回归；截图供目视。真实分屏交通灯避让、系统菜单展开后滚动/VoiceOver 焦点与手指滚动手感仍须真机复验，不能把对象身份断言等同系统真实菜单交互通过。
+
+**执行状态**：第 1–8、10 项已落实，第 9 项后置、试验代码已撤回；证据统一写入 `artifacts/acceptance/new-ui/u3-polish/`。不把本批通过视为 U4/U5 完成。
+
+- 共享契约：标准版 1862 / AI 版 1878 PASS，均 0 FAIL；各有 1 项非 Windows 路径自检 SKIP。
+- iOS Debug `iossimulator-arm64` 两版构建 0 错误。形态矩阵覆盖 iPhone 17 / 17e 标准版、17 Pro Max AI 版、iPad Pro 13 标准版、iPad mini AI 版；iPad form 含宽形态上下/左右与限宽分屏、手机 form 含两向横屏与新增分析/EXIF/控制开关组合。layout 两版 iPad、rating-control 手机与两版 iPad、edition 两版 iPad、tools 标准版 iPad 回归通过；最终撤回指示器试验后核心矩阵再复跑。
+- 截图已复看：手机竖屏分析栏共享 8 点与无顶线、胶片去除外层重复边距；横屏放大照片垫在右栏下时单一材质连续，控制关闭后的分析栏背景贴窗口缘；iPad 左右布局无衬底 EXIF 与筛选/更多合体。截图为 `form-*/polish-*.png` 与 `ipad-col.png`。
+- 跨端回归：Mac 标准版构建与真实 layout / filmstrip 冒烟、Windows 类型检查、令牌生成校验与 Web 344 项单测通过。Android 未验证（本机未安装 workload），不改其行为。
+- 未覆盖：真机交通灯/分屏与手指滚动、系统原生筛选菜单选择后的滚动及 VoiceOver 焦点、iOS Release/设备包；这些不以对象身份或布局数学断言冒充通过。
+- 第 9 项下轮验收：先在真实拖动下确认默认系统指示器可见，再验证公开 insets 对交叉轴位置的作用，最终用实际屏幕像素定位证明顶部显示；仅属性写入/读回不算通过。
+
 ### U4 接线收口、设置、外设、清除旧代码
 
 - **卡片长按**（已提前在 U3 完成，U4 只做复核与套件收口）：大小两档卡片长按都弹出 U2 的星级弹窗，可以从长按直接滑动选择；条目按 RATING-04 格式显示文件名，冲突时逐条列出来源。指针辅助点按卡片同样打开。卡片上下文菜单删除。

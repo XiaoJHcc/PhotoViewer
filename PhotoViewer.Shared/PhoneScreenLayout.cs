@@ -74,7 +74,7 @@ public readonly record struct PhoneLayoutInput(
 /// <param name="TopBar">竖屏顶栏背景。</param>
 /// <param name="BottomBar">竖屏底栏背景。</param>
 /// <param name="LeadingBar">横屏刘海侧栏背景。</param>
-/// <param name="TrailingBar">横屏控制栏背景（有 EXIF 时）。</param>
+/// <param name="TrailingBar">横屏连续右栏背景（有分析栏或 EXIF 时，从内侧栏缘铺到窗口外缘）。</param>
 /// <param name="PhotoAvoidance">主图适应区相对窗口四边的避让内边距（栏缘口径，与栏背景是否绘制无关）。</param>
 /// <param name="FilmstripPadding">胶片条滚动两端的内容留白：各边到卡片停靠线的距离，主轴两侧有效、交叉轴恒为 0。</param>
 public readonly record struct PhoneLayout(
@@ -210,7 +210,7 @@ public static class PhoneScreenLayout
         }
 
         var analysis = input.AnalysisVisible
-            ? Rect(0, rowBottom + inset, input.Width, input.AnalysisCross)
+            ? Rect(0, rowBottom, input.Width, input.AnalysisCross)
             : default;
         var topBar = Has(analysis) ? Rect(0, 0, input.Width, analysis.MaxY) : default;
 
@@ -238,14 +238,14 @@ public static class PhoneScreenLayout
         }
 
         var filmstrip = default(LayoutRect);
-        double filmBottom = input.ControlVisible ? bottomTop - inset : bottomEdge;
+        double filmBottom = input.ControlVisible ? bottomTop : bottomEdge;
         if (input.FilmVisible)
             filmstrip = Rect(0, filmBottom - input.FilmBand, input.Width, input.FilmBand);
 
-        var filmstripPadding = new EdgeInsets(controlLeft, 0, input.Width - controlRight, 0);
+        var filmstripPadding = new EdgeInsets(inset, 0, inset, 0);
 
         var bottomBar = Has(filmstrip)
-            ? Rect(0, filmstrip.Y - inset, input.Width, input.Height - (filmstrip.Y - inset))
+            ? Rect(0, filmstrip.Y, input.Width, input.Height - filmstrip.Y)
             : default;
 
         double avoidTop = Has(topBar) ? topBar.MaxY : rowBottom + inset;
@@ -348,15 +348,19 @@ public static class PhoneScreenLayout
 
             double columnLeft = Has(exif) ? Math.Min(exif.X, buttonX) : buttonX;
             controlEdge = columnLeft - inset;
-            if (Has(exif))
-                trailingBar = Rect(controlEdge, 0, input.Width - controlEdge, input.Height);
         }
 
         var analysis = default(LayoutRect);
         if (input.AnalysisVisible)
         {
-            double analysisRight = input.ControlVisible ? controlEdge : input.Width - safe.Right;
+            double analysisRight = input.ControlVisible ? controlEdge : input.Width;
             analysis = Rect(analysisRight - input.AnalysisCross, 0, input.AnalysisCross, input.Height);
+        }
+
+        if (Has(analysis) || Has(exif))
+        {
+            double backgroundLeft = Has(analysis) ? analysis.X : controlEdge;
+            trailingBar = Rect(backgroundLeft, 0, input.Width - backgroundLeft, input.Height);
         }
 
         double avoidRight = Has(analysis)

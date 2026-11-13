@@ -7,13 +7,93 @@ using UIKit;
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// 宽形态筛选控件（FILTER-07）：行布局为交互式玻璃胶囊内的三段原生弹出按钮（排序 / 方向 / 星级），
-/// 列布局或三段放不下时改为一个系统玻璃按钮，弹出与手机形态相同的三分组菜单（点选不关闭、失焦关闭）；
-/// AI 版另有相似聚类开关，行布局紧随三段、列布局落在单胶囊下方。
-/// <para>段宽、胶囊宽与开关宽一律取原生 <c>SizeThatFits</c> 的自然值（含 configuration 内边距与弹出指示器），
-/// 形态判定、整组居中、各矩形与主轴长度全部取共享 <see cref="WideFilterLayout"/>；
-/// 本类只把结果落成 UIKit frame 并写回共享 <see cref="FilterBarViewModel"/>。
-/// 本阶段不含筛选后计数（计数在后续阶段收入）。</para>
+/// 宽形态筛选控件的落位结果（FILTER-07，iOS）：两段合体胶囊、筛选/更多两段、相似聚类开关与控件主轴长度。
+/// </summary>
+/// <param name="Control">合体胶囊矩形（文件栏内容区坐标）。</param>
+/// <param name="Filter">筛选段（相对胶囊左上角）。</param>
+/// <param name="More">更多段（相对胶囊左上角）。</param>
+/// <param name="Toggle">相似聚类开关矩形（文件栏内容区坐标；标准版为零矩形）。</param>
+/// <param name="MainLength">筛选控件自身的主轴长度（含外边距）。</param>
+internal readonly record struct iOSFilterFrames(
+    LayoutRect Control,
+    LayoutRect Filter,
+    LayoutRect More,
+    LayoutRect Toggle,
+    double MainLength);
+
+/// <summary>
+/// 宽形态筛选控件的纯几何（FILTER-07，iOS）：筛选/更多两段合体宽 88（2 × 44），列布局在 116 带内居中，
+/// 行布局把合体与相似聚类开关当成一组按自然宽居中；列布局开关 96 宽落在合体下方隔 8 点。
+/// 全部以点为单位，只做算术，不依赖 UIKit。
+/// </summary>
+internal static class iOSFilterLayout
+{
+    /// <summary>单段边长（也是控件高）。</summary>
+    internal static double Segment => DesignTokens.ShellGlassButtonSize;
+
+    /// <summary>两段合体宽（筛选 + 更多）。</summary>
+    internal static double GroupWidth => Segment * 2;
+
+    /// <summary>控件与相似聚类开关之间的间距。</summary>
+    internal static double Gap => DesignTokens.ShellGlassGroupGap;
+
+    /// <summary>行布局的外边距（同时也是控件到内容区边缘的最小距离）。</summary>
+    internal static double Margin => MainScreenLayout.FilterMargin;
+
+    /// <summary>控件自身的主轴长度：行布局为高加两侧外边距，列布局为前导让位、合体、开关与尾部外边距之和。</summary>
+    /// <param name="row">是否行布局。</param>
+    /// <param name="leadingInset">列布局的前导让位（行布局忽略）。</param>
+    /// <param name="includeToggle">是否显示相似聚类开关（标准版为 false）。</param>
+    /// <returns>主轴长度。</returns>
+    internal static double MainLength(bool row, double leadingInset, bool includeToggle)
+        => row
+            ? Segment + Margin * 2
+            : leadingInset + Segment + (includeToggle ? Gap + Segment : 0) + Margin;
+
+    /// <summary>
+    /// 计算合体胶囊、两段与相似聚类开关的矩形：行布局整组（含开关）自然宽居中，
+    /// 列布局合体在内容带内居中、开关在合体下方隔 <see cref="Gap"/>。
+    /// </summary>
+    /// <param name="row">是否行布局。</param>
+    /// <param name="contentWidth">文件栏内容区宽度（列布局即 116 带）。</param>
+    /// <param name="leadingInset">列布局的前导让位。</param>
+    /// <param name="toggleWidth">相似聚类开关宽度（行布局为自然宽，列布局为卡片列宽）；0 表示没有开关。</param>
+    /// <returns>各矩形与主轴长度。</returns>
+    internal static iOSFilterFrames Compute(bool row, double contentWidth, double leadingInset, double toggleWidth)
+    {
+        bool includeToggle = toggleWidth > 0;
+        if (row)
+        {
+            double total = GroupWidth + (includeToggle ? Gap + toggleWidth : 0);
+            double start = Math.Max(Margin, (contentWidth - total) / 2);
+            var control = new LayoutRect(start, Margin, GroupWidth, Segment);
+            var toggle = includeToggle
+                ? new LayoutRect(control.MaxX + Gap, Margin, toggleWidth, Segment)
+                : default;
+            return new iOSFilterFrames(control, SegmentRect(0), SegmentRect(1), toggle, Segment + Margin * 2);
+        }
+
+        var column = new LayoutRect((contentWidth - GroupWidth) / 2, leadingInset, GroupWidth, Segment);
+        var columnToggle = includeToggle
+            ? new LayoutRect((contentWidth - toggleWidth) / 2, column.MaxY + Gap, toggleWidth, Segment)
+            : default;
+        return new iOSFilterFrames(column, SegmentRect(0), SegmentRect(1), columnToggle,
+            leadingInset + Segment + (includeToggle ? Gap + Segment : 0) + Margin);
+    }
+
+    /// <summary>第几段的局部矩形：两段沿主轴首尾相接，高占满控件。</summary>
+    /// <param name="index">段序（0 = 筛选，1 = 更多）。</param>
+    /// <returns>相对胶囊左上角的矩形。</returns>
+    private static LayoutRect SegmentRect(int index) => new(index * Segment, 0, Segment, Segment);
+}
+
+/// <summary>
+/// 宽形态筛选控件（FILTER-07）：一个交互式玻璃胶囊内并排两段——筛选段弹出与手机形态相同的三分组菜单
+/// （点选不关闭、失焦关闭），更多段承接宿主传入的主图菜单（与手机「更多」同源，
+/// 经 <see cref="SetMoreMenu"/> 一次性接入）。AI 版另有相似聚类开关，行布局紧随合体、列布局落在合体下方同宽。
+/// <para>几何取本文件内的纯函数 <see cref="iOSFilterLayout"/>：合体宽 88（2 × 44），列布局在 116 带内居中，
+/// 行布局整组（含开关）自然宽居中；本类只把结果落成 UIKit frame，并把筛选菜单交
+/// <see cref="iOSFilterMenu"/> 按稳定 action 标识就地刷新。旧的三段合体与单胶囊形态不再创建。</para>
 /// </summary>
 internal sealed class iOSFilterControl : UIView
 {
@@ -21,70 +101,40 @@ internal sealed class iOSFilterControl : UIView
     internal const bool ShowsSimilarityToggle = iOSAppCapabilities.HasDino;
 
     private readonly MainViewModel _main;
-    private readonly UIVisualEffectView _segmented;
-    private readonly UIButton _sort;
-    private readonly UIButton _order;
-    private readonly UIButton _rating;
-    private readonly UIButton _capsule;
+    private readonly iOSGlassButtonGroup _group;
+    private readonly UIButton _filter;
+    private readonly UIButton _more;
     private readonly UIButton? _similarity;
-    /// <summary>上一次刷新的筛选内容摘要：菜单只在选项/选中项真的变化时重建，避免无关通知换掉已展开的下拉。</summary>
-    private string _menuSignature = string.Empty;
-    private FilterControlMode _mode = FilterControlMode.Segmented;
-    private WideFilterFrames _frames;
+    private iOSFilterFrames _frames;
 
-    /// <summary>排序段按钮（验收读取几何）。</summary>
-    internal UIButton SortSegment => _sort;
+    /// <summary>筛选/更多合体胶囊（宿主据此挂系统滚动边缘交互）。</summary>
+    internal iOSGlassButtonGroup CombinedGroup => _group;
 
-    /// <summary>升降序段按钮。</summary>
-    internal UIButton OrderSegment => _order;
+    /// <summary>筛选段按钮（弹出三分组筛选菜单）。</summary>
+    internal UIButton FilterButton => _filter;
 
-    /// <summary>星级筛选段按钮。</summary>
-    internal UIButton RatingSegment => _rating;
-
-    /// <summary>单胶囊按钮（列布局与行布局溢出时使用）。</summary>
-    internal UIButton CapsuleButton => _capsule;
-
-    /// <summary>三合体的交互式玻璃容器（胶囊外形由系统给出）。</summary>
-    internal UIVisualEffectView SegmentedContainer => _segmented;
+    /// <summary>更多段按钮（主图菜单，内容由宿主提供）。</summary>
+    internal UIButton MoreButton => _more;
 
     /// <summary>相似聚类开关；标准版不创建该控件，为 null。</summary>
     internal UIButton? SimilarityToggle => _similarity;
 
-    /// <summary>最近一次排布采用的形态。</summary>
-    internal FilterControlMode Mode => _mode;
-
     /// <summary>最近一次排布算出的各矩形与主轴长度。</summary>
-    internal WideFilterFrames Frames => _frames;
+    internal iOSFilterFrames Frames => _frames;
 
-    /// <summary>构建三合体容器、三段弹出按钮、单胶囊与相似聚类开关。</summary>
+    /// <summary>构建合体胶囊（筛选 / 更多两段）与相似聚类开关，并接入当前筛选状态。</summary>
     /// <param name="main">共享主 VM。</param>
     public iOSFilterControl(MainViewModel main) : base(CGRect.Empty)
     {
         _main = main;
         BackgroundColor = UIColor.Clear;
-        _segmented = new UIVisualEffectView(new UIGlassEffect { Interactive = true })
-        {
-            CornerConfiguration = UICornerConfiguration.CreateCapsule(),
-            BackgroundColor = UIColor.Clear,
-            Hidden = true,
-        };
-        _sort = Segment("排序方式");
-        _order = Segment("排序方向");
-        _rating = Segment("星级筛选");
-        _segmented.ContentView.AddSubview(_sort);
-        _segmented.ContentView.AddSubview(_order);
-        _segmented.ContentView.AddSubview(_rating);
-        AddSubview(_segmented);
-
-        _capsule = new UIButton(UIButtonType.System)
-        {
-            Configuration = CapsuleConfiguration(),
-            ShowsMenuAsPrimaryAction = true,
-            AccessibilityLabel = "筛选",
-            AccessibilityHint = "下拉选择排序、方向与星级筛选",
-            Hidden = true,
-        };
-        AddSubview(_capsule);
+        _group = new iOSGlassButtonGroup();
+        _filter = _group.Add("line.3.horizontal.decrease", "筛选", null);
+        _filter.ShowsMenuAsPrimaryAction = true;
+        _filter.AccessibilityHint = "下拉选择排序、方向与星级筛选";
+        _more = _group.Add("ellipsis", "更多", null);
+        _more.ShowsMenuAsPrimaryAction = true;
+        AddSubview(_group);
 
 #if PHOTOVIEWER_DINO
         _similarity = new UIButton(UIButtonType.System)
@@ -102,123 +152,56 @@ internal sealed class iOSFilterControl : UIView
         Refresh();
     }
 
+    public override UIView? HitTest(CGPoint point, UIEvent? uievent)
+    {
+        var hit = base.HitTest(point, uievent);
+        return ReferenceEquals(hit, this) ? null : hit;
+    }
+
+    /// <summary>接入更多段的菜单（与手机形态「更多」同源，内容不在此另建）。</summary>
+    /// <param name="menu">更多段菜单。</param>
+    internal void SetMoreMenu(UIMenu menu) => _more.Menu = menu;
+
     /// <summary>
-    /// 同步共享筛选状态到原生控件（程序化改动与文件源刷新都不留旧选中项）：
-    /// 三段与单胶囊标题、单胶囊菜单与相似聚类外观；选项或选中项未变时不重建已展开的菜单。
+    /// 同步共享筛选状态到原生控件：筛选段菜单按稳定标识就地刷新勾选（展开中的菜单不重建、不回到顶部），
+    /// 读屏值取当前星级筛选，相似聚类开关同步外观。
     /// </summary>
     internal void Refresh()
     {
         var filter = _main.FileVM.FilterBar;
-        string sortTitle = filter.SortModes.FirstOrDefault(option => (SortMode)option.Value == filter.SortMode)?.DisplayName ?? "";
-        string orderTitle = filter.SortOrders.FirstOrDefault(option => (SortOrder)option.Value == filter.SortOrder)?.DisplayName ?? "";
-        string ratingTitle = filter.RatingFilters.FirstOrDefault(option => option.Key == filter.SelectedRatingFilter)?.DisplayName ?? "";
-        SetTitle(_sort, sortTitle);
-        SetTitle(_order, orderTitle);
-        SetTitle(_rating, ratingTitle);
-        SetCapsuleTitle(ratingTitle);
+        iOSFilterMenu.UpdateVisibleMenu(_filter, filter, Refresh);
+        _filter.AccessibilityValue = filter.RatingFilters.FirstOrDefault(option => option.Key == filter.SelectedRatingFilter)?.DisplayName ?? "";
         RefreshToggle();
-        string signature = string.Join("|",
-            string.Join(",", filter.SortModes.Select(option => option.DisplayName + ":" + option.Value)),
-            filter.SortMode + ":" + filter.SortOrder,
-            filter.SelectedRatingFilter,
-            string.Join(",", filter.SortOrders.Select(option => option.DisplayName + ":" + option.Value)),
-            string.Join(",", filter.RatingFilters.Select(option => option.DisplayName + ":" + option.Key)));
-        if (string.Equals(signature, _menuSignature, StringComparison.Ordinal)) return;
-        _menuSignature = signature;
-        _sort.Menu = SingleSelectionMenu(
-            filter.SortModes.Select(option => (option.DisplayName, (object)(SortMode)option.Value)).ToArray(), filter.SortMode,
-            value => filter.SortMode = (SortMode)value);
-        _order.Menu = SingleSelectionMenu(
-            filter.SortOrders.Select(option => (option.DisplayName, (object)(SortOrder)option.Value)).ToArray(), filter.SortOrder,
-            value => filter.SortOrder = (SortOrder)value);
-        _rating.Menu = SingleSelectionMenu(
-            filter.RatingFilters.Select(option => (option.DisplayName, (object)option.Key)).ToArray(), filter.SelectedRatingFilter,
-            value => filter.SelectedRatingFilter = (string)value);
-        RefreshCapsuleMenu();
     }
 
     /// <summary>
-    /// 筛选控件自身的主轴长度：行布局为控制高加上下外边距；列布局为前导让位、控制高、
-    /// 相似聚类开关（含组间距）与尾部外边距之和。
+    /// 筛选控件自身的主轴长度：行布局为控制高加上下外边距；列布局为前导让位、合体、相似聚类开关（含组间距）
+    /// 与尾部外边距之和。
     /// </summary>
     /// <param name="row">是否行布局。</param>
     /// <param name="leadingInset">列布局的前导让位。</param>
     /// <returns>主轴长度（行布局为高，列布局为内容区内的筛选段长度）。</returns>
     internal double MainLength(bool row, double leadingInset)
-        => row
-            ? WideFilterLayout.Height + WideFilterLayout.Margin * 2
-            : leadingInset + WideFilterLayout.Height
-                + (_similarity != null ? WideFilterLayout.Gap + WideFilterLayout.Height : 0)
-                + WideFilterLayout.Margin;
+        => iOSFilterLayout.MainLength(row, leadingInset, _similarity != null);
 
     /// <summary>
-    /// 按共享几何落位：只显示当前形态需要的变体（三段与单胶囊互斥），相似聚类开关按共享矩形紧随其后。
+    /// 按纯几何落位：合体胶囊、两段与相似聚类开关。
     /// </summary>
     /// <param name="row">是否行布局。</param>
-    /// <param name="contentWidth">文件栏内容区宽度（行布局为内容宽，列布局为卡片带厚）。</param>
-    /// <param name="cardWidth">列布局的胶片卡片列宽（大档 96 / 小档 64）。</param>
+    /// <param name="contentWidth">文件栏内容区宽度（列布局为 116 带）。</param>
+    /// <param name="cardWidth">列布局的胶片卡片列宽（相似聚类开关与卡片列同宽）。</param>
     /// <param name="leadingInset">列布局的前导让位。</param>
-    /// <returns>形态、各矩形与主轴长度。</returns>
-    internal WideFilterFrames Arrange(bool row, double contentWidth, double cardWidth, double leadingInset)
+    /// <returns>各矩形与主轴长度。</returns>
+    internal iOSFilterFrames Arrange(bool row, double contentWidth, double cardWidth, double leadingInset)
     {
-        var frames = WideFilterLayout.Compute(row, contentWidth, cardWidth, leadingInset,
-            NaturalWidth(_sort), NaturalWidth(_order), NaturalWidth(_rating), NaturalWidth(_capsule),
-            _similarity != null, _similarity == null ? 0 : NaturalWidth(_similarity));
+        double toggleWidth = _similarity == null ? 0 : row ? NaturalWidth(_similarity) : cardWidth;
+        var frames = iOSFilterLayout.Compute(row, contentWidth, leadingInset, toggleWidth);
         _frames = frames;
-        _mode = frames.Mode;
-        bool segmented = frames.Mode == FilterControlMode.Segmented;
-        _segmented.Hidden = !segmented;
-        _capsule.Hidden = segmented;
-        if (segmented)
-        {
-            _segmented.Frame = ToCGRect(frames.Control);
-            _sort.Frame = ToCGRect(frames.Sort);
-            _order.Frame = ToCGRect(frames.Order);
-            _rating.Frame = ToCGRect(frames.Rating);
-        }
-        else
-        {
-            _capsule.Frame = ToCGRect(frames.Control);
-        }
+        _group.Vertical = false;
+        _group.Frame = ToCGRect(frames.Control);
+        _group.LayoutIfNeeded();
         if (_similarity != null) _similarity.Frame = ToCGRect(frames.Toggle);
         return frames;
-    }
-
-    /// <summary>单胶囊菜单的应用回调：写回已由菜单处理器完成，这里重赋菜单并就地刷新展开中的勾选态。</summary>
-    private void RefreshCapsuleMenu()
-    {
-        var filter = _main.FileVM.FilterBar;
-        _capsule.Menu = iOSFilterMenu.Build(filter, RefreshCapsuleMenu).Menu;
-        SetCapsuleTitle(filter.RatingFilters.FirstOrDefault(option => option.Key == filter.SelectedRatingFilter)?.DisplayName ?? "");
-        iOSFilterMenu.UpdateVisibleMenu(_capsule);
-    }
-
-    /// <summary>三段共用的弹出配置：无底色（玻璃由容器承担）、带系统弹出指示器。</summary>
-    /// <param name="label">读屏名称。</param>
-    /// <returns>配置完成的段按钮。</returns>
-    private static UIButton Segment(string label)
-    {
-        var configuration = UIButtonConfiguration.PlainButtonConfiguration;
-        configuration.Indicator = UIButtonConfigurationIndicator.Popup;
-        configuration.BaseForegroundColor = UIColor.Label;
-        return new UIButton(UIButtonType.System)
-        {
-            Configuration = configuration,
-            ShowsMenuAsPrimaryAction = true,
-            ChangesSelectionAsPrimaryAction = true,
-            AccessibilityLabel = label,
-            AccessibilityHint = "下拉选择",
-        };
-    }
-
-    /// <summary>单胶囊的系统玻璃配置：筛选图标，标题为星级筛选当前值。</summary>
-    /// <returns>配置完成的按钮配置。</returns>
-    private static UIButtonConfiguration CapsuleConfiguration()
-    {
-        var configuration = UIButtonConfiguration.GlassButtonConfiguration;
-        configuration.Image = iOSSymbols.Symbol("line.3.horizontal.decrease", DesignTokens.ToolbarCommandGlyphFontSize);
-        configuration.BaseForegroundColor = UIColor.Label;
-        return configuration;
     }
 
     /// <summary>相似聚类开关配置：关闭为普通玻璃，打开为强调玻璃。</summary>
@@ -234,29 +217,6 @@ internal sealed class iOSFilterControl : UIView
         return configuration;
     }
 
-    /// <summary>改写段按钮标题（不动菜单与命中区）。</summary>
-    /// <param name="button">目标按钮。</param>
-    /// <param name="title">当前选项显示名。</param>
-    private static void SetTitle(UIButton button, string title)
-    {
-        var configuration = button.Configuration;
-        if (configuration == null) return;
-        configuration.Title = title;
-        button.Configuration = configuration;
-        button.AccessibilityValue = title;
-    }
-
-    /// <summary>改写单胶囊标题为星级筛选当前值。</summary>
-    /// <param name="title">当前选项显示名。</param>
-    private void SetCapsuleTitle(string title)
-    {
-        var configuration = _capsule.Configuration;
-        if (configuration == null) return;
-        configuration.Title = title;
-        _capsule.Configuration = configuration;
-        _capsule.AccessibilityValue = title;
-    }
-
     /// <summary>同步相似聚类开关的外观与读屏值。</summary>
     private void RefreshToggle()
     {
@@ -266,31 +226,13 @@ internal sealed class iOSFilterControl : UIView
         _similarity.AccessibilityValue = open ? "已展开" : "已收起";
     }
 
-    /// <summary>三段的单选菜单：选中即写回并关闭，当前项带勾选标记。</summary>
-    /// <param name="options">选项（显示名 + 业务值）。</param>
-    /// <param name="selected">当前业务值。</param>
-    /// <param name="apply">写回入口。</param>
-    /// <returns>单选菜单。</returns>
-    private static UIMenu SingleSelectionMenu((string Title, object Value)[] options, object selected, Action<object> apply)
-    {
-        var actions = new UIMenuElement[options.Length];
-        for (int index = 0; index < options.Length; index++)
-        {
-            var option = options[index];
-            var action = UIAction.Create(option.Title, null, null, _ => apply(option.Value));
-            action.State = Equals(option.Value, selected) ? UIMenuElementState.On : UIMenuElementState.Off;
-            actions[index] = action;
-        }
-        return UIMenu.Create(string.Empty, null, UIMenuIdentifier.None, UIMenuOptions.SingleSelection, actions);
-    }
-
-    /// <summary>原生量得的自然宽度（向上取整，含 configuration 内边距与弹出指示器）。</summary>
+    /// <summary>原生量得的自然宽度（向上取整，含 configuration 内边距）。</summary>
     /// <param name="button">目标按钮。</param>
     /// <returns>宽度，至少 1 点。</returns>
     private static double NaturalWidth(UIButton button)
     {
         double width = Math.Ceiling((double)button.SizeThatFits(
-            new CGSize(0, (nfloat)WideFilterLayout.Height)).Width);
+            new CGSize(0, (nfloat)DesignTokens.ShellGlassButtonSize)).Width);
         if (width <= 0) width = Math.Ceiling((double)button.IntrinsicContentSize.Width);
         return Math.Max(1, width);
     }

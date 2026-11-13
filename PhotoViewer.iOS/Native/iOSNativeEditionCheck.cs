@@ -196,9 +196,9 @@ internal static class iOSNativeEditionCheck
     }
 
     /// <summary>
-    /// 核对宽形态筛选控件（FILTER-07）：AI 版有相似聚类开关且可见、标准版不创建该控件；
-    /// 行布局只显示一段形态——三段合体（恰好三个段按钮）或放不下时的单胶囊，主轴长度固定为 44 + 2 × 外边距，
-    /// 没有计数、也没有空槽。
+    /// 核对宽形态筛选控件（FILTER-07）：一个合体玻璃胶囊内并排两个 44 点段——筛选段弹出与手机相同的
+    /// 三分组筛选菜单，更多段承接与手机「更多」同源的主图菜单（单个延迟元素）；AI 版另有相似聚类开关，
+    /// 标准版不创建也不为它留矩形。行布局主轴固定为 44 + 2 × 外边距，没有计数、也没有空槽。
     /// </summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="lines">报告行。</param>
@@ -206,9 +206,23 @@ internal static class iOSNativeEditionCheck
     {
         var bar = root.FilterBar;
         var frames = bar.Frames;
-        int segmentButtons = bar.SegmentedContainer.ContentView.Subviews.OfType<UIButton>().Count();
-        if (segmentButtons != 3)
-            throw new InvalidOperationException($"筛选控件三段容器内不是恰好三个段按钮：{segmentButtons}");
+        if (bar.CombinedGroup.Buttons.Count != 2)
+            throw new InvalidOperationException($"筛选合体胶囊不是两个段：{bar.CombinedGroup.Buttons.Count}");
+        if (!ReferenceEquals(bar.CombinedGroup.Buttons[0], bar.FilterButton)
+            || !ReferenceEquals(bar.CombinedGroup.Buttons[1], bar.MoreButton))
+            throw new InvalidOperationException("合体胶囊两段不是筛选 / 更多");
+        if (bar.FilterButton.Hidden || bar.MoreButton.Hidden)
+            throw new InvalidOperationException(
+                $"筛选 / 更多段可见性不符：筛选隐藏={bar.FilterButton.Hidden}，更多隐藏={bar.MoreButton.Hidden}");
+        if (Math.Abs((double)frames.Control.Width - iOSFilterLayout.GroupWidth) > 1)
+            throw new InvalidOperationException(
+                $"合体胶囊宽 {frames.Control.Width:0.##} ≠ {iOSFilterLayout.GroupWidth:0.##}（2 × 44）");
+        if (bar.FilterButton.Menu is not { } filterMenu)
+            throw new InvalidOperationException("筛选段没有菜单");
+        if (filterMenu.Children.Length != 3)
+            throw new InvalidOperationException($"筛选段菜单不是三个内联分组：{filterMenu.Children.Length}");
+        if (bar.MoreButton.Menu is not { Children.Length: 1 } moreMenu || moreMenu.Children[0] is not UIDeferredMenuElement)
+            throw new InvalidOperationException("更多段菜单不是与手机「更多」同源的单个延迟元素");
 #if PHOTOVIEWER_DINO
         if (bar.SimilarityToggle is not { } toggle || toggle.Hidden)
             throw new InvalidOperationException("AI 版筛选控件缺少相似聚类开关");
@@ -220,24 +234,13 @@ internal static class iOSNativeEditionCheck
         if (frames.Toggle.Width > 0 || frames.Toggle.Height > 0)
             throw new InvalidOperationException($"标准版筛选控件不应为相似聚类开关保留矩形：{frames.Toggle}");
 #endif
-        if (frames.Mode == FilterControlMode.Segmented)
-        {
-            if (bar.SegmentedContainer.Hidden || !bar.CapsuleButton.Hidden)
-                throw new InvalidOperationException($"三段形态下可见性不符：容器 Hidden={bar.SegmentedContainer.Hidden}，胶囊 Hidden={bar.CapsuleButton.Hidden}");
-        }
-        else
-        {
-            if (!bar.SegmentedContainer.Hidden || bar.CapsuleButton.Hidden)
-                throw new InvalidOperationException($"胶囊形态下可见性不符：容器 Hidden={bar.SegmentedContainer.Hidden}，胶囊 Hidden={bar.CapsuleButton.Hidden}");
-        }
-        double expected = WideFilterLayout.Height + WideFilterLayout.Margin * 2;
+        double expected = iOSFilterLayout.Segment + iOSFilterLayout.Margin * 2;
         if (Math.Abs((double)bar.Frame.Height - expected) > 1)
             throw new InvalidOperationException($"行布局筛选控件高度 {bar.Frame.Height:0.##} ≠ {expected:0.##}");
         if (Math.Abs(bar.MainLength(true, 0) - expected) > 1)
             throw new InvalidOperationException($"行布局筛选控件主轴长度 {bar.MainLength(true, 0):0.##} ≠ {expected:0.##}");
         lines.Add($"PASS 筛选控件：{iOSAppCapabilities.EditionName} 版{(iOSAppCapabilities.HasDino ? "含" : "无")}相似聚类开关，" +
-            $"{(frames.Mode == FilterControlMode.Segmented ? "三段合体（排序 / 方向 / 星级）" : "单胶囊")}，" +
-            $"行布局主轴 {expected:0.##} 点（无计数、无空槽）");
+            $"合体胶囊 2 × 44（筛选段三分组菜单、更多段与手机同源），行布局主轴 {expected:0.##} 点（无计数、无空槽）");
     }
 
 #if PHOTOVIEWER_DINO

@@ -12,6 +12,7 @@ namespace PhotoViewer.iOS.Native;
 /// 宽形态控制栏（TOOLBAR-01，手机形态不使用）：EXIF 信息块 / 星级控件 / 命令三分组固定顺序，
 /// 分组尺寸、整组换行或换列、行长、行内居中与文档尺寸取共享 <see cref="ToolbarFlowLayout"/>，
 /// 本类只把结果落成 UIKit frame。文档本身透明，底色由宿主栏位模糊材质承担。
+/// EXIF 信息块在上下布局是深色模糊衬底的圆角块，左右布局取无衬底变体（无衬底、无块内边距，SHELL-12）。
 /// <para>EXIF 信息块点按直达 EXIF 详情（无可用 EXIF 时由宿主回退工具列表，[TOOLS-01]）；
 /// 星级组是常驻的 <see cref="iOSRatingControl"/>（评分变化只刷新显示值，不重建控制栏）；
 /// 命令换 44 点圆形玻璃按钮，与星级控件同在一个系统玻璃容器内（静止分离、按压融合），评分快捷命令保留星心叠数字，读屏名称取共享
@@ -180,7 +181,7 @@ internal sealed class iOSToolbarView : UIView
     {
         _horizontal = horizontal;
         double main = Math.Max(1, availableMain - ToolbarFlowLayout.Padding * 2);
-        var sizes = Sizes(main);
+        var sizes = Sizes(main, horizontal);
         var lines = ToolbarFlowLayout.PackLines(sizes, main);
         double cross = ToolbarFlowLayout.Padding;
         foreach (var line in lines)
@@ -202,22 +203,39 @@ internal sealed class iOSToolbarView : UIView
         return new CGSize(document.Width, document.Height);
     }
 
-    /// <summary>按分组类型求共享尺寸：EXIF 按块尺寸、星级按可用主轴、命令按圆按钮数与间距。</summary>
+    /// <summary>按分组类型求共享尺寸：EXIF 按块尺寸（列布局取无衬底变体）、星级按可用主轴、命令按圆按钮数与间距。</summary>
     /// <param name="availableMain">扣掉外边距后的主轴可用长度。</param>
+    /// <param name="horizontal">是否横向排列（决定 EXIF 块是否为衬底块）。</param>
     /// <returns>与分组顺序一致的尺寸。</returns>
-    private List<ToolbarGroupSize> Sizes(double availableMain)
+    private List<ToolbarGroupSize> Sizes(double availableMain, bool horizontal)
     {
         var sizes = new List<ToolbarGroupSize>(_groupSpecs.Count);
         foreach (var (kind, count) in _groupSpecs)
         {
             sizes.Add(kind switch
             {
-                ControlBarGroupKind.Exif => ToolbarFlowLayout.Exif(count, _horizontal),
+                ControlBarGroupKind.Exif => ExifSize(count, horizontal),
                 ControlBarGroupKind.Rating => ToolbarFlowLayout.Rating(availableMain),
                 _ => ToolbarFlowLayout.Commands(count),
             });
         }
         return sizes;
+    }
+
+    /// <summary>
+    /// EXIF 分组尺寸：上下布局沿用共享 <see cref="ToolbarFlowLayout.Exif"/> 的衬底块；
+    /// 左右布局（列布局）取无衬底变体——没有块内边距，只剩项目与项距，与手机横屏控制栏同口径（SHELL-12、TOOLBAR-05）。
+    /// </summary>
+    /// <param name="count">EXIF 项数。</param>
+    /// <param name="horizontal">EXIF 块是否横排。</param>
+    /// <returns>EXIF 分组尺寸。</returns>
+    private static ToolbarGroupSize ExifSize(int count, bool horizontal)
+    {
+        var (width, height) = ExifBlockGeometry.Size(count, horizontal, bare: !horizontal);
+        return new ToolbarGroupSize(
+            ControlBarGroupKind.Exif,
+            horizontal ? width : height,
+            horizontal ? height : width);
     }
 
     /// <summary>分组内子控件落位：EXIF 块与星级控件就是分组视图，命令圆按钮按共享偏移排在主轴、交叉轴居中。</summary>
@@ -232,7 +250,13 @@ internal sealed class iOSToolbarView : UIView
         {
             // EXIF 块按整组矩形排项、星级控件自绘胶囊与星排：分组视图自己消费方向，不再有子控件偏移。
             if (kind == ControlBarGroupKind.Rating) _ratingControl.Horizontal = horizontal;
-            else ((iOSExifBlock)group).Horizontal = horizontal;
+            else
+            {
+                var exif = (iOSExifBlock)group;
+                exif.Horizontal = horizontal;
+                // 左右布局取无衬底变体：去掉模糊衬底与块内边距，直接放在栏背景上（SHELL-12、TOOLBAR-05）。
+                exif.Bare = !horizontal;
+            }
             return;
         }
         var children = group.Subviews;

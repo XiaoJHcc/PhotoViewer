@@ -332,6 +332,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _openBridge = openBridge;
         _automatedValidation = automatedValidation;
         _filterBar = new iOSFilterControl(main);
+        _filterBar.SetMoreMenu(BuildMoreMenu());
         _filmstrip = new iOSFilmstripView(main);
         // iOS 26 滚动边缘效果：横屏胶片条从筛选/更多与上下张控件下方滚过时由系统给出边缘效果，不手调模糊。
         // 两个交互对象只建一次，按形态挂到对应控件上或摘下（一个交互对象同一时刻只能属于一个视图）。
@@ -778,13 +779,20 @@ internal sealed class iOSNativeRootViewController : UIViewController
     {
         HidePhoneLayers();
         bool row = _main.IsRowLayout;
-        double leadingInset = (double)safe.Top + MainScreenLayout.FilterMargin;
+        _analysisPane.PhonePortrait = false;
+        var filterBand = ProbeBand(
+            row
+                ? new CGRect(0, safe.Top, width, DesignTokens.ShellGlassButtonSize)
+                : new CGRect(safe.Left, 0, FilmCardGeometry.BandThickness(FilmCardTier.Large, false), height),
+            row ? UIViewLayoutRegionAdaptivityAxis.Horizontal : UIViewLayoutRegionAdaptivityAxis.Vertical);
+        double leadingInset = (row ? 0 : filterBand.Top) + MainScreenLayout.FilterMargin;
+        double filterLeft = row ? Math.Max((double)safe.Left, filterBand.Left) : (double)safe.Left;
         double filterMain = _filterBar.MainLength(row, leadingInset);
         bool filmVisible = _main.IsThumbnailViewVisible;
         bool controlVisible = _main.IsControlViewVisible;
         double availableMain = row
             ? Math.Max(1, width - (double)safe.Left - (double)safe.Right)
-            : Math.Max(1, height - (double)safe.Top - (double)safe.Bottom);
+            : Math.Max(1, height);
 #if PHOTOVIEWER_DINO
         // 相似聚类：行布局从胶片栏右侧切出一段（含旧壳 MaxWidth 规则），列布局扩宽文件栏。
         bool similarityOpen = filmVisible && _main.FileVM.FilterBar.IsSimilarityPanelOpen;
@@ -829,7 +837,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
             Math.Max(0, height - photo.MaxY)));
         _analysisPane.Frame = ToFrame(_panes.Analysis);
         _analysisPane.Hidden = !analysisVisible;
-        if (analysisVisible) _analysisPane.Arrange(row, availableMain, row ? (double)safe.Left : (double)safe.Top);
+        if (analysisVisible) _analysisPane.Arrange(row, availableMain, row ? (double)safe.Left : 0);
         else
         {
             _analysisPane.ClearDetailHighlight();
@@ -855,10 +863,12 @@ internal sealed class iOSNativeRootViewController : UIViewController
             var content = _panes.FileContent;
             // 列布局的文件栏内容宽就是卡片带厚（筛选条与胶片条同宽），行布局沿用内容区宽度。
             double contentWidth = row ? content.Width : FilmCardGeometry.BandThickness(tier, false);
-            _filterBar.Frame = new CGRect(content.X, content.Y, contentWidth, filterMain);
-            _filterBar.Arrange(row, contentWidth, FilmCardGeometry.Width(tier), leadingInset);
+            double filterWidth = row ? Math.Max(1, width - filterLeft - (double)safe.Right) : contentWidth;
+            _filterBar.Frame = new CGRect(filterLeft, content.Y, filterWidth, filterMain);
+            _filterBar.Arrange(row, filterWidth, FilmCardGeometry.Width(tier), leadingInset);
             double filmWidth = row ? Math.Max(1, contentWidth - similarityColumn) : contentWidth;
-            var nextFilmstripFrame = new CGRect(content.X, content.Y + filterMain, filmWidth, Math.Max(1, content.Height - filterMain));
+            var nextFilmstripFrame = new CGRect(content.X, row ? content.Y + filterMain : 0,
+                filmWidth, row ? Math.Max(1, content.Height - filterMain) : height);
             if (_filmstrip.Frame != nextFilmstripFrame) _ratingPopup.CloseIfAnchoredTo(RatingPopupAnchor.Card);
             _filmstrip.Frame = nextFilmstripFrame;
 #if PHOTOVIEWER_DINO
@@ -878,9 +888,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
         bool axisChanged = _filmstrip.Horizontal != row;
         _filmstrip.SetAxis(row);
         _filmstrip.SetTier(tier);
-        // 宽形态胶片条贯穿栏位内容区，两端不额外留白；手机形态才有的滚动边缘效果在这里一律摘掉。
-        _filmstrip.SetEdgePadding(0, 0);
-        SetFilmstripEdgeEffects(false);
+        _filmstrip.SetEdgePadding(row ? 0 : filterMain, 0);
+        SetFilmstripEdgeEffects(false, !row && filmVisible);
+        if (filmVisible) _stage.BringSubviewToFront(_filterBar);
         // 方向变化属于显式定位条件（[FILM-04] 登记的原生增强），普通尺寸变化只约束偏移。
         if (axisChanged)
         {
@@ -918,6 +928,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private void LayoutPhone(double width, double height, UIEdgeInsets safe)
     {
         bool portrait = _form == ScreenForm.PhonePortrait;
+        _analysisPane.PhonePortrait = portrait;
         _phoneGlass.Frame = _stage.Bounds;
         double button = DesignTokens.ShellGlassButtonSize;
         double rowInset = _avoidanceTuning ?? DesignTokens.ShellPhoneRowInset;
@@ -1022,8 +1033,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         ApplyBarBackground(_phoneBottomBar, slots.BottomBar);
         ApplyBarBackground(_phoneLeadingBar, slots.LeadingBar);
         ApplyBarBackground(_phoneTrailingBar, slots.TrailingBar);
-        // 竖屏分析栏在顶栏背景内，不另加；横屏分析栏自带一条栏背景。
-        ApplyBarBackground(_analysisBackground, portrait ? default : slots.Analysis);
+        _analysisBackground.Hidden = true;
 
         var filmFrame = ToFrame(slots.Filmstrip);
         if (_filmstrip.Frame != filmFrame) _ratingPopup.CloseIfAnchoredTo(RatingPopupAnchor.Card);
@@ -1217,9 +1227,13 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// 卡片从它们下方滚过时由系统给出边缘效果；其它形态摘下同一批交互对象。
     /// </summary>
     /// <param name="landscape">是否手机横屏。</param>
-    private void SetFilmstripEdgeEffects(bool landscape)
+    /// <param name="wideColumn">是否显示 iPad 宽形态左侧胶片栏。</param>
+    private void SetFilmstripEdgeEffects(bool landscape, bool wideColumn = false)
     {
-        AttachEdgeInteraction(_phoneFilterMore, _filmstripTopEdge, landscape);
+        if (!wideColumn) AttachEdgeInteraction(_filterBar, _filmstripTopEdge, false);
+        if (!landscape) AttachEdgeInteraction(_phoneFilterMore, _filmstripTopEdge, false);
+        if (wideColumn) AttachEdgeInteraction(_filterBar, _filmstripTopEdge, true);
+        if (landscape) AttachEdgeInteraction(_phoneFilterMore, _filmstripTopEdge, true);
         AttachEdgeInteraction(_phoneNavigation, _filmstripBottomEdge, landscape);
     }
 
@@ -1298,11 +1312,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private void RefreshPhoneMenus()
     {
         if (!_phoneControlsBuilt) return;
-        var menu = iOSFilterMenu.Build(_main.FileVM.FilterBar, RefreshPhoneMenus).Menu;
-        _phoneFilter.Menu = menu;
-        _phoneFilterSegment.Menu = menu;
-        iOSFilterMenu.UpdateVisibleMenu(_phoneFilter);
-        iOSFilterMenu.UpdateVisibleMenu(_phoneFilterSegment);
+        var filter = _main.FileVM.FilterBar;
+        iOSFilterMenu.UpdateVisibleMenu(_phoneFilter, filter, RefreshPhoneMenus);
+        iOSFilterMenu.UpdateVisibleMenu(_phoneFilterSegment, filter, RefreshPhoneMenus);
     }
 
     /// <summary>把控制栏当前的 EXIF 显示项同步到手机形态的 EXIF 块（项数不变只改文本）。</summary>

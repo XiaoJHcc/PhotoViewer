@@ -16,9 +16,10 @@ namespace PhotoViewer.iOS.Native;
 
 /// <summary>
 /// 验收专用（非产品行为，测试钩子）：`--pv-native-layout-check &lt;目录&gt;` 在模拟器/真机上程序化核对宽形态主屏——
-/// 浮层外壳的分区（主图满舞台、分区表达为适应区内边距、栏位背景铺满边缘、内容收在安全区内）、
+/// 浮层外壳的分区（主图满舞台、分区表达为适应区内边距、栏位背景铺满边缘、上下布局内容收在安全区内、
+/// 左右布局栏位内容纵贯窗口且窗口控件只推筛选按钮）、
 /// 栏位显隐把对应一侧内边距退回安全区并释放适应区长度、宽形态固定大档的胶片卡片几何（带厚 / 可见容量 ≥5 /
-/// 96×144 内部）、宽形态筛选控件（三合体与单胶囊）与控制栏（EXIF 块 / 星级控件 / 44 点圆按钮），
+/// 96×144 内部）、宽形态筛选控件（两段合体胶囊 2 × 44）与控制栏（EXIF 块按方向取衬底/无衬底变体 / 星级控件 / 44 点圆按钮），
 /// 以及 [FILM-01–06] 的交互语义（点选不居中、显式定位的中间帧与终点、用户接管、减少动态效果直接到终点、
 /// 点星写回自有副本且不切主图、改星后筛选暂留）、卡片输入分流（指针点星写值 / 触摸只选中）、
 /// 卡片长按与辅助点按的星级弹窗（方向、落位、原地抬手保持、滑动提交一次、越界不写），
@@ -188,6 +189,7 @@ internal static class iOSNativeLayoutCheck
         }
         await UiDispatcher.InvokeAsync(() => main.Settings.LayoutMode = LayoutMode.Auto);
         await SettleAsync(root);
+        VerifyColumnSafeInjection((double)root.Stage.Bounds.Width, (double)root.Stage.Bounds.Height, label);
         bool expectRow = root.View!.Bounds.Height >= root.View.Bounds.Width;
         if (main.IsRowLayout != expectRow)
             throw new InvalidOperationException($"{label}/Auto 自动布局未按窗口方向选择分栏（IsRowLayout={main.IsRowLayout}）");
@@ -314,13 +316,41 @@ internal static class iOSNativeLayoutCheck
                 throw new InvalidOperationException(
                     $"{scope} 分隔线未收在主图分区两侧：文件 {fileDivider} / 控制 {controlDivider} / 主图 {panes.Photo}");
         }
-        // 内容收在安全区内。
-        RequireInside(root.FilterBar.Frame, safe, stage, $"{scope} 筛选条内容越出安全区");
-        RequireInside(root.Filmstrip.Frame, safe, stage, $"{scope} 胶片栏内容越出安全区");
-        RequireInside(root.ControlScroll.Frame, safe, stage, $"{scope} 控制栏内容越出安全区");
+        // 内容收在安全区内：行布局上下都在安全区内；左右布局纵贯窗口——顶部/底部安全区（状态栏、Home
+        // 指示条、圆角）只推筛选按钮自身，不推胶片列表与控制栏内容。
+        if (row)
+        {
+            RequireInside(root.FilterBar.Frame, safe, stage, $"{scope} 筛选条内容越出安全区");
+            RequireInside(root.Filmstrip.Frame, safe, stage, $"{scope} 胶片栏内容越出安全区");
+            RequireInside(root.ControlScroll.Frame, safe, stage, $"{scope} 控制栏内容越出安全区");
+        }
+        else
+        {
+            RequireColumnSpan(root.Filmstrip.Frame, stage, $"{scope} 胶片栏");
+            RequireColumnSpan(root.ControlScroll.Frame, stage, $"{scope} 控制栏内容");
+            if (Math.Abs((double)panes.FileContent.Y) > Exact
+                || Math.Abs((double)panes.FileContent.Height - (double)stage.Height) > Exact)
+                throw new InvalidOperationException(
+                    $"{scope} 列布局文件栏内容未纵贯窗口：{panes.FileContent}（顶部/底部安全区不应推列表）");
+            if (Math.Abs((double)panes.ControlContent.Y) > Exact
+                || Math.Abs((double)panes.ControlContent.Height - (double)stage.Height) > Exact)
+                throw new InvalidOperationException(
+                    $"{scope} 列布局控制栏内容未纵贯窗口：{panes.ControlContent}（顶部/底部安全区不应推右栏）");
+            double controlTop = (double)root.FilterBar.Frames.Control.Y;
+            if (Math.Abs(controlTop - FilterLeadingInset(root, false)) > Exact)
+                throw new InvalidOperationException(
+                    $"{scope} 列布局合体胶囊未从贴角带 + 外边距起排：Y {controlTop:0.##} ≠ {FilterLeadingInset(root, false):0.##}");
+            if (controlTop < (double)safe.Top - Exact)
+                throw new InvalidOperationException(
+                    $"{scope} 列布局合体胶囊越入顶部安全区：Y {controlTop:0.##}，安全区 {safe.Top:0.##}");
+            if ((double)root.FilterBar.Frames.Control.X < (double)safe.Left - Exact
+                || (double)root.FilterBar.Frames.Control.MaxX > (double)stage.Width - (double)safe.Right + Exact)
+                throw new InvalidOperationException(
+                    $"{scope} 列布局合体胶囊越入左右安全区：{root.FilterBar.Frames.Control}（安全区 L{safe.Left:0.##} R{safe.Right:0.##}）");
+        }
         // 文件栏主轴长度 = 筛选控件主轴 + 胶片卡片带厚 + 分隔线（行布局）；
         // 列布局 = 带厚 + 分隔线 + 安全区前导（相似面板打开时才另加柱宽，本检查保持关闭）。
-        double leadingInset = (double)safe.Top + MainScreenLayout.FilterMargin;
+        double leadingInset = FilterLeadingInset(root, row);
         double filterMain = root.FilterBar.MainLength(row, leadingInset);
         double band = FilmCardGeometry.BandThickness(root.Filmstrip.Tier, row);
         double expectedFileMain = row
@@ -332,9 +362,19 @@ internal static class iOSNativeLayoutCheck
         if (Math.Abs(actualFileMain - expectedFileMain) > .5)
             throw new InvalidOperationException(
                 $"{scope} 文件栏主轴 {actualFileMain:0.##} ≠ 筛选 {filterMain:0.##} + 带厚 {band:0.##}（{root.Filmstrip.Tier}）+ 分隔线/安全区 {expectedFileMain:0.##}");
-        // 筛选条 + 胶片栏恰好铺满文件栏内容区。
+        // 筛选条 + 胶片栏恰好铺满文件栏内容区；行布局的筛选控件另按自己的贴角带让开圆角/窗口控件。
+        double filterLeft = (double)safe.Left;
+        double filterWidth = (double)panes.FileContent.Width;
+        if (row)
+        {
+            var bandProbe = root.ProbeInsets(
+                new CGRect(0, (double)safe.Top, (double)stage.Width, DesignTokens.ShellGlassButtonSize),
+                UIViewLayoutRegionAdaptivityAxis.Horizontal);
+            filterLeft = Math.Max((double)safe.Left, (double)bandProbe.Left);
+            filterWidth = Math.Max(1, (double)stage.Width - filterLeft - (double)safe.Right);
+        }
         RequireFrame(root.FilterBar.Frame,
-            ToFrame(new LayoutRect(panes.FileContent.X, panes.FileContent.Y, panes.FileContent.Width, filterMain)),
+            ToFrame(new LayoutRect(filterLeft, panes.FileContent.Y, filterWidth, filterMain)),
             $"{scope} 筛选条未落在文件栏内容区");
         if (row)
         {
@@ -343,9 +383,28 @@ internal static class iOSNativeLayoutCheck
             if (Math.Abs(filmEnd - contentEnd) > .5)
                 throw new InvalidOperationException($"{scope} 胶片栏未填满文件栏剩余空间：{filmEnd} vs {contentEnd}");
         }
-        else if (Math.Abs((double)root.Filmstrip.Frame.Width - band) > .5)
+        else
         {
-            throw new InvalidOperationException($"{scope} 列布局胶片栏交叉轴 {root.Filmstrip.Frame.Width:0.##} 不是带厚 {band:0.##}");
+            if (Math.Abs((double)root.Filmstrip.Frame.Width - band) > .5)
+                throw new InvalidOperationException($"{scope} 列布局胶片栏交叉轴 {root.Filmstrip.Frame.Width:0.##} 不是带厚 {band:0.##}");
+            // 列布局胶片条纵贯窗口、从筛选条下方滚过：顶端滚动边缘交互挂在筛选控件上，筛选条压在列表之上。
+            RequireFrame(root.Filmstrip.Frame,
+                ToFrame(new LayoutRect(panes.FileContent.X, 0, band, (double)stage.Height)),
+                $"{scope} 列布局胶片栏未纵贯窗口");
+            if (!root.FilterBar.Interactions.Contains(root.FilmstripTopEdgeInteraction))
+                throw new InvalidOperationException($"{scope} 列布局未把胶片条的顶端滚动边缘交互挂在筛选控件上");
+            if (StageIndexOf(root, root.FilterBar) < StageIndexOf(root, root.Filmstrip))
+                throw new InvalidOperationException($"{scope} 列布局筛选控件未压在胶片列表之上");
+            if (!root.Filmstrip.Hidden)
+            {
+                var firstCard = root.Filmstrip.FrameAt(0)
+                    ?? throw new InvalidOperationException($"{scope} 列布局首卡几何缺失");
+                double expectedStart = (double)root.FilterBar.Frame.Height
+                    + FilmCardGeometry.MainLead(root.Filmstrip.Tier, false);
+                if (Math.Abs((double)firstCard.Y - expectedStart) > Exact)
+                    throw new InvalidOperationException(
+                        $"{scope} 列布局首卡未停在筛选条下方：Y {firstCard.Y:0.##} ≠ 筛选高 {root.FilterBar.Frame.Height:0.##} + 主轴前导 {FilmCardGeometry.MainLead(root.Filmstrip.Tier, false):0.##}");
+            }
         }
         // 适应区与任何可见栏位不相交（照片只在无遮挡区里适应）。
         var fit = root.Photo.FitRect;
@@ -362,7 +421,8 @@ internal static class iOSNativeLayoutCheck
         lines.Add(
             $"PASS {scope} 分区：舞台 {Size(stage)} safe(T{safe.Top:0.##} L{safe.Left:0.##} B{safe.Bottom:0.##} R{safe.Right:0.##}) " +
             $"适应区 {Size(fit)} @({fit.X:0.##},{fit.Y:0.##})、文件栏主轴 {actualFileMain:0.##}（筛选 {filterMain:0.##} + 带厚 {band:0.##} + 分隔线/安全区）、" +
-            $"主图分区与主图视图满舞台、栏位背景/分隔线与分区逐项一致、背景铺满边缘、内容在安全区内、适应区不与可见栏位相交");
+            $"主图分区与主图视图满舞台、栏位背景/分隔线与分区逐项一致、背景铺满边缘、" +
+            $"{(row ? "内容在安全区内" : "栏位内容纵贯窗口（顶部/底部安全区只推筛选按钮）")}、适应区不与可见栏位相交");
     }
 
     /// <summary>
@@ -385,9 +445,9 @@ internal static class iOSNativeLayoutCheck
     }
 
     /// <summary>
-    /// 核对宽形态筛选控件（FILTER-07）：各矩形逐项等于共享 <see cref="WideFilterLayout.Compute"/> 按原生自然宽度
-    /// 算出的结果；行布局必须是三段合体、在文件栏内容区内整组居中且 AI 版开关隔组间距紧随其后，
-    /// 列布局必须是单胶囊（宽等于胶片卡片列宽、在带内居中）且开关在下方同宽。
+    /// 核对宽形态筛选控件（FILTER-07）：筛选 / 更多两段合体胶囊（2 × 44）逐项等于 <see cref="iOSFilterLayout"/> 的
+    /// 纯几何结果；行布局整组（含 AI 版相似聚类开关）按自然宽在文件栏内容区内居中、开关隔 8 点紧随，
+    /// 列布局胶囊在 116 带内居中并从前导让位（贴角带 + 外边距）起排、开关在下方隔 8 点同宽。
     /// </summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="row">是否行布局。</param>
@@ -398,45 +458,51 @@ internal static class iOSNativeLayoutCheck
         var bar = root.FilterBar;
         double contentWidth = (double)bar.Bounds.Width;
         double cardWidth = FilmCardGeometry.Width(root.Filmstrip.Tier);
-        double leadingInset = (double)root.View!.SafeAreaInsets.Top + MainScreenLayout.FilterMargin;
+        double leadingInset = FilterLeadingInset(root, row);
         var toggle = bar.SimilarityToggle;
-        double toggleWidth = toggle == null ? 0 : NaturalWidth(toggle);
-        var expected = WideFilterLayout.Compute(row, contentWidth, cardWidth, leadingInset,
-            NaturalWidth(bar.SortSegment), NaturalWidth(bar.OrderSegment), NaturalWidth(bar.RatingSegment),
-            NaturalWidth(bar.CapsuleButton), toggle != null, toggleWidth);
-        if (bar.Mode != expected.Mode)
-            throw new InvalidOperationException($"{scope} 筛选形态 {bar.Mode} ≠ 共享计算 {expected.Mode}");
+        double toggleWidth = toggle == null ? 0 : row ? NaturalWidth(toggle) : cardWidth;
+        var expected = iOSFilterLayout.Compute(row, contentWidth, leadingInset, toggleWidth);
+
+        // 合体胶囊恰好两段：筛选段弹出三分组菜单，更多段与手机「更多」同源；旧的三段与单胶囊不再创建。
+        if (bar.CombinedGroup.Buttons.Count != 2)
+            throw new InvalidOperationException($"{scope} 筛选合体胶囊不是两个段：{bar.CombinedGroup.Buttons.Count}");
+        if (!ReferenceEquals(bar.CombinedGroup.Buttons[0], bar.FilterButton)
+            || !ReferenceEquals(bar.CombinedGroup.Buttons[1], bar.MoreButton))
+            throw new InvalidOperationException($"{scope} 合体胶囊两段不是筛选 / 更多");
+        if (bar.CombinedGroup.Vertical)
+            throw new InvalidOperationException($"{scope} 合体胶囊竖排，筛选 / 更多应沿水平方向并排");
+        if (bar.FilterButton.Hidden || bar.MoreButton.Hidden)
+            throw new InvalidOperationException(
+                $"{scope} 筛选 / 更多段可见性不符：筛选隐藏={bar.FilterButton.Hidden}，更多隐藏={bar.MoreButton.Hidden}");
+        if (bar.FilterButton.Menu == null) throw new InvalidOperationException($"{scope} 筛选段没有菜单");
+        if (bar.MoreButton.Menu == null) throw new InvalidOperationException($"{scope} 更多段没有菜单");
+
         if (Math.Abs(bar.MainLength(row, leadingInset) - expected.MainLength) > Exact)
             throw new InvalidOperationException(
-                $"{scope} 筛选控件主轴长度 {bar.MainLength(row, leadingInset):0.##} ≠ 共享计算 {expected.MainLength:0.##}");
+                $"{scope} 筛选控件主轴长度 {bar.MainLength(row, leadingInset):0.##} ≠ 纯几何 {expected.MainLength:0.##}");
         if (Math.Abs((double)bar.Frame.Height - expected.MainLength) > Exact)
             throw new InvalidOperationException($"{scope} 筛选控件高度 {bar.Frame.Height:0.##} ≠ 主轴长度 {expected.MainLength:0.##}");
-        RequireFrame(ToFrame(bar.Frames.Control), ToFrame(expected.Control), $"{scope} 筛选控件整体矩形与共享计算不一致");
-        RequireFrame(ToFrame(bar.Frames.Sort), ToFrame(expected.Sort), $"{scope} 排序段矩形与共享计算不一致");
-        RequireFrame(ToFrame(bar.Frames.Order), ToFrame(expected.Order), $"{scope} 方向段矩形与共享计算不一致");
-        RequireFrame(ToFrame(bar.Frames.Rating), ToFrame(expected.Rating), $"{scope} 星级段矩形与共享计算不一致");
-        bool segmented = expected.Mode == FilterControlMode.Segmented;
-        if (bar.SegmentedContainer.Hidden == segmented)
-            throw new InvalidOperationException($"{scope} 三段容器可见性不符：Hidden={bar.SegmentedContainer.Hidden}，形态={expected.Mode}");
-        if (bar.CapsuleButton.Hidden != segmented)
-            throw new InvalidOperationException($"{scope} 单胶囊可见性不符：Hidden={bar.CapsuleButton.Hidden}，形态={expected.Mode}");
-        if (segmented)
-        {
-            if (bar.SegmentedContainer.ContentView.Subviews.OfType<UIButton>().Count() != 3)
-                throw new InvalidOperationException($"{scope} 三段容器内不是恰好三个段按钮");
-            RequireFrame(bar.SegmentedContainer.Frame, ToFrame(expected.Control), $"{scope} 三段容器未铺满控件矩形");
-            RequireFrame(bar.SortSegment.Frame, ToFrame(expected.Sort), $"{scope} 排序段原生 frame 与共享矩形不一致");
-            RequireFrame(bar.OrderSegment.Frame, ToFrame(expected.Order), $"{scope} 方向段原生 frame 与共享矩形不一致");
-            RequireFrame(bar.RatingSegment.Frame, ToFrame(expected.Rating), $"{scope} 星级段原生 frame 与共享矩形不一致");
-        }
-        else
-        {
-            RequireFrame(bar.CapsuleButton.Frame, ToFrame(expected.Control), $"{scope} 单胶囊未铺满控件矩形");
-        }
+        RequireFrame(ToFrame(bar.Frames.Control), ToFrame(expected.Control), $"{scope} 合体胶囊矩形与纯几何不一致");
+        RequireFrame(ToFrame(bar.Frames.Filter), ToFrame(expected.Filter), $"{scope} 筛选段矩形与纯几何不一致");
+        RequireFrame(ToFrame(bar.Frames.More), ToFrame(expected.More), $"{scope} 更多段矩形与纯几何不一致");
+        RequireFrame(bar.CombinedGroup.Frame, ToFrame(expected.Control), $"{scope} 合体胶囊未铺满控件矩形");
+        RequireFrame(bar.FilterButton.ConvertRectToView(bar.FilterButton.Bounds, bar.CombinedGroup), ToFrame(expected.Filter),
+            $"{scope} 筛选段原生 frame 与共享矩形不一致");
+        RequireFrame(bar.MoreButton.ConvertRectToView(bar.MoreButton.Bounds, bar.CombinedGroup), ToFrame(expected.More),
+            $"{scope} 更多段原生 frame 与共享矩形不一致");
+        if (Math.Abs((double)bar.CombinedGroup.Frame.Height - iOSFilterLayout.Segment) > Exact)
+            throw new InvalidOperationException(
+                $"{scope} 合体胶囊高 {bar.CombinedGroup.Frame.Height:0.##} 不是单段边长 {iOSFilterLayout.Segment:0.##}");
+        // 两段首尾相接：更多段紧贴筛选段右缘，宽高都是 44。
+        if (Math.Abs((double)expected.More.X - (double)expected.Filter.MaxX) > Exact
+            || Math.Abs((double)expected.Filter.Width - iOSFilterLayout.Segment) > Exact
+            || Math.Abs((double)expected.More.Width - iOSFilterLayout.Segment) > Exact)
+            throw new InvalidOperationException(
+                $"{scope} 筛选 / 更多两段不是首尾相接的 44 点等宽段：{expected.Filter} / {expected.More}");
         if (toggle != null)
         {
             if (toggle.Hidden) throw new InvalidOperationException($"{scope} AI 版相似聚类开关必须显示");
-            RequireFrame(ToFrame(bar.Frames.Toggle), ToFrame(expected.Toggle), $"{scope} 相似聚类开关矩形与共享计算不一致");
+            RequireFrame(ToFrame(bar.Frames.Toggle), ToFrame(expected.Toggle), $"{scope} 相似聚类开关矩形与纯几何不一致");
             RequireFrame(toggle.Frame, ToFrame(expected.Toggle), $"{scope} 相似聚类开关原生 frame 与共享矩形不一致");
         }
         else if (bar.Frames.Toggle.Width > 0 || bar.Frames.Toggle.Height > 0)
@@ -445,41 +511,105 @@ internal static class iOSNativeLayoutCheck
         }
         if (row)
         {
-            if (!segmented)
-                throw new InvalidOperationException($"{scope} 行布局三段放不下却退回单胶囊：内容宽 {contentWidth:0.##}");
-            if (Math.Abs((double)expected.Control.Y - WideFilterLayout.Margin) > Exact
-                || Math.Abs((double)expected.Control.Height - WideFilterLayout.Height) > Exact)
-                throw new InvalidOperationException($"{scope} 行布局筛选控件未保持上下外边距与 44 点高：{expected.Control}");
-            double groupWidth = (double)expected.Control.Width + (toggle == null ? 0 : WideFilterLayout.Gap + toggleWidth);
+            if (Math.Abs((double)expected.Control.Y - iOSFilterLayout.Margin) > Exact
+                || Math.Abs((double)expected.Control.Height - iOSFilterLayout.Segment) > Exact)
+                throw new InvalidOperationException(
+                    $"{scope} 行布局合体胶囊未保持上下外边距与 44 点高：{expected.Control}");
+            double groupWidth = (double)expected.Control.Width + (toggle == null ? 0 : iOSFilterLayout.Gap + toggleWidth);
             double groupCenter = (double)expected.Control.X + groupWidth / 2;
             if (Math.Abs(groupCenter - contentWidth / 2) > Exact)
-                throw new InvalidOperationException($"{scope} 筛选控件未在文件栏内容区整组居中：中心 {groupCenter:0.##} / {contentWidth / 2:0.##}");
-            if (toggle != null
-                && Math.Abs((double)expected.Toggle.X - (double)expected.Control.MaxX - WideFilterLayout.Gap) > Exact)
                 throw new InvalidOperationException(
-                    $"{scope} 相似聚类开关未隔 {WideFilterLayout.Gap:0.##} 点紧随三段：{expected.Toggle}/{expected.Control}");
+                    $"{scope} 筛选控件未在文件栏内容区整组居中：中心 {groupCenter:0.##} / {contentWidth / 2:0.##}");
+            if (toggle != null
+                && Math.Abs((double)expected.Toggle.X - (double)expected.Control.MaxX - iOSFilterLayout.Gap) > Exact)
+                throw new InvalidOperationException(
+                    $"{scope} 相似聚类开关未隔 {iOSFilterLayout.Gap:0.##} 点紧随合体胶囊：{expected.Toggle}/{expected.Control}");
         }
         else
         {
-            if (segmented)
-                throw new InvalidOperationException($"{scope} 列布局三段竟然放进了卡片列宽：{expected.Control}");
             if (Math.Abs(contentWidth - FilmCardGeometry.BandThickness(root.Filmstrip.Tier, false)) > Exact)
                 throw new InvalidOperationException($"{scope} 列布局筛选控件宽度不是胶片卡片带厚：{contentWidth:0.##}");
-            if (Math.Abs((double)expected.Control.Width - cardWidth) > Exact
-                || Math.Abs((double)expected.Control.X - (contentWidth - cardWidth) / 2) > Exact)
-                throw new InvalidOperationException($"{scope} 单胶囊未按卡片列宽在带内居中：{expected.Control}");
+            if (Math.Abs((double)expected.Control.Width - iOSFilterLayout.GroupWidth) > Exact
+                || Math.Abs((double)expected.Control.X - (contentWidth - iOSFilterLayout.GroupWidth) / 2) > Exact)
+                throw new InvalidOperationException($"{scope} 合体胶囊未按 88 点在带内居中：{expected.Control}");
+            if (Math.Abs((double)expected.Control.Y - leadingInset) > Exact)
+                throw new InvalidOperationException(
+                    $"{scope} 合体胶囊未从前导让位起排：Y={expected.Control.Y:0.##}/{leadingInset:0.##}");
             if (toggle != null
                 && (Math.Abs((double)toggle.Frame.Width - cardWidth) > Exact
-                    || Math.Abs((double)toggle.Frame.Y - (double)expected.Control.MaxY - WideFilterLayout.Gap) > Exact))
-                throw new InvalidOperationException($"{scope} 相似聚类开关未在单胶囊下方同宽：{toggle.Frame}");
-            if (Math.Abs((double)expected.Control.Y - leadingInset) > Exact)
-                throw new InvalidOperationException($"{scope} 单胶囊未从前导让位起排：Y={expected.Control.Y:0.##}/{leadingInset:0.##}");
+                    || Math.Abs((double)toggle.Frame.Y - (double)expected.Control.MaxY - iOSFilterLayout.Gap) > Exact))
+                throw new InvalidOperationException($"{scope} 相似聚类开关未在合体胶囊下方隔 {iOSFilterLayout.Gap:0.##} 同宽：{toggle.Frame}");
         }
         lines.Add(row
-            ? $"PASS {scope} 筛选控件：三段合计 {expected.Control.Width:0.##} 点（排序 {expected.Sort.Width:0.##} / 方向 {expected.Order.Width:0.##} / 星级 {expected.Rating.Width:0.##}）在 {contentWidth:0.##} 内容区整组居中，" +
-                $"{(toggle == null ? "标准版无相似聚类开关" : $"AI 版开关 {toggleWidth:0.##} 点隔 {WideFilterLayout.Gap:0.##} 紧随其后")}；行高 {expected.MainLength:0.##}（无计数、无空槽）"
-            : $"PASS {scope} 筛选控件：单胶囊 {cardWidth:0.##} 点在 {contentWidth:0.##} 带内居中（Y={expected.Control.Y:0.##}），" +
-                $"{(toggle == null ? "标准版无相似聚类开关" : $"AI 版开关在下方隔 {WideFilterLayout.Gap:0.##} 同宽")}；列主轴 {expected.MainLength:0.##}");
+            ? $"PASS {scope} 筛选控件：合体胶囊 88 点（筛选 44 + 更多 44）在 {contentWidth:0.##} 内容区整组居中，" +
+                $"{(toggle == null ? "标准版无相似聚类开关" : $"AI 版开关 {toggleWidth:0.##} 点隔 {iOSFilterLayout.Gap:0.##} 紧随其后")}；行高 {expected.MainLength:0.##}（无计数、无空槽）"
+            : $"PASS {scope} 筛选控件：合体胶囊 88 点在 {contentWidth:0.##} 带内居中（Y={expected.Control.Y:0.##} = 贴角带 + 外边距），" +
+                $"{(toggle == null ? "标准版无相似聚类开关" : $"AI 版开关在下方隔 {iOSFilterLayout.Gap:0.##} 同宽")}；列主轴 {expected.MainLength:0.##}");
+    }
+
+    /// <summary>
+    /// 筛选控件列布局的前导让位：贴角带（窗口圆角 / 控件适应）在该列上的上缘距离 + 外边距；
+    /// 行布局只看外边距。与根控制器探针口径一致，按钮因此只按自身带被推下，不推列表与右栏。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="row">是否行布局。</param>
+    /// <returns>前导让位（点）。</returns>
+    private static double FilterLeadingInset(iOSNativeRootViewController root, bool row)
+    {
+        if (row) return MainScreenLayout.FilterMargin;
+        var panes = root.Panes;
+        var stage = root.Stage.Bounds;
+        double band = FilmCardGeometry.BandThickness(root.Filmstrip.Tier, false);
+        var probe = root.ProbeInsets(
+            new CGRect((double)panes.FileContent.X, 0, band, (double)stage.Height),
+            UIViewLayoutRegionAdaptivityAxis.Vertical);
+        return (double)probe.Top + MainScreenLayout.FilterMargin;
+    }
+
+    /// <summary>
+    /// 人工注入安全区的纯几何核对：同一份窗口控件安全区（顶 24 / 底 20）在左右布局只推动筛选按钮
+    /// （按钮自身贴角带 + 外边距），文件栏、控制栏与分析栏内容仍纵贯窗口；上下布局仍把内容收在安全区内。
+    /// 探针值与真实窗口无关，因此这条断言不依赖设备是否有刘海/圆角。
+    /// </summary>
+    /// <param name="width">窗口宽。</param>
+    /// <param name="height">窗口高。</param>
+    /// <param name="scope">报告范围标签。</param>
+    private static void VerifyColumnSafeInjection(double width, double height, string scope)
+    {
+        var injected = new UIEdgeInsets(24, 12, 20, 8);
+        const double fileMain = MainScreenLayout.FileBarContentWidth + MainScreenLayout.Divider + 12;
+        const double controlMain = 84;
+        const double analysisCross = 64;
+        var column = iOSMainScreenLayout.Compute(false, width, height, injected, fileMain, controlMain, analysisCross);
+        if (Math.Abs((double)column.FileContent.Y) > Exact || Math.Abs((double)column.FileContent.Height - height) > Exact
+            || Math.Abs((double)column.FileContent.X - 12) > Exact)
+            throw new InvalidOperationException(
+                $"{scope} 注入安全区 T24 B20 后列布局文件栏内容未纵贯窗口：{column.FileContent}（舞台高 {height:0.##}）");
+        if (Math.Abs((double)column.ControlContent.Y) > Exact || Math.Abs((double)column.ControlContent.Height - height) > Exact)
+            throw new InvalidOperationException(
+                $"{scope} 注入安全区 T24 B20 后列布局控制栏内容未纵贯窗口：{column.ControlContent}（舞台高 {height:0.##}）");
+        if (Math.Abs((double)column.Analysis.Y) > Exact || Math.Abs((double)column.Analysis.Height - height) > Exact
+            || Math.Abs((double)column.Analysis.Width - analysisCross) > Exact)
+            throw new InvalidOperationException(
+                $"{scope} 注入安全区后列布局分析栏未纵贯窗口：{column.Analysis}（高度应为 {height:0.##}）");
+        double photoWidth = width - fileMain - controlMain - analysisCross;
+        if (Math.Abs((double)column.Photo.Width - photoWidth) > .5)
+            throw new InvalidOperationException(
+                $"{scope} 注入安全区后列布局主图宽度不只扣左右栏：{column.Photo.Width:0.##} ≠ {photoWidth:0.##}");
+        // 同一份安全区在上下布局仍把内容收在安全区内（顶 24 / 底 20）。
+        var row = iOSMainScreenLayout.Compute(true, width, height, injected, fileMain, controlMain, 0);
+        if (Math.Abs((double)row.FileContent.Y - 24) > Exact
+            || Math.Abs((double)row.ControlContent.MaxY - (height - 20)) > Exact)
+            throw new InvalidOperationException(
+                $"{scope} 注入安全区后上下布局未按安全区收内容：文件 {row.FileContent}，控制 {row.ControlContent}");
+        // 筛选按钮只随自身前导让位移动，横向仍按 88 点在 116 带内居中——安全区不会推列表与右栏。
+        var shallow = iOSFilterLayout.Compute(false, MainScreenLayout.FileBarContentWidth, 10, 0);
+        var deep = iOSFilterLayout.Compute(false, MainScreenLayout.FileBarContentWidth, 34, 0);
+        double centred = (MainScreenLayout.FileBarContentWidth - iOSFilterLayout.GroupWidth) / 2;
+        if (Math.Abs((double)shallow.Control.Y - 10) > Exact || Math.Abs((double)deep.Control.Y - 34) > Exact
+            || Math.Abs((double)shallow.Control.X - centred) > Exact || Math.Abs((double)deep.Control.X - centred) > Exact)
+            throw new InvalidOperationException(
+                $"{scope} 列布局合体胶囊未只随自身前导让位移动：{shallow.Control} / {deep.Control}");
     }
 
     /// <summary>原生量得的自然宽度（与控件同一口径：SizeThatFits 向上取整，含 configuration 内边距与弹出指示器）。</summary>
@@ -487,7 +617,7 @@ internal static class iOSNativeLayoutCheck
     /// <returns>宽度，至少 1 点。</returns>
     private static double NaturalWidth(UIButton button)
     {
-        double width = Math.Ceiling((double)button.SizeThatFits(new CGSize(0, (nfloat)WideFilterLayout.Height)).Width);
+        double width = Math.Ceiling((double)button.SizeThatFits(new CGSize(0, (nfloat)DesignTokens.ShellGlassButtonSize)).Width);
         if (width <= 0) width = Math.Ceiling((double)button.IntrinsicContentSize.Width);
         return Math.Max(1, width);
     }
@@ -543,17 +673,24 @@ internal static class iOSNativeLayoutCheck
         string exifSummary = "无 EXIF 分组";
         if (exifCount > 0)
         {
-            // EXIF 组就是新 EXIF 块本身：整块尺寸取共享尺寸，块内逐项落在共享项目矩形内、标签在数值上方。
+            // EXIF 组就是新 EXIF 块本身：上下布局是有衬底的整块，左右布局取无衬底变体（SHELL-12、TOOLBAR-05）；
+            // 整块尺寸与逐项矩形都取共享几何，块内各项落在项目矩形内、标签在数值上方。
             var exif = bar.ExifGroup!;
             exif.LayoutIfNeeded();
-            var spec = ToolbarFlowLayout.Exif(exifCount, row);
+            bool bare = !row;
+            var (specWidth, specHeight) = ExifBlockGeometry.Size(exifCount, row, bare);
+            double specMain = row ? specWidth : specHeight;
+            double specCross = row ? specHeight : specWidth;
             double frameMain = row ? (double)exif.Frame.Width : (double)exif.Frame.Height;
             double frameCross = row ? (double)exif.Frame.Height : (double)exif.Frame.Width;
-            if (Math.Abs(frameMain - spec.Main) > Exact || Math.Abs(frameCross - spec.Cross) > Exact)
+            if (Math.Abs(frameMain - specMain) > Exact || Math.Abs(frameCross - specCross) > Exact)
                 throw new InvalidOperationException(
-                    $"{scope} EXIF 块 {frameMain:0.##}×{frameCross:0.##} 与共享尺寸 {spec.Main:0.##}×{spec.Cross:0.##} 不一致");
+                    $"{scope} EXIF 块 {frameMain:0.##}×{frameCross:0.##} 与共享{(bare ? "无衬底" : "衬底")}尺寸 {specMain:0.##}×{specCross:0.##} 不一致");
             if (exif.Horizontal != row)
                 throw new InvalidOperationException($"{scope} EXIF 块排向 {exif.Horizontal} 未随布局方向 {row}");
+            if (exif.Bare != bare)
+                throw new InvalidOperationException(
+                    $"{scope} EXIF 块衬底模式 {exif.Bare} 与{(row ? "上下布局（带衬底）" : "左右布局（无衬底）")}不符");
             if (exif.ItemLabels.Count != exifCount || exif.ItemValues.Count != exifCount)
                 throw new InvalidOperationException(
                     $"{scope} EXIF 块项数 {exif.ItemLabels.Count}/{exif.ItemValues.Count} ≠ 启用项 {exifCount}");
@@ -561,7 +698,8 @@ internal static class iOSNativeLayoutCheck
             {
                 var label = exif.ItemLabels[index];
                 var value = exif.ItemValues[index];
-                var item = ExifBlockGeometry.ItemRect(index, exifCount, row, row ? (double)exif.Bounds.Width : (double)exif.Bounds.Height);
+                var item = ExifBlockGeometry.ItemRect(index, exifCount, row,
+                    row ? (double)exif.Bounds.Width : (double)exif.Bounds.Height, bare);
                 if (Math.Abs((double)label.Font.PointSize - DesignTokens.ToolbarExifLabelFontSize) > Exact
                     || Math.Abs((double)value.Font.PointSize - DesignTokens.ToolbarExifValueFontSize) > Exact)
                     throw new InvalidOperationException($"{scope} EXIF 第 {index + 1} 项字号不是 10/12：{label.Font.PointSize}/{value.Font.PointSize}");
@@ -576,9 +714,25 @@ internal static class iOSNativeLayoutCheck
                 if ((double)label.Frame.Y < (double)item.Y - Exact || (double)value.Frame.GetMaxY() > (double)item.MaxY + Exact)
                     throw new InvalidOperationException($"{scope} EXIF 第 {index + 1} 项越出项目矩形：{label.Frame}/{value.Frame} / {item}");
             }
-            if (exif.Background.Effect is not UIBlurEffect)
-                throw new InvalidOperationException($"{scope} EXIF 块缺少模糊材质衬底");
-            exifSummary = $"{frameMain:0.##}×{frameCross:0.##}（{exifCount} 项{(row ? "横排" : "竖排")}）";
+            if (row)
+            {
+                if (exif.Background.Hidden || exif.Background.Effect is not UIBlurEffect)
+                    throw new InvalidOperationException($"{scope} 上下布局 EXIF 块缺少模糊材质衬底");
+                if (Math.Abs((double)exif.Layer.CornerRadius - ExifBlockGeometry.CornerRadius) > Exact)
+                    throw new InvalidOperationException(
+                        $"{scope} 上下布局 EXIF 块圆角 {exif.Layer.CornerRadius} ≠ {ExifBlockGeometry.CornerRadius:0.##}");
+            }
+            else
+            {
+                if (!exif.Background.Hidden)
+                    throw new InvalidOperationException($"{scope} 左右布局 EXIF 块仍显示模糊衬底");
+                if ((double)exif.Layer.CornerRadius > Exact)
+                    throw new InvalidOperationException($"{scope} 左右布局 EXIF 块仍有圆角 {exif.Layer.CornerRadius}");
+                if (Math.Abs((double)exif.Bounds.Width - ExifBlockGeometry.ItemWidth) > Exact)
+                    throw new InvalidOperationException(
+                        $"{scope} 无衬底 EXIF 列宽 {exif.Bounds.Width:0.##} ≠ 项宽 {ExifBlockGeometry.ItemWidth:0.##}（无块内边距）");
+            }
+            exifSummary = $"{frameMain:0.##}×{frameCross:0.##}（{exifCount} 项{(row ? "横排带衬底" : "竖排无衬底")}）";
         }
         // 星级分组：共享尺寸占位，控件在组内铺满，胶囊按共享几何落在展开/紧凑形态。
         double availableMain = row ? (double)root.ControlScroll.Bounds.Width : (double)root.ControlScroll.Bounds.Height;
@@ -665,7 +819,11 @@ internal static class iOSNativeLayoutCheck
         var viewport = filmstrip.Bounds.Size;
         int count = main.FileVM.ThumbnailList.FilteredFiles.Count;
         var tier = filmstrip.Tier;
+        // 列布局的胶片条从筛选控件下方滚过：主轴文档与卡片起点整体后移筛选控件高（含贴角让位与外边距），
+        // 行布局不留白。
+        double lead = row ? 0 : (double)root.FilterBar.Frame.Height;
         double filmMain = horizontal ? (double)viewport.Width : (double)viewport.Height;
+        double innerMain = Math.Max(1, filmMain - lead);
         double filmCross = horizontal ? (double)viewport.Height : (double)viewport.Width;
         const FilmCardTier expectedTier = FilmCardTier.Large;
         if (tier != expectedTier)
@@ -682,13 +840,13 @@ internal static class iOSNativeLayoutCheck
         double step = FilmCardGeometry.Step(tier, horizontal);
         double expected = count * step + FilmCardGeometry.MainLead(tier, horizontal) + FilmCardGeometry.MainTrail(tier, horizontal);
         double documentMain = horizontal ? (double)document.Width : (double)document.Height;
-        if (Math.Abs(documentMain - Math.Max(filmMain, expected)) > .5)
+        if (Math.Abs(documentMain - (Math.Max(innerMain, expected) + lead)) > .5)
             throw new InvalidOperationException($"{scope} 胶片栏文档主轴长度错误：{documentMain}");
         var first = filmstrip.FrameAt(0) ?? throw new InvalidOperationException($"{scope} 首卡几何缺失");
-        // 共享卡片矩形的跨轴基准：横向取文档主轴长度，纵向取视口宽度。
+        // 共享卡片矩形的跨轴基准：横向取文档主轴长度，纵向取视口宽度；列布局再沿主轴后移筛选控件高。
         double sharedContentWidth = horizontal ? documentMain : (double)viewport.Width;
         var expectedFirst = FilmCardGeometry.ItemFrame(tier, horizontal, 0, count, sharedContentWidth);
-        RequireFrame(first, new CGRect(expectedFirst.X, expectedFirst.Y, expectedFirst.Width, expectedFirst.Height),
+        RequireFrame(first, new CGRect(expectedFirst.X, expectedFirst.Y + (horizontal ? 0 : lead), expectedFirst.Width, expectedFirst.Height),
             $"{scope} 首卡位置与卡片尺寸（{tier}）");
         if (Math.Abs((double)first.Width - cardWidth) > Exact || Math.Abs((double)first.Height - cardHeight) > Exact)
             throw new InvalidOperationException($"{scope} 首卡尺寸 {Size(first)} ≠ {tier} 档 {cardWidth:0.##}×{cardHeight:0.##}");
@@ -1590,6 +1748,31 @@ internal static class iOSNativeLayoutCheck
         if ((double)frame.X < (double)safe.Left - Exact || (double)frame.Y < (double)safe.Top - Exact ||
             (double)frame.Right > (double)bounds.Width - (double)safe.Right + Exact || (double)frame.Bottom > (double)bounds.Height - (double)safe.Bottom + Exact)
             throw new InvalidOperationException($"{context}：{frame} / bounds {bounds} / safe(T{safe.Top:0.##} L{safe.Left:0.##} B{safe.Bottom:0.##} R{safe.Right:0.##})");
+    }
+
+    /// <summary>
+    /// 左右布局的栏位内容纵贯窗口：上缘 0、高等于舞台高（顶部/底部安全区不推列表与右栏）。
+    /// 只看纵向——右栏内容按设计铺到窗口外缘，不避让左右安全内缩。
+    /// </summary>
+    /// <param name="frame">栏位内容矩形（舞台坐标）。</param>
+    /// <param name="stage">舞台尺寸。</param>
+    /// <param name="context">失败信息。</param>
+    private static void RequireColumnSpan(CGRect frame, CGRect stage, string context)
+    {
+        if (Math.Abs((double)frame.Y) > Exact || Math.Abs((double)frame.Height - (double)stage.Height) > Exact)
+            throw new InvalidOperationException(
+                $"{context} 未纵贯窗口：{frame} / 舞台 {stage}（顶部/底部安全区不应推栏位内容）");
+    }
+
+    /// <summary>视图所在舞台子视图的层级序号（不在舞台内为 -1）。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="view">目标视图。</param>
+    /// <returns>舞台直接子视图的序号。</returns>
+    private static int StageIndexOf(iOSNativeRootViewController root, UIView view)
+    {
+        UIView? current = view;
+        while (current != null && !ReferenceEquals(current.Superview, root.Stage)) current = current.Superview;
+        return current == null ? -1 : Array.IndexOf(root.Stage.Subviews, current);
     }
 
     /// <summary>隐藏栏位后核对主图主轴变长（隐藏起始栏时归零原点，隐藏末端栏时保持原点）。</summary>

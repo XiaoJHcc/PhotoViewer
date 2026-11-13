@@ -6,7 +6,7 @@ namespace PhotoViewer.iOS.Native;
 /// <summary>
 /// iPad 主屏分区几何：在共享 <see cref="MainScreenLayout.Partition"/> 之上叠加 UIKit 的安全区口径——
 /// 栏位**背景**铺满屏幕边缘（状态栏、Home 指示条与横屏刘海区都盖住），栏位**内容**（筛选条、胶片栏、控制栏）
-/// 收在安全区内；主图区保持满幅（观片时照片延伸到边缘，与 Mac 主图铺满观片区同义）。
+/// 在上下布局收在安全区内，左右布局纵贯窗口；主图区保持满幅。
 /// 分析栏的交叉轴长度由调用方传入，未启用时恒为 0（槽位保留，空间归主图）。
 /// </summary>
 /// <param name="FileBar">文件栏背景分区。</param>
@@ -55,18 +55,18 @@ internal static class iOSMainScreenLayout
                 new LayoutRect(0, controlDivider.Y, width, Math.Max(0, height - controlDivider.Y)),
                 new LayoutRect(left, controlContent.Y, contentWidth, controlContent.Height));
         }
-        // 列布局：主轴水平，安全区左右让位在计算文件栏长度时已计入（前导内边距）；栏位背景向右补回屏幕边缘。
+        // 列布局：主轴水平，内容纵贯窗口上下缘（不扣上下安全区）；左右让位只计入文件栏前导，栏位背景补回屏幕边缘。
         var column = MainScreenLayout.Partition(false, width, height, fileMain, controlMain, analysisCross);
-        double contentHeight = Math.Max(1, height - top - bottom);
+        double contentHeight = Math.Max(1, height);
         return new iOSPaneFrames(
             column.FileBar,
-            new LayoutRect(left, top, Math.Min(MainScreenLayout.FileBarContentWidth, Math.Max(0, column.FileBar.Width - left)), contentHeight),
+            new LayoutRect(left, 0, Math.Min(MainScreenLayout.FileBarContentWidth, Math.Max(0, column.FileBar.Width - left)), contentHeight),
             column.FileDivider,
             column.Photo,
             column.Analysis,
             column.ControlDivider,
             new LayoutRect(column.ControlBar.X, 0, Math.Max(0, width - column.ControlBar.X), height),
-            new LayoutRect(column.ControlBar.X, top, column.ControlBar.Width, contentHeight));
+            new LayoutRect(column.ControlBar.X, 0, column.ControlBar.Width, contentHeight));
     }
 
     /// <summary>沿主轴平移矩形（行布局把安全区顶边让位补回主轴坐标）。</summary>

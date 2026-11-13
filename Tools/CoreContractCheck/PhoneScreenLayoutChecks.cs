@@ -7,6 +7,11 @@ namespace CoreContractCheck;
 /// 手机形态槽位几何不变量（SHELL-08/09/10/11/12）：在手机竖横屏尺寸网格上核对元素落位与安全区例外、
 /// 与主图适应区互不侵占、槽位互不重叠、胶片条贯穿窗口且两端内容留白正确、主图避让的栏缘口径、
 /// 贴角元素带的隔离、横屏控制栏的桌面式次序与 EXIF 整项裁剪，以及刘海双向镜像。
+/// <para>栏与栏之间只有一份 8 点外层间距，不许在共享层叠加第二份：竖屏胶片条下缘直接落在底行上缘
+/// （视觉间距来自小档卡片自身的交叉轴内边距 8），分析栏紧贴顶行下缘（瓦片的 8 点上留白在分析栏交叉轴内，
+/// 由分析面板自己排），胶片条两端滚动留白取行内间距而非底行按钮的圆角缘距；底栏背景自胶片条上缘铺到窗口下缘。
+/// 横屏下巴侧栏背景由分析栏或 EXIF 列决定：分析栏在时从分析栏左缘铺到窗口右缘并纵贯整窗，
+/// 控制栏关闭时分析栏贴窗口外缘（栏背景仍整块铺满），只有纯控制栏时完全透明。</para>
 /// </summary>
 internal static class PhoneScreenLayoutChecks
 {
@@ -27,6 +32,9 @@ internal static class PhoneScreenLayoutChecks
 
     /// <summary>横屏卡片靠刘海一侧的交叉轴内边距（小档 8）。</summary>
     private static readonly double SmallCardPad = FilmCardGeometry.CrossLead(FilmCardTier.Small, false);
+
+    /// <summary>竖屏横向小档卡片的交叉轴尾随内边距（小档 8）：胶片条与底行之间唯一的视觉间距。</summary>
+    private static readonly double PortraitCardTrail = FilmCardGeometry.CrossTrail(FilmCardTier.Small, true);
 
     /// <summary>窄胶片列：带厚窄于「边距 + 两段宽按钮 + 行内间距」，列缘改由按钮决定。</summary>
     private static readonly double NarrowFilmBand = 56;
@@ -77,7 +85,9 @@ internal static class PhoneScreenLayoutChecks
 
         RunRatingChecks(c);
         RunPortraitBottomRowChecks(c);
+        RunPortraitOuterInsetChecks(c);
         RunLandscapeControlBarChecks(c);
+        RunLandscapeTrailingBarChecks(c);
         RunExifTrimmingChecks(c);
         RunProbeChecks(c);
         RunIphone17Checks(c);
@@ -221,11 +231,24 @@ internal static class PhoneScreenLayoutChecks
     private static double BottomGapFloor(in PhoneLayoutInput input)
         => Math.Max(input.Safe.Bottom - RowInset, RowInset);
 
+    /// <summary>竖屏底行到窗口下缘的间距：Home 指示条余量与底行两端贴边取大，夹在一份行内间距之上。</summary>
+    private static double BottomGap(in PhoneLayoutInput input)
+    {
+        double controlLeft = Math.Max(input.Safe.Left, input.ControlBand.Left) + EdgeMargin;
+        double controlRight = input.Width - Math.Max(input.Safe.Right, input.ControlBand.Right) - EdgeMargin;
+        return Math.Max(
+            Math.Max(input.Safe.Bottom - RowInset, Math.Min(controlLeft, input.Width - controlRight)), RowInset);
+    }
+
     private static bool CardZoneInsideSafe(in PhoneLayoutInput input, LayoutRect zone)
     {
         var safe = input.Safe;
-        bool lateralInside = zone.X >= safe.Left - Epsilon
-            && zone.MaxX <= input.Width - safe.Right + Epsilon;
+        // 竖屏主轴留白取行内间距（8），比圆角侧安全区（如 12）更贴窗口缘：卡片带的侧安全区只为角部圆角给出，
+        // 卡片带位于屏幕中段，因此下限取两者较小者，同时不得越出窗口。横屏卡片贴物理刘海，仍按安全区核对。
+        double lateralFloor = input.Landscape ? safe.Left : Math.Min(safe.Left, input.RowInset);
+        double lateralCeiling = input.Landscape ? safe.Right : Math.Min(safe.Right, input.RowInset);
+        bool lateralInside = zone.X >= lateralFloor - Epsilon
+            && zone.MaxX <= input.Width - lateralCeiling + Epsilon;
         if (!lateralInside || zone.Y < safe.Top - Epsilon) return false;
 
         // 胶片条落在最后一行时与底行同一口径：压进 Home 指示条余量，横屏胶片条纵贯整窗。
@@ -382,23 +405,12 @@ internal static class PhoneScreenLayoutChecks
             return;
         }
 
-        double controlLeft = Math.Max(input.Safe.Left, input.ControlBand.Left) + EdgeMargin;
-        double controlRight = input.Width - Math.Max(input.Safe.Right, input.ControlBand.Right) - EdgeMargin;
-
         if (!Near(padding.Top, 0) || !Near(padding.Bottom, 0))
             problems.Add(label + "竖屏胶片条交叉轴留白应为 0 " + EdgeInsetsText(padding));
 
-        if (!Near(padding.Left, controlLeft))
-            problems.Add(label + $"竖屏胶片条左留白 {padding.Left:0.##}，应为 {controlLeft:0.##}");
-
-        if (!Near(padding.Right, input.Width - controlRight))
-            problems.Add(label + $"竖屏胶片条右留白 {padding.Right:0.##}，应为 {input.Width - controlRight:0.##}");
-
-        if (Has(layout.Navigation) && !Near(padding.Left, layout.Navigation.X))
-            problems.Add(label + "竖屏胶片条左留白应等于上下张起点");
-
-        if (Has(layout.FitEnhance) && !Near(padding.Right, input.Width - layout.FitEnhance.MaxX))
-            problems.Add(label + "竖屏胶片条右留白应等于缩放增强到窗口末端的距离");
+        // 两端内容留白取行内间距，不再跟随底行按钮的内缘或圆角缘距：底行显隐、控制带加宽都不改变它。
+        if (!Near(padding.Left, input.RowInset) || !Near(padding.Right, input.RowInset))
+            problems.Add(label + "竖屏胶片条两端留白应为行内间距 " + EdgeInsetsText(padding));
 
         if (!Has(filmstrip)) return;
 
@@ -407,11 +419,11 @@ internal static class PhoneScreenLayoutChecks
         if (!Near(filmstrip.Height, input.FilmBand))
             problems.Add(label + "竖屏胶片条高度不等于 FilmBand " + RectText(filmstrip));
 
-        double bottomGap = Math.Max(
-            Math.Max(input.Safe.Bottom - RowInset, Math.Min(controlLeft, input.Width - controlRight)), RowInset);
+        // 底行可见时胶片条下缘直接落在底行上缘，共享层不再让出第二份行内间距；
+        // 底行隐藏时贴 Home 指示条余量给出的下缘。
         double expectedFilmBottom = input.ControlVisible
-            ? layout.FitEnhance.Y - RowInset
-            : input.Height - bottomGap;
+            ? layout.FitEnhance.Y
+            : input.Height - BottomGap(input);
         if (!Near(filmstrip.MaxY, expectedFilmBottom))
             problems.Add(label + $"竖屏胶片条下缘 {filmstrip.MaxY:0.##}，应为 {expectedFilmBottom:0.##}");
     }
@@ -507,16 +519,50 @@ internal static class PhoneScreenLayoutChecks
         if (Has(layout.FilterMoreGroup))
             problems.Add(label + "竖屏不应有刘海侧合体按钮");
 
-        if (Has(layout.TopBar) != input.AnalysisVisible)
-            problems.Add(label + "顶栏背景与分析栏不一致");
-
-        if (Has(layout.BottomBar) != Has(layout.Filmstrip))
-            problems.Add(label + "底栏背景与胶片条不一致");
-
         if (!Near(layout.Filter.Y, PhoneScreenLayout.TopRowY(input))
             || !Near(layout.More.Y, PhoneScreenLayout.TopRowY(input)))
         {
             problems.Add(label + $"顶行上缘 {layout.Filter.Y:0.##}，应为 {PhoneScreenLayout.TopRowY(input):0.##}");
+        }
+
+        // 分析栏直接贴顶行下缘（瓦片自己的 8 点上留白在分析栏交叉轴内，由分析面板排），
+        // 顶栏背景覆盖顶行与分析栏并铺满整窗宽；没有分析栏时不画顶栏。
+        double rowBottom = layout.Filter.MaxY;
+        if (input.AnalysisVisible)
+        {
+            if (!Near(layout.Analysis.X, 0) || !Near(layout.Analysis.Width, input.Width)
+                || !Near(layout.Analysis.Y, rowBottom)
+                || !Near(layout.Analysis.Height, input.AnalysisCross))
+            {
+                problems.Add(label + "竖屏分析栏应铺满窗口宽并紧贴顶行下缘 " + RectText(layout.Analysis));
+            }
+
+            if (!Has(layout.TopBar) || !Near(layout.TopBar.X, 0) || !Near(layout.TopBar.Y, 0)
+                || !Near(layout.TopBar.Width, input.Width)
+                || !Near(layout.TopBar.MaxY, layout.Analysis.MaxY))
+            {
+                problems.Add(label + "顶栏背景应覆盖顶行与分析栏并铺满窗口宽 " + RectText(layout.TopBar));
+            }
+        }
+        else if (Has(layout.TopBar))
+        {
+            problems.Add(label + "分析栏隐藏时不应有顶栏背景");
+        }
+
+        // 底栏背景自胶片条上缘铺到窗口下缘（不再向下多让一份行内间距）。
+        if (Has(layout.Filmstrip))
+        {
+            if (!Has(layout.BottomBar) || !Near(layout.BottomBar.X, 0)
+                || !Near(layout.BottomBar.Width, input.Width)
+                || !Near(layout.BottomBar.Y, layout.Filmstrip.Y)
+                || !Near(layout.BottomBar.MaxY, input.Height))
+            {
+                problems.Add(label + "底栏背景应自胶片条上缘铺到窗口下缘 " + RectText(layout.BottomBar));
+            }
+        }
+        else if (Has(layout.BottomBar))
+        {
+            problems.Add(label + "胶片条隐藏时不应有底栏背景");
         }
 
         if (!Has(layout.Exif))
@@ -554,8 +600,9 @@ internal static class PhoneScreenLayoutChecks
 
         if (Has(layout.LeadingBar) != Has(layout.Filmstrip))
             problems.Add(label + "刘海侧栏背景与胶片条不一致");
-        if (Has(layout.TrailingBar) != Has(layout.Exif))
-            problems.Add(label + "下巴侧栏背景与 EXIF 列不一致");
+
+        // 下巴侧栏背景由分析栏或 EXIF 列决定，与控制栏自身的显示无关，须在控制栏提前返回之前核对。
+        ValidateTrailingBar(input, layout, problems, label);
 
         if (Has(layout.LeadingBar)
             && (!Near(layout.LeadingBar.X, 0) || !Near(layout.LeadingBar.Y, 0)
@@ -632,12 +679,6 @@ internal static class PhoneScreenLayoutChecks
             problems.Add(label + "横屏 EXIF 列应在控制栏顶端且不压星级 " + RectText(layout.Exif));
         }
 
-        if (!Near(layout.TrailingBar.X, Math.Min(layout.Exif.X, layout.FitEnhance.X) - RowInset)
-            || !Near(layout.TrailingBar.MaxX, input.Width))
-        {
-            problems.Add(label + "控制栏背景应在最宽一列元素内缘外扩前起画 " + RectText(layout.TrailingBar));
-        }
-
         // 控制列外缘距窗口缘 EdgeMargin，且不避让对称安全内缩。
         if (!Near(layout.FitEnhance.MaxX, input.Width - EdgeMargin)
             || !Near(layout.Rating.MaxX, layout.FitEnhance.MaxX))
@@ -647,6 +688,43 @@ internal static class PhoneScreenLayoutChecks
 
         if (layout.FitEnhance.X < safe.Left - Epsilon)
             problems.Add(label + "控制列越出刘海侧安全区 " + RectText(layout.FitEnhance));
+    }
+
+    /// <summary>
+    /// 横屏下巴侧栏背景：分析栏或 EXIF 列任一存在即绘制——有分析栏时从分析栏左缘起，只有 EXIF 列时从控制列缘起，
+    /// 一律铺到窗口右缘并纵贯整窗；只有纯控制栏（无分析栏、无 EXIF）时完全透明。
+    /// </summary>
+    private static void ValidateTrailingBar(
+        in PhoneLayoutInput input,
+        in PhoneLayout layout,
+        List<string> problems,
+        string label)
+    {
+        bool expected = input.AnalysisVisible || Has(layout.Exif);
+        if (Has(layout.TrailingBar) != expected)
+        {
+            problems.Add(label + "下巴侧栏背景应由分析栏或 EXIF 列决定 " + RectText(layout.TrailingBar));
+            return;
+        }
+
+        if (!expected) return;
+
+        double expectedLeft = Has(layout.Analysis)
+            ? layout.Analysis.X
+            : Math.Min(layout.Exif.X, layout.FitEnhance.X) - RowInset;
+
+        if (!Near(layout.TrailingBar.X, expectedLeft) || !Near(layout.TrailingBar.MaxX, input.Width)
+            || !Near(layout.TrailingBar.Y, 0) || !Near(layout.TrailingBar.MaxY, input.Height))
+        {
+            problems.Add(label + $"控制栏背景应从 {expectedLeft:0.##} 铺到窗口右缘并纵贯整窗 "
+                + RectText(layout.TrailingBar));
+        }
+
+        foreach (var (name, rect) in ControlColumn(layout))
+        {
+            if (Has(rect) && !Contains(layout.TrailingBar, rect))
+                problems.Add(label + name + " 未被控制栏背景覆盖 " + RectText(rect));
+        }
     }
 
     private static void ValidateMirror(
@@ -786,11 +864,14 @@ internal static class PhoneScreenLayoutChecks
             c.True(size.Name + " 横屏控制栏几何不随胶片栏与上下张开关变化",
                 problems.Count == 0, Detail(problems));
 
-            c.True(size.Name + " 横屏分析栏紧贴控制栏栏缘且在控制列内侧",
-                Near(layout.Analysis.MaxX, layout.TrailingBar.X)
-                    && layout.Analysis.MaxX <= layout.Exif.X + Epsilon
-                    && layout.Analysis.MaxX <= layout.FitEnhance.X + Epsilon,
-                $"分析 {RectText(layout.Analysis)}，栏缘 {layout.TrailingBar.X:0.##}，EXIF {RectText(layout.Exif)}");
+            c.True(size.Name + " 横屏分析栏紧贴控制栏栏缘并铺满控制栏背景左缘",
+                Near(layout.Analysis.X, layout.TrailingBar.X)
+                    && Near(layout.Analysis.MaxX, Math.Min(layout.Exif.X, layout.FitEnhance.X) - RowInset)
+                    && Near(layout.TrailingBar.MaxX, size.Width)
+                    && Near(layout.TrailingBar.Y, 0)
+                    && Near(layout.TrailingBar.MaxY, size.Height),
+                $"分析 {RectText(layout.Analysis)}，栏缘 {layout.TrailingBar.X:0.##}，"
+                + $"背景 {RectText(layout.TrailingBar)}，EXIF {RectText(layout.Exif)}");
 
             c.True(size.Name + " 横屏控制列外缘贴 EdgeMargin 且星级不短于紧凑态最短长度",
                 Near(layout.FitEnhance.MaxX, size.Width - EdgeMargin)
@@ -799,16 +880,246 @@ internal static class PhoneScreenLayoutChecks
                 $"增强 {RectText(layout.FitEnhance)}，星级 {RectText(layout.Rating)}");
 
             var noExif = PhoneScreenLayout.Compute(input with { ExifVisible = false });
-            c.True(size.Name + " 横屏无 EXIF 时不画控制栏背景且分析栏贴按钮内缘",
-                !Has(noExif.TrailingBar) && !Has(noExif.Exif)
-                    && Near(noExif.Analysis.MaxX, noExif.FitEnhance.X - RowInset),
+            c.True(size.Name + " 横屏无 EXIF 时控制栏背景改从分析栏左缘起画、分析栏贴按钮内缘",
+                !Has(noExif.Exif)
+                    && Near(noExif.Analysis.MaxX, noExif.FitEnhance.X - RowInset)
+                    && Near(noExif.TrailingBar.X, noExif.Analysis.X)
+                    && Near(noExif.TrailingBar.MaxX, size.Width)
+                    && Near(noExif.TrailingBar.MaxY, size.Height),
                 $"栏背景 {RectText(noExif.TrailingBar)}，分析 {RectText(noExif.Analysis)}");
 
             var noControl = PhoneScreenLayout.Compute(input with { ControlVisible = false });
-            c.True(size.Name + " 横屏控制栏关闭时星级与 EXIF 一起消失且分析栏止于下巴侧安全区",
-                !Has(noControl.Rating) && !Has(noControl.Exif) && !Has(noControl.TrailingBar)
-                    && Near(noControl.Analysis.MaxX, size.Width - size.Safe.Right),
-                $"分析 {RectText(noControl.Analysis)}");
+            c.True(size.Name + " 横屏控制栏关闭时星级与 EXIF 一起消失、分析栏贴窗口外缘且右栏背景仍铺满",
+                !Has(noControl.Rating) && !Has(noControl.Exif) && !Has(noControl.FitEnhance)
+                    && Near(noControl.Analysis.MaxX, size.Width)
+                    && Near(noControl.Analysis.X, size.Width - AnalysisCross)
+                    && Near(noControl.TrailingBar.X, noControl.Analysis.X)
+                    && Near(noControl.TrailingBar.MaxX, size.Width)
+                    && Near(noControl.TrailingBar.MaxY, size.Height)
+                    && Near(noControl.PhotoAvoidance.Right, AnalysisCross),
+                $"分析 {RectText(noControl.Analysis)}，栏背景 {RectText(noControl.TrailingBar)}");
+        }
+    }
+
+    /// <summary>
+    /// 竖屏收尾口径：栏与栏之间只有一份 8 点外层间距——胶片条下缘落在底行上缘（视觉间距来自小档卡片自身的
+    /// 交叉轴内边距）、分析栏紧贴顶行下缘（瓦片的 8 点上留白在分析栏交叉轴内）、胶片条两端留白取行内间距；
+    /// 底栏背景自胶片条上缘铺到窗口下缘；控制栏关闭时胶片条落到 Home 余量而分析栏与顶栏不动；
+    /// 无 EXIF 时顶行回到耳区但分析栏仍贴行下缘；纯控制栏不画顶栏；底行贴角带加宽只移动底行与胶片条。
+    /// </summary>
+    private static void RunPortraitOuterInsetChecks(Checks c)
+    {
+        foreach (var size in PortraitSizes)
+        {
+            var input = Input(size, landscape: false, notchOnLeft: true,
+                filmVisible: true, controlVisible: true, exifVisible: true, analysisVisible: true,
+                showNavigation: true, hasExifItems: true);
+            var layout = PhoneScreenLayout.Compute(input);
+            double rowBottom = layout.Filter.MaxY;
+            var problems = new List<string>();
+
+            if (!Near(layout.Filmstrip.MaxY, layout.FitEnhance.Y))
+            {
+                problems.Add($"胶片条下缘 {layout.Filmstrip.MaxY:0.##} 应等于底行上缘 {layout.FitEnhance.Y:0.##}");
+            }
+
+            if (!Near(layout.FitEnhance.Y - (layout.Filmstrip.MaxY - PortraitCardTrail), PortraitCardTrail))
+                problems.Add("胶片条与底行之间应只隔卡片交叉轴内边距一份");
+            if (!Near(PortraitCardTrail, RowInset))
+                problems.Add($"卡片交叉轴内边距 {PortraitCardTrail} 与行内间距 {RowInset} 不同");
+
+            if (!Near(layout.FilmstripPadding.Left, RowInset) || !Near(layout.FilmstripPadding.Right, RowInset)
+                || !Near(layout.FilmstripPadding.Top, 0) || !Near(layout.FilmstripPadding.Bottom, 0))
+            {
+                problems.Add("胶片条两端留白应等于行内间距 " + EdgeInsetsText(layout.FilmstripPadding));
+            }
+
+            if (layout.Navigation.X <= RowInset + Epsilon)
+            {
+                problems.Add($"底行起点 {layout.Navigation.X:0.##}"
+                    + $" 不应与行内间距 {RowInset} 同值（留白不再跟随底行缘距）");
+            }
+
+            if (!Near(layout.BottomBar.X, 0) || !Near(layout.BottomBar.Width, size.Width)
+                || !Near(layout.BottomBar.Y, layout.Filmstrip.Y)
+                || !Near(layout.BottomBar.MaxY, size.Height))
+            {
+                problems.Add("底栏背景应自胶片条上缘铺到窗口下缘 " + RectText(layout.BottomBar));
+            }
+
+            if (!Near(layout.Analysis.Y, rowBottom) || !Near(layout.Analysis.Y, layout.Exif.MaxY))
+                problems.Add($"分析栏上缘 {layout.Analysis.Y:0.##} 应贴顶行下缘 {rowBottom:0.##}"
+                    + "（瓦片 8 点上留白在交叉轴内，共享层不再叠加）");
+            if (!Near(layout.Analysis.X, 0) || !Near(layout.Analysis.Width, size.Width)
+                || !Near(layout.Analysis.Height, AnalysisCross))
+            {
+                problems.Add("分析栏应铺满整窗宽且交叉轴等于 AnalysisCross " + RectText(layout.Analysis));
+            }
+
+            if (!Near(layout.TopBar.X, 0) || !Near(layout.TopBar.Y, 0)
+                || !Near(layout.TopBar.Width, size.Width) || !Near(layout.TopBar.MaxY, layout.Analysis.MaxY))
+            {
+                problems.Add("顶栏背景应覆盖顶行与分析栏 " + RectText(layout.TopBar));
+            }
+
+            c.True(size.Name + " 竖屏栏与栏之间只有一份 8 点外层间距（胶片条贴底行、分析栏贴顶行、留白取行内间距）",
+                problems.Count == 0, Detail(problems));
+
+            var noControl = PhoneScreenLayout.Compute(input with { ControlVisible = false });
+            var noExif = PhoneScreenLayout.Compute(input with { ExifVisible = false });
+            var pureControl = PhoneScreenLayout.Compute(input with { AnalysisVisible = false, ExifVisible = false });
+            var widened = PhoneScreenLayout.Compute(input with
+            {
+                ControlBand = new EdgeInsets(40, 0, 40, input.Safe.Bottom),
+            });
+            var matrix = new List<string>();
+
+            if (!Near(noControl.Filmstrip.MaxY, size.Height - BottomGap(input)))
+            {
+                matrix.Add($"控制栏关闭时胶片条下缘 {noControl.Filmstrip.MaxY:0.##}，"
+                    + $"应为 {size.Height - BottomGap(input):0.##}");
+            }
+
+            if (!Near(noControl.Analysis.Y, rowBottom) || !Near(noControl.TopBar.MaxY, layout.TopBar.MaxY))
+                matrix.Add("控制栏关闭不应移动分析栏与顶栏背景");
+            if (!Near(noControl.FilmstripPadding.Left, RowInset)
+                || !Near(noControl.FilmstripPadding.Right, RowInset))
+                matrix.Add("控制栏关闭不应改变胶片条两端留白");
+            if (Has(noControl.Navigation) || Has(noControl.Rating) || Has(noControl.FitEnhance))
+                matrix.Add("控制栏关闭时底行元素应全部消失");
+            if (!Has(noControl.BottomBar) || !Near(noControl.BottomBar.Y, noControl.Filmstrip.Y)
+                || !Near(noControl.BottomBar.MaxY, size.Height))
+                matrix.Add("控制栏关闭时底栏背景应仍从胶片条上缘铺到窗口下缘");
+
+            if (Has(noExif.Exif))
+                matrix.Add("EXIF 关闭时不应有 EXIF 块");
+            if (!Near(noExif.Filter.Y, PhoneScreenLayout.TopRowY(input with { ExifVisible = false })))
+                matrix.Add("无 EXIF 时顶行应回到耳区");
+            if (!Near(noExif.Analysis.Y, noExif.Filter.MaxY)
+                || !Near(noExif.TopBar.MaxY, noExif.Analysis.MaxY))
+                matrix.Add("无 EXIF 时分析栏仍应紧贴顶行下缘且顶栏覆盖到分析栏下缘");
+
+            if (!Has(pureControl.Rating) || !Has(pureControl.FitEnhance)
+                || Has(pureControl.Analysis) || Has(pureControl.TopBar))
+                matrix.Add("纯控制栏不应有分析栏与顶栏背景");
+            if (!Near(pureControl.PhotoAvoidance.Top, pureControl.Filter.MaxY + RowInset))
+                matrix.Add("纯控制栏时主图上避让应取顶行下缘 + 行内间距");
+
+            if (!Near(widened.Filmstrip.MaxY, widened.FitEnhance.Y)
+                || !Near(widened.FilmstripPadding.Left, RowInset)
+                || !Near(widened.FilmstripPadding.Right, RowInset))
+                matrix.Add("底行贴角带加宽后胶片条应贴行移动而两端留白不变");
+            if (widened.FitEnhance.Y >= layout.FitEnhance.Y - Epsilon)
+                matrix.Add("底行贴角带加宽后底行上缘应随之上移");
+            if (!Near(widened.Analysis.Y, rowBottom)
+                || !Near(widened.Analysis.Y, widened.Filter.MaxY))
+                matrix.Add("底行贴角带加宽不应移动分析栏");
+
+            c.True(size.Name + " 竖屏开关矩阵：控制隐藏/无 EXIF/纯控制/底行加宽都保持单份 8 点口径",
+                matrix.Count == 0, Detail(matrix));
+        }
+    }
+
+    /// <summary>
+    /// 横屏下巴侧栏背景的三条件矩阵：分析栏或 EXIF 列任一存在即从最左那一列铺到窗口右缘并纵贯整窗；
+    /// 控制栏关闭时分析栏贴窗口外缘、栏背景仍整块铺满；只有纯控制栏（无分析栏、无 EXIF）时完全透明；
+    /// 刘海在右时整块贴窗口左缘，与刘海在左时镜像。
+    /// </summary>
+    private static void RunLandscapeTrailingBarChecks(Checks c)
+    {
+        foreach (var size in LandscapeSizes)
+        {
+            var problems = new List<string>();
+            var cases = 0;
+            var drawn = 0;
+
+            foreach (var control in Flags)
+            foreach (var exif in Flags)
+            foreach (var analysis in Flags)
+            {
+                cases++;
+                var input = Input(size, landscape: true, notchOnLeft: true,
+                    filmVisible: true, controlVisible: control, exifVisible: exif,
+                    analysisVisible: analysis, showNavigation: true, hasExifItems: true);
+                var layout = PhoneScreenLayout.Compute(input);
+                var label = $"控制{(control ? "显" : "隐")}/EXIF{(exif ? "开" : "关")}"
+                    + $"/分析{(analysis ? "显" : "隐")}：";
+
+                bool exifShown = control && exif;
+                if (Has(layout.Exif) && !exifShown)
+                    problems.Add(label + "控制栏隐藏或 EXIF 关闭时不应有 EXIF 列");
+
+                bool barExpected = analysis || Has(layout.Exif);
+                if (Has(layout.TrailingBar)) drawn++;
+
+                if (Has(layout.TrailingBar) != barExpected)
+                {
+                    problems.Add(label + "右栏背景应由分析栏或 EXIF 列决定 " + RectText(layout.TrailingBar));
+                    continue;
+                }
+
+                if (!barExpected)
+                {
+                    foreach (var (name, rect) in ControlColumn(layout))
+                    {
+                        if (!Has(rect)) continue;
+                        if (Bars(layout).Any(bar => Intersects(bar, rect)))
+                            problems.Add(label + name + " 在纯控制栏时不应被任何栏背景覆盖");
+                    }
+
+                    if (control && !Near(layout.PhotoAvoidance.Right,
+                        size.Width - (layout.FitEnhance.X - RowInset)))
+                    {
+                        problems.Add(label + "纯控制栏的主图右避让应到控制列缘 " + EdgeInsetsText(layout.PhotoAvoidance));
+                    }
+
+                    continue;
+                }
+
+                double expectedLeft = analysis
+                    ? layout.Analysis.X
+                    : Math.Min(layout.Exif.X, layout.FitEnhance.X) - RowInset;
+                if (!Near(layout.TrailingBar.X, expectedLeft)
+                    || !Near(layout.TrailingBar.MaxX, size.Width)
+                    || !Near(layout.TrailingBar.Y, 0)
+                    || !Near(layout.TrailingBar.MaxY, size.Height))
+                {
+                    problems.Add(label + $"右栏背景应从 {expectedLeft:0.##} 铺到窗口右缘并纵贯整窗 "
+                        + RectText(layout.TrailingBar));
+                }
+
+                foreach (var (name, rect) in ControlColumn(layout))
+                {
+                    if (Has(rect) && !Contains(layout.TrailingBar, rect))
+                        problems.Add(label + name + " 未被右栏背景覆盖 " + RectText(rect));
+                }
+
+                if (analysis && !control
+                    && (!Near(layout.Analysis.MaxX, size.Width)
+                        || !Near(layout.Analysis.X, size.Width - AnalysisCross)))
+                {
+                    problems.Add(label + "控制栏关闭时分析栏应贴窗口外缘 " + RectText(layout.Analysis));
+                }
+
+                if (analysis)
+                {
+                    var mirrored = PhoneScreenLayout.Compute(input with { NotchOnLeft = false });
+                    if (!Near(mirrored.TrailingBar.X, 0)
+                        || !Near(mirrored.TrailingBar.MaxX, size.Width - layout.Analysis.X)
+                        || !Near(mirrored.TrailingBar.MaxX, mirrored.Analysis.MaxX)
+                        || !Near(mirrored.TrailingBar.MaxY, size.Height))
+                    {
+                        problems.Add(label + "刘海在右时右栏背景应贴窗口左缘并与分析栏右缘相接 "
+                            + RectText(mirrored.TrailingBar));
+                    }
+                }
+            }
+
+            if (cases != 8 || drawn != 5)
+                problems.Add($"矩阵应覆盖 8 种组合、其中 5 种画右栏背景，实际 {cases}/{drawn}");
+
+            c.True(size.Name + " 横屏右栏背景的三条件矩阵：分析栏或 EXIF 铺满右缘、纯控制透明、刘海双向一致",
+                problems.Count == 0, Detail(problems));
         }
     }
 
@@ -927,11 +1238,41 @@ internal static class PhoneScreenLayoutChecks
                 && Near(portraitLayout.Exif.Height, 44) && portraitLayout.ExifItems == ExifCount,
             $"EXIF {RectText(portraitLayout.Exif)}，显示项 {portraitLayout.ExifItems}");
 
+        c.True("iPhone 17 竖屏 402×874：分析栏 106..202 铺满宽度、EXIF 下缘与瓦片之间只差面板内的 8",
+            Near(portraitLayout.Analysis.Y, 106)
+                && Near(portraitLayout.Analysis.Height, AnalysisCross)
+                && Near(portraitLayout.Analysis.MaxY, 106 + AnalysisCross)
+                && Near(portraitLayout.Analysis.X, 0) && Near(portraitLayout.Analysis.Width, 402)
+                && Near(portraitLayout.Analysis.Y, portraitLayout.Exif.MaxY)
+                && Near(portraitLayout.TopBar.MaxY, 106 + AnalysisCross),
+            $"分析 {RectText(portraitLayout.Analysis)}，顶栏 {RectText(portraitLayout.TopBar)}，"
+            + $"EXIF {RectText(portraitLayout.Exif)}");
+
+        c.True("iPhone 17 竖屏 402×874：胶片条 712..804 贴底行、两端留白 8、底栏自 712 铺到窗口下缘",
+            Near(portraitLayout.Filmstrip.Y, 712) && Near(portraitLayout.Filmstrip.MaxY, 804)
+                && Near(portraitLayout.Filmstrip.MaxY, portraitLayout.FitEnhance.Y)
+                && Near(portraitLayout.FilmstripPadding.Left, RowInset)
+                && Near(portraitLayout.FilmstripPadding.Right, RowInset)
+                && Near(portraitLayout.BottomBar.Y, 712)
+                && Near(portraitLayout.BottomBar.MaxY, 874),
+            $"胶片条 {RectText(portraitLayout.Filmstrip)}，底栏 {RectText(portraitLayout.BottomBar)}，"
+            + EdgeInsetsText(portraitLayout.FilmstripPadding));
+
         var landscape = LandscapeSizes.Single(size => size.Name == "874×402");
         var landscapeInput = Input(landscape, landscape: true, notchOnLeft: true,
             filmVisible: true, controlVisible: true, exifVisible: true, analysisVisible: true,
             showNavigation: true, hasExifItems: true);
         var landscapeLayout = PhoneScreenLayout.Compute(landscapeInput);
+
+        c.True("iPhone 17 横屏 874×402：分析栏 706..802 贴控制列缘、右栏背景 706..874 纵贯整窗",
+            Near(landscapeLayout.Analysis.X, 706)
+                && Near(landscapeLayout.Analysis.MaxX, 802)
+                && Near(landscapeLayout.Analysis.Y, 0)
+                && Near(landscapeLayout.Analysis.Height, 402)
+                && Near(landscapeLayout.TrailingBar.X, 706)
+                && Near(landscapeLayout.TrailingBar.MaxX, 874)
+                && Near(landscapeLayout.TrailingBar.Height, 402),
+            $"分析 {RectText(landscapeLayout.Analysis)}，栏背景 {RectText(landscapeLayout.TrailingBar)}");
 
         c.True("iPhone 17 横屏 874×402：控制列外缘距窗口右缘 16（858）",
             Near(landscapeLayout.FitEnhance.MaxX, 858)
@@ -1033,6 +1374,8 @@ internal static class PhoneScreenLayoutChecks
                 SameRect(problems, "上下张", baseline.Navigation, layout.Navigation);
                 SameRect(problems, "星级", baseline.Rating, layout.Rating);
                 SameRect(problems, "缩放增强", baseline.FitEnhance, layout.FitEnhance);
+                SameRect(problems, "分析栏", baseline.Analysis, layout.Analysis);
+                SameRect(problems, "顶栏", baseline.TopBar, layout.TopBar);
                 SameRect(problems, "胶片条", baseline.Filmstrip, layout.Filmstrip);
                 SamePadding(problems, baseline.FilmstripPadding, layout.FilmstripPadding);
                 SameAvoidance(problems, baseline.PhotoAvoidance, layout.PhotoAvoidance);
@@ -1263,6 +1606,14 @@ internal static class PhoneScreenLayoutChecks
         ("星级", layout.Rating, false),
         ("缩放增强", layout.FitEnhance, true),
         ("分析栏", layout.Analysis, false),
+    ];
+
+    /// <summary>横屏下巴侧控制栏的三段（自上而下 EXIF、星级、缩放增强），用于核对栏背景覆盖。</summary>
+    private static (string Name, LayoutRect Rect)[] ControlColumn(in PhoneLayout layout) =>
+    [
+        ("EXIF", layout.Exif),
+        ("星级", layout.Rating),
+        ("缩放增强", layout.FitEnhance),
     ];
 
     private static LayoutRect[] Bars(in PhoneLayout layout) =>

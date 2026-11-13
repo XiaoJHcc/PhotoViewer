@@ -10,7 +10,8 @@ namespace PhotoViewer.iOS.Native;
 /// 每项上标签（次要色）下数值（半粗主色），居中尾部截断。横排时块高取玻璃按钮边长、项目自左向右排；
 /// 竖排时块宽为项目宽加两侧内边距、项目自上而下排。整块只有一个点按目标并直达 EXIF 详情，
 /// 读屏也只暴露一个按钮元素，值为各项「名称 值」的串联。
-/// <para>无衬底（<see cref="Bare"/>，手机横屏控制栏）去掉模糊衬底与块内边距，直接放在栏背景上；
+/// <para>无衬底（<see cref="Bare"/>，移动端左右布局控制栏：iPad 宽形态与手机横屏）去掉模糊衬底与块内边距，
+/// 直接放在栏背景上；
 /// <see cref="VisibleCount"/> 限定实际显示的前若干项（横屏放不下时裁掉末尾项，被裁的项仍可从详情查看）。</para>
 /// <para>项目尺寸、间距、内边距、整块尺寸与逐项矩形全部取共享 <see cref="ExifBlockGeometry"/>，
 /// 槽位挤压时各项等量收窄，本类只把结果落到原生标签上。</para>
@@ -44,7 +45,7 @@ internal sealed class iOSExifBlock : UIView
         AddGestureRecognizer(new UITapGestureRecognizer(_ => Tap()));
     }
 
-    /// <summary>项目是否横排（手机竖屏顶行与宽形态行布局为横排，EXIF 列为竖排）。</summary>
+    /// <summary>项目是否横排（手机竖屏顶行与 iPad 上下布局控制栏为横排，左右布局的 EXIF 列为竖排）。</summary>
     internal bool Horizontal
     {
         get => _horizontal;
@@ -59,7 +60,7 @@ internal sealed class iOSExifBlock : UIView
     /// <summary>整块点按回调（宿主接到 EXIF 详情入口）。</summary>
     internal Action? Tapped { get; set; }
 
-    /// <summary>无衬底变体：去掉模糊衬底与圆角裁切、项目从块缘起排（手机横屏直接放在控制栏背景上）。</summary>
+    /// <summary>无衬底变体：去掉模糊衬底与圆角裁切、项目从块缘起排（移动端左右布局控制栏直接放在栏背景上）。</summary>
     internal bool Bare
     {
         get => _bare;
