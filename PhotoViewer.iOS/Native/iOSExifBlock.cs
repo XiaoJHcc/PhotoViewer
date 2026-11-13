@@ -11,7 +11,7 @@ namespace PhotoViewer.iOS.Native;
 /// 竖排时块宽为项目宽加两侧内边距、项目自上而下排。整块只有一个点按目标并直达 EXIF 详情，
 /// 读屏也只暴露一个按钮元素，值为各项「名称 值」的串联。
 /// <para>无衬底（<see cref="Bare"/>，移动端左右布局控制栏：iPad 宽形态与手机横屏）去掉模糊衬底与块内边距，
-/// 直接放在栏背景上；
+/// 直接放在栏背景上；透明容器宽固定为玻璃按钮边长（44）、与按钮同宽同轴，文字在容器内尾部截断；
 /// <see cref="VisibleCount"/> 限定实际显示的前若干项（横屏放不下时裁掉末尾项，被裁的项仍可从详情查看）。</para>
 /// <para>项目尺寸、间距、内边距、整块尺寸与逐项矩形全部取共享 <see cref="ExifBlockGeometry"/>，
 /// 槽位挤压时各项等量收窄，本类只把结果落到原生标签上。</para>
@@ -115,7 +115,10 @@ internal sealed class iOSExifBlock : UIView
         SetNeedsLayout();
     }
 
-    /// <summary>铺满衬底，并按共享矩形把每项的标签/数值对在项目内竖直居中。</summary>
+    /// <summary>
+    /// 铺满衬底，并按共享矩形把每项的标签/数值对在项目内竖直居中；项目矩形再按块自身 bounds 夹取——
+    /// 无衬底纵排的透明容器固定为玻璃按钮边长（44），项目固有宽（52）不撑宽控制列，超出部分由标签尾部截断。
+    /// </summary>
     public override void LayoutSubviews()
     {
         base.LayoutSubviews();
@@ -132,9 +135,11 @@ internal sealed class iOSExifBlock : UIView
             _values[index].Hidden = !visible;
             if (!visible) continue;
             var rect = ExifBlockGeometry.ItemRect(index, shown, Horizontal, mainLength, Bare);
+            double width = Math.Min(rect.Width, (double)Bounds.Width);
+            double x = Math.Clamp(rect.X, 0, Math.Max(0, (double)Bounds.Width - width));
             double top = rect.Y + (rect.Height - pairHeight) / 2;
-            _labels[index].Frame = new CGRect(rect.X, top, rect.Width, labelHeight);
-            _values[index].Frame = new CGRect(rect.X, top + labelHeight + 1, rect.Width, valueHeight);
+            _labels[index].Frame = new CGRect(x, top, width, labelHeight);
+            _values[index].Frame = new CGRect(x, top + labelHeight + 1, width, valueHeight);
         }
     }
 

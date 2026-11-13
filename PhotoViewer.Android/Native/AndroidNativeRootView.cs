@@ -28,7 +28,8 @@ namespace PhotoViewer.Android.Native;
 /// <summary>
 /// Android 原生主屏根视图（A3）：按共享 <see cref="MainScreenLayout"/> 与
 /// <see cref="AndroidMainScreenLayout"/> 拼合文件栏（筛选条 + 胶片栏）、主图区与控制栏；
-/// 栏位背景铺到屏幕边缘、内容收在系统栏/刘海安全区内，行/列/自动布局只看窗口方向。
+/// 栏位背景铺到屏幕边缘、内容收在系统栏/刘海安全区内，行/列/自动布局只看窗口方向；
+/// 横屏不为手势导航条保留底部空间，三键导航与刘海照常让位。
 /// 主图由 <see cref="AndroidPhotoView"/> 渲染，物理视口上报共享 <see cref="PhotoLoadSession"/>。
 /// </summary>
 internal sealed class AndroidNativeRootView : FrameLayout
@@ -63,6 +64,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
     private readonly AndroidNavigationOverlay _navigation;
     private PopupWindow? _photoMenu;
     private readonly List<(string Text, bool Checked, bool Enabled, string Icon)> _photoMenuItems = [];
+    private AndroidWindowInsets _windowInsets;
     private AndroidInsets _insets;
     private AndroidPaneFrames _panes;
     private ImageFile? _observedFile;
@@ -95,8 +97,10 @@ internal sealed class AndroidNativeRootView : FrameLayout
     internal AndroidNavigationOverlay Navigation => _navigation;
     /// <summary>空态提示所在的主图分区。</summary>
     internal FrameLayout PhotoPane => _photoPane;
-    /// <summary>当前安全区（dp）。</summary>
+    /// <summary>当前布局安全区（dp）；横屏已忽略手势导航条底部。</summary>
     internal AndroidInsets SafeInsets => _insets;
+    /// <summary>最近一次收到的原始窗口 Insets（dp，验收用：核对旋转后由原始值重新派生）。</summary>
+    internal AndroidWindowInsets WindowInsetsForChecks => _windowInsets;
     /// <summary>分析栏（验收读取瓦片/可见性）。</summary>
     internal AndroidAnalysisPanel AnalysisPane => _analysisPane;
 #if PHOTOVIEWER_DINO
@@ -288,16 +292,43 @@ internal sealed class AndroidNativeRootView : FrameLayout
     {
         if (insets == null) return base.OnApplyWindowInsets(insets);
         var compat = WindowInsetsCompat.ToWindowInsetsCompat(insets, this)!;
-        var safe = compat.GetInsets(WindowInsetsCompat.Type.SystemBars() | WindowInsetsCompat.Type.DisplayCutout())!;
+        var bars = compat.GetInsets(WindowInsetsCompat.Type.SystemBars())!;
+        var cutout = compat.GetInsets(WindowInsetsCompat.Type.DisplayCutout())!;
+        // 导航栏与可点元素底部同位即三键导航；手势导航只有导航栏底部，没有可点按钮。
+        var navigation = compat.GetInsets(WindowInsetsCompat.Type.NavigationBars())!;
+        var tappable = compat.GetInsets(WindowInsetsCompat.Type.TappableElement())!;
         double density = AndroidUiTheme.Density(Context!);
-        var next = new AndroidInsets(safe.Left / density, safe.Top / density, safe.Right / density, safe.Bottom / density);
-        if (Math.Abs(next.Left - _insets.Left) > .01 || Math.Abs(next.Top - _insets.Top) > .01
-            || Math.Abs(next.Right - _insets.Right) > .01 || Math.Abs(next.Bottom - _insets.Bottom) > .01)
-        {
-            _insets = next;
-            RequestLayout();
-        }
+        _windowInsets = new AndroidWindowInsets(
+            new AndroidInsets(bars.Left / density, bars.Top / density, bars.Right / density, bars.Bottom / density),
+            new AndroidInsets(cutout.Left / density, cutout.Top / density, cutout.Right / density, cutout.Bottom / density),
+            navigation.Bottom / density, tappable.Bottom / density);
+        if (DeriveSafeInsets(LandscapeForInsets())) RequestLayout();
         return base.OnApplyWindowInsets(insets);
+    }
+
+    /// <summary>
+    /// 按方向从原始 Insets 重新派生布局安全区：横屏忽略手势导航条底部，竖屏保留底部系统栏；
+    /// 旋转后旧值不会残留。返回是否发生变化。
+    /// </summary>
+    /// <param name="landscape">是否横屏。</param>
+    private bool DeriveSafeInsets(bool landscape)
+    {
+        var next = _windowInsets.DeriveSafe(landscape);
+        if (Math.Abs(next.Left - _insets.Left) <= .01 && Math.Abs(next.Top - _insets.Top) <= .01
+            && Math.Abs(next.Right - _insets.Right) <= .01 && Math.Abs(next.Bottom - _insets.Bottom) <= .01)
+            return false;
+        _insets = next;
+        return true;
+    }
+
+    /// <summary>
+    /// Insets 到达时的方向：窗口尺寸已落定则按实际宽高，尚未布局（0 尺寸）时用配置方向兜底；
+    /// 布局阶段还会以真实宽高再派生一次。
+    /// </summary>
+    private bool LandscapeForInsets()
+    {
+        if (Width > 0 && Height > 0) return Width > Height;
+        return Context?.Resources?.Configuration?.Orientation == global::Android.Content.Res.Orientation.Landscape;
     }
 
     /// <summary>挂上窗口后主动请求一次 Insets（SurfaceView 与其他子视图不消费，安全区只由根收口）。</summary>
@@ -331,6 +362,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
             double density = AndroidUiTheme.Density(Context!);
             double widthDp = Width / density, heightDp = Height / density;
             _main.UpdateScreenOrientation(widthDp, heightDp);
+            // 旋转/分屏后按真实窗口方向重新派生安全区，不沿用上一方向的底部读数。
+            DeriveSafeInsets(widthDp > heightDp);
             bool row = _main.IsRowLayout;
             // FileContent 已从安全区顶部起排；筛选条内部只再加普通外边距，避免列布局把 safe.Top 计两次。
             double leadingInset = MainScreenLayout.FilterMargin;

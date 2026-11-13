@@ -20,8 +20,9 @@ namespace PhotoViewer.iOS.Native;
 /// 弹窗外点/ Esc / 切图 / 入口移动四种收起路径、减少动态效果、竖排紧凑弹窗、读屏增减与禁用态；
 /// [RATING-04] 冲突三角打开来源弹窗、整组写回与冲突消解、卡片三角入口；iPhone 竖屏紧凑/展开、横屏两种刘海方向
 /// （真实 <c>RequestGeometryUpdate</c> 旋转、控制列竖排次序与方向表、旋转收起弹窗）；iPad 宽形态行/列控制栏的
-/// 星级分组、胶囊尺寸、命令圆按钮与 [TOOLBAR-03]「显示评分」显隐。输入只经接缝方法驱动（星排/控件的 Track*、
-/// 读屏入口、卡片按钮动作），坐标一律由真实视图 frame 换算。
+/// 星级分组、胶囊尺寸、命令圆按钮、[TOOLBAR-03]「显示评分」显隐，以及 [SHELL-12] 共同玻璃容器内容区里的平级效果元素、
+/// 无衬底 EXIF 列与星级/命令同列等宽、真值刷新与同尺寸重排不拆控件不碰交互几何（星排按压缩放跨重排保持、取消回弹后几何一致）。
+/// 输入只经接缝方法驱动（星排/控件的 Track*、读屏入口、卡片按钮动作），坐标一律由真实视图 frame 换算。
 /// 素材先复制到 App 自建的可写工作副本 <c>Documents/rating-control-fixtures-work</c>，收尾删除；
 /// 临时设置、方向、弹窗、减少动态效果提供器与临时视图全部还原。
 /// 报告写 Documents/PhotoViewer/native-rating-control-checks.txt，打印 <c>[NativeSmoke] PASS rating-control (n checks)</c> / FAIL。
@@ -435,6 +436,16 @@ internal static class iOSNativeRatingControlCheck
         /// <param name="view">目标视图。</param>
         /// <returns>舞台坐标矩形。</returns>
         private CGRect FrameInStage(UIView view) => view.ConvertRectToView(view.Bounds, _root.Stage);
+
+        /// <summary>视图在控制栏文档坐标中的矩形（玻璃容器内容区与文档同坐标）。</summary>
+        /// <param name="view">目标视图。</param>
+        /// <returns>文档坐标矩形。</returns>
+        private CGRect FrameInBar(UIView view) => view.ConvertRectToView(view.Bounds, _root.ControlBar);
+
+        /// <summary>视图在星排坐标中的矩形（格子/星排相对关系）。</summary>
+        /// <param name="view">目标视图。</param>
+        /// <returns>星排坐标矩形。</returns>
+        private CGRect FrameInRow(UIView view) => view.ConvertRectToView(view.Bounds, _root.ControlBar.RatingControl.Row);
 
         #endregion
 
@@ -1545,8 +1556,8 @@ internal static class iOSNativeRatingControlCheck
 
         /// <summary>
         /// 手机横屏一个刘海方向：控制栏先保住星级紧凑长度、剩下才给 EXIF 列（EXIF 开 → 紧凑竖排胶囊），
-        /// 起手打开单条目弹窗（方向朝主图内侧）、点弹窗星排写回、冲突三角弹窗；EXIF 关闭后星级取回整列长度 →
-        /// 展开竖排（5 号在 0 号上方）并沿星列滑动 5→2。
+        /// 起手打开单条目弹窗（方向朝主图内侧）、点弹窗星排写回、冲突三角弹窗；EXIF 关闭后星级槽位取剩余长度
+        /// 并封顶展开态固有长度、整组在可用纵向区间居中 → 展开竖排（5 号在 0 号上方）并沿星列滑动 5→2。
         /// </summary>
         /// <param name="fixture">冲突夹具。</param>
         /// <param name="expected">该方向期望的弹窗方向。</param>
@@ -1630,18 +1641,47 @@ internal static class iOSNativeRatingControlCheck
             _lines.Add($"PASS RATING-07/04 {suite}：EXIF 列在控制栏顶端，星级槽位高 {slot.Height:0.#} → 紧凑竖排胶囊（宽 44、铺满槽位）；" +
                 $"起手打开单条目弹窗（方向 {expected}、面板落在该侧），点弹窗 2 号星写回 2，冲突三角打开来源弹窗且 0 次写回");
 
-            // EXIF 关闭：星级取回整列长度 → 展开竖排，保留展开态星列滑动覆盖。
+            // EXIF 关闭：星级槽位取剩余长度并封顶展开态固有长度，整组在可用纵向区间居中（末端按钮不贴底），
+            // 保留展开态星列滑动覆盖。
             await UiDispatcher.InvokeAsync(() => _main.IsExifViewVisible = false);
             await SettleAsync();
             if (Has(_root.PhoneSlots.Exif))
                 throw new InvalidOperationException($"{suite} EXIF 关闭后仍显示 EXIF 列");
             slot = _root.PhoneSlots.Rating;
-            if (phone.Form != RatingControlForm.Expanded)
+            var controlInput = _root.PhoneSlotsInput;
+            double columnTop = Math.Max(controlInput.Safe.Top, controlInput.ControlBand.Top) + controlInput.RowInset;
+            double columnBottom = (double)_root.Stage.Bounds.Height
+                - Math.Max(controlInput.Safe.Bottom, controlInput.ControlBand.Bottom) - controlInput.RowInset;
+            double columnLength = Math.Max(0, columnBottom - columnTop);
+            double expectedSlot = Math.Min(RatingControlGeometry.ExpandedLength,
+                Math.Max(0, columnLength - controlInput.GroupGap - controlInput.ButtonSize * 2));
+            if (Math.Abs(slot.Height - expectedSlot) > Tolerance)
                 throw new InvalidOperationException(
-                    $"{suite} EXIF 关闭后槽位高 {slot.Height:0.#} 仍为 {phone.Form} ≠ Expanded");
+                    $"{suite} EXIF 关闭后星级槽位高 {slot.Height:0.#} ≠ 剩余长度封顶 {expectedSlot:0.#}"
+                    + $"（可用纵向区间 {columnLength:0.#}）");
+            var fitEnhance = _root.PhoneSlots.FitEnhance;
+            if (Math.Abs(slot.X - fitEnhance.X) > Tolerance)
+                throw new InvalidOperationException(
+                    $"{suite} EXIF 关闭后星级与缩放增强不在同一列：{slot.X:0.#} vs {fitEnhance.X:0.#}");
+            double topMargin = slot.Y - columnTop;
+            double bottomMargin = columnBottom - fitEnhance.MaxY;
+            if (Math.Abs(topMargin - bottomMargin) > Tolerance || topMargin < -Tolerance)
+                throw new InvalidOperationException(
+                    $"{suite} EXIF 关闭后整组未在可用纵向区间居中：上余量 {topMargin:0.#}，下余量 {bottomMargin:0.#}");
+            if (expectedSlot >= RatingControlGeometry.ExpandedLength - Tolerance && bottomMargin < Tolerance)
+                throw new InvalidOperationException(
+                    $"{suite} 星级封顶后末端按钮仍贴列底（下余量 {bottomMargin:0.#}）");
             if (phone.Form != RatingControlGeometry.ResolveForm(slot.Height))
                 throw new InvalidOperationException(
                     $"{suite} EXIF 关闭后槽位高 {slot.Height:0.#} 的形态 {phone.Form} 与 ResolveForm 不一致");
+            if (phone.Form != RatingControlForm.Expanded)
+            {
+                _lines.Add($"NOTE RATING-07 {suite}：EXIF 关闭后槽位高 {slot.Height:0.#} < "
+                    + $"{RatingControlGeometry.ExpandedLength:0.#}，该窗口仍为紧凑态，跳过展开态星列滑动");
+                await UiDispatcher.InvokeAsync(() => _main.IsExifViewVisible = true);
+                await SettleAsync();
+                return;
+            }
             var row = phone.Row;
             row.SetNeedsLayout();
             row.LayoutIfNeeded();
@@ -1668,7 +1708,8 @@ internal static class iOSNativeRatingControlCheck
             if (_commits[slide].Value != 2)
                 throw new InvalidOperationException($"{suite} 竖排滑动写回 {_commits[slide].Value} ≠ 2");
             await WaitForFileRatingAsync(fixture.Photo, 2, $"{suite} 竖排滑动");
-            _lines.Add($"PASS RATING-07 {suite}：EXIF 关闭后槽位高 {slot.Height:0.#} → 展开竖排、星列 5 号在 0 号上方，" +
+            _lines.Add($"PASS RATING-07 {suite}：EXIF 关闭后槽位高 {slot.Height:0.#}（封顶 {RatingControlGeometry.ExpandedLength:0.#}、"
+                + $"整组上下余量 {topMargin:0.#}/{bottomMargin:0.#}）→ 展开竖排、星列 5 号在 0 号上方，" +
                 $"竖排滑动预览 {string.Join("→", previews)} 后抬手写回 2");
             await UiDispatcher.InvokeAsync(() => _main.IsExifViewVisible = true);
             await SettleAsync();
@@ -1698,6 +1739,7 @@ internal static class iOSNativeRatingControlCheck
                 throw new InvalidOperationException($"行布局星级控件形态为 {control.Form} ≠ Expanded");
             RequireCapsule(control, 224, 44, "行布局");
             RequireCommandButtons(44, "行布局");
+            RequireWideGlassHierarchy("行布局");
             await HoldAsync("rating-wide-row");
 
             await RebuildConflictAsync(fixture);
@@ -1733,7 +1775,11 @@ internal static class iOSNativeRatingControlCheck
                 throw new InvalidOperationException($"列布局星级控件形态为 {control.Form} ≠ Expanded");
             RequireCapsule(control, 44, 224, "列布局");
             RequireCommandButtons(44, "列布局");
+            RequireWideGlassHierarchy("列布局");
+            RequireWideColumnEqualWidth("列布局");
             await HoldAsync("rating-wide-col");
+            await VerifyWideControlStabilityAsync("列布局");
+            await VerifyRatingPressGeometryAsync("列布局");
 
             await EnsurePopupClosedAsync();
             row = control.Row;
@@ -1794,6 +1840,211 @@ internal static class iOSNativeRatingControlCheck
                 var frame = button.Frame;
                 if (Math.Abs((double)frame.Width - size) > Tolerance || Math.Abs((double)frame.Height - size) > Tolerance)
                     throw new InvalidOperationException($"{context} 命令 {command} 按钮 {Rect(frame)} ≠ {size:0.#}×{size:0.#}");
+            }
+        }
+
+        /// <summary>
+        /// 宽形态玻璃层级（SHELL-12）：星级控件与命令圆按钮都是共同玻璃容器内容区的直接子视图（平级效果元素），
+        /// 中间不夹整组命中视图；EXIF 块（含无衬底变体）留在文档上、不进玻璃容器。
+        /// </summary>
+        /// <param name="context">报告范围名。</param>
+        private void RequireWideGlassHierarchy(string context)
+        {
+            var bar = _root.ControlBar;
+            var glass = bar.GlassContainer.ContentView;
+            if (!ReferenceEquals(bar.RatingControl.Superview, glass))
+                throw new InvalidOperationException($"{context} 星级控件未与命令玻璃平级挂在共同玻璃容器内容区");
+            if (bar.ExifGroup is { } exif)
+            {
+                if (ReferenceEquals(exif.Superview, glass))
+                    throw new InvalidOperationException($"{context} EXIF 块不应进入玻璃容器");
+                if (!ReferenceEquals(exif.Superview, bar))
+                    throw new InvalidOperationException($"{context} EXIF 块未直接挂在透明文档上");
+            }
+            var buttons = bar.Commands.Values.ToArray();
+            foreach (var (command, button) in bar.Commands)
+            {
+                if (!ReferenceEquals(button.Superview, glass))
+                    throw new InvalidOperationException($"{context} 命令 {command} 的圆按钮未直接挂在共同玻璃容器内容区");
+                if (!ReferenceEquals(button.Superview, bar.RatingControl.Superview))
+                    throw new InvalidOperationException($"{context} 命令 {command} 的圆按钮与星级控件不在同一层玻璃容器内容区");
+            }
+            for (int first = 0; first < buttons.Length; first++)
+                for (int second = first + 1; second < buttons.Length; second++)
+                    if (SameRect(FrameInBar(buttons[first]), FrameInBar(buttons[second])))
+                        throw new InvalidOperationException($"{context} 命令圆按钮重叠：{Rect(FrameInBar(buttons[first]))}");
+            _lines.Add($"PASS SHELL-12 {context}：星级胶囊与 {buttons.Length} 个命令圆按钮平级挂在共同玻璃容器内容区（无整组命中视图夹层），" +
+                "EXIF 块留在透明文档上");
+        }
+
+        /// <summary>
+        /// 宽形态列布局的同列等宽与同轴（TOOLBAR-05）：无衬底 EXIF 列、星级控件与命令圆按钮的交叉轴宽度都是
+        /// 玻璃按钮边长 44；单列文档时三者中轴一致（多列是整组换列后的合法结果，只核对等宽）。
+        /// </summary>
+        /// <param name="context">报告范围名。</param>
+        private void RequireWideColumnEqualWidth(string context)
+        {
+            var bar = _root.ControlBar;
+            double size = DesignTokens.ShellGlassButtonSize;
+            var rating = FrameInBar(bar.RatingControl);
+            if (Math.Abs((double)rating.Width - size) > Tolerance)
+                throw new InvalidOperationException($"{context} 星级控件列宽 {(double)rating.Width:0.#} ≠ {size:0.#}");
+            var centers = new List<double> { (double)rating.GetMidX() };
+            if (bar.ExifGroup is { } exif)
+            {
+                var frame = FrameInBar(exif);
+                if (Math.Abs((double)frame.Width - size) > Tolerance)
+                    throw new InvalidOperationException(
+                        $"{context} 无衬底 EXIF 列宽 {(double)frame.Width:0.#} ≠ {size:0.#}（应与星级控件、命令按钮等宽）");
+                centers.Add((double)frame.GetMidX());
+            }
+            foreach (var (command, button) in bar.Commands)
+            {
+                var frame = FrameInBar(button);
+                if (Math.Abs((double)frame.Width - size) > Tolerance || Math.Abs((double)frame.Height - size) > Tolerance)
+                    throw new InvalidOperationException($"{context} 命令 {command} 按钮 {Rect(frame)} ≠ {size:0.#}×{size:0.#}");
+                centers.Add((double)frame.GetMidX());
+            }
+            // 单列文档的交叉轴 = 两侧外边距 + 一列 44；出现整组换列时文档变宽，这是 TOOLBAR-08 的合法结果，
+            // 只保留「每列等宽」的裁定（同轴仅对单列断言）。
+            double documentCross = bar.Groups.Select(FrameInBar).Max(frame => (double)frame.GetMaxX()) + ToolbarFlowLayout.Padding;
+            bool singleColumn = Math.Abs(documentCross - (ToolbarFlowLayout.Padding * 2 + size)) <= Tolerance;
+            if (singleColumn && centers.Any(center => Math.Abs(center - centers[0]) > Tolerance))
+                throw new InvalidOperationException(
+                    $"{context} 单列文档里 EXIF / 星级 / 命令未同轴：中轴 {string.Join("、", centers.Select(center => $"{center:0.#}"))}");
+            _lines.Add($"PASS TOOLBAR-05 {context}：无衬底 EXIF 列 / 星级控件 / 命令圆按钮列宽同为 {size:0.#}，" +
+                (singleColumn ? "同列中轴一致" : "整组换列后仍保持列宽"));
+        }
+
+        /// <summary>
+        /// 状态刷新与同尺寸重排不拆控件、不碰几何（SHELL-12）：多次真值刷新（含冲突与禁用）、重建入口与强制布局
+        /// 都不得换掉星级控件、胶囊、星排、格子、命令按钮或分组的实例，也不得改变任何几何与变换。
+        /// </summary>
+        /// <param name="context">报告范围名。</param>
+        /// <returns>任务。</returns>
+        private async Task VerifyWideControlStabilityAsync(string context)
+        {
+            var bar = _root.ControlBar;
+            var control = bar.RatingControl;
+            var capsule = control.Capsule;
+            var row = control.Row;
+            var slots = row.SlotViews.ToArray();
+            var commands = bar.Commands.ToArray();
+            var groups = bar.Groups.ToArray();
+            var exif = bar.ExifGroup;
+            var capsuleRect = FrameInBar(capsule);
+            var rowRect = FrameInRow(row);
+            var slotRects = slots.Select(FrameInRow).ToArray();
+            var commandRects = commands.Select(pair => FrameInBar(pair.Value)).ToArray();
+            var exifRect = exif == null ? CGRect.Empty : FrameInBar(exif);
+            var groupRects = groups.Select(FrameInBar).ToArray();
+
+            for (int round = 0; round < 3; round++)
+            {
+                int value = round == 1 ? 5 : 2;
+                await UiDispatcher.InvokeAsync(() =>
+                {
+                    control.SetState(value, round == 2, round != 2);
+                    _root.BuildControls();
+                    bar.SetNeedsLayout();
+                    bar.LayoutIfNeeded();
+                    control.SetNeedsLayout();
+                    control.LayoutIfNeeded();
+                    row.SetNeedsLayout();
+                    row.LayoutIfNeeded();
+                });
+                await SettleAsync();
+
+                if (!ReferenceEquals(bar.RatingControl, control) || !ReferenceEquals(control.Capsule, capsule)
+                    || !ReferenceEquals(control.Row, row))
+                    throw new InvalidOperationException($"{context} 状态刷新替换了星级控件/胶囊/星排实例");
+                var groupsNow = bar.Groups.ToArray();
+                if (groupsNow.Length != groups.Length)
+                    throw new InvalidOperationException($"{context} 状态刷新改变了分组数 {groupsNow.Length}/{groups.Length}");
+                for (int index = 0; index < groups.Length; index++)
+                    if (!ReferenceEquals(groupsNow[index], groups[index]))
+                        throw new InvalidOperationException($"{context} 状态刷新替换了第 {index + 1} 个分组视图");
+                if (bar.Commands.Count != commands.Length)
+                    throw new InvalidOperationException($"{context} 状态刷新改变了命令数 {bar.Commands.Count}/{commands.Length}");
+                foreach (var (command, button) in commands)
+                {
+                    if (!bar.Commands.TryGetValue(command, out var now) || !ReferenceEquals(now, button))
+                        throw new InvalidOperationException($"{context} 状态刷新替换了命令 {command} 的按钮实例");
+                }
+                if (exif != null && !ReferenceEquals(bar.ExifGroup, exif))
+                    throw new InvalidOperationException($"{context} 状态刷新替换了 EXIF 块实例");
+                if (!SameRect(FrameInBar(capsule), capsuleRect) || !SameRect(FrameInRow(row), rowRect))
+                    throw new InvalidOperationException($"{context} 状态刷新改写了胶囊/星排几何");
+                for (int index = 0; index < slots.Length; index++)
+                    if (!SameRect(FrameInRow(slots[index]), slotRects[index]))
+                        throw new InvalidOperationException($"{context} 状态刷新改写了 {index} 号格几何");
+                for (int index = 0; index < commands.Length; index++)
+                    if (!SameRect(FrameInBar(commands[index].Value), commandRects[index]))
+                        throw new InvalidOperationException($"{context} 状态刷新改写了命令 {commands[index].Key} 的位置");
+                if (exif != null && !SameRect(FrameInBar(exif), exifRect))
+                    throw new InvalidOperationException($"{context} 状态刷新改写了 EXIF 块几何");
+                for (int index = 0; index < groups.Length; index++)
+                    if (!SameRect(FrameInBar(groups[index]), groupRects[index]))
+                        throw new InvalidOperationException($"{context} 状态刷新改写了第 {index + 1} 个分组几何");
+                if (!IsIdentity(capsule.Transform) || !IsIdentity(row.Transform))
+                    throw new InvalidOperationException($"{context} 状态刷新给胶囊/星排加了变换");
+            }
+
+            var file = _main.CurrentFile;
+            await UiDispatcher.InvokeAsync(() => control.SetState(
+                Math.Max(0, file?.Rating ?? 0), file?.HasRatingConflict ?? false, file != null));
+            await SettleAsync();
+            _lines.Add($"PASS SHELL-12 {context}：三轮真值刷新（含冲突与禁用）+ 重建入口 + 同尺寸强制布局后，" +
+                "星级控件/胶囊/星排/六格/命令按钮/分组实例与全部几何、变换逐项不变（不拆控件、不重写交互几何）");
+        }
+
+        /// <summary>
+        /// 星排按压与重排的几何稳定（RATING-07）：格子带按压缩放变换时，真值刷新与强制重排不得用 frame 反解 bounds
+        /// 把缩放固化成永久尺寸变化；取消后回弹到单位变换且格子几何与按压前逐项一致。
+        /// </summary>
+        /// <param name="context">报告范围名。</param>
+        /// <returns>任务。</returns>
+        private async Task VerifyRatingPressGeometryAsync(string context)
+        {
+            var control = _root.ControlBar.RatingControl;
+            if (control.Form != RatingControlForm.Expanded) return;
+            var row = control.Row;
+            var slot = row.SlotViews[3];
+            var reduceMotion = row.ReduceMotionProvider;
+            row.ReduceMotionProvider = () => false;
+            try
+            {
+                row.SetNeedsLayout();
+                row.LayoutIfNeeded();
+                var before = FrameInRow(slot);
+                row.TrackBegan(SlotCenter(row, 3));
+                await Task.Delay(400);
+                double scale = (double)slot.Transform.A;
+                if (scale <= 1.01)
+                    throw new InvalidOperationException($"{context} 星排按压放大未生效（scale {scale:0.###}）");
+                var file = _main.CurrentFile;
+                await UiDispatcher.InvokeAsync(() =>
+                {
+                    control.SetState(Math.Max(0, file?.Rating ?? 0), file?.HasRatingConflict ?? false, file != null);
+                    row.SetNeedsLayout();
+                    row.LayoutIfNeeded();
+                });
+                if (Math.Abs((double)slot.Transform.A - scale) > .05)
+                    throw new InvalidOperationException(
+                        $"{context} 重排把进行中的按压缩放 {scale:0.###} 改成 {(double)slot.Transform.A:0.###}");
+                row.TrackCancelled();
+                await Task.Delay(400);
+                if (!IsIdentity(slot.Transform))
+                    throw new InvalidOperationException($"{context} 取消后格子未回弹到单位变换：{slot.Transform}");
+                if (!SameRect(FrameInRow(slot), before))
+                    throw new InvalidOperationException(
+                        $"{context} 取消后格子几何漂移：{Rect(FrameInRow(slot))} ≠ {Rect(before)}");
+                _lines.Add($"PASS RATING-07 {context}：格子按压放大 {scale:0.##}× 期间真值刷新与强制重排不改变换，" +
+                    "取消后回弹到单位变换且格子几何与按压前一致");
+            }
+            finally
+            {
+                row.ReduceMotionProvider = reduceMotion;
             }
         }
 

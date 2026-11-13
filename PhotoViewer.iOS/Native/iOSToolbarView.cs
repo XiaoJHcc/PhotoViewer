@@ -23,10 +23,18 @@ internal sealed class iOSToolbarView : UIView
     private readonly Action _changed;
     private readonly List<UIView> _groupViews = [];
     private readonly List<(ControlBarGroupKind Kind, int Count)> _groupSpecs = [];
+    private readonly List<UIButton> _commandButtons = [];
     private readonly List<SettingsViewModel.HotkeyItem> _hotkeys = [];
     private readonly Dictionary<string, UIButton> _commands = new(StringComparer.Ordinal);
     private readonly iOSRatingControl _ratingControl = new();
     private readonly iOSGlassContainer _glass = new(DesignTokens.ShellGlassContainerSpacing);
+    // 命令组的逻辑矩形：命令圆按钮本身是玻璃容器内容区里与星级控件平级的效果元素（SHELL-12），
+    // 这个不接收触摸的视图只保留「命令组」的排版矩形，不夹在命令玻璃与共同容器之间。
+    private readonly UIView _commandGroup = new(CGRect.Empty)
+    {
+        BackgroundColor = UIColor.Clear,
+        UserInteractionEnabled = false,
+    };
     private iOSExifBlock? _exifGroup;
     private Action? _openExif;
     private bool _horizontal;
@@ -39,10 +47,11 @@ internal sealed class iOSToolbarView : UIView
         _changed = changed;
         BackgroundColor = UIColor.Clear;
         _ratingControl.Hidden = true;
+        _commandGroup.AccessibilityElementsHidden = true;
         AddSubview(_glass);
     }
 
-    /// <summary>业务分组视图（EXIF / 星级 / 命令，按顺序）。</summary>
+    /// <summary>业务分组视图（EXIF / 星级 / 命令，按顺序）；命令组只承载排版矩形，玻璃按钮与星级控件平级挂在玻璃容器内容区。</summary>
     internal IReadOnlyList<UIView> Groups => _groupViews;
 
     /// <summary>命令标识与原生按钮一一对应。</summary>
@@ -68,27 +77,78 @@ internal sealed class iOSToolbarView : UIView
     /// <returns>是否有可用实现。</returns>
     internal static bool IsCommandAvailable(string command) => true;
 
-    /// <summary>按共享设置重建分组：EXIF 信息块、星级组（受「显示评分」控制）与命令圆按钮。</summary>
+    /// <summary>
+    /// 按共享设置同步分组：EXIF 信息块、星级组（受「显示评分」控制）与命令圆按钮。
+    /// 重建就地复用现有视图——EXIF 块项数不变只换文本、星级控件与同名命令按钮实例保留、只摘掉真正消失的项：
+    /// 切图会因 EXIF 文本变化而重跑本方法，重挂控件会中断系统正在进行的按压缩放与松手回弹。
+    /// </summary>
     /// <param name="main">共享主 VM。</param>
     /// <param name="execute">命令执行入口（与 Mac 同一份命令语义）。</param>
     /// <param name="openExif">EXIF 信息块点击（直接进入 EXIF 详情）；null 表示本壳无工具页。</param>
     internal void Rebuild(MainViewModel main, Action<string> execute, Action? openExif = null)
     {
-        ClearGroups();
         _openExif = openExif;
+        var groups = new List<UIView>(3);
+        var specs = new List<(ControlBarGroupKind Kind, int Count)>(3);
+
         var entries = main.ControlVM.EnabledExifItems;
         if (entries.Count > 0)
         {
-            var exif = new iOSExifBlock { Tapped = () => _openExif?.Invoke() };
-            exif.SetEntries(entries);
-            _exifGroup = exif;
-            AddGroup(exif, ControlBarGroupKind.Exif, entries.Count);
+            if (_exifGroup == null)
+            {
+                _exifGroup = new iOSExifBlock();
+                AddSubview(_exifGroup);
+            }
+            _exifGroup.Tapped = () => _openExif?.Invoke();
+            _exifGroup.SetEntries(entries);
+            groups.Add(_exifGroup);
+            specs.Add((ControlBarGroupKind.Exif, entries.Count));
         }
+        else DetachExif();
+
         _hasRatingGroup = main.Settings.ShowRating;
         _ratingControl.Hidden = !_hasRatingGroup;
-        if (_hasRatingGroup) AddGroup(_ratingControl, ControlBarGroupKind.Rating, 0);
-        else _ratingControl.RemoveFromSuperview();
-        var commandGroup = new UIView(CGRect.Empty) { BackgroundColor = UIColor.Clear };
+        if (_hasRatingGroup)
+        {
+            if (!ReferenceEquals(_ratingControl.Superview, _glass.ContentView))
+                _glass.ContentView.AddSubview(_ratingControl);
+            groups.Add(_ratingControl);
+            specs.Add((ControlBarGroupKind.Rating, 0));
+        }
+        else if (_ratingControl.Superview != null) _ratingControl.RemoveFromSuperview();
+
+        SyncCommands(main, execute);
+        if (_commandButtons.Count > 0)
+        {
+            if (_commandGroup.Superview == null) _glass.ContentView.AddSubview(_commandGroup);
+            groups.Add(_commandGroup);
+            specs.Add((ControlBarGroupKind.Command, _commandButtons.Count));
+        }
+        else _commandGroup.RemoveFromSuperview();
+
+        _groupViews.Clear();
+        _groupViews.AddRange(groups);
+        _groupSpecs.Clear();
+        _groupSpecs.AddRange(specs);
+
+        foreach (var hotkey in _hotkeys) hotkey.PropertyChanged -= OnHotkeyChanged;
+        _hotkeys.Clear();
+        foreach (var hotkey in main.Settings.Hotkeys)
+        {
+            _hotkeys.Add(hotkey);
+            hotkey.PropertyChanged += OnHotkeyChanged;
+        }
+    }
+
+    /// <summary>
+    /// 命令按钮就地同步：同名命令保留原按钮实例（只刷新读屏名称与可用态），新命令追加、消失的命令摘除释放。
+    /// 按钮是玻璃容器内容区的直接子视图，与星级控件、合体按钮同处一层效果元素（SHELL-12）。
+    /// </summary>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="execute">命令执行入口。</param>
+    private void SyncCommands(MainViewModel main, Action<string> execute)
+    {
+        var desired = new List<(string Command, UIButton Button)>();
         foreach (var hotkey in main.ControlVM.EnabledControls)
         {
             if (!IsCommandAvailable(hotkey.Command)) continue;
@@ -96,23 +156,46 @@ internal sealed class iOSToolbarView : UIView
             if (symbol == null) continue;
             bool ratingCommand = hotkey.Command.StartsWith("SetRating", StringComparison.Ordinal);
             bool clearRating = hotkey.Command == "SetRating0";
-            // TOOLBAR-04：评分快捷命令画实心星（清零为叉），星心再叠数字，不再与标题并排。
-            var button = iOSGlassButtons.Round(ratingCommand && !clearRating ? "star.fill" : symbol,
-                CommandAccessibilityLabel(hotkey), () => execute(hotkey.Command));
+            if (!_commands.TryGetValue(hotkey.Command, out var button))
+            {
+                // TOOLBAR-04：评分快捷命令画实心星（清零为叉），星心再叠数字，不再与标题并排。
+                button = iOSGlassButtons.Round(ratingCommand && !clearRating ? "star.fill" : symbol,
+                    CommandAccessibilityLabel(hotkey), () => execute(hotkey.Command));
+                double size = ToolbarFlowLayout.CommandSize;
+                button.Frame = new CGRect(0, 0, size, size);
+                if (ratingCommand && !clearRating)
+                    button.AddSubview(new RatingDigitLabel(hotkey.Command[9..], ToolbarFlowLayout.CommandSize));
+                _glass.ContentView.AddSubview(button);
+            }
+            button.AccessibilityLabel = CommandAccessibilityLabel(hotkey);
             button.Enabled = hotkey.Command == "Open" || main.CurrentFile != null;
-            double size = ToolbarFlowLayout.CommandSize;
-            button.Frame = new CGRect(0, 0, size, size);
-            if (ratingCommand && !clearRating)
-                button.AddSubview(new RatingDigitLabel(hotkey.Command[9..], ToolbarFlowLayout.CommandSize));
-            commandGroup.AddSubview(button);
-            _commands.Add(hotkey.Command, button);
+            desired.Add((hotkey.Command, button));
         }
-        if (commandGroup.Subviews.Length > 0) AddGroup(commandGroup, ControlBarGroupKind.Command, commandGroup.Subviews.Length);
-        foreach (var hotkey in main.Settings.Hotkeys)
+        foreach (var command in _commands.Keys.ToArray())
         {
-            _hotkeys.Add(hotkey);
-            hotkey.PropertyChanged += OnHotkeyChanged;
+            if (desired.Any(entry => entry.Command == command)) continue;
+            var stale = _commands[command];
+            stale.RemoveFromSuperview();
+            stale.Dispose();
+            _commands.Remove(command);
         }
+        // 命令顺序属于用户设置：字典顺序与排版顺序都按本次生效顺序重排，实例本身保持不变。
+        _commands.Clear();
+        _commandButtons.Clear();
+        foreach (var (command, button) in desired)
+        {
+            _commands.Add(command, button);
+            _commandButtons.Add(button);
+        }
+    }
+
+    /// <summary>摘除并释放 EXIF 信息块（没有启用项时整组移除，不留空条）。</summary>
+    private void DetachExif()
+    {
+        if (_exifGroup == null) return;
+        _exifGroup.RemoveFromSuperview();
+        _exifGroup.Dispose();
+        _exifGroup = null;
     }
 
     /// <summary>测量文档尺寸并顺带摆好分组与子控件（宿主随后调用 <see cref="Arrange"/> 落位）。</summary>
@@ -127,17 +210,18 @@ internal sealed class iOSToolbarView : UIView
     {
         double availableMain = _horizontal ? (double)viewport.Width : (double)viewport.Height;
         var measured = Layout(_horizontal, availableMain);
-        Frame = new CGRect(0, 0,
+        var size = new CGSize(
             Math.Max((double)viewport.Width, (double)measured.Width),
             Math.Max((double)viewport.Height, (double)measured.Height));
-        _glass.Frame = Bounds;
+        if (Frame.Size != size) Frame = new CGRect(0, 0, size.Width, size.Height);
+        iOSViewGeometry.SetRectIfNeeded(_glass, new CGRect(0, 0, Bounds.Width, Bounds.Height));
     }
 
     /// <summary>玻璃容器始终铺满文档。</summary>
     public override void LayoutSubviews()
     {
         base.LayoutSubviews();
-        _glass.Frame = Bounds;
+        iOSViewGeometry.SetRectIfNeeded(_glass, new CGRect(0, 0, Bounds.Width, Bounds.Height));
     }
 
     /// <summary>
@@ -160,19 +244,6 @@ internal sealed class iOSToolbarView : UIView
             or nameof(SettingsViewModel.HotkeyItem.PrimaryHotkey) or nameof(SettingsViewModel.HotkeyItem.SecondaryHotkey)) _changed();
     }
 
-    /// <summary>登记分组及其类型/子项数，不把组内按钮摊平成可任意断开的列表。</summary>
-    /// <param name="group">已填好子控件的分组视图。</param>
-    /// <param name="kind">分组类型，决定共享布局口径。</param>
-    /// <param name="count">分组子项数（星级组按 0 计，尺寸取控件自身口径）。</param>
-    private void AddGroup(UIView group, ControlBarGroupKind kind, int count)
-    {
-        _groupViews.Add(group);
-        _groupSpecs.Add((kind, count));
-        // 星级控件与命令圆按钮同在玻璃容器内（按压时相互融合）；EXIF 块是模糊材质，直接挂在文档上。
-        if (kind == ControlBarGroupKind.Exif) AddSubview(group);
-        else _glass.ContentView.AddSubview(group);
-    }
-
     /// <summary>按方向求分组尺寸、整组换行并把分组与子控件落成 frame，返回文档尺寸。</summary>
     /// <param name="horizontal">是否横向排列。</param>
     /// <param name="availableMain">主轴可用长度。</param>
@@ -191,10 +262,11 @@ internal sealed class iOSToolbarView : UIView
             foreach (int index in line)
             {
                 var size = sizes[index];
-                _groupViews[index].Frame = horizontal
+                var rect = horizontal
                     ? new CGRect(start, cross, size.Main, lineCross)
                     : new CGRect(cross, start, lineCross, size.Main);
-                LayoutChildren(index, horizontal, lineCross);
+                iOSViewGeometry.SetRectIfNeeded(_groupViews[index], rect);
+                LayoutChildren(index, horizontal, lineCross, rect);
                 start += size.Main + ToolbarFlowLayout.GroupSpacing;
             }
             cross += lineCross + ToolbarFlowLayout.GroupSpacing;
@@ -225,6 +297,7 @@ internal sealed class iOSToolbarView : UIView
     /// <summary>
     /// EXIF 分组尺寸：上下布局沿用共享 <see cref="ToolbarFlowLayout.Exif"/> 的衬底块；
     /// 左右布局（列布局）取无衬底变体——没有块内边距，只剩项目与项距，与手机横屏控制栏同口径（SHELL-12、TOOLBAR-05）。
+    /// 无衬底纵排的交叉轴宽度固定取玻璃按钮边长（44），与同列的星级控件、命令圆按钮等宽同轴，不被项目固有宽撑大。
     /// </summary>
     /// <param name="count">EXIF 项数。</param>
     /// <param name="horizontal">EXIF 块是否横排。</param>
@@ -235,43 +308,46 @@ internal sealed class iOSToolbarView : UIView
         return new ToolbarGroupSize(
             ControlBarGroupKind.Exif,
             horizontal ? width : height,
-            horizontal ? height : width);
+            horizontal ? height : DesignTokens.ShellGlassButtonSize);
     }
 
-    /// <summary>分组内子控件落位：EXIF 块与星级控件就是分组视图，命令圆按钮按共享偏移排在主轴、交叉轴居中。</summary>
+    /// <summary>
+    /// 分组内子控件落位：EXIF 块与星级控件就是分组视图；命令圆按钮是玻璃容器内容区的平级效果元素，
+    /// 位置按共享偏移换算到容器（= 文档）坐标，命令组矩形只作排版与验收读数的逻辑框。
+    /// </summary>
     /// <param name="index">分组顺序索引。</param>
     /// <param name="horizontal">是否横向排列。</param>
     /// <param name="lineCross">所在行的交叉轴长度。</param>
-    private void LayoutChildren(int index, bool horizontal, double lineCross)
+    /// <param name="groupRect">分组在文档坐标中的矩形。</param>
+    private void LayoutChildren(int index, bool horizontal, double lineCross, CGRect groupRect)
     {
         var kind = _groupSpecs[index].Kind;
-        var group = _groupViews[index];
-        if (kind is ControlBarGroupKind.Rating or ControlBarGroupKind.Exif)
+        if (kind == ControlBarGroupKind.Rating)
         {
-            // EXIF 块按整组矩形排项、星级控件自绘胶囊与星排：分组视图自己消费方向，不再有子控件偏移。
-            if (kind == ControlBarGroupKind.Rating) _ratingControl.Horizontal = horizontal;
-            else
-            {
-                var exif = (iOSExifBlock)group;
-                exif.Horizontal = horizontal;
-                // 左右布局取无衬底变体：去掉模糊衬底与块内边距，直接放在栏背景上（SHELL-12、TOOLBAR-05）。
-                exif.Bare = !horizontal;
-            }
+            // 星级控件自绘胶囊与星排：分组视图自己消费方向，不再有子控件偏移。
+            _ratingControl.Horizontal = horizontal;
             return;
         }
-        var children = group.Subviews;
+        if (kind == ControlBarGroupKind.Exif)
+        {
+            var exif = (iOSExifBlock)_groupViews[index];
+            exif.Horizontal = horizontal;
+            // 左右布局取无衬底变体：去掉模糊衬底与块内边距，直接放在栏背景上（SHELL-12、TOOLBAR-05）。
+            exif.Bare = !horizontal;
+            return;
+        }
         double size = ToolbarFlowLayout.CommandSize;
-        for (int child = 0; child < children.Length; child++)
+        for (int child = 0; child < _commandButtons.Count; child++)
         {
             double offset = ToolbarFlowLayout.CommandOffset(child);
-            children[child].Frame = horizontal
-                ? new CGRect(offset, (lineCross - size) / 2, size, size)
-                : new CGRect((lineCross - size) / 2, offset, size, size);
+            iOSViewGeometry.SetRectIfNeeded(_commandButtons[child], horizontal
+                ? new CGRect(groupRect.X + offset, groupRect.Y + (lineCross - size) / 2, size, size)
+                : new CGRect(groupRect.X + (lineCross - size) / 2, groupRect.Y + offset, size, size));
         }
     }
 
     /// <summary>
-    /// 重建或关闭时移除并释放分组、解除模型订阅；常驻星级控件只从视图树摘下，随控制栏一起复用。
+    /// 重建或关闭时移除并释放分组、解除模型订阅；常驻星级控件与命令矩形只从视图树摘下，随控制栏一起复用。
     /// <c>UIView.Dispose</c> 只释放托管句柄，原生视图仍被父视图持有并留在视图树里；
     /// 必须先 <c>RemoveFromSuperview</c>，否则每次设置回写都会把新分组叠在旧分组上（重叠且不可用）。
     /// </summary>
@@ -282,12 +358,20 @@ internal sealed class iOSToolbarView : UIView
         foreach (var group in _groupViews)
         {
             group.RemoveFromSuperview();
-            if (!ReferenceEquals(group, _ratingControl)) group.Dispose();
+            if (!ReferenceEquals(group, _ratingControl) && !ReferenceEquals(group, _commandGroup)
+                && !ReferenceEquals(group, _exifGroup)) group.Dispose();
         }
         _groupViews.Clear();
         _groupSpecs.Clear();
-        _exifGroup = null;
+        DetachExif();
+        foreach (var button in _commands.Values)
+        {
+            button.RemoveFromSuperview();
+            button.Dispose();
+        }
         _commands.Clear();
+        _commandButtons.Clear();
+        _commandGroup.RemoveFromSuperview();
         _hasRatingGroup = false;
     }
 

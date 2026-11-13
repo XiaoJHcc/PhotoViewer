@@ -75,11 +75,32 @@ internal sealed class iOSGlassButtonGroup : UIVisualEffectView
         {
             if (button.Hidden) continue;
             int slot = Mirrored ? visible - 1 - index : index;
-            button.Frame = Vertical
+            iOSViewGeometry.SetRectIfNeeded(button, Vertical
                 ? new CGRect(0, slot * size, Bounds.Width, size)
-                : new CGRect(slot * size, 0, size, Bounds.Height);
+                : new CGRect(slot * size, 0, size, Bounds.Height));
             index++;
         }
+    }
+}
+
+/// <summary>
+/// 原生视图落位的稳定写法：交互式玻璃的按压缩放、松手回弹由系统在按压期间驱动自身几何，
+/// 重排只按**未变换**的 bounds/center 比较，几何未变就完全不写视图。
+/// 不用 <c>Frame</c> 直接赋值：带变换的视图写 Frame 会由 frame 反解 bounds，
+/// 把正在进行的按压缩放/回弹改成永久尺寸变化（星排格子的按压放大就是这样被冲掉的）。
+/// </summary>
+internal static class iOSViewGeometry
+{
+    /// <summary>按目标矩形设置 bounds 与 center；两者都已一致时什么都不写（保持系统驱动的变换与动画）。</summary>
+    /// <param name="view">目标视图。</param>
+    /// <param name="rect">目标矩形（父视图坐标，bounds 原点取 0）。</param>
+    internal static void SetRectIfNeeded(UIView view, CGRect rect)
+    {
+        var bounds = new CGRect(0, 0, rect.Width, rect.Height);
+        var center = new CGPoint(rect.GetMidX(), rect.GetMidY());
+        if (view.Bounds == bounds && view.Center == center) return;
+        view.Bounds = bounds;
+        view.Center = center;
     }
 }
 

@@ -122,7 +122,6 @@ internal sealed class iOSRatingControl : UIView
             if (_conflict == value) return;
             _conflict = value;
             Render();
-            SetNeedsLayout();
         }
     }
 
@@ -139,7 +138,11 @@ internal sealed class iOSRatingControl : UIView
         }
     }
 
-    /// <summary>宿主刷新真值：一次写入显示值、冲突与可用态，并清掉待确认/预览。</summary>
+    /// <summary>
+    /// 宿主刷新真值：一次写入显示值、冲突与可用态，并清掉待确认/预览。
+    /// 只改内容与状态，不请求重排、不重写胶囊与星排几何：值刷新可能发生在按压/拖动途中，
+    /// 重写交互中的 frame 会打断系统交互式玻璃的按压缩放与松手回弹。
+    /// </summary>
     /// <param name="value">当前星级（负值按无星级显示）。</param>
     /// <param name="conflict">当前照片组内是否有评分冲突。</param>
     /// <param name="enabled">是否有当前照片。</param>
@@ -151,7 +154,6 @@ internal sealed class iOSRatingControl : UIView
         _row.ClearPending();
         Render();
         ApplyForm();
-        SetNeedsLayout();
     }
 
     /// <summary>紧凑态起手：先请宿主打开弹窗，再把同一次手势转给弹窗内的单条目星排。</summary>
@@ -186,7 +188,7 @@ internal sealed class iOSRatingControl : UIView
         _forwardingPopup = null;
     }
 
-    /// <summary>按槽位主轴长度判定形态并落位胶囊、星排与紧凑星簇。</summary>
+    /// <summary>按槽位主轴长度判定形态并落位胶囊、星排与紧凑星簇；几何未变时不写交互中的视图。</summary>
     public override void LayoutSubviews()
     {
         base.LayoutSubviews();
@@ -197,10 +199,11 @@ internal sealed class iOSRatingControl : UIView
             ApplyForm();
         }
         var capsule = CapsuleFrame;
-        _capsule.Frame = new CGRect(capsule.X, capsule.Y, capsule.Width, capsule.Height);
-        _row.Frame = new CGRect(0, 0, capsule.Width, capsule.Height);
+        var capsuleRect = new CGRect(capsule.X, capsule.Y, capsule.Width, capsule.Height);
+        iOSViewGeometry.SetRectIfNeeded(_capsule, capsuleRect);
+        iOSViewGeometry.SetRectIfNeeded(_row, new CGRect(0, 0, capsule.Width, capsule.Height));
         _row.Horizontal = _horizontal;
-        LayoutCluster();
+        LayoutCluster(capsule.Width, capsule.Height);
     }
 
     /// <summary>读屏增量：直接提交相邻星级。</summary>
@@ -220,11 +223,15 @@ internal sealed class iOSRatingControl : UIView
         return true;
     }
 
-    /// <summary>紧凑星簇铺满玻璃胶囊内容区，字形位置由星簇按共享偏移自行计算。</summary>
-    private void LayoutCluster()
+    /// <summary>
+    /// 紧凑星簇铺满玻璃胶囊内容区，字形位置由星簇按共享偏移自行计算；尺寸未变时不写视图。
+    /// 尺寸取共享几何算出的未变换胶囊矩形，不读可能带系统按压变换的 <c>Frame</c>。
+    /// </summary>
+    /// <param name="width">胶囊宽（点）。</param>
+    /// <param name="height">胶囊高（点）。</param>
+    private void LayoutCluster(double width, double height)
     {
-        var capsule = _capsule.Frame;
-        _cluster.Frame = new CGRect(0, 0, capsule.Width, capsule.Height);
+        iOSViewGeometry.SetRectIfNeeded(_cluster, new CGRect(0, 0, width, height));
         _cluster.Update(_value, _conflict, _horizontal);
     }
 

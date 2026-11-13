@@ -66,6 +66,10 @@ internal sealed class iOSRatingRow : UIView
     private bool _enabled = true;
     private bool _horizontal = true;
     private bool _handlesOwnTouches = true;
+    private int _renderedDisplay = int.MinValue;
+    private bool _renderedConflict;
+    private bool _renderedEnabled = true;
+    private bool _renderedPending;
 
     /// <summary>建立星排。</summary>
     /// <param name="pitch">每格步长。</param>
@@ -292,7 +296,11 @@ internal sealed class iOSRatingRow : UIView
         Preview = null;
     }
 
-    /// <summary>按共享几何把六格摆进自身 bounds，格子交叉轴占满、字形居中。</summary>
+    /// <summary>
+    /// 按共享几何把六格摆进自身 bounds，格子交叉轴占满、字形居中。
+    /// 用 bounds/center 而不是 frame：被按住的格带按压缩放变换，写 frame 会由 frame 反解 bounds，
+    /// 把缩放固化成尺寸变化（松手后格子变小/偏移）；几何未变时完全不写，保住按压缩放与松手回弹。
+    /// </summary>
     public override void LayoutSubviews()
     {
         base.LayoutSubviews();
@@ -301,7 +309,7 @@ internal sealed class iOSRatingRow : UIView
         for (int value = 0; value < _slots.Length; value++)
         {
             var rect = RatingControlGeometry.SlotRect(value, main, cross, _horizontal, _pitch);
-            _slots[value].Frame = new CGRect(rect.X, rect.Y, rect.Width, rect.Height);
+            iOSViewGeometry.SetRectIfNeeded(_slots[value], new CGRect(rect.X, rect.Y, rect.Width, rect.Height));
         }
     }
 
@@ -338,10 +346,16 @@ internal sealed class iOSRatingRow : UIView
 
     private bool InBand(double cross) => RatingControlGeometry.InBand(cross, 0, CrossLength);
 
-    /// <summary>重画字形与透明度：值/冲突/预览/待确认/禁用任一变化都走这里。</summary>
+    /// <summary>重画字形与透明度：值/冲突/预览/待确认/禁用任一变化都走这里；显示内容没变就不重画。</summary>
     private void Render()
     {
         int display = DisplayValue;
+        if (display == _renderedDisplay && _conflict == _renderedConflict
+            && _enabled == _renderedEnabled && _pending == _renderedPending) return;
+        _renderedDisplay = display;
+        _renderedConflict = _conflict;
+        _renderedEnabled = _enabled;
+        _renderedPending = _pending;
         var clear = _slots[0];
         clear.Image = iOSSymbols.Symbol(_conflict ? "exclamationmark.triangle.fill" : "xmark",
             _conflict ? _glyphSize : _clearGlyphSize);

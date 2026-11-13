@@ -23,6 +23,17 @@ internal readonly record struct iOSPaneFrames(LayoutRect FileBar, LayoutRect Fil
 /// <summary>iPad 主屏分区计算（纯函数，便于程序化对拍）。</summary>
 internal static class iOSMainScreenLayout
 {
+    /// <summary>
+    /// 布局实际使用的安全区：宽大于高（横屏主屏，含 iPad 行布局）时不为底部 Home 指示条保留安全区，
+    /// 其余与系统安全区一致；刘海、屏幕圆角与窗口控件由各元素带的探针单独避让，不在这里扣除。
+    /// </summary>
+    /// <param name="safe">系统安全区。</param>
+    /// <param name="width">舞台宽。</param>
+    /// <param name="height">舞台高。</param>
+    /// <returns>布局用安全区。</returns>
+    internal static UIEdgeInsets LayoutSafeInsets(UIEdgeInsets safe, double width, double height)
+        => width > height ? new UIEdgeInsets(safe.Top, safe.Left, 0, safe.Right) : safe;
+
     /// <summary>计算两向分区：行布局栏位在上下、列布局在左右，隐藏的栏位压成零并把空间让给主图。</summary>
     /// <param name="horizontal">是否行布局。</param>
     /// <param name="width">屏幕宽度。</param>

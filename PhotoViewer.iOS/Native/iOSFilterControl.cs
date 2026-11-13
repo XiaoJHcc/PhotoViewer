@@ -89,11 +89,11 @@ internal static class iOSFilterLayout
 
 /// <summary>
 /// 宽形态筛选控件（FILTER-07）：一个交互式玻璃胶囊内并排两段——筛选段弹出与手机形态相同的三分组菜单
-/// （点选不关闭、失焦关闭），更多段承接宿主传入的主图菜单（与手机「更多」同源，
+/// （点选保持展开、失焦关闭），更多段承接宿主传入的主图菜单（与手机「更多」同源，
 /// 经 <see cref="SetMoreMenu"/> 一次性接入）。AI 版另有相似聚类开关，行布局紧随合体、列布局落在合体下方同宽。
 /// <para>几何取本文件内的纯函数 <see cref="iOSFilterLayout"/>：合体宽 88（2 × 44），列布局在 116 带内居中，
 /// 行布局整组（含开关）自然宽居中；本类只把结果落成 UIKit frame，并把筛选菜单交
-/// <see cref="iOSFilterMenu"/> 按稳定 action 标识就地刷新。旧的三段合体与单胶囊形态不再创建。</para>
+/// <see cref="iOSFilterMenu"/> 按稳定 action 标识更新模型侧勾选。旧的三段合体与单胶囊形态不再创建。</para>
 /// </summary>
 internal sealed class iOSFilterControl : UIView
 {
@@ -163,8 +163,11 @@ internal sealed class iOSFilterControl : UIView
     internal void SetMoreMenu(UIMenu menu) => _more.Menu = menu;
 
     /// <summary>
-    /// 同步共享筛选状态到原生控件：筛选段菜单按稳定标识就地刷新勾选（展开中的菜单不重建、不回到顶部），
+    /// 同步共享筛选状态到原生控件：筛选段菜单按稳定标识更新模型侧的勾选态（<see cref="UIAction.State"/>），
     /// 读屏值取当前星级筛选，相似聚类开关同步外观。
+    /// <para>已知限制：系统不会因同一份菜单的 action 状态变化而重绘已展开的菜单，换成新菜单又会让菜单滚回顶部，
+    /// 因此「菜单保持展开 + 屏上勾选即时刷新」在原生菜单路径上尚未解决；本方法只保证模型侧勾选与共享状态一致，
+    /// 不代表展开菜单的可见结果。</para>
     /// </summary>
     internal void Refresh()
     {

@@ -49,6 +49,11 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private readonly UIView _stage = new();
     /// <summary>手机形态逐带安全区探针：只写 frame、只读安全区内边距，不绘制、不响应触摸，挂在舞台最底层。</summary>
     private readonly UIView _bandProbe = new();
+    /// <summary>
+    /// 手机形态逐带圆角探针：边距归零且不从父视图或安全区派生，只读 <c>marginsLayoutRegionWithCornerAdaptation:</c>
+    /// 给出的原生圆角/窗口控件适应值，不绘制、不响应触摸，挂在舞台最底层（与安全区探针互不影响）。
+    /// </summary>
+    private readonly UIView _cornerProbe = new();
     private readonly UIView _photoPane = new();
     private readonly UIVisualEffectView _fileBar = BarBackground();
     private readonly UIView _fileDivider = new();
@@ -126,6 +131,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private PhoneLayout _phoneSlots;
     private PhoneLayoutInput _phoneSlotsInput;
     private bool _notchOnLeft = true;
+    /// <summary>本次布局使用的安全区（横屏已去掉底部手势条），供验收按同一口径核对。</summary>
+    private UIEdgeInsets _layoutSafe;
     private double? _avoidanceTuning;
     private UIEdgeInsets? _fitInsetsOverride;
     private UIEdgeInsets _formFitInsets;
@@ -181,6 +188,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
     internal PhoneLayoutInput PhoneSlotsInput => _phoneSlotsInput;
     /// <summary>手机横屏时刘海是否在左（左为 <c>LandscapeRight</c>，其余按在左处理）。</summary>
     internal bool NotchOnLeft => _notchOnLeft;
+    /// <summary>最近一次布局实际使用的安全区：横屏主屏已去掉底部 Home 指示条，其余与系统安全区一致。</summary>
+    internal UIEdgeInsets LayoutSafeInsets => _layoutSafe;
     /// <summary>
     /// 验收缝：非空时以其中的行内间距替代 <c>shell.phone.rowInset</c> 并立即重排
     /// （行到安全区的间距，同时决定栏缘与主图避让）；为空时一律取令牌。
@@ -472,6 +481,14 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _bandProbe.UserInteractionEnabled = false;
         _bandProbe.BackgroundColor = UIColor.Clear;
         _stage.InsertSubview(_bandProbe, 0);
+        // 圆角探针：边距归零、不继承父视图边距、也不由安全区补进边距，margins 布局区域因此只剩
+        // 系统对该位置的原生圆角/窗口控件适应——横屏去掉底部手势条不必再与 Home 安全区相减或按阈值判断。
+        _cornerProbe.UserInteractionEnabled = false;
+        _cornerProbe.BackgroundColor = UIColor.Clear;
+        _cornerProbe.PreservesSuperviewLayoutMargins = false;
+        _cornerProbe.InsetsLayoutMarginsFromSafeArea = false;
+        _cornerProbe.LayoutMargins = UIEdgeInsets.Zero;
+        _stage.InsertSubview(_cornerProbe, 0);
         _stage.AddSubview(_phoneTopBar);
         _stage.AddSubview(_phoneBottomBar);
         _stage.AddSubview(_phoneLeadingBar);
@@ -576,7 +593,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     }
 
     /// <summary>
-    /// Esc 收起星级弹窗（<see cref="PressesBegan"/> 与验收共用）：弹窗未打开时不处理，
+    /// Esc 收起星级弹窗（<see cref="PressesBegan"/> 与验收共用）：未打开时不处理，
     /// 打开时同时作废按住状态的重复目标。
     /// </summary>
     /// <returns>是否关闭了弹窗。</returns>
@@ -712,6 +729,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <summary>
     /// 判定主屏形态并分发：宽形态沿用两向分区，手机形态按共享槽位铺浮层。
     /// 两种形态下主图分区与主图视图都是整个舞台，栏位与按钮一律作为浮层压在照片上。
+    /// 宽大于高（横屏主屏，含 iPad 行布局）时布局安全区去掉底部 Home 指示条，其余安全区原样使用。
     /// </summary>
     private void Layout()
     {
@@ -723,7 +741,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
             if (_stage.Frame != stageFrame) _stage.Frame = stageFrame;
             var bounds = _stage.Bounds;
             double width = (double)bounds.Width, height = (double)bounds.Height;
-            var safe = StageSafeInsets();
+            // 横屏主屏（含 iPad 行布局）不为底部 Home 指示条保留安全区；刘海、屏幕圆角与窗口控件仍由贴角带探测避让。
+            var rawSafe = StageSafeInsets();
+            var safe = iOSMainScreenLayout.LayoutSafeInsets(rawSafe, width, height);
+            _layoutSafe = safe;
             _main.UpdateScreenOrientation(width, height);
             _form = ScreenFormResolver.Resolve(
                 TraitCollection.HorizontalSizeClass == UIUserInterfaceSizeClass.Compact,
@@ -780,6 +801,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
         HidePhoneLayers();
         bool row = _main.IsRowLayout;
         _analysisPane.PhonePortrait = false;
+        _analysisPane.PhoneAdjacent = false;
+        _analysisPane.PhoneAdjacentOnRight = true;
         var filterBand = ProbeBand(
             row
                 ? new CGRect(0, safe.Top, width, DesignTokens.ShellGlassButtonSize)
@@ -918,21 +941,26 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <summary>
     /// 手机形态：按共享槽位铺四个栏背景、胶片条、分析栏与固定操作行；宽形态专属控件全部隐藏。
     /// 轴向只由形态决定（竖屏横向、横屏纵向），不读用户以前选过的上下/左右模式。
-    /// <para>安全区分三层：系统安全区原样交给共享几何；贴角元素带按元素在窗口中的实际位置单独探测——
+    /// <para>安全区分三层：按方向归一后的系统安全区交给共享几何；贴角元素带按元素在窗口中的实际位置单独探测——
     /// 竖屏顶行在共享 <see cref="PhoneScreenLayout.TopRowY"/> 给出的行位置上分左右两半探测（整条横带会跨过灵动岛），
-    /// 竖屏底行、横屏刘海侧列与横屏下巴侧控制栏各探自己那一条，互不沿用。</para>
+    /// 竖屏底行、横屏刘海侧列与横屏下巴侧控制栏各探自己那一条，互不沿用。横屏主屏不为底部手势条保留安全区：
+    /// 传入的 <paramref name="safe"/> 已由 <see cref="Layout"/> 去掉 <c>Bottom</c>；两条横屏带的下缘另用圆角探针读
+    /// 原生圆角适应的独立读数（见 <see cref="LandscapeBandEdges"/>），不从安全区减基线、也不按阈值猜 Home。</para>
     /// </summary>
     /// <param name="width">窗口宽。</param>
     /// <param name="height">窗口高。</param>
-    /// <param name="safe">舞台内的系统安全区。</param>
+    /// <param name="safe">舞台内布局用安全区（横屏已去掉底部 Home 指示条，见 <see cref="iOSMainScreenLayout.LayoutSafeInsets"/>）。</param>
     private void LayoutPhone(double width, double height, UIEdgeInsets safe)
     {
         bool portrait = _form == ScreenForm.PhonePortrait;
         _analysisPane.PhonePortrait = portrait;
-        _phoneGlass.Frame = _stage.Bounds;
+        iOSViewGeometry.SetRectIfNeeded(_phoneGlass, _stage.Bounds);
         double button = DesignTokens.ShellGlassButtonSize;
         double rowInset = _avoidanceTuning ?? DesignTokens.ShellPhoneRowInset;
         _notchOnLeft = ResolveNotchOnLeft();
+        // 手机横屏：控制栏可见时它是分析栏的相邻侧（瓦片贴该侧零内边距），控制栏关闭后恢复窗口侧内边距。
+        _analysisPane.PhoneAdjacent = !portrait && _main.IsControlViewVisible && _main.IsAnalysisViewVisible;
+        _analysisPane.PhoneAdjacentOnRight = _notchOnLeft;
         // 选档（[FILM-05]）：胶片条贯穿整个主轴，按整条主轴长度选档；带厚随之决定栏位厚度与横屏卡片列宽。
         var tier = FilmCardGeometry.ResolveTier(portrait ? width : height, portrait);
         double filmBand = FilmCardGeometry.BandThickness(tier, portrait);
@@ -993,15 +1021,21 @@ internal sealed class iOSNativeRootViewController : UIViewController
         else
         {
             // 横屏刘海侧列：在共享给出的列宽上整列探测，只取上下两侧适应值（左右由系统安全区给出）。
+            // 下缘直接取该带位置上原生圆角适应的独立读数：横屏不为底部手势条留安全区，
+            // 而 Home 余量与屏幕圆角在安全区里按并集合并，从安全区读数里减基线或按阈值猜 Home 会把真实圆角一并削掉。
             double leadStrip = PhoneScreenLayout.LeadStripWidth(in provisional);
-            var leadProbe = ProbeBand(new CGRect(_notchOnLeft ? 0 : width - leadStrip, 0, leadStrip, height),
-                UIViewLayoutRegionAdaptivityAxis.Vertical);
-            lead = new EdgeInsets(plain.Left, leadProbe.Top, plain.Right, leadProbe.Bottom);
+            var leadFrame = new CGRect(_notchOnLeft ? 0 : width - leadStrip, 0, leadStrip, height);
+            var leadSafe = ProbeInsets(leadFrame, UIViewLayoutRegionAdaptivityAxis.Vertical);
+            var leadCorner = ProbeCornerInsets(leadFrame, UIViewLayoutRegionAdaptivityAxis.Vertical);
+            var (leadTop, leadBottom) = LandscapeBandEdges(leadSafe, leadCorner);
+            lead = new EdgeInsets(plain.Left, leadTop, plain.Right, leadBottom);
             // 横屏控制栏：下巴侧对称的安全内缩不是实物遮挡，控制栏不避让；在自身的列宽上取上下带圆角适应值。
             double controlStrip = PhoneScreenLayout.ControlStripWidth(in provisional);
-            var controlProbe = ProbeBand(new CGRect(_notchOnLeft ? width - controlStrip : 0, 0, controlStrip, height),
-                UIViewLayoutRegionAdaptivityAxis.Vertical);
-            control = new EdgeInsets(0, controlProbe.Top, 0, controlProbe.Bottom);
+            var controlFrame = new CGRect(_notchOnLeft ? width - controlStrip : 0, 0, controlStrip, height);
+            var controlSafe = ProbeInsets(controlFrame, UIViewLayoutRegionAdaptivityAxis.Vertical);
+            var controlCorner = ProbeCornerInsets(controlFrame, UIViewLayoutRegionAdaptivityAxis.Vertical);
+            var (controlTop, controlBottom) = LandscapeBandEdges(controlSafe, controlCorner);
+            control = new EdgeInsets(0, controlTop, 0, controlBottom);
             controlOrigin = "下巴侧控制栏列";
         }
         LogPhoneBands(plain, lead, control, controlOrigin);
@@ -1072,31 +1106,31 @@ internal sealed class iOSNativeRootViewController : UIViewController
         bool filterMoreGroup = !portrait && Has(slots.FilterMoreGroup);
         _phoneFilter.Hidden = filterMoreGroup || !Has(slots.Filter);
         _phoneMore.Hidden = filterMoreGroup || !Has(slots.More);
-        _phoneFilter.Frame = ToFrame(slots.Filter);
-        _phoneMore.Frame = ToFrame(slots.More);
+        iOSViewGeometry.SetRectIfNeeded(_phoneFilter, ToFrame(slots.Filter));
+        iOSViewGeometry.SetRectIfNeeded(_phoneMore, ToFrame(slots.More));
         _phoneFilterSegment.Hidden = !filterMoreGroup;
         _phoneMoreSegment.Hidden = !filterMoreGroup;
         _phoneFilterMore.Mirrored = !portrait && !_notchOnLeft;
         // 段的显隐变化不会自动让容器重排，显式登记一次；镜像段序同样在容器内重新计算。
         _phoneFilterMore.SetNeedsLayout();
         _phoneFilterMore.Hidden = !filterMoreGroup;
-        _phoneFilterMore.Frame = ToFrame(slots.FilterMoreGroup);
+        iOSViewGeometry.SetRectIfNeeded(_phoneFilterMore, ToFrame(slots.FilterMoreGroup));
         _phoneFilterMore.LayoutIfNeeded();
 
         _phoneNavigation.Vertical = false;
         _phoneNavigation.Hidden = !Has(slots.Navigation);
-        _phoneNavigation.Frame = ToFrame(slots.Navigation);
+        iOSViewGeometry.SetRectIfNeeded(_phoneNavigation, ToFrame(slots.Navigation));
         _phoneNavigation.LayoutIfNeeded();
 
         _phoneFitEnhance.Vertical = !portrait;
         _phoneFitEnhance.Hidden = !Has(slots.FitEnhance);
-        _phoneFitEnhance.Frame = ToFrame(slots.FitEnhance);
+        iOSViewGeometry.SetRectIfNeeded(_phoneFitEnhance, ToFrame(slots.FitEnhance));
         _phoneFitEnhance.LayoutIfNeeded();
 
         // 显示评分关闭时手机形态保留空槽位、控件隐藏（宽形态是整组移除）。
         _phoneRating.Horizontal = portrait;
         _phoneRating.Hidden = !Has(slots.Rating) || !_main.Settings.ShowRating;
-        _phoneRating.Frame = ToFrame(slots.Rating);
+        iOSViewGeometry.SetRectIfNeeded(_phoneRating, ToFrame(slots.Rating));
         // EXIF：竖屏是顶行中间的带衬底块；横屏是控制栏顶端的无衬底列，只显示放得下的前几项。
         _phoneExif.Horizontal = portrait;
         _phoneExif.Bare = !portrait;
@@ -1176,6 +1210,19 @@ internal sealed class iOSNativeRootViewController : UIViewController
     }
 
     /// <summary>
+    /// 横屏贴角带的窗口缘距离：上缘取「带圆角/刘海适应的安全区域」与「原生边距区域的圆角适应」中的较大者，
+    /// 下缘直接取原生圆角适应值。横屏主屏不为底部手势条保留安全区，而 Home 余量与屏幕圆角在安全区里按遮挡并集
+    /// （max）合并而不是相加——从安全区读数里减基线、或按阈值判断哪部分是 Home，都会在圆角距离不大于手势条余量时
+    /// 把真实圆角避让一并清零。iOS 26 的 <c>marginsLayoutRegionWithCornerAdaptation:</c> 在不从安全区补边距的视图上
+    /// 只反映圆角/窗口控件适应，因此两条横屏带的下缘一律取这份独立读数，不论它比手势条余量大还是小。
+    /// </summary>
+    /// <param name="safeProbe">安全区布局区域给出的带内边距（含刘海、圆角与 Home 指示条）。</param>
+    /// <param name="cornerProbe">原生边距布局区域给出的带内边距（只含圆角/窗口控件适应）。</param>
+    /// <returns>贴角带的上缘与下缘窗口距离。</returns>
+    internal static (double Top, double Bottom) LandscapeBandEdges(UIEdgeInsets safeProbe, UIEdgeInsets cornerProbe)
+        => (Math.Max((double)safeProbe.Top, (double)cornerProbe.Top), (double)cornerProbe.Bottom);
+
+    /// <summary>
     /// 探测一条贴边元素带必须保持的<b>绝对舞台缘距离</b>：把探针放进该带的舞台矩形，读它在
     /// <paramref name="axis"/> 轴上的安全区内边距（含圆角、刘海与窗口控件适应），再加上探针自身到各舞台边的距离。
     /// 探针就挂在舞台上，分屏/限宽舞台因此自动按真实舞台边界计算。
@@ -1206,6 +1253,21 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _bandProbe.Frame = frameInStage;
         _bandProbe.LayoutIfNeeded();
         return _bandProbe.GetEdgeInsets(UIViewLayoutRegion.CreateSafeAreaLayoutRegion(axis));
+    }
+
+    /// <summary>
+    /// 把圆角探针放到舞台上的指定矩形，读取<b>原生圆角/窗口控件适应</b>的相对内边距：探针边距归零、
+    /// 不继承父视图边距、也不从安全区补边距，因此结果不含 Home 指示条与刘海安全区，只含系统对该位置的圆角适应。
+    /// 供横屏两条贴角带取独立下缘、以及验收核对原生适应值共用。
+    /// </summary>
+    /// <param name="frameInStage">探针在舞台坐标中的矩形。</param>
+    /// <param name="axis">适应轴。</param>
+    /// <returns>相对探针自身的内边距。</returns>
+    internal UIEdgeInsets ProbeCornerInsets(CGRect frameInStage, UIViewLayoutRegionAdaptivityAxis axis)
+    {
+        _cornerProbe.Frame = frameInStage;
+        _cornerProbe.LayoutIfNeeded();
+        return _cornerProbe.GetEdgeInsets(UIViewLayoutRegion.CreateMarginsLayoutRegion(axis));
     }
 
     /// <summary>系统安全区与两条贴角带的取值变化时打一行控制台日志，便于核对刘海、圆角与 Home 指示条的避让来源。</summary>
@@ -1308,7 +1370,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         UpdatePhoneEnhanceState();
     }
 
-    /// <summary>筛选菜单内容与勾选态现读共享筛选状态；菜单展开时就地替换，失焦后才关闭。</summary>
+    /// <summary>同步系统筛选菜单的模型状态；展开菜单的可见勾选刷新仍待解决。</summary>
     private void RefreshPhoneMenus()
     {
         if (!_phoneControlsBuilt) return;

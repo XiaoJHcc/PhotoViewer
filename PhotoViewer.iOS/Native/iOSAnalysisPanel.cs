@@ -16,7 +16,8 @@ namespace PhotoViewer.iOS.Native;
 /// 细节预览（中心 / 对焦点）、直方图与诊断瓦片（AI 版含 DINO PCA / Cosine，标准版只有 CV 锐度 / 抖动）。
 /// 几何与旧壳 <c>AnalysisView</c>/Mac 原生分析栏同口径：正方形瓦片边长 =
 /// <c>floor((可用主轴长度 − 20 − 8×(n−1)) / n)</c>，行布局排在主图下方、列布局排在主图右侧，
-/// 交叉轴尺寸 = 瓦片边长 + 20。
+/// 交叉轴尺寸 = 瓦片边长 + 20；手机竖屏交叉轴只留两份行内间距，手机横屏在控制栏相邻侧零内边距
+/// （瓦片到控制栏元素只留一份行内间距）。
 /// 背景由宿主栏位背景承担（系统深色模糊材质），面板本身透明，朝主图一侧保留 1 点 <c>#333</c> 分隔线；
 /// 空白处点击清空准星。
 /// 细节裁剪从展示会话取源图：F16 代理与 8 位 P3 Full 都经共享 <see cref="DisplayCrop"/> 转成显示朝向 sRGB8。
@@ -95,21 +96,41 @@ internal sealed class iOSAnalysisPanel : UIView
     /// <summary>是否手机竖屏：分析栏接在顶行之下，不画顶部分隔线，交叉轴只留一份行内间距。</summary>
     internal bool PhonePortrait { get; set; }
 
+    /// <summary>
+    /// 手机横屏且控制栏可见：控制栏是面板的相邻侧，瓦片贴该侧零内边距，面板交叉轴只留朝主图一侧的
+    /// <see cref="AnalysisPanelGeometry.Padding"/>，瓦片到控制栏元素因此只有一份行内间距（SHELL-09／ANALYSIS-05）。
+    /// 控制栏关闭时置回 false，面板贴窗口外缘并恢复两侧内边距。
+    /// </summary>
+    internal bool PhoneAdjacent { get; set; }
+
+    /// <summary>相邻控制栏在面板右侧（刘海在左时控制栏在右）；为 false 时相邻侧是面板左边。</summary>
+    internal bool PhoneAdjacentOnRight { get; set; }
+
     /// <summary>朝主图一侧的分隔线当前是否可见（手机竖屏不画）。</summary>
     internal bool DividerVisible => !_divider.Hidden;
 
-    /// <summary>交叉轴尺寸：宽形态为瓦片边长 + 两侧 10 点内边距；手机竖屏只加两侧行内间距（8）。</summary>
+    /// <summary>分隔线在面板局部坐标中的左缘：始终在朝主图一侧（验收核对镜像方向）。</summary>
+    internal double DividerX => (double)_divider.Frame.X;
+
+    /// <summary>
+    /// 交叉轴尺寸：宽形态为瓦片边长 + 两侧 10 点内边距；手机竖屏只加两侧行内间距（8）；
+    /// 手机横屏控制栏可见时只加朝主图一侧的 10 点（相邻侧零内边距），否则两侧 10 点。
+    /// </summary>
     /// <param name="availableMain">主轴可用长度（不含安全区让位）。</param>
     /// <returns>需为面板分配的交叉轴长度。</returns>
     internal double CrossSize(double availableMain)
-        => PhonePortrait
-            ? AnalysisPanelGeometry.TileSize(availableMain, _order.Count) + DesignTokens.ShellPhoneRowInset * 2
+    {
+        double tile = AnalysisPanelGeometry.TileSize(availableMain, _order.Count);
+        if (PhonePortrait) return tile + DesignTokens.ShellPhoneRowInset * 2;
+        return PhoneAdjacent
+            ? tile + AnalysisPanelGeometry.Padding
             : AnalysisPanelGeometry.CrossSize(availableMain, _order.Count);
+    }
 
     /// <summary>
     /// 按交叉轴可用长度摆放瓦片，并刷新朝主图一侧的分隔线。
-    /// 行布局瓦片横排、分隔线在顶边；列布局瓦片纵排、分隔线在左边；手机竖屏不画分隔线（顶行背景已给出边界），
-    /// 交叉轴起点取一份行内间距。
+    /// 行布局瓦片横排、分隔线在顶边；列布局瓦片纵排、分隔线在朝主图一侧；手机竖屏不画分隔线（顶行背景已给出边界），
+    /// 交叉轴起点取一份行内间距；手机横屏控制栏可见时瓦片贴相邻侧、零内边距，分隔线仍在朝主图一侧。
     /// </summary>
     /// <param name="horizontal">行布局（瓦片横排）为 true。</param>
     /// <param name="availableMain">主轴可用长度（已扣除安全区）。</param>
@@ -119,18 +140,36 @@ internal sealed class iOSAnalysisPanel : UIView
         _horizontal = horizontal;
         double tile = AnalysisPanelGeometry.TileSize(availableMain, _order.Count);
         _tileSize = tile;
+        double cross = CrossOffset(tile);
         // 与旧壳一致：瓦片从主轴内边距处起排，剩余不足一枚的零头留在末端。
         for (int i = 0; i < _order.Count; i++)
         {
             double offset = startInset + AnalysisPanelGeometry.TileOffset(i, tile);
             _views[_order[i]].Frame = horizontal
-                ? new CGRect(offset, PhonePortrait ? DesignTokens.ShellPhoneRowInset : AnalysisPanelGeometry.Padding, tile, tile)
-                : new CGRect(AnalysisPanelGeometry.Padding, offset, tile, tile);
+                ? new CGRect(offset, cross, tile, tile)
+                : new CGRect(cross, offset, tile, tile);
         }
         _divider.Hidden = PhonePortrait;
-        _divider.Frame = horizontal ? new CGRect(0, 0, Bounds.Width, 1) : new CGRect(0, 0, 1, Bounds.Height);
+        // 分隔线始终在朝主图一侧：相邻控制栏在右时面板左边朝主图，镜像时面板右边朝主图。
+        double dividerX = !horizontal && !PhoneAdjacentOnRight ? Math.Max(0, (double)Bounds.Width - 1) : 0;
+        _divider.Frame = horizontal
+            ? new CGRect(0, 0, Bounds.Width, 1)
+            : new CGRect(dividerX, 0, 1, Bounds.Height);
         foreach (var detail in _order)
             if (detail.Kind == AnalysisTileKind.Detail) UpdateDetailCrop(detail);
+    }
+
+    /// <summary>
+    /// 瓦片的交叉轴起点：宽形态取面板内边距；手机竖屏取一份行内间距；
+    /// 手机横屏控制栏可见时贴相邻侧（相邻侧零内边距），控制栏关闭时恢复两侧内边距。
+    /// </summary>
+    /// <param name="tile">瓦片边长。</param>
+    /// <returns>交叉轴起点。</returns>
+    private double CrossOffset(double tile)
+    {
+        if (PhonePortrait) return DesignTokens.ShellPhoneRowInset;
+        if (!PhoneAdjacent) return AnalysisPanelGeometry.Padding;
+        return PhoneAdjacentOnRight ? Math.Max(0, (double)Bounds.Width - tile) : 0;
     }
 
     /// <summary>清除全部细节预览的绿框（分析栏隐藏或切图时由宿主调用）。</summary>

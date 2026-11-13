@@ -8,6 +8,7 @@ using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.Core.Storage;
 using PhotoViewer.iOS.Core;
+using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
 using System.Diagnostics;
@@ -784,7 +785,8 @@ internal static class iOSNativeInputCheck
         RequireCommandAccessibilityFormat(root, main, lines);
 
         // 控制栏重建幂等性：反复改变 EXIF 项与命令显隐（正是作者报告的"多块 EXIF/按钮重叠"触发路径），
-        // 每次重建后核对子视图数 == 分组数、无旧分组残留、分组与组内控件都不重叠。
+        // 每轮重建后核对视图树里只剩一套分组：文档上只有 EXIF 块，玻璃容器内容区只有星级控件、
+        // 命令圆按钮与命令组逻辑矩形；分组之间零重叠、命令按共享偏移落在命令组矩形内、EXIF 文字区域互不重叠。
         var fit = main.Settings.Hotkeys.First(hotkey => hotkey.Command == "Fit");
         for (int round = 0; round < 3; round++)
         {
@@ -799,11 +801,12 @@ internal static class iOSNativeInputCheck
                 fit.IsDisplay = fitVisible;
             });
             await WaitAsync(() => main.ControlVM.EnabledExifItems.Count == exifCount
-                && root.ControlBar.Subviews.Length == root.ControlBar.Groups.Count, $"控制栏第 {round + 1} 轮重建");
+                && ControlBarShapeProblem(root, main) == null, $"控制栏第 {round + 1} 轮重建");
             await SettleAsync(root);
             RequireControlBarStructure(root, main, $"控制栏重建第 {round + 1} 轮");
         }
-        lines.Add("PASS 控制栏重建：EXIF 项/评分/命令显隐连续三轮切换后子视图数始终等于分组数，无旧分组残留、分组与组内控件零重叠");
+        lines.Add("PASS 控制栏重建：EXIF 项/评分/命令显隐连续三轮切换后文档上只有 EXIF 块、玻璃容器内容区只有星级控件与命令玻璃" +
+            "（命令组只留逻辑矩形、无旧分组残留），分组零重叠、命令按共享偏移落在命令组矩形内、EXIF 标签/数值文字区域互不重叠");
 
         var list = main.FileVM.ThumbnailList;
         int index = list.FilteredFiles.IndexOf(main.CurrentFile!);
@@ -826,46 +829,235 @@ internal static class iOSNativeInputCheck
     }
 
     /// <summary>
-    /// 控制栏重建后的结构核对（回归"设置回写后多块 EXIF/按钮重叠"）：
-    /// 视图树里只能有一套分组（子视图数 == 分组数）、分组顺序与共享设置一致、分组之间与组内控件之间零重叠。
+    /// 控制栏视图树是否符合本次设置（等待重建与结构核对共用，纯读取、不抛错）：
+    /// 文档层玻璃容器之外只有 EXIF 块本身；玻璃容器内容区恰好是星级控件 + 每个命令圆按钮 + 命令组逻辑矩形；
+    /// 分组数、命令数与星级分组来自共享设置。返回 null 表示结构就位，否则返回首个不一致的描述。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <returns>结构不一致的描述，或 null。</returns>
+    private static string? ControlBarShapeProblem(iOSNativeRootViewController root, MainViewModel main)
+    {
+        var bar = root.ControlBar;
+        int exifCount = main.ControlVM.EnabledExifItems.Count;
+        var expectedCommands = main.ControlVM.EnabledControls
+            .Where(hotkey => iOSToolbarView.IsCommandAvailable(hotkey.Command)
+                && AppleSymbolNames.ForCommand(hotkey.Command) != null)
+            .Select(hotkey => hotkey.Command)
+            .ToArray();
+        int commandCount = expectedCommands.Length;
+        var actualCommands = bar.Commands.Keys.ToArray();
+        if (actualCommands.Length != commandCount
+            || !actualCommands.SequenceEqual(expectedCommands, StringComparer.Ordinal))
+            return $"命令按钮集合/顺序 [{string.Join(",", actualCommands)}] ≠ 生效命令 [{string.Join(",", expectedCommands)}]";
+        bool rating = main.Settings.ShowRating;
+        if (bar.HasRatingGroup != rating)
+            return $"星级分组 {bar.HasRatingGroup} ≠ 显示评分 {rating}";
+        int expectedGroups = (exifCount > 0 ? 1 : 0) + (rating ? 1 : 0) + (commandCount > 0 ? 1 : 0);
+        if (bar.Groups.Count != expectedGroups)
+            return $"分组数 {bar.Groups.Count} ≠ 期望 {expectedGroups}（EXIF {exifCount}、评分 {rating}、命令 {commandCount}）";
+        // 文档层：玻璃容器之外只允许 EXIF 块（EXIF 块不进玻璃容器，SHELL-12）。
+        var glass = bar.GlassContainer.ContentView;
+        if (bar.Subviews.Count(view => ReferenceEquals(view, bar.GlassContainer)) != 1)
+            return "玻璃容器未恰好挂在文档上一次（缺失或出现多份）";
+        var documentViews = bar.Subviews.Where(view => !ReferenceEquals(view, bar.GlassContainer)).ToArray();
+        int expectedDocument = exifCount > 0 ? 1 : 0;
+        if (documentViews.Length != expectedDocument)
+            return $"文档上的分组视图 {documentViews.Length} 个 ≠ 期望 {expectedDocument} 个（只有 EXIF 块挂在文档上）";
+        if (exifCount > 0 && !ReferenceEquals(bar.ExifGroup?.Superview, bar))
+            return "EXIF 块未直接挂在控制栏文档上";
+        if (exifCount == 0 && bar.ExifGroup != null)
+            return "没有启用 EXIF 项时仍保留 EXIF 块";
+        // 玻璃容器内容区：星级控件、每个命令圆按钮、命令组逻辑矩形，数量与身份都必须恰好对上。
+        var expectedGlass = new List<UIView>(commandCount + 2);
+        if (rating)
+        {
+            if (!ReferenceEquals(bar.RatingControl.Superview, glass)) return "星级控件未挂在玻璃容器内容区";
+            expectedGlass.Add(bar.RatingControl);
+        }
+        foreach (var button in bar.Commands.Values)
+        {
+            if (!ReferenceEquals(button.Superview, glass)) return "命令圆按钮未直接挂在玻璃容器内容区";
+            expectedGlass.Add(button);
+        }
+        if (commandCount > 0)
+        {
+            var logical = bar.Groups[bar.Groups.Count - 1];
+            if (ReferenceEquals(logical, bar.RatingControl) || ReferenceEquals(logical, bar.ExifGroup))
+                return "命令组逻辑矩形缺失";
+            if (!ReferenceEquals(logical.Superview, glass)) return "命令组逻辑矩形未挂在玻璃容器内容区";
+            if (logical.Subviews.Length != 0) return "命令组逻辑矩形不应承载玻璃按钮（命令玻璃必须与星级控件平级）";
+            expectedGlass.Add(logical);
+        }
+        if (glass.Subviews.Length != expectedGlass.Count)
+            return $"玻璃容器内容区 {glass.Subviews.Length} 个子视图 ≠ 期望 {expectedGlass.Count} 个" +
+                $"（评分 {rating} + 命令 {commandCount} + 逻辑矩形 {(commandCount > 0 ? 1 : 0)}）";
+        foreach (var view in glass.Subviews)
+            if (!expectedGlass.Contains(view)) return "玻璃容器内容区出现不属于本次重建的残留视图";
+        return null;
+    }
+
+    /// <summary>
+    /// 控制栏重建后的结构核对（回归"设置回写后多块 EXIF/按钮重叠"）：视图树里只能有一套分组——文档上只有 EXIF 块，
+    /// 玻璃容器内容区只有星级控件、命令圆按钮与命令组逻辑矩形；分组顺序与共享设置一致、分组之间零重叠；
+    /// 命令按钮按共享偏移落在命令组逻辑矩形内，星级胶囊落在评分分组内，EXIF 标签/数值按文字区域互不重叠
+    /// （块的模糊衬底属于 EXIF 块自身，不当作组内控件参与重叠判定）。
     /// </summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="main">共享主 VM。</param>
     /// <param name="label">报告/报错标签。</param>
     private static void RequireControlBarStructure(iOSNativeRootViewController root, MainViewModel main, string label)
     {
+        if (ControlBarShapeProblem(root, main) is { } problem)
+            throw new InvalidOperationException($"{label} 控制栏结构不符：{problem}");
         var bar = root.ControlBar;
         var groups = bar.Groups.ToArray();
-        int expected = (main.ControlVM.EnabledExifItems.Count > 0 ? 1 : 0)
-            + (main.Settings.ShowRating ? 1 : 0)
-            + (main.ControlVM.EnabledControls.Count(hotkey => AppleSymbolNames.ForCommand(hotkey.Command) != null) > 0 ? 1 : 0);
-        if (groups.Length != expected)
-            throw new InvalidOperationException($"{label} 控制栏分组数 {groups.Length} != 期望 {expected}");
-        // EXIF 块直接挂在文档上，星级控件与命令组在文档的玻璃容器内：两处子视图合计必须恰好等于分组数。
-        var glass = bar.GlassContainer.ContentView;
-        int attached = bar.Subviews.Count(view => !ReferenceEquals(view, bar.GlassContainer)) + glass.Subviews.Length;
-        if (attached != groups.Length)
-            throw new InvalidOperationException($"{label} 控制栏残留旧分组：子视图 {attached} 个 / 分组 {groups.Length} 个");
-        foreach (var group in groups)
+        int exifCount = main.ControlVM.EnabledExifItems.Count;
+        int commandCount = bar.Commands.Count;
+        bool rating = main.Settings.ShowRating;
+        bool row = main.IsRowLayout;
+        // 固定顺序 EXIF → 星级 → 命令；星级组就是常驻控件本身，命令组只承载逻辑矩形。
+        int groupIndex = 0;
+        if (exifCount > 0)
         {
-            if (!ReferenceEquals(group.Superview, bar) && !ReferenceEquals(group.Superview, glass))
-                throw new InvalidOperationException($"{label} 分组不在控制栏视图树内：{group.Frame}");
-            var children = group.Subviews;
-            foreach (var child in children)
-                if ((double)child.Frame.X < -Exact || (double)child.Frame.Y < -Exact
-                    || (double)child.Frame.Right > (double)group.Bounds.Width + Exact
-                    || (double)child.Frame.Bottom > (double)group.Bounds.Height + Exact)
-                    throw new InvalidOperationException($"{label} 组内控件越出分组：{child.Frame} / {group.Bounds}");
-            for (int first = 0; first < children.Length; first++)
-                for (int second = first + 1; second < children.Length; second++)
-                    if (Overlaps(children[first].Frame, children[second].Frame))
-                        throw new InvalidOperationException($"{label} 组内控件重叠：{children[first].Frame} × {children[second].Frame}");
+            if (!ReferenceEquals(groups[groupIndex], bar.ExifGroup))
+                throw new InvalidOperationException($"{label} 控制栏第 {groupIndex + 1} 组不是 EXIF 信息块");
+            groupIndex++;
         }
-        for (int first = 0; first < groups.Length; first++)
-            for (int second = first + 1; second < groups.Length; second++)
-                if (Overlaps(groups[first].Frame, groups[second].Frame))
-                    throw new InvalidOperationException($"{label} 控制栏分组重叠：{groups[first].Frame} × {groups[second].Frame}");
+        if (rating)
+        {
+            if (!ReferenceEquals(groups[groupIndex], bar.RatingControl))
+                throw new InvalidOperationException($"{label} 控制栏第 {groupIndex + 1} 组不是星级控件");
+            groupIndex++;
+        }
+        UIView? commandGroup = null;
+        if (commandCount > 0)
+        {
+            if (groupIndex >= groups.Length)
+                throw new InvalidOperationException($"{label} 控制栏缺少命令组：组 {groupIndex}/{groups.Length}");
+            commandGroup = groups[groupIndex];
+            if (ReferenceEquals(commandGroup, bar.RatingControl) || ReferenceEquals(commandGroup, bar.ExifGroup))
+                throw new InvalidOperationException($"{label} 第 {groupIndex + 1} 组不是命令组逻辑矩形");
+        }
+        // 分组矩形统一换算到文档坐标：有实际占位，且组间零重叠。
+        var groupRects = groups.Select(group => FrameIn(group, bar)).ToArray();
+        for (int firstIndex = 0; firstIndex < groupRects.Length; firstIndex++)
+        {
+            if ((double)groupRects[firstIndex].Width <= Exact || (double)groupRects[firstIndex].Height <= Exact)
+                throw new InvalidOperationException($"{label} 第 {firstIndex + 1} 组没有实际占位：{groupRects[firstIndex]}");
+            for (int secondIndex = firstIndex + 1; secondIndex < groupRects.Length; secondIndex++)
+                if (Overlaps(groupRects[firstIndex], groupRects[secondIndex]))
+                    throw new InvalidOperationException(
+                        $"{label} 控制栏分组重叠：{groupRects[firstIndex]} × {groupRects[secondIndex]}");
+        }
+        // 星级分组：胶囊自身几何单独核对（交叉轴 44），并完整落在分组矩形内；展开态星排铺在胶囊内容区。
+        if (rating)
+        {
+            var control = bar.RatingControl;
+            var capsule = control.CapsuleFrame;
+            double thickness = RatingControlGeometry.Thickness;
+            double capsuleCross = row ? capsule.Height : capsule.Width;
+            if (Math.Abs(capsuleCross - thickness) > Exact)
+                throw new InvalidOperationException($"{label} 星级胶囊交叉轴 {capsuleCross:0.##} ≠ {thickness:0.##}");
+            var groupRect = FrameIn(control, bar);
+            var capsuleRect = FrameIn(control.Capsule, bar);
+            if (!Inside(groupRect, capsuleRect))
+                throw new InvalidOperationException($"{label} 星级胶囊越出评分分组：{capsuleRect} / {groupRect}");
+            if (!ReferenceEquals(control.Row.Superview, control.Capsule.ContentView))
+                throw new InvalidOperationException($"{label} 星排未铺在星级胶囊内容区");
+        }
+        // 命令组：玻璃按钮是容器内容区的平级效果元素，按共享偏移相对命令组逻辑矩形落位并在交叉轴居中。
+        if (commandGroup is { } logical)
+        {
+            var groupRect = FrameIn(logical, bar);
+            var buttons = bar.Commands.Values.ToArray();
+            double size = ToolbarFlowLayout.CommandSize;
+            var logicalSize = ToolbarFlowLayout.Commands(buttons.Length);
+            double logicalMain = row ? (double)groupRect.Width : (double)groupRect.Height;
+            if (Math.Abs(logicalMain - logicalSize.Main) > Exact)
+                throw new InvalidOperationException(
+                    $"{label} 命令组逻辑矩形主轴 {logicalMain:0.##} ≠ 共享命令组长度 {logicalSize.Main:0.##}（{groupRect}）");
+            var buttonRects = buttons.Select(button => FrameIn(button, bar)).ToArray();
+            for (int buttonIndex = 0; buttonIndex < buttonRects.Length; buttonIndex++)
+            {
+                var frame = buttonRects[buttonIndex];
+                if (Math.Abs((double)frame.Width - size) > Exact || Math.Abs((double)frame.Height - size) > Exact)
+                    throw new InvalidOperationException(
+                        $"{label} 命令按钮 {buttonIndex} 不是 {size:0.##}×{size:0.##}：{frame}");
+                double offset = row ? (double)frame.X - (double)groupRect.X : (double)frame.Y - (double)groupRect.Y;
+                double expected = ToolbarFlowLayout.CommandOffset(buttonIndex);
+                if (Math.Abs(offset - expected) > Exact)
+                    throw new InvalidOperationException(
+                        $"{label} 命令按钮 {buttonIndex} 相对命令组偏移 {offset:0.##} ≠ 共享偏移 {expected:0.##}（{frame} / 组 {groupRect}）");
+                double crossStart = row ? (double)frame.Y - (double)groupRect.Y : (double)frame.X - (double)groupRect.X;
+                double crossLength = row ? (double)groupRect.Height : (double)groupRect.Width;
+                if (Math.Abs(crossStart - (crossLength - size) / 2) > Exact)
+                    throw new InvalidOperationException(
+                        $"{label} 命令按钮 {buttonIndex} 未在命令组交叉轴居中：{crossStart:0.##} / {crossLength:0.##}");
+                if (!Inside(groupRect, frame))
+                    throw new InvalidOperationException($"{label} 命令按钮 {buttonIndex} 越出命令组逻辑矩形：{frame} / {groupRect}");
+                for (int other = buttonIndex + 1; other < buttonRects.Length; other++)
+                    if (Overlaps(frame, buttonRects[other]))
+                        throw new InvalidOperationException($"{label} 命令圆按钮重叠：{frame} × {buttonRects[other]}");
+            }
+        }
+        // EXIF 块：只按标签/数值的文字区域核对（衬底覆盖整块，不参与组内重叠判定），项数与启用项一致。
+        if (bar.ExifGroup is { } exif)
+        {
+            exif.LayoutIfNeeded();
+            if (!ReferenceEquals(exif.Background.Superview, exif))
+                throw new InvalidOperationException($"{label} EXIF 模糊衬底不属于块自身");
+            if (exif.ItemLabels.Count != exifCount || exif.ItemValues.Count != exifCount)
+                throw new InvalidOperationException(
+                    $"{label} EXIF 块项数 {exif.ItemLabels.Count}/{exif.ItemValues.Count} ≠ 启用项 {exifCount}");
+            double blockWidth = (double)exif.Bounds.Width;
+            double blockHeight = (double)exif.Bounds.Height;
+            var textRegions = new List<CGRect>();
+            for (int item = 0; item < exif.ShownItemCount; item++)
+            {
+                var labelFrame = exif.ItemLabels[item].Frame;
+                var valueFrame = exif.ItemValues[item].Frame;
+                if ((double)labelFrame.Width <= Exact || (double)labelFrame.Height <= Exact
+                    || (double)valueFrame.Width <= Exact || (double)valueFrame.Height <= Exact)
+                    throw new InvalidOperationException(
+                        $"{label} EXIF 第 {item + 1} 项文字区域为空：{labelFrame} / {valueFrame}");
+                if ((double)labelFrame.X < -Exact || (double)labelFrame.Y < -Exact
+                    || (double)labelFrame.Right > blockWidth + Exact || (double)labelFrame.Bottom > blockHeight + Exact
+                    || (double)valueFrame.X < -Exact || (double)valueFrame.Y < -Exact
+                    || (double)valueFrame.Right > blockWidth + Exact || (double)valueFrame.Bottom > blockHeight + Exact)
+                    throw new InvalidOperationException(
+                        $"{label} EXIF 第 {item + 1} 项文字越出块：{labelFrame} / {valueFrame} / {blockWidth:0.##}×{blockHeight:0.##}");
+                if ((double)labelFrame.Bottom > (double)valueFrame.Y + Exact)
+                    throw new InvalidOperationException(
+                        $"{label} EXIF 第 {item + 1} 项标签未在数值上方：{labelFrame} / {valueFrame}");
+                if (Overlaps(labelFrame, valueFrame))
+                    throw new InvalidOperationException(
+                        $"{label} EXIF 第 {item + 1} 项标签与数值重叠：{labelFrame} × {valueFrame}");
+                textRegions.Add(labelFrame);
+                textRegions.Add(valueFrame);
+            }
+            for (int first = 0; first < textRegions.Count; first++)
+                for (int second = first + 1; second < textRegions.Count; second++)
+                    if (Overlaps(textRegions[first], textRegions[second]))
+                        throw new InvalidOperationException(
+                            $"{label} EXIF 文字区域相互重叠：{textRegions[first]} × {textRegions[second]}");
+        }
     }
+
+    /// <summary>视图在宿主坐标中的矩形（玻璃容器内容区与文档同坐标，统一换算后再比较）。</summary>
+    /// <param name="view">目标视图。</param>
+    /// <param name="host">宿主视图。</param>
+    /// <returns>宿主坐标矩形。</returns>
+    private static CGRect FrameIn(UIView view, UIView host) => view.ConvertRectToView(view.Bounds, host);
+
+    /// <summary>内矩形是否完整落在外矩形内（±0.5 点贴边容差）。</summary>
+    /// <param name="outer">外矩形。</param>
+    /// <param name="inner">内矩形。</param>
+    /// <returns>完整落在内部时为 true。</returns>
+    private static bool Inside(CGRect outer, CGRect inner)
+        => (double)inner.X >= (double)outer.X - Exact && (double)inner.Y >= (double)outer.Y - Exact
+            && (double)inner.GetMaxX() <= (double)outer.GetMaxX() + Exact
+            && (double)inner.GetMaxY() <= (double)outer.GetMaxY() + Exact;
 
     /// <summary>
     /// TOOLBAR-04：命令按钮的读屏名称必须是 <c>名称（主 / 次）</c>。期望值按设计格式在本套件里独立拼装，

@@ -7,11 +7,14 @@ using UIKit;
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// 验收专用（测试钩子，独立筛选菜单回归）：核对 [FILTER-08] 的「点选保持展开的菜单只就地更新勾选，
-/// 不重建整份菜单、不重置菜单内滚动与焦点」。只读真实菜单结构与共享筛选状态——不弹系统菜单、
-/// 不访问系统菜单内部滚动视图；菜单与 action 身份是结构性回归点，真实展开菜单的滚动与焦点另行手验。
-/// 断言：分组与选项都带稳定业务键标识且与处理器键一一对应；选中值变化时筛选段仍是同一份菜单、同一批 action，
-/// 只有选中项变 On、同组其余项为 Off；选项集合变化时结构检测要求重建一次。
+/// 验收专用（测试钩子，独立筛选菜单回归）：只核对 [FILTER-08] 的<b>模型结构</b>——分组与选项都带稳定业务键、
+/// 业务回调与标识一一对应、选中值变化后筛选段仍是同一份菜单与同一批 action、只有模型侧勾选态变化、
+/// 选项集合变化时结构检测要求重建一次。只读真实菜单结构与共享筛选状态：不弹系统菜单、
+/// 不访问系统菜单内部滚动视图。
+/// <para>本检查<b>不判定交互通过</b>：原生菜单路径上「保持展开的同时让屏上勾选即时刷新」尚未解决——
+/// 同一实例经 <c>UpdateVisibleMenu</c> 不会产生可见重绘，换成新菜单又会让菜单滚回顶部。
+/// 因此 action 对象的状态变化只代表模型侧勾选，不代表用户在屏上看到的勾选；展开菜单的屏上勾选与
+/// 滚动保持仍属未解决问题，不在此伪造通过。</para>
 /// 由 <c>--pv-native-form-check</c> 在筛选写回核对之后调用（见报告行）。
 /// </summary>
 internal static class iOSFilterMenuCheck
@@ -25,7 +28,7 @@ internal static class iOSFilterMenuCheck
     /// <summary>星级筛选分组前缀。</summary>
     private const string RatingPrefix = "rating:";
 
-    /// <summary>核对筛选菜单身份与就地勾选更新，返回报告行。</summary>
+    /// <summary>核对筛选菜单结构与模型侧勾选更新，返回报告行。</summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="main">共享主 VM。</param>
     /// <returns>报告行；任一项不符即抛异常（套件转 FAIL）。</returns>
@@ -77,8 +80,9 @@ internal static class iOSFilterMenuCheck
     }
 
     /// <summary>
-    /// 核对筛选段就地更新：选中值变化后菜单实例与 action 实例都不变，只有勾选态变化；
-    /// 手机筛选按钮的勾选同样随共享状态更新（其实例是否保持取决于 RefreshPhoneMenus 的接线）。
+    /// 核对模型侧勾选更新：选中值变化后菜单实例与 action 实例都不变，只有 action 状态变化；
+    /// 手机筛选入口的菜单同样随共享状态更新（其实例是否保持取决于 RefreshPhoneMenus 的接线）。
+    /// 这里核对的是对象身份与状态，<b>不代表展开菜单的屏上勾选或滚动结果</b>。
     /// </summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="filter">共享筛选状态。</param>
@@ -98,7 +102,7 @@ internal static class iOSFilterMenuCheck
 
         await UiDispatcher.InvokeAsync(() => filter.SortMode = target);
         await WaitAsync(() => ActionById(filterButton.Menu, targetIdentifier)?.State == UIMenuElementState.On,
-            $"筛选段「{target}」转为勾选");
+            $"筛选段模型勾选「{target}」更新");
 
         var snapshot = await UiDispatcher.InvokeAsync(() =>
         {
@@ -115,17 +119,18 @@ internal static class iOSFilterMenuCheck
         if (!SameInstances(actionsBefore, snapshot.Actions))
             throw new InvalidOperationException("选中排序方式后筛选段换掉了 action 实例：勾选刷新不应重建选项");
         if (snapshot.Selected != UIMenuElementState.On || !snapshot.OthersOff)
-            throw new InvalidOperationException($"筛选段勾选未就地更新：{targetIdentifier}={snapshot.Selected}，其余同组项仍勾选={!snapshot.OthersOff}");
-        lines.Add($"PASS 筛选段就地更新：选中「{target}」后菜单与 {snapshot.Actions.Length} 个 action 实例不变，只有勾选态变化");
+            throw new InvalidOperationException($"筛选段模型勾选未更新：{targetIdentifier}={snapshot.Selected}，其余同组项仍勾选={!snapshot.OthersOff}");
+        lines.Add($"PASS 筛选段模型结构：选中「{target}」后菜单与 {snapshot.Actions.Length} 个 action 实例不变，只有模型侧勾选态变化");
+        lines.Add("NOTE 原生屏上勾选刷新尚未解决：同一实例 UpdateVisibleMenu 不产生可见重绘、换新菜单会滚回顶部，本项不代表展开菜单的可见勾选变化");
 
         foreach (var (button, label) in new[] { (root.PhoneFilterButton, "筛选圆按钮"), (root.PhoneFilterSegment, "合体筛选段") })
         {
             await WaitAsync(() => ActionById(button.Menu, targetIdentifier)?.State == UIMenuElementState.On,
-                $"{label}「{target}」转为勾选");
+                $"{label}模型勾选「{target}」更新");
         }
         bool phoneKeptInstance = await UiDispatcher.InvokeAsync(() => ReferenceEquals(root.PhoneFilterSegment.Menu, phoneMenuBefore));
         if (!phoneKeptInstance) throw new InvalidOperationException("手机筛选段刷新后替换了菜单实例");
-        lines.Add("PASS 手机筛选按钮：刷新后菜单实例不变；真实展开菜单的滚动与焦点待手验");
+        lines.Add("PASS 手机筛选入口模型勾选：刷新后菜单实例不变；原生屏上勾选刷新与滚动保持尚未解决，未通过交互验收");
     }
 
     /// <summary>核对结构检测：选项集合变化要求重建一次，还原后恢复就地勾选。</summary>
@@ -150,7 +155,7 @@ internal static class iOSFilterMenuCheck
         bool matches = await UiDispatcher.InvokeAsync(() => iOSFilterMenu.ApplySelection(menu, filter));
         if (!needsRebuild) throw new InvalidOperationException("选项集合变化时结构检测未要求重建（菜单会缺项）");
         if (!matches) throw new InvalidOperationException("选项集合还原后结构检测仍报不一致");
-        lines.Add("PASS 结构检测：选项集合变化报需重建一次，还原后回到就地勾选");
+        lines.Add("PASS 结构检测：选项集合变化报需重建一次，还原后模型结构与勾选重新一致");
     }
 
     /// <summary>菜单各分组的 action（根 → 分组 → 选项）。</summary>

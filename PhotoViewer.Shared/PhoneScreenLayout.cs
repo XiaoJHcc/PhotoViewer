@@ -12,9 +12,10 @@ public readonly record struct EdgeInsets(double Left, double Top, double Right, 
 /// <param name="NotchOnLeft">横屏时刘海在左；false 时整体水平镜像。</param>
 /// <param name="Width">窗口宽。</param>
 /// <param name="Height">窗口高。</param>
-/// <param name="Safe">系统安全区（刘海、圆角与 Home 指示条的避让），不含任何按元素带适配的额外距离。</param>
-/// <param name="LeadBand">贴角元素带必须保持的绝对窗口缘距离：竖屏为顶行（用左右两侧，须在 <see cref="PhoneScreenLayout.TopRowY"/> 给出的行位置探测），横屏为刘海侧列（用上下两侧）；数值已含安全区与该带的圆角/窗口控件适配。</param>
-/// <param name="ControlBand">控制栏带的绝对窗口缘距离：竖屏为底行（用左右两侧），横屏为下巴侧控制栏整列（用上下两侧，在 <see cref="PhoneScreenLayout.ControlStripWidth"/> 给出的列宽上探测）。</param>
+/// <param name="Safe">系统安全区（刘海、圆角与 Home 指示条的避让），不含任何按元素带适配的额外距离；
+/// 横屏主屏不为底部手势条保留安全区，宿主在宽大于高时把 <c>Bottom</c> 传 0。</param>
+/// <param name="LeadBand">贴角元素带必须保持的绝对窗口缘距离：竖屏为顶行（用左右两侧，须在 <see cref="PhoneScreenLayout.TopRowY"/> 给出的行位置探测），横屏为刘海侧列（用上下两侧）；数值已含安全区与该带的圆角/窗口控件适配。横屏下缘取该带位置上原生圆角适应值，与 Home 指示条无关。</param>
+/// <param name="ControlBand">控制栏带的绝对窗口缘距离：竖屏为底行（用左右两侧），横屏为下巴侧控制栏整列（用上下两侧，在 <see cref="PhoneScreenLayout.ControlStripWidth"/> 给出的列宽上探测）；横屏下缘同样取该带位置的原生圆角适应值，不从安全区里减 Home 指示条。</param>
 /// <param name="FilmVisible">胶片栏开关：胶片条，横屏另含刘海侧列的上一张/下一张。</param>
 /// <param name="ControlVisible">控制栏开关：星级控件与同栏按钮（竖屏底行、横屏下巴侧控制栏）。</param>
 /// <param name="ExifVisible">手机形态 EXIF 开关：竖屏单独决定 EXIF 块，横屏还要控制栏可见。</param>
@@ -25,7 +26,7 @@ public readonly record struct EdgeInsets(double Left, double Top, double Right, 
 /// <param name="FilmOuterPad">横屏胶片条靠刘海一侧的卡片交叉轴内边距；卡片贴刘海安全区时把它让进安全区。</param>
 /// <param name="AnalysisCross">分析栏交叉轴（竖屏为高，横屏为宽）。</param>
 /// <param name="ExifCount">启用的 EXIF 项数；0 表示没有 EXIF 显示项。</param>
-/// <param name="ExifWidth">EXIF 固有宽：竖屏为带衬底的横排块，横屏为无衬底的纵排列。</param>
+/// <param name="ExifWidth">EXIF 固有宽：竖屏为带衬底的横排块；横屏的无衬底纵排列与玻璃按钮等宽同轴，不使用本值。</param>
 /// <param name="ExifHeight">EXIF 固有高（同上，横屏为全部项纵排的总高）。</param>
 /// <param name="ExifItemSpacing">EXIF 相邻项间距；横屏按整项裁掉放不下的末尾项时使用。</param>
 /// <param name="RatingMinLength">横屏控制栏里星级控件至少保留的主轴长度（紧凑态最短长度）。</param>
@@ -101,7 +102,10 @@ public readonly record struct PhoneLayout(
 /// 结果同时给出每个槽位矩形、胶片条内容留白与主图适应区的四边避让。
 /// <para>贴实物遮挡（灵动岛、刘海）的系统安全内缩已含视觉边距：元素直接贴安全区边，不再叠加行内间距；
 /// Home 指示条的安全内缩同样含一份行内间距的余量，底行压进这份余量但不比本行两端更贴边；
-/// 横屏下巴侧的系统对称安全内缩不是实物遮挡，控制栏不避让它。</para>
+/// 横屏下巴侧的系统对称安全内缩不是实物遮挡，控制栏不避让它，横屏主屏也不为底部手势条保留安全区
+/// （调用方在横屏传 <c>Safe.Bottom = 0</c>；真实的屏幕圆角与刘海由 <c>LeadBand</c>／<c>ControlBand</c>
+/// 的贴角距离给出，不受这条规则影响）。横屏控制栏的 EXIF、星级与两段按钮同轴，整组在可用纵向区间居中；
+/// 星级槽位封顶展开态固有长度，多出的余量留在整组两端，末端按钮不固定在底边。</para>
 /// </summary>
 public static class PhoneScreenLayout
 {
@@ -165,16 +169,14 @@ public static class PhoneScreenLayout
     }
 
     /// <summary>
-    /// 横屏控制栏从下巴侧窗口缘起算的宽度：按钮外缘距窗口缘 <c>EdgeMargin</c>，EXIF 列与按钮同一中轴。
+    /// 横屏控制栏从下巴侧窗口缘起算的宽度：按钮外缘距窗口缘 <c>EdgeMargin</c>。
+    /// EXIF 无衬底列的透明容器与玻璃按钮等宽同轴，列宽因此只由按钮边长决定，EXIF 开关不改变它。
     /// 宿主在这条列上探测控制栏的上下贴角距离。
     /// </summary>
     /// <param name="input">槽位输入。</param>
     /// <returns>列宽（不含栏背景外扩）。</returns>
     public static double ControlStripWidth(in PhoneLayoutInput input)
-    {
-        double column = LandscapeExifShown(input) ? Math.Max(input.ButtonSize, input.ExifWidth) : input.ButtonSize;
-        return input.EdgeMargin + input.ButtonSize / 2 + column / 2;
-    }
+        => input.EdgeMargin + input.ButtonSize;
 
     private static PhoneLayout ComputePortrait(in PhoneLayoutInput input)
     {
@@ -323,31 +325,43 @@ public static class PhoneScreenLayout
             double buttonX = input.Width - edge - button;
             double axis = buttonX + button / 2;
             double columnTop = Math.Max(safe.Top, control.Top) + inset;
-            double columnBottom = input.Height - Math.Max(Math.Max(safe.Bottom, control.Bottom), inset);
-
-            fitEnhance = Rect(buttonX, columnBottom - button * 2, button, button * 2);
+            double columnBottom = input.Height - Math.Max(safe.Bottom, control.Bottom) - inset;
+            double columnLength = Math.Max(0, columnBottom - columnTop);
+            double pitch = input.ExifCount > 0
+                ? (input.ExifHeight + input.ExifItemSpacing) / input.ExifCount
+                : 0;
 
             if (LandscapeExifShown(input))
             {
                 // EXIF 只按整项显示：星级控件先保住紧凑态最短长度，剩余长度能放几项放几项，裁掉的是末尾项。
-                double room = fitEnhance.Y - gap - input.RatingMinLength - gap - columnTop;
-                double pitch = (input.ExifHeight + input.ExifItemSpacing) / input.ExifCount;
+                double room = columnLength - button * 2 - gap * 2 - input.RatingMinLength;
                 exifItems = Math.Clamp(
                     (int)Math.Floor((room + input.ExifItemSpacing) / pitch + 1e-9), 0, input.ExifCount);
-                if (exifItems > 0)
-                {
-                    exif = Rect(axis - input.ExifWidth / 2, columnTop, input.ExifWidth,
-                        exifItems * pitch - input.ExifItemSpacing);
-                }
-
-                if (!Has(exif)) exifItems = 0;
             }
 
-            double ratingTop = Has(exif) ? exif.MaxY + gap : columnTop;
-            rating = Rect(buttonX, ratingTop, button, fitEnhance.Y - gap - ratingTop);
+            double exifHeight = exifItems > 0 ? exifItems * pitch - input.ExifItemSpacing : 0;
+            // 星级槽位取剩余长度并封顶展开态固有长度：多出的余量留在整组两端，不把末端按钮推到底边。
+            double exifGap = exifHeight > 0 ? gap : 0;
+            double ratingLength = Math.Min(
+                RatingControlGeometry.ExpandedLength,
+                Math.Max(0, columnLength - exifHeight - exifGap - gap - button * 2));
+            // 整组（EXIF 可见项 + 星级实际长度 + 两按钮）在可用纵向区间居中。
+            double total = exifHeight + exifGap + ratingLength + gap + button * 2;
+            double groupTop = columnTop + Math.Max(0, (columnLength - total) / 2);
 
-            double columnLeft = Has(exif) ? Math.Min(exif.X, buttonX) : buttonX;
-            controlEdge = columnLeft - inset;
+            if (exifHeight > 0)
+            {
+                // 无衬底列的透明容器固定为玻璃按钮边长、与按钮同一中轴：文字在容器内尾部截断，
+                // 不拿项目固有宽（52）撑宽控制列，EXIF 开关因此不改变列宽与主图右避让。
+                exif = Rect(axis - button / 2, groupTop, button, exifHeight);
+            }
+
+            double ratingTop = groupTop + exifHeight + exifGap;
+            rating = Rect(buttonX, ratingTop, button, ratingLength);
+            fitEnhance = Rect(buttonX, ratingTop + ratingLength + gap, button, button * 2);
+
+            // EXIF 容器与按钮等宽同轴，控制列内缘恒为按钮列，不随 EXIF 开关移动。
+            controlEdge = buttonX - inset;
         }
 
         var analysis = default(LayoutRect);

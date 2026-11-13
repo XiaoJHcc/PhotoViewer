@@ -425,11 +425,11 @@ EXIF 开关关闭时筛选与更多上移到灵动岛/刘海两旁的显示区�
 | 7. 手机横屏右栏背景缝与空缺 | 分析与控制此前使用两个独立模糊视图、各自判断显隐；改由单个连续右栏材质承载，有分析或实际 EXIF 即铺到窗口外缘、上下贯通，控制关闭则分析直接贴外缘；纯控制且无 EXIF 才透明 | SHELL-09、SHELL-12 |
 | 8. 竖屏分析栏无顶线、共享间距 | 删除外壳与面板各自叠加的间距，分析面板紧接顶行、瓦片上方只留 8 点，不画顶线 | SHELL-08、SHELL-12 |
 | 9. 竖屏胶片滚动指示器在上方 | **后置、未实现**。公开 `HorizontalScrollIndicatorInsets` 试验的属性读回不等于屏幕位置；默认/上移两组连续闪现截图均未捕获指示器，无法证明方案有效，试验代码与相应假通过断言已撤回。保留系统默认绘制，不引入自绘、私有 API 或翻转列表 | FILM-07 |
-| 10. 筛选菜单选后滚回顶部 | 每次选择此前整棵 Build 并重赋菜单；改为稳定菜单/action 标识、就地更新勾选，选项集合不变不替换对象 | FILTER-08 |
+| 10. 筛选菜单选后滚回顶部 | 首次改为稳定菜单/action 身份并就地改状态；本轮真实展开验证发现系统持不可变副本，可见勾选不会刷新，原对象身份检查不足以验收。后续改用原生表格弹层，见下节 | FILTER-08 |
 
 **验收边界**：共享几何网格与 iOS form/layout/edition/rating-control/tools 套件覆盖落位、开关组合与回归；截图供目视。真实分屏交通灯避让、系统菜单展开后滚动/VoiceOver 焦点与手指滚动手感仍须真机复验，不能把对象身份断言等同系统真实菜单交互通过。
 
-**执行状态**：第 1–8、10 项已落实，第 9 项后置、试验代码已撤回；证据统一写入 `artifacts/acceptance/new-ui/u3-polish/`。不把本批通过视为 U4/U5 完成。
+**执行状态**：第 1–8 项已落实；第 10 项此前只核对菜单对象状态，本轮复核撤销其交互通过结论并补修；第 9 项后置、试验代码已撤回；证据统一写入 `artifacts/acceptance/new-ui/u3-polish/`。不把本批通过视为 U4/U5 完成。
 
 - 共享契约：标准版 1862 / AI 版 1878 PASS，均 0 FAIL；各有 1 项非 Windows 路径自检 SKIP。
 - iOS Debug `iossimulator-arm64` 两版构建 0 错误。形态矩阵覆盖 iPhone 17 / 17e 标准版、17 Pro Max AI 版、iPad Pro 13 标准版、iPad mini AI 版；iPad form 含宽形态上下/左右与限宽分屏、手机 form 含两向横屏与新增分析/EXIF/控制开关组合。layout 两版 iPad、rating-control 手机与两版 iPad、edition 两版 iPad、tools 标准版 iPad 回归通过；最终撤回指示器试验后核心矩阵再复跑。
@@ -437,6 +437,25 @@ EXIF 开关关闭时筛选与更多上移到灵动岛/刘海两旁的显示区�
 - 跨端回归：Mac 标准版构建与真实 layout / filmstrip 冒烟、Windows 类型检查、令牌生成校验与 Web 344 项单测通过。Android 未验证（本机未安装 workload），不改其行为。
 - 未覆盖：真机交通灯/分屏与手指滚动、系统原生筛选菜单选择后的滚动及 VoiceOver 焦点、iOS Release/设备包；这些不以对象身份或布局数学断言冒充通过。
 - 第 9 项下轮验收：先在真实拖动下确认默认系统指示器可见，再验证公开 insets 对交叉轴位置的作用，最终用实际屏幕像素定位证明顶部显示；仅属性写入/读回不算通过。
+
+### U3 后续五项补修：可见勾选、横屏约束与玻璃交互
+
+- **筛选（替代方案已被作者否决并撤回）**：UIKit 菜单同一实例改 `UIAction.State` 未触发屏上重绘，替换可见菜单又会滚顶；曾未经许可换成 `UIPopoverPresentationController` + `UITableView`。该样式变更不满足任务边界，表格弹层、专属令牌和接线现已移除，恢复本轮前的系统 `UIButton.Menu`。连续点选与失焦关闭走原生能力；屏上勾选刷新与滚动保持尚未同时实现，旧表格方案的通过报告不能作为原生菜单通过证据。
+- **分析与控制**：手机横屏分析栏相邻控制列的一侧不再叠加面板内边距，实际瓦片到控制元素只有 8 点；两向镜像与控制列隐藏态分别核对，分隔线始终朝主图。
+- **EXIF**：iPad 左右布局与手机横屏无衬底 EXIF 仍保留透明容器，宽固定 44 点、与星级及按钮同轴，无额外内边距；文字在容器内截断，EXIF 开关不再撑宽控制列或扩大适应区避让。
+- **横屏安全区**：iOS 按实际窗口宽高归一底部安全区，全部横屏忽略 Home 指示条，包含横屏但手动选择上下布局的 iPad。此前按 Home 基线阈值归零会一并丢掉被手势条覆盖的较小圆角避让，该做法不正确，已进入返工；必须读取系统原生圆角区域，不得减法或阈值拟合。Android 分离原始系统栏、挖孔、导航栏与可点区 Insets，只在横屏手势导航时忽略底部条，三键导航不动，旋转后从原始值重新派生。
+- **玻璃交互**：宽形态命令按钮与星级控件直接平级挂在共同玻璃容器内容区，命令组只保留无交互逻辑矩形；同名按钮、EXIF 和评分实例就地复用。所有交互视图按未变换的 bounds/center 比对落位，同尺寸不写几何，避免对带按压变换的视图写 Frame 导致缩水、跳回或打断回弹；手机玻璃入口同样处理。
+
+**上轮验收记录（筛选替代方案已否决，圆角与居中本轮重验）**：证据在 `artifacts/acceptance/new-ui/followup/`，以下不代表本次原生筛选交互通过。CoreContractCheck 标准版 1869 / AI 版 1885 PASS、0 FAIL，各有 1 项非 Windows 路径 SKIP；Web 344 项通过。iOS 两版模拟器构建通过，iPhone 17 两版 form、标准版 rating-control 与 iPad Pro 13 两版 form / rating-control / layout 通过，标准版 input / tools 及两版 iPad edition 回归通过（tools 的多格式切换因夹具仅 JPEG 按既有规则跳过）。edition 只在宽形态 iPad 验收；误在 iPhone 运行时会被旧的宽形态合体宽度断言挡住，不作手机发行能力结论；原生筛选表格已真正呈现，尾部点选前后表格身份、滚动偏移与可见勾选均断言，并复看 `filter-scrolled-before/after.png`。Mac 标准版构建及 layout / filmstrip 冒烟、Windows 类型检查通过。
+
+Android 最终工作树构建被既有 `AndroidNativeSettingsPresenter.cs:774/783` 的 `LayoutMode.Auto` 名称冲突阻塞（实际绑定到父类 `ViewLayoutMode`），未把范围外修复留在树里。子代理在临时限定这两处名称的构建上跑过 AVD layout（36 PASS / 0 FAIL），此结果不能视为最终交付树通过；三键导航只有合成 Insets 覆盖。真实手指、VoiceOver 焦点、真机窗口控件与圆角、系统液态玻璃融合及松手手感、iOS Release/设备包仍待复验，程序化星排回弹几何不冒充系统玻璃动画观感。
+
+### U3 作者返工：原生菜单回退与横屏控制列
+
+- **边界**：此前自行把系统菜单替换成表格弹层属于未经授权的样式变更，已撤回。筛选菜单实现及入口回到 `77029bf` 的 `UIButton.Menu`（仅修正文案，不把模型状态当屏上结果）；移除弹层、专属令牌、事件绑定和替代方案验收。连续点选与失焦关闭保留系统能力；尚无同时满足可见勾选刷新和滚动保持的公开原生修复，按作者要求只还原，不以自绘、私有菜单视图、滚动回填或替代控件绕过。
+- **原生圆角方向**：iOS 26 `UIViewLayoutRegion.margins(cornerAdaptation:)` 是官方的圆角/窗口控件布局区域；在专用不可见探针上关闭 `InsetsLayoutMarginsFromSafeArea`、不继承祖先 margins，并置零显式 margins，可核验不含 Home 安全区的原生角适应。保留顶部窗口控件，底部直接使用原生结果；删除 `WithoutHomeIndicator` 基线阈值判断，不以几何猜测替代系统区域。官方依据：[WWDC25 282，13:04](https://developer.apple.com/videos/play/wwdc2025/282/)、[InsetsLayoutMarginsFromSafeArea](https://developer.apple.com/documentation/uikit/uiview/insetslayoutmarginsfromsafearea)。若不能验证，保留原生 safe-area 区域，不做拟合。
+- **居中规则**：手机横屏 EXIF → 星级 → 缩放/增强两按钮保持 44 点同轴，整组在本列圆角适应后的可用区间居中；原生圆角外上下各保留已有的 8 点行内间距；星级槽位不超过 224 点，剩余空白均分到整组两端，不固定将按钮放在底边。保留 EXIF 整项裁剪、分析栏 8 点间距和刘海方向镜像。
+- **验收结果与边界**：证据独立放入 `artifacts/acceptance/new-ui/rework/`。两版 iOS 模拟器构建、iPhone 17 标准版 form / rating-control、iPad Pro 13 AI 版 form / layout 通过；原生 margins 圆角区域在 iPhone 双向横屏分别保留刘海侧 18 点、控制侧约 8.67 点，屏幕中段读数为零且角落为正，未混入 20 点 Home 安全区。圆角外上下各 8 点，EXIF 关闭时星级 224、整组两端余量各约 24.3 点，截图已复看。CoreContractCheck 标准版 1893 / AI 版 1909 PASS、0 FAIL，各 1 项非 Windows 路径 SKIP；Web 344 项、Mac 构建与 Windows 类型检查通过。原生筛选屏上勾选刷新仍记缺口，任何模型/几何检查通过不提升为交互通过。标准版 Release 真机包已覆盖安装到 XJH-17（iPhone 17）与 XJH-mini7（iPad mini A17 Pro），两台均启动并确认进程存活，版本保持 0.9.3（93）；这不代替真机 UI 观感与交互手验。
 
 ### U4 接线收口、设置、外设、清除旧代码
 
