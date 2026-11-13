@@ -55,7 +55,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
 - **FILM-04@web**：浏览器胶片栏为原生 `overflow` 滚动 + 自绘悬浮滚动条，横向列表把鼠标纵向滚轮映射为横向滚动。
 - **FILM-05**：卡片内容与命中。
   - macOS：`PhotoViewer.Mac/Native/MacThumbnailItem.cs` 的 `MacThumbnailItem`（`NSCollectionViewItem`；`InitializeView` 落几何、星级、徽标）。
-  - iOS：`PhotoViewer.iOS/Native/iOSThumbnailCard.cs` 的 `iOSThumbnailCard`（两档几何取共享 `PhotoViewer.Shared/FilmCardGeometry.cs`，选档在根控制器按胶片栏主轴长度）。
+  - iOS：`PhotoViewer.iOS/Native/iOSThumbnailCard.cs` 的 `iOSThumbnailCard`（两档几何取共享 `PhotoViewer.Shared/FilmCardGeometry.cs`；宽形态固定大档，手机形态由根控制器按胶片栏主轴长度选档）。
   - Windows：`PhotoViewer.Windows/Native/WindowsThumbnailCard.cs`（`_name` 文件名、`_secondLine` 第二行与相似度条），`WindowsLayout` 转接共享 `FilmstripGeometry` 与 `film.*` / `color.*` 令牌。
   - Android：`PhotoViewer.Android/Native/AndroidThumbnailCard.cs` 的 `OnDraw`（圆角缩略图、第二行）与 `ShowCardMenu`（卡片菜单）。
   - **FILM-05@ios**：大档星排是纯显示视图，另挂只收间接指针（`AllowedTouchTypes = IndirectPointer`）且只在星排矩形内接收的点按识别器，手指落在星排上由整卡选择按钮接管；长按（`motion.rating.longPress`）与辅助点按（`ButtonMaskRequired = Secondary`）打开星级弹窗，长按可不抬手滑到弹窗星排提交（与紧凑态共用 `iOSRatingPopup.BeginExternal` 转发路径）。卡片不再挂 `UIContextMenuInteraction`。

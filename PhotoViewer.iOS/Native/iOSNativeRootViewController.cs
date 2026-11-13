@@ -800,14 +800,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
         // 标准版不创建相似面板，也不为它预留任何柱宽或高度。
         const double similarityColumn = 0;
 #endif
-        // 选档（[FILM-05]）：胶片条主轴扣掉相似聚类柱后还能放下 5 张大档才用大档。
-        // 相似聚类面板打开时恒用大档——面板列表本身沿用大档，胶片栏与其同档，同一屏不并排两种卡片。
-        double filmstripMain = row
-            ? Math.Max(1, width - (double)safe.Left - (double)safe.Right - similarityColumn)
-            : Math.Max(1, height - (double)safe.Top - (double)safe.Bottom - filterMain);
-        var tier = FilmCardGeometry.ResolveTier(filmstripMain, row);
+        // 宽形态固定大档；容量选档只用于手机形态。
+        const FilmCardTier tier = FilmCardTier.Large;
 #if PHOTOVIEWER_DINO
-        if (similarityOpen) tier = FilmCardTier.Large;
         if (similarityOpen) _similarityPane.SetLayout(row, row ? FilmCardGeometry.BandThickness(tier, true) : availableMain);
         _similarityPane.Hidden = !similarityOpen;
 #endif

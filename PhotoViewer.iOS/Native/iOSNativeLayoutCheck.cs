@@ -17,8 +17,8 @@ namespace PhotoViewer.iOS.Native;
 /// <summary>
 /// 验收专用（非产品行为，测试钩子）：`--pv-native-layout-check &lt;目录&gt;` 在模拟器/真机上程序化核对宽形态主屏——
 /// 浮层外壳的分区（主图满舞台、分区表达为适应区内边距、栏位背景铺满边缘、内容收在安全区内）、
-/// 栏位显隐把对应一侧内边距退回安全区并释放适应区长度、胶片栏两档卡片几何（选档 / 带厚 / 可见容量 ≥5 /
-/// 60×72 与 96×144 内部）、宽形态筛选控件（三合体与单胶囊）与控制栏（EXIF 块 / 星级控件 / 44 点圆按钮），
+/// 栏位显隐把对应一侧内边距退回安全区并释放适应区长度、宽形态固定大档的胶片卡片几何（带厚 / 可见容量 ≥5 /
+/// 96×144 内部）、宽形态筛选控件（三合体与单胶囊）与控制栏（EXIF 块 / 星级控件 / 44 点圆按钮），
 /// 以及 [FILM-01–06] 的交互语义（点选不居中、显式定位的中间帧与终点、用户接管、减少动态效果直接到终点、
 /// 点星写回自有副本且不切主图、改星后筛选暂留）、卡片输入分流（指针点星写值 / 触摸只选中）、
 /// 卡片长按与辅助点按的星级弹窗（方向、落位、原地抬手保持、滑动提交一次、越界不写），
@@ -640,7 +640,7 @@ internal static class iOSNativeLayoutCheck
     }
 
     /// <summary>
-    /// 核对卡片两档几何（[FILM-05]）：胶片条主轴长度按共享选档规则决定档位、带厚等于共享
+    /// 核对宽形态卡片几何（[FILM-05]）：固定大档、带厚等于共享
     /// <see cref="FilmCardGeometry.BandThickness"/>、可见容量不少于 5 张；卡片矩形取共享
     /// <see cref="FilmCardGeometry.ItemFrame"/>，内部几何按档位（大档 96×144 / 90×138 / 80 方形 / 六格星级，
     /// 小档 64×76 / 60×72 / 54 方形 / 一行文件名 / 星级角标与抖动点）与身份绑定逐项核对。
@@ -667,10 +667,10 @@ internal static class iOSNativeLayoutCheck
         var tier = filmstrip.Tier;
         double filmMain = horizontal ? (double)viewport.Width : (double)viewport.Height;
         double filmCross = horizontal ? (double)viewport.Height : (double)viewport.Width;
-        var expectedTier = FilmCardGeometry.ResolveTier(filmMain, horizontal);
+        const FilmCardTier expectedTier = FilmCardTier.Large;
         if (tier != expectedTier)
             throw new InvalidOperationException(
-                $"{scope} 卡片档位 {tier} 与共享选档 {expectedTier} 不一致（胶片条主轴 {filmMain:0.##}）");
+                $"{scope} 宽形态卡片档位 {tier} ≠ 固定大档（胶片条主轴 {filmMain:0.##}）");
         int capacity = FilmCardGeometry.VisibleCapacity(filmMain, tier, horizontal);
         if (capacity < FilmCardGeometry.MinVisible)
             throw new InvalidOperationException(

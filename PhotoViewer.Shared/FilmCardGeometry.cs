@@ -99,8 +99,8 @@ public static class FilmCardGeometry
         => (horizontal ? Width(tier) : Height(tier)) + Spacing(tier);
 
     /// <summary>
-    /// 按胶片条主轴长度选档：扣掉大档的主轴两端内边距后仍放得下 <see cref="MinVisible"/> 张大档卡片就用大档，
-    /// 否则用小档。比较带 1e-6 容差，正好放下时取大档。
+    /// 手机形态按胶片条主轴长度选档：扣掉大档的主轴两端内边距后仍放得下 <see cref="MinVisible"/> 张大档卡片就用大档，
+    /// 否则用小档。宽形态由宿主固定使用大档。比较带 1e-6 容差，正好放下时取大档。
     /// </summary>
     /// <param name="mainLength">胶片条沿主轴的整条长度。</param>
     /// <param name="horizontal">胶片条是否横向。</param>

@@ -886,6 +886,12 @@ internal static class iOSNativeFormCheck
     /// <param name="scope">报告范围名。</param>
     private static void VerifyWideGeometry(iOSNativeRootViewController root, string scope)
     {
+        if (root.Filmstrip.Tier != FilmCardTier.Large)
+            throw new InvalidOperationException($"{scope} 宽形态胶片卡片 {root.Filmstrip.Tier} ≠ 固定大档");
+        if (!root.FilterBar.Hidden && !root.Filmstrip.Horizontal
+            && Math.Abs((double)root.FilterBar.Frames.Control.Width - FilmCardGeometry.Width(FilmCardTier.Large)) > Tolerance)
+            throw new InvalidOperationException(
+                $"{scope} 宽形态列布局筛选宽 {root.FilterBar.Frames.Control.Width:0.##} ≠ 大档卡片列宽 {FilmCardGeometry.Width(FilmCardTier.Large):0.##}");
         if (root.Photo.Frame != root.Stage.Bounds)
             throw new InvalidOperationException($"{scope} 主图视图未铺满舞台：{CGRect(root.Photo.Frame)} vs {CGRect(root.Stage.Bounds)}");
         var panes = root.Panes;
