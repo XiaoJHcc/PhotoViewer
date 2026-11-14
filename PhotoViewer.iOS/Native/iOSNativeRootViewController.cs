@@ -23,8 +23,8 @@ namespace PhotoViewer.iOS.Native;
 
 /// <summary>
 /// 原生主屏：主图恒铺满根视图，栏位与按钮作为浮层压在照片上（栏背景是系统深色模糊材质）。
-/// <para>宽形态沿用共享 <see cref="MainScreenLayout"/> 与 <see cref="iOSMainScreenLayout"/> 的两向分区：
-/// 文件栏（筛选条 + 胶片栏）、控制栏与分析栏按行/列/自动排布，隐藏栏位把空间让给主图；
+/// <para>宽形态取共享 <see cref="ShellPaneLayout.Partition"/> 的两向分区：文件栏（筛选控件 + 胶片栏）、
+/// 控制栏与分析栏按行/列/自动排布，隐藏栏位把空间让给主图；
 /// 手机形态按共享 <see cref="PhoneScreenLayout"/> 铺竖屏顶/底行或横屏左右两栏，轴向只由形态决定。</para>
 /// <para>旋转、Split View、Stage Manager 的任意尺寸都重算几何，尺寸类别变化由特性登记触发重排。</para>
 /// 主图仍由 <see cref="iOSPhotoView"/> 渲染，物理视口照旧上报共享展示会话。
@@ -122,7 +122,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private double _detailU = .5, _detailV = .5;
     private double? _detailFrameWidth, _detailFrameHeight;
     private bool _detailVisible;
-    private iOSPaneFrames _panes;
+    private ShellPaneFrames _panes;
     private ScreenForm _form = ScreenForm.Wide;
     private PhoneLayout _phoneSlots;
     private PhoneLayoutInput _phoneSlotsInput;
@@ -175,7 +175,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <summary>控制栏系统滚动容器。</summary>
     internal UIScrollView ControlScroll => _controlScroll;
     /// <summary>最近一次布局算出的分区矩形（验收按几何核对，不重建模拟布局）。</summary>
-    internal iOSPaneFrames Panes => _panes;
+    internal ShellPaneFrames Panes => _panes;
     /// <summary>最近一次布局判定的主屏形态。</summary>
     internal ScreenForm Form => _form;
     /// <summary>最近一次布局算出的手机形态槽位（宽形态下保留上一次手机形态的结果）。</summary>
@@ -322,11 +322,6 @@ internal sealed class iOSNativeRootViewController : UIViewController
     internal UILabel HintLabel => _hintLabel;
     /// <summary>解码失败详情文本。</summary>
     internal UILabel HintDetailLabel => _hintDetail;
-    /// <summary>主图分区沿主轴的长度（行布局取高度，列布局取宽度），供验收核对栏位显隐与让位。</summary>
-    /// <param name="row">是否行布局。</param>
-    /// <returns>主轴长度。</returns>
-    internal double PhotoMainLength(bool row) => row ? (double)_photoPane.Frame.Height : (double)_photoPane.Frame.Width;
-
     /// <summary>用共享主 VM 与展示会话构建原生主屏。</summary>
     /// <param name="main">共享主 VM。</param>
     /// <param name="session">共享展示加载会话（所有权在壳层，生命周期与根控制器一致）。</param>
@@ -743,9 +738,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
             if (_stage.Frame != stageFrame) _stage.Frame = stageFrame;
             var bounds = _stage.Bounds;
             double width = (double)bounds.Width, height = (double)bounds.Height;
-            // 横屏主屏（含 iPad 行布局）不为底部 Home 指示条保留安全区；刘海、屏幕圆角与窗口控件仍由贴角带探测避让。
+            // 横屏主屏（含行布局）不为底部 Home 指示条保留安全区；刘海、屏幕圆角与窗口控件仍由贴角带探测避让。
             var rawSafe = StageSafeInsets();
-            var safe = iOSMainScreenLayout.LayoutSafeInsets(rawSafe, width, height);
+            var layoutSafe = ShellPaneLayout.SafeInsets(RawEdges(rawSafe), width, height);
+            var safe = new UIEdgeInsets((nfloat)layoutSafe.Top, (nfloat)layoutSafe.Left, (nfloat)layoutSafe.Bottom, (nfloat)layoutSafe.Right);
             _layoutSafe = safe;
             _main.UpdateScreenOrientation(width, height);
             _form = ScreenFormResolver.Resolve(
@@ -866,8 +862,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
         double controlMain = controlVisible ? MainScreenLayout.ControlBarMainLength(row ? (double)measure.Height : (double)measure.Width) : 0;
         // 分析栏的交叉轴尺寸按是否邻接控制栏取共同工具区几何。
         double analysisSize = analysisVisible ? _analysisPane.CrossSize(availableMain) : 0;
-        _panes = iOSMainScreenLayout.Compute(row, width, height, safe, fileMain, controlMain, analysisSize,
-            row ? null : FilmSide);
+        _panes = ShellPaneLayout.Partition(row, width, height, RawEdges(safe), fileMain, controlMain, analysisSize,
+            row ? null : FilmSide.FilmstripX, row ? null : FilmSide.Width - FilmSide.FilmstripX);
 
         var photo = _panes.Photo;
         ApplyPhotoFitInsets(new EdgeInsets(
@@ -965,7 +961,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// </summary>
     /// <param name="width">窗口宽。</param>
     /// <param name="height">窗口高。</param>
-    /// <param name="safe">舞台内布局用安全区（横屏已去掉底部 Home 指示条，见 <see cref="iOSMainScreenLayout.LayoutSafeInsets"/>）。</param>
+    /// <param name="safe">舞台内布局用安全区（横屏已去掉底部 Home 指示条，见 <see cref="ShellPaneLayout.SafeInsets"/>）。</param>
     private void LayoutPhone(double width, double height, UIEdgeInsets safe)
     {
         bool portrait = _form == ScreenForm.PhonePortrait;
@@ -1069,7 +1065,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
 
         ApplyPhotoFitInsets(slots.PhotoAvoidance);
 
-        // 宽形态专属浮层：旧筛选条、旧控制栏与其背景、文件栏背景、两条分隔线与相似面板。
+        // 宽形态专属浮层：筛选控件、控制栏与其背景、文件栏背景、两条分隔线与相似面板。
         _fileBar.Hidden = true;
         _fileDivider.Hidden = true;
         _controlDivider.Hidden = true;
@@ -1192,6 +1188,12 @@ internal sealed class iOSNativeRootViewController : UIViewController
             Math.Max(0, (double)bounds.Width - (double)insets.Left - (double)insets.Right),
             Math.Max(0, (double)bounds.Height - (double)insets.Top - (double)insets.Bottom));
     }
+
+    /// <summary>UIKit 安全区 → 共享四边值（左、上、右、下）。</summary>
+    /// <param name="insets">系统安全区或探针读数。</param>
+    /// <returns>共享四边值。</returns>
+    private static EdgeInsets RawEdges(UIEdgeInsets insets)
+        => new((double)insets.Left, (double)insets.Top, (double)insets.Right, (double)insets.Bottom);
 
     /// <summary>把形态算出的主图避让交给主图视图；验收缝生效时一律保留缝里的内边距。</summary>
     /// <param name="insets">形态算出的四边避让。</param>

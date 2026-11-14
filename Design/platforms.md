@@ -86,7 +86,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
 
 - **SHELL-01**：分区与显隐。
   - macOS：`PhotoViewer.Mac/Native/MacMainWindow.cs` 的 `MacMainWindow`，分区取共享 `MainScreenLayout.Partition`。
-  - iOS：`PhotoViewer.iOS/Native/iOSNativeRootViewController.cs`，`MainScreenLayout` + 真实安全区（`iOSMainScreenLayout`）。
+  - iOS：`PhotoViewer.iOS/Native/iOSNativeRootViewController.cs`，共享 `ShellPaneLayout` + 真实安全区。
   - Windows：`PhotoViewer.Windows/Native/WindowsMainWindow.cs` 的 `ApplyLayout`（XAML Grid 五分区；栏宽与胶片带高经 `WindowsLayout` 取共享 `MainScreenLayout` / `FilmBandHeight`）。
   - Android：`PhotoViewer.Android/Native/AndroidNativeRootView.cs` + `AndroidMainScreenLayout`；insets 分别读取 `NavigationBars` / `TappableElement` 区分手势条与三键导航，横屏只忽略手势条底部，刘海与三键导航遮挡仍保留。
   - **SHELL-01@mac**：列布局筛选条前导 `shell.filter.leadingInset`（42）让开盖住文件栏的标题栏与交通灯（见 FILTER-07）。
@@ -106,7 +106,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
 - **SHELL-05**：跨屏与显示变化。macOS `DidChangeBackingProperties`；iPad 旋转/分屏重建滚动基准；Windows `XamlRoot`/DPI 变化；Android `OnSizeChanged`/`SurfaceChanged`。
 - **SHELL-06**：窗口级输入边界。macOS 系统交通灯；Windows 系统标题栏与窗口按钮；触屏由长按菜单承担。
 - **SHELL-07、SHELL-08、SHELL-09、SHELL-11**：形态判定与手机槽位。共享 `PhotoViewer/Core/Settings/ScreenFormResolver.cs`（判定表）、`PhotoViewer.Shared/PhoneScreenLayout.cs`（竖横屏槽位与避让矩形）、`PhotoViewer.Shared/FilmSideGeometry.cs`（刘海侧列与宽文件栏的内容末端锚点、列宽与列表 X）、`PhotoViewer.Shared/ToolRegionGeometry.cs`（分析与控制工具区的边距、接缝、列宽与居中起点）、`PhotoViewer.Shared/PhotoViewport.cs` 的 `SetFitInsets`（视图矩形与适应矩形分离）；iOS 侧在 `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs` 的手机槽位布局与旋转/分屏响应。
-  - **SHELL-07@ios**：尺寸类别取 `UITraitCollection.HorizontalSizeClass` / `VerticalSizeClass`，设备取 `UserInterfaceIdiom == Phone`，与用户布局模式一并交给共享判定函数；横屏的刘海侧按界面方向判定（`LandscapeRight` 为刘海在左），其他方向镜像。iPhone 上隐藏布局模式分组（SETTINGS-08@ios）。
+  - **SHELL-07@ios**：尺寸类别取 `UITraitCollection.HorizontalSizeClass` / `VerticalSizeClass`，设备取 `UserInterfaceIdiom == Phone`，与用户布局模式一并交给共享判定函数；横屏的刘海侧按界面方向判定（`LandscapeRight` 为刘海在左），其他方向镜像。iPhone 的布局位置分组只列并勾选「手机」（SETTINGS-08@ios）。
   - **SHELL-07@android**：尺寸类别映射到 `WindowSizeClass`（目标）。
 - **SHELL-09@ios**：刘海侧几何取共享 `FilmSideGeometry`，控制几何取 `ToolRegionGeometry`，宿主为根控制器；手机横屏与 iPad 左右布局共用同一套规则，刘海在右时整体镜像，入口与上下张登记为滚动边缘元素。规则见 [spec/shell.md](spec/shell.md)（SHELL-09），探针见 SHELL-10@ios。
 - **SHELL-10@ios**：贴角带在元素实际位置探测。竖屏顶行按共享 `PhoneScreenLayout.TopRowY` 给出的行位置、以左右两半各一块等大的不可见探针读取该半的左右适应值；竖屏底行在底行位置整行探测左右两侧；横屏刘海侧列取筛选/更多入口合体的实际范围（`FilmEntryBandFrame`：88 宽 × 全高），下巴侧控制栏取控制内容列（`ControlBandFrame`：44 宽 × 全高），`LeadStripWidth` 只作刘海侧列宽。带圆角适应安全区接口按视图自身位置计算，每条带取自身方向的适应值，其他方向交给系统安全区。横屏下缘由专用探针读取 iOS 26 `marginsLayoutRegionWithCornerAdaptation:`：显式 margins 为零、不继承祖先 margins、`InsetsLayoutMarginsFromSafeArea=false`，保留独立圆角适应。
@@ -291,6 +291,8 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - 控制栏功能行的命令图标：Windows `WindowsIcons.ForCommand`，macOS/iOS `AppleSymbolNames.ForCommand`，Android `HotkeyItem.DisplaySymbol` 与 uicons。键鼠相关控件的显隐按 INPUT-13（见 [input](#input)）。
   - **SETTINGS-01@ios**：控制栏功能沿用系统勾选排序列表，与 EXIF 显示表同为 52 点标准行高；绑定按钮只在有外设时出现，点按即在行内录制，长按或辅助点按出「清空」菜单；录制期间手指轻点任意处取消录制并保留原绑定。
   - **SETTINGS-01@android**：勾选字形→命令图标、命令图标→命令名的视觉间距取 `settings.android.icon.gap`（16）；勾选 44dp 命中区的透明内缩由图标负左边距抵消，命中区不缩小。
+  - **SETTINGS-08@ios**：控制页始终显示「边栏布局位置」；iPhone 的 `iOSLayoutModePicker` 只列并勾选「手机」，其他设备保留全部选项以便切回。手机形态的「控制栏功能」只列上一张/下一张，不创建宽形态命令排序与键盘映射分组（含行内绑定按钮），配置与已持久化绑定保留，页内切换形态时页面就地重建分组。
+  - **SETTINGS-17@ios**：上一张/下一张复用 `iOSNativeEmbeddedCheckableReorderListView` 的蓝色勾选、文字与 52 点行高，图标取 `chevron.left.chevron.right`，单项关闭排序把手，点行写共享 `ShowNavigationButtons`（`SettingsChangeImpact.Layout`）；关闭后竖屏底行合体收起、让出的长度并入星级控件，横屏只收起刘海侧上下张、控制列几何不变。
 - **SETTINGS-03**：平台外观。macOS `NavigationSplitView` + `Form(.grouped)`；Windows Mica + `TitleBar` + `NavigationView`；iOS 半屏 sheet；Android Material 3 `BottomSheetDialog`。
   - **SETTINGS-03@mac / @win / @ios / @android**：各自原生设置外观，明暗统一固定深色。iOS 整个应用固定深色（`Info.plist` `UIUserInterfaceStyle = Dark` + 窗口覆盖），页面不铺不透明底以保留 sheet 半透材质。
 - **SETTINGS-04**：入口与关闭。关闭统一走 `NativeSettingsSession.ApplyAsync()` 一次提交并 `Dispose`（幂等）。

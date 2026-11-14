@@ -864,12 +864,14 @@ internal static class iOSNativeFormCheck
 
         // 贴角带：下缘取原生边距区域的圆角适应值，上缘取安全区探测与它的较大者。
         // 只按真实入口带（header 实际 x + 整高）探测：列表交叉轴宽度不再参与按钮的角适应。
+        // 手机横屏的入口是筛选/更多两段各一枚 44 点圆按钮（共 88），不是宽形态筛选/更多合体组的 96。
         var leadFrame = root.FilmEntryBandFrame;
-        if (Math.Abs((double)leadFrame.Width - iOSFilterLayout.GroupWidth) > Tolerance
+        double phoneGroupWidth = DesignTokens.ShellGlassButtonSize * 2;
+        if (Math.Abs((double)leadFrame.Width - phoneGroupWidth) > Tolerance
             || Math.Abs((double)leadFrame.Y) > Tolerance
             || Math.Abs((double)leadFrame.Height - (double)stage.Height) > Tolerance)
             throw new InvalidOperationException(
-                $"{scope} 横屏入口带不是 header 实际 x 范围 + 整高：{CGRect(leadFrame)}（组宽 {iOSFilterLayout.GroupWidth:0.#}）");
+                $"{scope} 横屏入口带不是合体实际 x 范围 + 整高：{CGRect(leadFrame)}（合体宽 {phoneGroupWidth:0.#}）");
         var lead = root.ProbeInsets(leadFrame, UIViewLayoutRegionAdaptivityAxis.Vertical);
         var leadCorner = root.ProbeCornerInsets(leadFrame, UIViewLayoutRegionAdaptivityAxis.Vertical);
         var controlFrame = root.ControlBandFrame;
@@ -1514,14 +1516,14 @@ internal static class iOSNativeFormCheck
             + MainScreenLayout.Divider;
         const double controlMain = 84;
         const double analysisCross = 64;
-        var column = iOSMainScreenLayout.Compute(false, width, height, injected, fileMain, controlMain, analysisCross);
+        var column = ShellPaneLayout.Partition(false, width, height, Edges(injected), fileMain, controlMain, analysisCross);
         if (Math.Abs((double)column.FileContent.Y) > Tolerance || Math.Abs((double)column.FileContent.Height - height) > Tolerance)
             throw new InvalidOperationException($"{scope} 注入安全区后列布局文件栏内容未纵贯窗口：{Rect(column.FileContent)}");
         if (Math.Abs((double)column.ControlContent.Y) > Tolerance || Math.Abs((double)column.ControlContent.Height - height) > Tolerance)
             throw new InvalidOperationException($"{scope} 注入安全区后列布局控制栏内容未纵贯窗口：{Rect(column.ControlContent)}");
         if (Math.Abs((double)column.Analysis.Y) > Tolerance || Math.Abs((double)column.Analysis.Height - height) > Tolerance)
             throw new InvalidOperationException($"{scope} 注入安全区后列布局分析栏未纵贯窗口：{Rect(column.Analysis)}");
-        var row = iOSMainScreenLayout.Compute(true, width, height, injected, fileMain, controlMain, 0);
+        var row = ShellPaneLayout.Partition(true, width, height, Edges(injected), fileMain, controlMain, 0);
         if (Math.Abs((double)row.FileContent.Y - 24) > Tolerance
             || Math.Abs((double)row.ControlContent.MaxY - (height - 20)) > Tolerance)
             throw new InvalidOperationException(
@@ -2540,6 +2542,12 @@ internal static class iOSNativeFormCheck
     /// <param name="rect">共享矩形。</param>
     /// <returns>文本。</returns>
     private static string Rect(LayoutRect rect) => FormattableString.Invariant($"{rect.X:0.#},{rect.Y:0.#} {rect.Width:0.#}×{rect.Height:0.#}");
+
+    /// <summary>UIKit 安全区 → 共享四边值（左、上、右、下）。</summary>
+    /// <param name="insets">系统安全区或注入值。</param>
+    /// <returns>共享四边值。</returns>
+    private static EdgeInsets Edges(UIEdgeInsets insets)
+        => new((double)insets.Left, (double)insets.Top, (double)insets.Right, (double)insets.Bottom);
 
     /// <summary>UIKit 矩形格式化。</summary>
     /// <param name="rect">矩形。</param>

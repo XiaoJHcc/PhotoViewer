@@ -106,30 +106,44 @@ internal static class iOSNativeLayoutCheck
             await WaitAsync(() => main.CurrentFile != null, "首图选中");
             await SettleAsync(root);
             VerifyToolRegionMath("工具区");
-            await VerifyRatingHiddenAsync(root, main, lines);
             // 本检查会经真实评分路径改写自有副本：先记下进入时的星级，收尾一律按磁盘真值还原。
             var entryRatings = main.FolderVM.AllFiles.ToDictionary(
                 file => file.File.StorageId.Value, file => Math.Max(0, file.Rating), StringComparer.Ordinal);
+            var entryLayout = main.Settings.LayoutMode;
+            bool entryShowNavigation = main.Settings.ShowNavigationButtons;
             lines.Add($"PASS 素材：{fixtures.Length} 张自有夹具（{directory}），主屏安全区 insets={Insets(root.View!)}");
 
-            // 一、两向显式布局与自动布局：当前朝向 + 尝试驱动系统旋转得到的另一朝向
-            var startOrientation = IsLandscape(root);
-            await VerifyOrientationAsync(root, main, startOrientation, lines);
-            var flipped = startOrientation ? UIInterfaceOrientationMask.Portrait : UIInterfaceOrientationMask.Landscape;
-            if (await RotateAsync(root, flipped))
+            if (root.Form == ScreenForm.Wide)
             {
-                bool rotated = IsLandscape(root);
-                lines.Add($"PASS 系统旋转：{(startOrientation ? "landscape" : "portrait")} → {(rotated ? "landscape" : "portrait")}（requestGeometryUpdate 生效）");
-                await VerifyOrientationAsync(root, main, rotated, lines);
-                await RotateAsync(root, startOrientation ? UIInterfaceOrientationMask.Landscape : UIInterfaceOrientationMask.Portrait);
+                await VerifyRatingHiddenAsync(root, main, lines);
+                // 一、两向显式布局与自动布局：当前朝向 + 尝试驱动系统旋转得到的另一朝向
+                var startOrientation = IsLandscape(root);
+                await VerifyOrientationAsync(root, main, startOrientation, lines);
+                var flipped = startOrientation ? UIInterfaceOrientationMask.Portrait : UIInterfaceOrientationMask.Landscape;
+                if (await RotateAsync(root, flipped))
+                {
+                    bool rotated = IsLandscape(root);
+                    lines.Add($"PASS 系统旋转：{(startOrientation ? "landscape" : "portrait")} → {(rotated ? "landscape" : "portrait")}（requestGeometryUpdate 生效）");
+                    await VerifyOrientationAsync(root, main, rotated, lines);
+                    await RotateAsync(root, startOrientation ? UIInterfaceOrientationMask.Landscape : UIInterfaceOrientationMask.Portrait);
+                }
+                else
+                {
+                    lines.Add($"NOTE 系统旋转未被接受（{lastRotationFailure}）：本机未驱动方向切换，改用同一份布局数学核对另一朝向的尺寸口径");
+                    VerifySyntheticOrientation(root, main, lines);
+                }
+                await UiDispatcher.InvokeAsync(() => main.Settings.LayoutMode = LayoutMode.Row);
+                await SettleAsync(root);
             }
             else
             {
-                lines.Add($"NOTE 系统旋转未被接受（{lastRotationFailure}）：本机未驱动方向切换，改用同一份布局数学核对另一朝向的尺寸口径");
-                VerifySyntheticOrientation(root, main, lines);
+                // 手机形态：宽形态两向分区与筛选条/控制栏不参与，外壳取共享手机槽位。
+                await UiDispatcher.InvokeAsync(() => main.Settings.ShowNavigationButtons = true);
+                await SettleAsync(root);
+                await VerifyPhoneShellAsync(root, main, lines);
+                await VerifyCardPopupAsync(root, main, root.Form == ScreenForm.PhonePortrait,
+                    root.Form == ScreenForm.PhonePortrait ? "手机竖屏" : "手机横屏", lines);
             }
-            await UiDispatcher.InvokeAsync(() => main.Settings.LayoutMode = LayoutMode.Row);
-            await SettleAsync(root);
 
             // 二、胶片栏交互（[FILM-01–03]）
             await VerifyFilmstripAsync(root, main, lines, session);
@@ -140,7 +154,7 @@ internal static class iOSNativeLayoutCheck
             // 五、胶片栏显示快照：重载前的陈旧索引不得读到缩短后的 live 筛选列表
             await VerifyDisplaySnapshotAsync(root, main, lines);
 
-            await RestoreAsync(root, main, entrySimilarity, entryExif);
+            await RestoreAsync(root, main, entrySimilarity, entryExif, entryLayout, entryShowNavigation);
             await RestoreRatingsAsync(main, entryRatings);
             lines.Add($"PASS 收尾还原：布局模式/栏位显隐/筛选/评级已回到进入本检查时的状态");
             await File.WriteAllLinesAsync(report, lines);
@@ -169,6 +183,123 @@ internal static class iOSNativeLayoutCheck
             await File.WriteAllLinesAsync(report, lines);
             Console.Error.WriteLine("[NativeSmoke] FAIL layout " + exception);
         }
+    }
+
+    /// <summary>
+    /// 手机形态外壳（SHELL-08、SHELL-09）：宽形态浮层全部收起，主图分区与主图视图铺满舞台，
+    /// 适应区、胶片条档位与每个固定控件的 frame 逐项等于按当前输入重算的共享手机槽位。
+    /// 两向布局与栏位显隐的组合由 form 检查覆盖，这里证明主屏消费的是同一份共享几何。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="lines">报告行。</param>
+    private static async Task VerifyPhoneShellAsync(iOSNativeRootViewController root, MainViewModel main, List<string> lines)
+    {
+        if (root.Form == ScreenForm.Wide) throw new InvalidOperationException("手机外壳核对要求手机形态");
+        bool portrait = root.Form == ScreenForm.PhonePortrait;
+        var stage = root.Stage.Bounds;
+        if (!root.FilterBar.Hidden || !root.ControlScroll.Hidden || !root.FileBarView.Hidden || !root.FileDividerView.Hidden)
+            throw new InvalidOperationException(
+                $"手机形态仍显示宽形态浮层：筛选={!root.FilterBar.Hidden} 控制栏={!root.ControlScroll.Hidden} " +
+                $"文件栏={!root.FileBarView.Hidden} 分隔线={!root.FileDividerView.Hidden}");
+        RequireFrame(root.PhotoPane.Frame, new CGRect(0, 0, stage.Width, stage.Height), "手机形态主图分区未铺满舞台");
+        RequireFrame(root.Photo.Frame, new CGRect(0, 0, stage.Width, stage.Height), "手机形态主图视图未铺满舞台");
+
+        var slots = PhoneScreenLayout.Compute(root.PhoneSlotsInput);
+        var avoid = slots.PhotoAvoidance;
+        var photo = new LayoutRect(avoid.Left, avoid.Top,
+            Math.Max(0, (double)stage.Width - avoid.Left - avoid.Right), Math.Max(0, (double)stage.Height - avoid.Top - avoid.Bottom));
+        RequireFitInsets(root, photo, stage, "手机形态适应区");
+        RequireFrame(root.Photo.FitRect, ToFrame(photo), "手机形态适应区与共享避让不一致");
+        RequireOverlaysInFitArea(root, portrait ? "手机竖屏" : "手机横屏");
+
+        if (root.Filmstrip.Horizontal != portrait)
+            throw new InvalidOperationException($"手机形态胶片条轴向 {root.Filmstrip.Horizontal} 与{(portrait ? "竖屏横向" : "横屏纵向")}不符");
+        var tier = FilmCardGeometry.ResolveTier(portrait ? (double)stage.Width : (double)stage.Height, portrait);
+        if (root.Filmstrip.Tier != tier)
+            throw new InvalidOperationException($"手机形态胶片条档位 {root.Filmstrip.Tier} ≠ 共享选档 {tier}");
+
+        RequireSlot(root.PhoneFilterButton, slots.Filter, "筛选");
+        RequireSlot(root.PhoneMoreButton, slots.More, "更多");
+        RequireSlot(root.PhoneFilterMoreGroup, slots.FilterMoreGroup, "筛选/更多合体");
+        RequireSlot(root.PhoneNavigationGroup, slots.Navigation, "上下张");
+        RequireSlot(root.PhoneRatingControl, slots.Rating, "星级控件");
+        RequireSlot(root.PhoneFitEnhanceGroup, slots.FitEnhance, "缩放适应/雾天增强");
+        RequireSlot(root.PhoneExifBlock, slots.Exif, "EXIF 块");
+        var bars = root.PhoneBarBackgrounds;
+        RequireSlot(bars.Top, slots.TopBar, "顶栏背景");
+        RequireSlot(bars.Bottom, slots.BottomBar, "底栏背景");
+        RequireSlot(bars.Leading, slots.LeadingBar, "刘海侧栏背景");
+        RequireSlot(bars.Trailing, slots.TrailingBar, "工具区背景");
+        if (root.PhoneExifBlock.ShownItemCount != slots.ExifItems)
+            throw new InvalidOperationException(
+                $"手机形态 EXIF 显示 {root.PhoneExifBlock.ShownItemCount} 项 ≠ 共享裁剪 {slots.ExifItems} 项");
+        lines.Add($"PASS 手机外壳（{(portrait ? "竖屏" : "横屏")}）：宽形态浮层收起、主图满舞台、适应区 " +
+            $"{(double)root.Photo.FitRect.Width:0.#}×{(double)root.Photo.FitRect.Height:0.#}、胶片条 {tier}、" +
+            $"筛选/更多/上下张/星级/适应增强/EXIF 与栏背景逐项等于共享槽位，空态提示/提示条/计算中药丸与导航图落在适应区内");
+
+        // SETTINGS-17「显示上下张按钮」两态：关闭后合体收起，竖屏让出的长度并入星级、横屏控制列几何不变；打开后恢复。
+        await UiDispatcher.InvokeAsync(() => main.Settings.ShowNavigationButtons = false);
+        await SettleAsync(root);
+        try
+        {
+            var off = PhoneScreenLayout.Compute(root.PhoneSlotsInput);
+            if (off.Navigation.Width > 0 || off.Navigation.Height > 0)
+                throw new InvalidOperationException($"关闭显示上下张后槽位仍占位：{off.Navigation}");
+            RequireSlot(root.PhoneNavigationGroup, off.Navigation, "上下张（关闭）");
+            if (portrait && off.Rating.Width <= slots.Rating.Width)
+                throw new InvalidOperationException(
+                    $"竖屏关闭上下张后星级未取回让出的长度：{slots.Rating.Width:0.##} → {off.Rating.Width:0.##}");
+            if (!portrait && Math.Abs(off.FitEnhance.Width - slots.FitEnhance.Width) > 1)
+                throw new InvalidOperationException("横屏关闭上下张改变了控制列几何");
+            lines.Add($"PASS 显示上下张按钮关闭：{(portrait ? "底部行合体收起、星级加宽" : "刘海侧上下张收起、控制列几何不变")}");
+        }
+        finally
+        {
+            await UiDispatcher.InvokeAsync(() => main.Settings.ShowNavigationButtons = true);
+            await SettleAsync(root);
+        }
+        RequireSlot(root.PhoneNavigationGroup, PhoneScreenLayout.Compute(root.PhoneSlotsInput).Navigation, "上下张（恢复）");
+    }
+
+    /// <summary>
+    /// 主图区的浮层（空态提示、STATE-03 提示条与计算中药丸）都落在适应区内：栏位与按钮是浮层，
+    /// 这些提示不能压到栏位或裸按钮上。导航图由 gesture 检查在放大态单独核对。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="scope">报告范围名。</param>
+    private static void RequireOverlaysInFitArea(iOSNativeRootViewController root, string scope)
+    {
+        var fit = root.Photo.FitRect;
+        RequireInsideFit(root.HintLabel, fit, scope + " 空态提示");
+        RequireInsideFit(root.Toast, fit, scope + " 状态提示条");
+        RequireInsideFit(root.EnhanceBusyLabel, fit, scope + " 计算中药丸");
+    }
+
+    /// <summary>视图矩形完整落在适应区内（±1 点容差）。</summary>
+    /// <param name="view">浮层视图。</param>
+    /// <param name="fit">主图适应区。</param>
+    /// <param name="context">失败信息。</param>
+    private static void RequireInsideFit(UIView view, CGRect fit, string context)
+    {
+        var frame = view.Frame;
+        if ((double)frame.Width <= 0 || (double)frame.Height <= 0)
+            throw new InvalidOperationException($"{context} 尺寸非法：{frame}（适应区 {fit}）");
+        if ((double)frame.X < (double)fit.X - 1 || (double)frame.Y < (double)fit.Y - 1
+            || (double)frame.GetMaxX() > (double)fit.GetMaxX() + 1 || (double)frame.GetMaxY() > (double)fit.GetMaxY() + 1)
+            throw new InvalidOperationException($"{context} 越出主图适应区：{frame} / {fit}");
+    }
+
+    /// <summary>控件或栏背景与槽位：槽位非空时必须可见且 frame 与槽位一致，槽位为空时必须隐藏。</summary>
+    /// <param name="view">原生控件或栏背景。</param>
+    /// <param name="slot">共享槽位矩形。</param>
+    /// <param name="name">报告名。</param>
+    private static void RequireSlot(UIView view, LayoutRect slot, string name)
+    {
+        bool visible = slot.Width > 0 && slot.Height > 0;
+        if (view.Hidden == visible)
+            throw new InvalidOperationException($"手机形态 {name} 可见性 {!view.Hidden} 与槽位 {slot} 不符");
+        if (visible) RequireFrame(view.Frame, ToFrame(slot), $"手机形态 {name} 与共享槽位不一致", 1);
     }
 
     /// <summary>核对某一朝向下的两向与自动布局：安全区、分区拼合、栏位显隐、筛选条、控制栏与卡片几何。</summary>
@@ -216,7 +347,7 @@ internal static class iOSNativeLayoutCheck
         foreach (var scenario in cases)
         {
             // 翻转后宽大于高即为横屏主屏：其布局安全区同样不为底部手势条保留空间。
-            var safe = iOSMainScreenLayout.LayoutSafeInsets(raw, scenario.Width, scenario.Height);
+            var safe = ShellPaneLayout.SafeInsets(Edges(raw), scenario.Width, scenario.Height);
             double band = FilmCardGeometry.BandThickness(root.Filmstrip.Tier, scenario.Row);
             double fileMain = scenario.Row
                 ? root.FilterBar.MainLength(true, (double)safe.Top + MainScreenLayout.FilterMargin) + band + MainScreenLayout.Divider
@@ -225,7 +356,7 @@ internal static class iOSNativeLayoutCheck
                     FilmCardGeometry.CrossTrail(FilmCardTier.Large, false), iOSFilterLayout.GroupWidth).Width
                     + MainScreenLayout.Divider;
             double controlMain = MainScreenLayout.ControlBarMainLength(scenario.Row ? 60 : 244);
-            var panes = iOSMainScreenLayout.Compute(scenario.Row, scenario.Width, scenario.Height, safe, fileMain, controlMain, 0);
+            var panes = ShellPaneLayout.Partition(scenario.Row, scenario.Width, scenario.Height, safe, fileMain, controlMain, 0);
             if ((double)panes.Photo.Width < 1 || (double)panes.Photo.Height < 1)
                 throw new InvalidOperationException($"翻转尺寸 {scenario.Width}×{scenario.Height} 主图被压成零尺寸：{panes.Photo}");
             double boxMain = (scenario.Row ? scenario.Height : scenario.Width)
@@ -248,7 +379,7 @@ internal static class iOSNativeLayoutCheck
 
     /// <summary>
     /// 核对浮层外壳的分区（SHELL-11）：主图分区与主图视图恒为整个舞台，分区矩形改为表达主图<b>适应区</b>的四边内边距；
-    /// 文件栏背景、两条分隔线、控制栏滚动内容与分析栏槽位逐项等于 <see cref="iOSMainScreenLayout"/> 的结果，
+    /// 文件栏背景、两条分隔线、控制栏滚动内容与分析栏槽位逐项等于共享 <see cref="ShellPaneLayout.Partition"/> 的结果，
     /// 工具区背景是分析/控制共用的单个宿主（几何取可见并集、只在有分析或实际 EXIF 时显示），
     /// 栏位背景按安全区口径铺到屏幕边缘、内容收在安全区内、适应区与任何可见栏位都不相交。
     /// </summary>
@@ -266,12 +397,13 @@ internal static class iOSNativeLayoutCheck
         var rawSafe = view.SafeAreaInsets;
         // 横屏主屏（含 iPad 行布局）不为底部 Home 指示条保留安全区；刘海、屏幕圆角与窗口控件仍由各元素带的探针避让。
         bool landscape = (double)stage.Width > (double)stage.Height;
-        var safe = iOSMainScreenLayout.LayoutSafeInsets(rawSafe, (double)stage.Width, (double)stage.Height);
-        if (landscape && Math.Abs((double)safe.Bottom) > Exact)
-            throw new InvalidOperationException($"{scope} 横屏仍为底部手势条保留安全区：B{safe.Bottom:0.##}");
-        if (!landscape && Math.Abs((double)safe.Bottom - (double)rawSafe.Bottom) > Exact)
+        var layoutSafe = ShellPaneLayout.SafeInsets(Edges(rawSafe), (double)stage.Width, (double)stage.Height);
+        var safe = new UIEdgeInsets((nfloat)layoutSafe.Top, (nfloat)layoutSafe.Left, (nfloat)layoutSafe.Bottom, (nfloat)layoutSafe.Right);
+        if (landscape && Math.Abs(layoutSafe.Bottom) > Exact)
+            throw new InvalidOperationException($"{scope} 横屏仍为底部手势条保留安全区：B{layoutSafe.Bottom:0.##}");
+        if (!landscape && Math.Abs(layoutSafe.Bottom - (double)rawSafe.Bottom) > Exact)
             throw new InvalidOperationException(
-                $"{scope} 竖屏改动了底部安全区：B{safe.Bottom:0.##} ≠ 系统 B{rawSafe.Bottom:0.##}");
+                $"{scope} 竖屏改动了底部安全区：B{layoutSafe.Bottom:0.##} ≠ 系统 B{rawSafe.Bottom:0.##}");
         var panes = root.Panes;
         // 横屏行布局的内容因此铺到窗口下缘，不为手势条留空。
         if (landscape && row && Math.Abs((double)panes.ControlContent.MaxY - (double)stage.Height) > Exact)
@@ -288,6 +420,7 @@ internal static class iOSNativeLayoutCheck
         // 分区矩形表达为适应区：四边内边距与分区矩形在舞台中的位置逐项相等，适应区本身也等于分区矩形。
         RequireFitInsets(root, panes.Photo, stage, $"{scope} 主图适应区");
         RequireFrame(root.Photo.FitRect, ToFrame(panes.Photo), $"{scope} 适应区与分区矩形不一致");
+        RequireOverlaysInFitArea(root, scope);
 
         // 栏位背景、分隔线与滚动容器逐项等于共享分区结果。
         RequireFrame(root.FileBarView.Frame, ToFrame(panes.FileBar), $"{scope} 文件栏背景与分区不一致");
@@ -307,7 +440,7 @@ internal static class iOSNativeLayoutCheck
             throw new InvalidOperationException(
                 $"{scope} 工具区背景可见性不符：Hidden={root.ToolBackgroundView.Hidden}，分析={!root.AnalysisPane.Hidden}、EXIF 项 {main.ControlVM.EnabledExifItems.Count}");
 
-        // 栏位背景铺到屏幕边缘（iOSMainScreenLayout 的安全区口径：行布局补回上下、列布局补回左右）。
+        // 栏位背景铺到屏幕边缘（共享浮层口径：行布局背景补回上下、列布局补回左右）。
         var fileBar = root.FileBarView.Frame;
         var controlBackground = root.ControlBackgroundView.Frame;
         var fileDivider = root.FileDividerView.Frame;
@@ -484,7 +617,7 @@ internal static class iOSNativeLayoutCheck
             $"PASS {scope} 分区：舞台 {Size(stage)} safe(T{safe.Top:0.##} L{safe.Left:0.##} B{safe.Bottom:0.##} R{safe.Right:0.##}) " +
             $"适应区 {Size(fit)} @({fit.X:0.##},{fit.Y:0.##})、文件栏主轴 {actualFileMain:0.##}（筛选 {filterMain:0.##} + 带厚 {band:0.##} + 分隔线/左栏宽）、" +
             $"主图分区与主图视图满舞台、栏位背景/分隔线与分区逐项一致、背景铺满边缘、" +
-            $"{(row ? "内容在安全区内" : $"栏位内容纵贯窗口（顶部/底部安全区只推筛选按钮）、左栏 header/nav/卡片外框同落末端 {filmSide.ContentTrailing:0.##}")}、适应区不与可见栏位相交");
+            $"{(row ? "内容在安全区内" : $"栏位内容纵贯窗口（顶部/底部安全区只推筛选按钮）、左栏 header/nav/卡片外框同落末端 {filmSide.ContentTrailing:0.##}")}、适应区不与可见栏位相交、空态提示/提示条/计算中药丸落在适应区内");
     }
 
     /// <summary>
@@ -708,13 +841,15 @@ internal static class iOSNativeLayoutCheck
                     + $"（安全区探针 T{safe.Top:0.##} B{safe.Bottom:0.##}，圆角探针 T{corner.Top:0.##} B{corner.Bottom:0.##}）");
         }
 
-        // 圆角/控件适应只按真实入口带（header 实际 x + 整高）探测：列表交叉轴宽度不再参与按钮的角适应。
+        // 圆角/控件适应只按真实入口带（合体实际 x 范围 + 整高）探测：列表交叉轴宽度不再参与按钮的角适应。
+        // 手机横屏入口是筛选/更多两枚 44 点圆按钮（共 88），与宽形态 iPad 的 96 点筛选/更多合体不是同一宽度。
         VerifyBand("刘海侧入口带", root.FilmEntryBandFrame, input.LeadBand);
-        if (Math.Abs((double)root.FilmEntryBandFrame.Width - iOSFilterLayout.GroupWidth) > Exact
+        double phoneGroupWidth = DesignTokens.ShellGlassButtonSize * 2;
+        if (Math.Abs((double)root.FilmEntryBandFrame.Width - phoneGroupWidth) > Exact
             || Math.Abs((double)root.FilmEntryBandFrame.Y) > Exact
             || Math.Abs((double)root.FilmEntryBandFrame.Height - (double)stage.Height) > Exact)
             throw new InvalidOperationException(
-                $"{scope} 横屏入口带不是 header 实际 x 范围 + 整高：{root.FilmEntryBandFrame}（组宽 {iOSFilterLayout.GroupWidth:0.##}）");
+                $"{scope} 横屏入口带不是合体实际 x 范围 + 整高：{root.FilmEntryBandFrame}（合体宽 {phoneGroupWidth:0.##}）");
         var controlProbe = root.ProbeInsets(root.ControlBandFrame, UIViewLayoutRegionAdaptivityAxis.Vertical);
         var controlCorner = root.ProbeCornerInsets(root.ControlBandFrame, UIViewLayoutRegionAdaptivityAxis.Vertical);
         var (controlTop, controlBottom) = iOSNativeRootViewController.LandscapeBandEdges(controlProbe, controlCorner);
@@ -824,7 +959,7 @@ internal static class iOSNativeLayoutCheck
         const double fileMain = MainScreenLayout.FileBarContentWidth + MainScreenLayout.Divider + 12;
         const double controlMain = 84;
         const double analysisCross = 64;
-        var column = iOSMainScreenLayout.Compute(false, width, height, injected, fileMain, controlMain, analysisCross);
+        var column = ShellPaneLayout.Partition(false, width, height, Edges(injected), fileMain, controlMain, analysisCross);
         if (Math.Abs((double)column.FileContent.Y) > Exact || Math.Abs((double)column.FileContent.Height - height) > Exact)
             throw new InvalidOperationException(
                 $"{scope} 注入安全区 T24 B20 后列布局文件栏内容未纵贯窗口：{column.FileContent}（舞台高 {height:0.##}）");
@@ -853,19 +988,19 @@ internal static class iOSNativeLayoutCheck
         if (column.ControlBackground != union)
             throw new InvalidOperationException(
                 $"{scope} 列布局工具区背景 {column.ControlBackground} ≠ 分析/控制并集 {union}");
-        var controlOnlyColumn = iOSMainScreenLayout.Compute(false, width, height, injected, fileMain, controlMain, 0);
+        var controlOnlyColumn = ShellPaneLayout.Partition(false, width, height, Edges(injected), fileMain, controlMain, 0);
         if (Math.Abs(controlOnlyColumn.ControlDivider.Width - MainScreenLayout.Divider) > Exact
             || Math.Abs(controlOnlyColumn.ControlBackground.X - (width - controlMain)) > Exact
             || Math.Abs(controlOnlyColumn.ControlContent.X - (width - controlMain + MainScreenLayout.Divider)) > Exact)
             throw new InvalidOperationException(
                 $"{scope} 控制栏单独时外分隔线/背景口径改变：{controlOnlyColumn.ControlDivider} / {controlOnlyColumn.ControlBackground}");
         // 同一份安全区在上下布局仍把内容收在安全区内（顶 24 / 底 20）。
-        var row = iOSMainScreenLayout.Compute(true, width, height, injected, fileMain, controlMain, 0);
+        var row = ShellPaneLayout.Partition(true, width, height, Edges(injected), fileMain, controlMain, 0);
         if (Math.Abs((double)row.FileContent.Y - 24) > Exact
             || Math.Abs((double)row.ControlContent.MaxY - (height - 20)) > Exact)
             throw new InvalidOperationException(
                 $"{scope} 注入安全区后上下布局未按安全区收内容：文件 {row.FileContent}，控制 {row.ControlContent}");
-        var rowBoth = iOSMainScreenLayout.Compute(true, width, height, injected, fileMain, controlMain, analysisCross);
+        var rowBoth = ShellPaneLayout.Partition(true, width, height, Edges(injected), fileMain, controlMain, analysisCross);
         var rowUnion = new LayoutRect(0, rowBoth.Analysis.Y, width, height - rowBoth.Analysis.Y);
         if (rowBoth.ControlDivider.Width > Exact || rowBoth.ControlDivider.Height > Exact
             || rowBoth.ControlBackground != rowUnion
@@ -1360,8 +1495,8 @@ internal static class iOSNativeLayoutCheck
 
     /// <summary>
     /// 隐藏/恢复胶片栏与控制栏：浮层外壳里栏位不再切走主图空间，而是把对应一侧的适应区内边距释放给主图。
-    /// 隐藏后该侧内边距退回 <see cref="iOSMainScreenLayout"/> 编码的安全区值（行布局上下、列布局左右为 0，
-    /// 横屏行布局的底部安全区已按 <see cref="iOSMainScreenLayout.LayoutSafeInsets"/> 归零），
+    /// 隐藏后该侧内边距退回 <see cref="ShellPaneLayout.SafeInsets"/> 编码的安全区值（行布局上下、列布局左右为 0，
+    /// 横屏行布局的底部安全区已归零），
     /// 适应区主轴长度必须恰好增长同等长度；恢复后内边距与适应区完全还原。
     /// </summary>
     /// <param name="root">原生根控制器。</param>
@@ -1372,7 +1507,7 @@ internal static class iOSNativeLayoutCheck
     private static async Task VerifyPaneReleaseAsync(iOSNativeRootViewController root, MainViewModel main, bool row, string scope, List<string> lines)
     {
         // 栏位隐藏后内边距退回布局安全区口径：横屏行布局同样不为底部手势条保留空间。
-        var safe = iOSMainScreenLayout.LayoutSafeInsets(root.View!.SafeAreaInsets,
+        var safe = ShellPaneLayout.SafeInsets(Edges(root.View!.SafeAreaInsets),
             (double)root.Stage.Bounds.Width, (double)root.Stage.Bounds.Height);
         var stage = root.Stage.Bounds;
         var before = root.Panes;
@@ -1380,7 +1515,7 @@ internal static class iOSNativeLayoutCheck
         var beforeFit = root.Photo.FitRect;
         double beforeMain = row ? (double)beforeFit.Height : (double)beforeFit.Width;
         double beforeLeading = row ? (double)beforeInsets.Top : (double)beforeInsets.Left;
-        // 隐藏后该侧内边距退回 iOSMainScreenLayout 的安全区口径：行布局保留顶边安全区，列布局为 0。
+        // 隐藏后该侧内边距退回共享浮层口径：行布局保留顶边安全区，列布局为 0。
         double expectedLeading = row ? (double)safe.Top : 0;
         if (beforeLeading <= expectedLeading + .5)
             throw new InvalidOperationException($"{scope} 主图旁没有可释放的文件栏分区：{before.Photo}（内边距 {beforeLeading:0.##}）");
@@ -1458,6 +1593,17 @@ internal static class iOSNativeLayoutCheck
     /// <param name="main">共享主 VM。</param>
     /// <param name="lines">报告行。</param>
     /// <param name="session">展示会话（空图时的守卫用）。</param>
+    /// <summary>真实的上一张/下一张按钮：宽形态取控制栏命令，手机形态取上下张合体。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="command">Previous 或 Next。</param>
+    /// <returns>可发送真实点按动作的按钮。</returns>
+    private static UIButton NavigationButton(iOSNativeRootViewController root, string command)
+    {
+        if (root.Form == ScreenForm.Wide) return root.ControlBar.Commands[command];
+        var buttons = root.PhoneNavigationGroup.Buttons;
+        return command == "Next" ? buttons[1] : buttons[0];
+    }
+
     private static async Task VerifyFilmstripAsync(iOSNativeRootViewController root, MainViewModel main, List<string> lines, PhotoLoadSession session)
     {
         var filmstrip = root.Filmstrip;
@@ -1487,7 +1633,7 @@ internal static class iOSNativeLayoutCheck
         });
         await SettleAsync(root);
         MainOffset(filmstrip, out double startOffset, out double viewportMain);
-        var next = root.ControlBar.Commands["Next"];
+        var next = NavigationButton(root, "Next");
         var samples = new List<double>();
         await UiDispatcher.InvokeAsync(() => next.SendActionForControlEvents(UIControlEvent.TouchUpInside));
         var watch = Stopwatch.StartNew();
@@ -1512,12 +1658,12 @@ internal static class iOSNativeLayoutCheck
 
         // 端点：末张再下一张不环绕、首张再上一张不环绕且保持在合法边界（[FILM-02]）
         await UiDispatcher.InvokeAsync(() => main.FileVM.ThumbnailList.SelectImageCommand(files[^1]));
-        var lastNext = root.ControlBar.Commands["Next"];
+        var lastNext = NavigationButton(root, "Next");
         await UiDispatcher.InvokeAsync(() => lastNext.SendActionForControlEvents(UIControlEvent.TouchUpInside));
         await SettleAsync(root);
         if (!ReferenceEquals(main.CurrentFile, files[^1])) throw new InvalidOperationException("末张再下一张发生了环绕");
         await UiDispatcher.InvokeAsync(() => main.FileVM.ThumbnailList.SelectImageCommand(files[0]));
-        var firstPrevious = root.ControlBar.Commands["Previous"];
+        var firstPrevious = NavigationButton(root, "Previous");
         await UiDispatcher.InvokeAsync(() => firstPrevious.SendActionForControlEvents(UIControlEvent.TouchUpInside));
         await SettleAsync(root);
         if (!ReferenceEquals(main.CurrentFile, files[0])) throw new InvalidOperationException("首张再上一张发生了环绕");
@@ -1533,7 +1679,7 @@ internal static class iOSNativeLayoutCheck
             main.FileVM.ThumbnailList.SelectImageCommand(files[2]);
         });
         await SettleAsync(root);
-        var takeoverTrigger = root.ControlBar.Commands["Next"];
+        var takeoverTrigger = NavigationButton(root, "Next");
         await UiDispatcher.InvokeAsync(() => takeoverTrigger.SendActionForControlEvents(UIControlEvent.TouchUpInside));
         await Task.Delay(90);
         await UiDispatcher.InvokeAsync(() =>
@@ -1557,7 +1703,7 @@ internal static class iOSNativeLayoutCheck
                 main.FileVM.ThumbnailList.SelectImageCommand(files[6]);
             });
             await SettleAsync(root);
-            var reduceNext = root.ControlBar.Commands["Next"];
+            var reduceNext = NavigationButton(root, "Next");
             await UiDispatcher.InvokeAsync(() => reduceNext.SendActionForControlEvents(UIControlEvent.TouchUpInside));
             await Task.Delay(30);
             MainOffset(filmstrip, out double reducedOffset, out _);
@@ -1734,9 +1880,16 @@ internal static class iOSNativeLayoutCheck
         // 共享方向表：卡片入口宽形态行布局向下、列布局向右（手机形态另有表，本套件只跑宽形态）。
         var expectedDirection = RatingControlGeometry.PopupDirection(root.Form, main.IsRowLayout, root.NotchOnLeft,
             RatingPopupAnchor.Card);
-        if (expectedDirection != (row ? RatingPopupDirection.Down : RatingPopupDirection.Right))
+        // 宽形态按行/列查表（行向下、列向右）；手机竖屏向上、手机横屏朝主图内侧（与刘海侧相反）。
+        var documented = root.Form switch
+        {
+            ScreenForm.PhonePortrait => RatingPopupDirection.Up,
+            ScreenForm.PhoneLandscape => root.NotchOnLeft ? RatingPopupDirection.Right : RatingPopupDirection.Left,
+            _ => row ? RatingPopupDirection.Down : RatingPopupDirection.Right,
+        };
+        if (expectedDirection != documented)
             throw new InvalidOperationException(
-                $"{scope} 卡片弹窗方向表 {(row ? "行" : "列")} 布局给出 {expectedDirection}（期望 {(row ? "Down" : "Right")}）");
+                $"{scope} 卡片弹窗方向表给出 {expectedDirection}（期望 {documented}）");
         if (file.Rating != 2) await main.SetRatingAsync(file, 2);
         await WaitAsync(() => file.Rating == 2, "卡片长按核对起始星级");
         var commits = new List<int>();
@@ -2011,7 +2164,7 @@ internal static class iOSNativeLayoutCheck
     /// <param name="similarity">进入检查时的相似面板状态。</param>
     /// <param name="entryExif">进入检查时的 EXIF 显示项开关。</param>
     private static async Task RestoreAsync(iOSNativeRootViewController root, MainViewModel main, bool similarity,
-        IReadOnlyDictionary<string, bool> entryExif)
+        IReadOnlyDictionary<string, bool> entryExif, LayoutMode entryLayout, bool entryShowNavigation)
     {
         await UiDispatcher.InvokeAsync(() =>
         {
@@ -2019,6 +2172,8 @@ internal static class iOSNativeLayoutCheck
             main.IsControlViewVisible = true;
             main.FileVM.FilterBar.IsSimilarityPanelOpen = similarity;
             main.FileVM.FilterBar.SelectedRatingFilter = "All";
+            main.Settings.LayoutMode = entryLayout;
+            main.Settings.ShowNavigationButtons = entryShowNavigation;
             foreach (var item in main.Settings.ExifDisplayItems)
                 if (entryExif.TryGetValue(item.PropertyName, out bool enabled) && item.IsEnabled != enabled)
                     item.IsEnabled = enabled;
@@ -2159,6 +2314,12 @@ internal static class iOSNativeLayoutCheck
     /// <param name="rect">共享布局矩形。</param>
     /// <returns>UIKit 矩形。</returns>
     private static CGRect ToFrame(LayoutRect rect) => new(rect.X, rect.Y, rect.Width, rect.Height);
+
+    /// <summary>UIKit 安全区 → 共享四边值（左、上、右、下）。</summary>
+    /// <param name="insets">系统安全区或注入值。</param>
+    /// <returns>共享四边值。</returns>
+    private static EdgeInsets Edges(UIEdgeInsets insets)
+        => new((double)insets.Left, (double)insets.Top, (double)insets.Right, (double)insets.Bottom);
 
     /// <summary>核对矩形整体位于安全区内。</summary>
     /// <param name="frame">待核对矩形。</param>

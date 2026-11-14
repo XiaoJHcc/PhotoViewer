@@ -216,6 +216,18 @@ internal static class iOSNativeFaultCheck
             await WaitAsync(() => main.CurrentFile != null, "失败提取素材成为当前照片");
             main.FileVM.FilterBar.IsSimilarityPanelOpen = true;
             var panel = main.FileVM.SimilarityPanel;
+            if (root.Form != ScreenForm.Wide)
+            {
+                // 手机形态没有相似聚类入口（本计划范围外）：面板保持隐藏且不占位，SIM-10 的列表态错误由
+                // 共享 VM 状态承载，仍按同一注入文案核对（停靠区呈现只在宽形态出现）。
+                await WaitAsync(() => panel.ShowActionArea, "相似面板动作区状态");
+                if (!root.SimilarityPane.Hidden)
+                    throw new InvalidOperationException("手机形态不应呈现相似面板");
+                typeof(SimilarityPanelViewModel).GetProperty(nameof(panel.IndexError))!.SetValue(panel, "注入的提取失败");
+                await WaitAsync(() => panel.ShowActionAreaError && panel.IndexError == "注入的提取失败", "列表态错误状态生效");
+                lines.Add("PASS sim10（手机形态）：面板不呈现（无手机入口），共享列表态错误仍按注入文案进入动作区状态");
+                return;
+            }
             await WaitAsync(() => panel.ShowActionArea && !root.SimilarityPane.Hidden, "相似面板动作区出现");
             typeof(SimilarityPanelViewModel).GetProperty(nameof(panel.IndexError))!.SetValue(panel, "注入的提取失败");
             await WaitAsync(() => panel.ShowActionAreaError && !root.SimilarityPane.DockErrorLabel.Hidden, "列表态错误标签生效");

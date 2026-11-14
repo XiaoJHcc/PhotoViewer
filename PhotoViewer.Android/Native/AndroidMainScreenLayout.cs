@@ -42,7 +42,7 @@ internal readonly record struct AndroidWindowInsets(AndroidInsets SystemBars, An
 }
 
 /// <summary>
-/// Android 主屏分区（A3）：与 iOS <c>iOSMainScreenLayout</c> 同一套安全区口径——
+/// Android 主屏分区（A3）：与共享 <c>ShellPaneLayout</c>（iOS 宽形态）同一套安全区口径——
 /// 栏位背景铺满屏幕边缘，内容收在安全区内，主图满幅；行布局栏位在上下、列布局在左右。
 /// 安全区来自 <see cref="AndroidWindowInsets.DeriveSafe"/>：横屏不为手势导航条保留底部空间，
 /// 三键导航与刘海照常扣除。

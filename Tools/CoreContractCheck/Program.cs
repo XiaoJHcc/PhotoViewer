@@ -75,6 +75,7 @@ internal static class Program
             TitleBarLayoutChecks.Run(checks);
             ScreenFormChecks.Run(checks);
             PhoneScreenLayoutChecks.Run(checks);
+            ShellPaneLayoutChecks.Run(checks);
             PhotoViewportChecks.Run(checks);
             MemoryAdmissionChecks.Run(checks);
             AnalysisEditionChecks.RunAsync(checks, root).GetAwaiter().GetResult();

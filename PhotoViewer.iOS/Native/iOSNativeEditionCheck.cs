@@ -205,6 +205,19 @@ internal static class iOSNativeEditionCheck
     private static void VerifyFilterBar(iOSNativeRootViewController root, List<string> lines)
     {
         var bar = root.FilterBar;
+        // 发行版能力与形态无关：先核对该版本应有的相似聚类开关是否创建。
+#if PHOTOVIEWER_DINO
+        if (bar.SimilarityToggle == null)
+            throw new InvalidOperationException("AI 版筛选控件缺少相似聚类开关");
+#else
+        if (bar.SimilarityToggle != null)
+            throw new InvalidOperationException("标准版筛选控件不应创建相似聚类开关");
+#endif
+        if (root.Form != ScreenForm.Wide)
+        {
+            VerifyPhoneFilterEntry(root, lines);
+            return;
+        }
         var frames = bar.Frames;
         if (bar.CombinedGroup.Buttons.Count != 2)
             throw new InvalidOperationException($"筛选合体胶囊不是两个段：{bar.CombinedGroup.Buttons.Count}");
@@ -225,12 +238,10 @@ internal static class iOSNativeEditionCheck
             throw new InvalidOperationException("更多段菜单不是与手机「更多」同源的单个延迟元素");
 #if PHOTOVIEWER_DINO
         if (bar.SimilarityToggle is not { } toggle || toggle.Hidden)
-            throw new InvalidOperationException("AI 版筛选控件缺少相似聚类开关");
+            throw new InvalidOperationException("AI 版宽形态筛选控件缺少相似聚类开关");
         if (Math.Abs((double)toggle.Frame.X - (double)frames.Toggle.X) > 1 || Math.Abs((double)toggle.Frame.Width - (double)frames.Toggle.Width) > 1)
             throw new InvalidOperationException($"AI 版相似聚类开关未按共享矩形落位：{toggle.Frame} vs {frames.Toggle}");
 #else
-        if (bar.SimilarityToggle != null)
-            throw new InvalidOperationException("标准版筛选控件不应创建相似聚类开关");
         if (frames.Toggle.Width > 0 || frames.Toggle.Height > 0)
             throw new InvalidOperationException($"标准版筛选控件不应为相似聚类开关保留矩形：{frames.Toggle}");
 #endif
@@ -241,6 +252,27 @@ internal static class iOSNativeEditionCheck
             throw new InvalidOperationException($"行布局筛选控件主轴长度 {bar.MainLength(true, 0):0.##} ≠ {expected:0.##}");
         lines.Add($"PASS 筛选控件：{iOSAppCapabilities.EditionName} 版{(iOSAppCapabilities.HasDino ? "含" : "无")}相似聚类开关，" +
             $"合体胶囊 2 × 48（筛选段三分组菜单、更多段与手机同源），行布局主轴 {expected:0.##} 点（无计数、无空槽）");
+    }
+
+    /// <summary>
+    /// 手机形态的筛选入口（FILTER-07）：竖屏为单一胶囊、横屏为筛选/更多合体，筛选段弹出与宽形态相同的三分组菜单，
+    /// 更多段承接与主图同源的主图菜单；两种形态都没有计数与空槽。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="lines">报告行。</param>
+    private static void VerifyPhoneFilterEntry(iOSNativeRootViewController root, List<string> lines)
+    {
+        bool portrait = root.Form == ScreenForm.PhonePortrait;
+        var filter = portrait ? root.PhoneFilterButton : root.PhoneFilterSegment;
+        var more = portrait ? root.PhoneMoreButton : root.PhoneMoreSegment;
+        if (filter.Hidden || more.Hidden)
+            throw new InvalidOperationException($"手机形态筛选/更多入口隐藏：筛选={filter.Hidden}，更多={more.Hidden}");
+        if (filter.Menu is not { Children.Length: 3 })
+            throw new InvalidOperationException("手机筛选入口菜单不是三个内联分组");
+        if (more.Menu is not { Children.Length: 1 } menu || menu.Children[0] is not UIDeferredMenuElement)
+            throw new InvalidOperationException("手机更多入口菜单不是与宽形态同源的主图菜单");
+        lines.Add($"PASS 筛选入口（手机{(portrait ? "竖屏单胶囊" : "横屏筛选/更多合体")}）：三分组筛选菜单 + 主图菜单" +
+            $"{(iOSAppCapabilities.HasDino ? "" : "，无相似聚类开关")}，无计数与空槽");
     }
 
 #if PHOTOVIEWER_DINO

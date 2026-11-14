@@ -1338,18 +1338,23 @@ internal sealed class iOSNativeExifSettingsViewController : iOSNativeSettingsFor
 }
 
 /// <summary>
-/// iOS 原生控制设置页：布局模式三选一、控制栏功能勾选排序列表与键盘映射。
-/// 每行与 Mac 单行布局一致：勾选、名称、主/次快捷键按钮、系统拖拽手柄。纯触控只显示勾选、名称与
-/// 拖拽手柄；连接键盘或鼠标后同一行就地出现两个绑定按钮，点按钮进入录制，Delete/Backspace 清空，
-/// 长按菜单「清空」。外设连接变化就地刷新行，不重建页面、不丢工作副本。
+/// iOS 原生控制设置页：布局模式、控制栏功能与键盘映射。
+/// 宽形态命令行与 Mac 单行布局一致；手机形态只列上一张/下一张，沿用蓝色勾选、图标与文字，
+/// 不提供排序或快捷键编辑。宽形态连接键盘或鼠标后就地出现主/次绑定按钮。
 /// </summary>
 internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettingsFormViewController
 {
     private readonly iOSInputCapabilities _capabilities = new();
     private readonly iOSHotkeyRecorder _recorder;
     private readonly Dictionary<SettingsViewModel.HotkeyItem, iOSHotkeyBindingButtons> _bindingButtons = [];
+    internal const string NavigationIconSymbol = "chevron.left.chevron.right";
     private iOSNativeEmbeddedCheckableReorderListView<SettingsViewModel.HotkeyItem>? _hotkeys;
+    private iOSNativeEmbeddedCheckableReorderListView<string>? _navigationList;
     private UIView? _mapping;
+    /// <summary>本次内容构建时的形态（手机形态只保留上下张开关，隐藏快捷键编辑）。</summary>
+    private bool _phoneForm;
+    /// <summary>布局模式订阅是否已挂接（页面重新载入时不重复订阅）。</summary>
+    private bool _layoutModeHooked;
 
     public iOSNativeControlSettingsViewController(SettingsViewModel settings) : base(settings)
     {
@@ -1364,16 +1369,46 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
     /// <summary>快捷键录制器（行内按钮与验收共用）。</summary>
     internal iOSHotkeyRecorder Recorder => _recorder;
 
-    /// <summary>控制栏功能列表（验收读取真实单元格）。</summary>
+    /// <summary>宽形态控制栏命令列表（验收读取真实单元格）。</summary>
     internal iOSNativeEmbeddedCheckableReorderListView<SettingsViewModel.HotkeyItem>? HotkeyList => _hotkeys;
+
+    /// <summary>上一张/下一张显示开关列表（手机形态为控制栏功能的唯一一项）。</summary>
+    internal iOSNativeEmbeddedCheckableReorderListView<string>? NavigationList => _navigationList;
 
     /// <summary>键盘映射分组（验收读取可见性）。</summary>
     internal UIView? KeyboardMappingSection => _mapping;
 
+    /// <summary>设备本身是手机（iPhone）：形态固定为手机，布局选择只列「手机」。</summary>
+    internal static bool IsPhoneDevice => UIDevice.CurrentDevice.UserInterfaceIdiom == UIUserInterfaceIdiom.Phone;
+
+    /// <summary>本页按手机形态排版：iPhone，或工作副本选了「手机」布局（SETTINGS-08）。</summary>
+    internal bool PhoneForm => IsPhoneDevice || Settings.LayoutMode == LayoutMode.Phone;
+
     protected override void BuildContent(UIStackView contentStack)
     {
         Title = "控制";
-        contentStack.AddArrangedSubview(CreateSection("边栏布局位置", null, new iOSLayoutModePicker(Settings)));
+        _phoneForm = PhoneForm;
+        contentStack.AddArrangedSubview(CreateSection("边栏布局位置", null,
+            new iOSLayoutModePicker(Settings, IsPhoneDevice)));
+        _hotkeys = null;
+        _mapping = null;
+        _navigationList = new iOSNativeEmbeddedCheckableReorderListView<string>(
+            itemsProvider: () => ["上一张/下一张"],
+            titleSelector: item => item,
+            subtitleSelector: _ => null,
+            isEnabledGetter: _ => Settings.ShowNavigationButtons,
+            isEnabledSetter: (_, value) => Settings.ShowNavigationButtons = value,
+            moveAction: (_, _) => { },
+            rowHeight: iOSNativeSettingsMetrics.ListRowHeight,
+            cellStyle: UITableViewCellStyle.Default,
+            leadingIconSelector: _ => SymbolIcon(NavigationIconSymbol),
+            showsReorderControls: false);
+        if (_phoneForm)
+        {
+            contentStack.AddArrangedSubview(CreateSection("控制栏功能", null, _navigationList));
+            RefreshCapabilities();
+            return;
+        }
         _hotkeys = new iOSNativeEmbeddedCheckableReorderListView<SettingsViewModel.HotkeyItem>(
             itemsProvider: () => Settings.Hotkeys,
             titleSelector: item => item.Name,
@@ -1385,7 +1420,7 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
             cellStyle: UITableViewCellStyle.Default,
             trailingAccessorySelector: BindingButtons,
             leadingIconSelector: CommandIcon);
-        contentStack.AddArrangedSubview(CreateSection("控制栏功能", null, _hotkeys));
+        contentStack.AddArrangedSubview(CreateSection("控制栏功能", null, _navigationList, _hotkeys));
 
         var rows = new List<UIView>
         {
@@ -1399,17 +1434,36 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
         RefreshCapabilities();
     }
 
-    /// <summary>控制栏功能的命令图标：取命令目录登记的同一条 SF Symbols，与控制栏按钮同一语义。</summary>
-    /// <param name="item">快捷键项。</param>
-    /// <returns>命令行图标；命令目录缺失映射时按共享映射的严格口径抛错。</returns>
-    private static UIImage? CommandIcon(SettingsViewModel.HotkeyItem item)
+    /// <summary>布局模式在页内改成「手机」或改回宽形态时，按新形态重建分组（工作副本，不影响主屏）。</summary>
+    /// <param name="sender">事件源（工作副本）。</param>
+    /// <param name="args">属性变化参数。</param>
+    private void OnLayoutModeChanged(object? sender, PropertyChangedEventArgs args)
     {
-        string? symbol = PhotoViewer.Apple.AppleSymbolNames.ForCommand(item.Command);
-        return symbol == null
+        if (args.PropertyName != nameof(SettingsViewModel.LayoutMode) || PhoneForm == _phoneForm) return;
+        if (NSThread.IsMain) RebuildContent();
+        else BeginInvokeOnMainThread(RebuildContent);
+    }
+
+    /// <summary>订阅工作副本的布局模式变化（整页只订阅一次）。</summary>
+    public override void ViewDidLoad()
+    {
+        base.ViewDidLoad();
+        if (_layoutModeHooked) return;
+        _layoutModeHooked = true;
+        Settings.PropertyChanged += OnLayoutModeChanged;
+    }
+
+    /// <summary>控制栏功能的命令图标：取命令目录登记的同一条 SF Symbols，与控制栏按钮同一语义。</summary>
+    private static UIImage? CommandIcon(SettingsViewModel.HotkeyItem item) => CommandIcon(item.Command);
+
+    private static UIImage? CommandIcon(string command)
+        => SymbolIcon(PhotoViewer.Apple.AppleSymbolNames.ForCommand(command));
+
+    private static UIImage? SymbolIcon(string? symbol)
+        => symbol == null
             ? null
             : UIImage.GetSystemImage(symbol)?.ApplyConfiguration(
                 UIImageSymbolConfiguration.Create((nfloat)PhotoViewer.Core.Design.DesignTokens.ToolbarCommandGlyphFontSize));
-    }
 
     /// <summary>每行的主/次快捷键按钮组：外设连接时创建或复用，纯触控返回 null 表示不显示。</summary>
     internal iOSHotkeyBindingButtons? BindingButtons(SettingsViewModel.HotkeyItem item)
@@ -1514,6 +1568,7 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
     internal void RefreshHotkeyRows()
     {
         RefreshBindingButtons();
+        _navigationList?.RefreshInPlace();
         _hotkeys?.RefreshInPlace();
     }
 
@@ -1564,6 +1619,11 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
     {
         if (disposing)
         {
+            if (_layoutModeHooked)
+            {
+                _layoutModeHooked = false;
+                Settings.PropertyChanged -= OnLayoutModeChanged;
+            }
             _capabilities.Changed -= RefreshCapabilities;
             _recorder.Changed -= RefreshHotkeyRows;
             _recorder.Dispose();
@@ -1663,7 +1723,7 @@ internal static class iOSNativeSettingsMetrics
 }
 
 /// <summary>
-/// iOS 内联可勾选可排序列表视图：勾选位、可选命令图标、标题、可选副标题与系统拖拽手柄；
+/// iOS 内联可勾选列表视图：勾选位、可选命令图标、标题、可选副标题与可选系统拖拽手柄；
 /// 可选的详情按钮（编辑态 ⓘ）与按行高度由调用方提供。
 /// </summary>
 /// <typeparam name="TItem">列表项类型。</typeparam>
@@ -1695,7 +1755,8 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListView<TItem> : UIView
         Func<TItem, bool>? showsDetailButton = null,
         Action<TItem>? detailAction = null,
         Func<TItem, UIView?>? trailingAccessorySelector = null,
-        Func<TItem, UIImage?>? leadingIconSelector = null)
+        Func<TItem, UIImage?>? leadingIconSelector = null,
+        bool showsReorderControls = true)
     {
         _itemsProvider = itemsProvider;
 
@@ -1729,7 +1790,8 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListView<TItem> : UIView
             showsDetailButton,
             detailAction,
             trailingAccessorySelector,
-            leadingIconSelector);
+            leadingIconSelector,
+            showsReorderControls);
         _tableView.Source = _source;
 
         AddSubview(_tableView);
@@ -1805,6 +1867,7 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListSource<TItem> : UITab
     private readonly Action<TItem>? _detailAction;
     private readonly Func<TItem, UIView?>? _trailingAccessorySelector;
     private readonly Func<TItem, UIImage?>? _leadingIconSelector;
+    private readonly bool _showsReorderControls;
 
     /// <summary>
     /// 初始化列表数据源。
@@ -1825,7 +1888,8 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListSource<TItem> : UITab
         Func<TItem, bool>? showsDetailButton,
         Action<TItem>? detailAction,
         Func<TItem, UIView?>? trailingAccessorySelector,
-        Func<TItem, UIImage?>? leadingIconSelector)
+        Func<TItem, UIImage?>? leadingIconSelector,
+        bool showsReorderControls)
     {
         _itemsProvider = itemsProvider;
         _titleSelector = titleSelector;
@@ -1843,6 +1907,7 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListSource<TItem> : UITab
         _detailAction = detailAction;
         _trailingAccessorySelector = trailingAccessorySelector;
         _leadingIconSelector = leadingIconSelector;
+        _showsReorderControls = showsReorderControls;
     }
 
     /// <summary>指定项的行高。</summary>
@@ -1894,7 +1959,7 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListSource<TItem> : UITab
             attributedSubtitle: showsSubtitle ? _attributedSubtitleSelector?.Invoke(item) : null,
             accessibilityValue: _accessibilityValueSelector?.Invoke(item),
             icon: _leadingIconSelector?.Invoke(item));
-        cell.ShowsReorderControl = true;
+        cell.ShowsReorderControl = _showsReorderControls;
         cell.BackgroundColor = UIColor.Clear;
         cell.EditingAccessory = _showsDetailButton?.Invoke(item) == true
             ? UITableViewCellAccessory.DetailButton
@@ -1925,7 +1990,7 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListSource<TItem> : UITab
     /// </summary>
     public override bool CanMoveRow(UITableView tableView, NSIndexPath indexPath)
     {
-        return true;
+        return _showsReorderControls;
     }
 
     /// <summary>
@@ -1966,8 +2031,8 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListSource<TItem> : UITab
 }
 
 /// <summary>
-/// iOS 内联勾选排序列表单元格。
-/// 左侧固定显示勾选位，右侧保留系统拖拽手柄；副标题为空时标题垂直居中。
+/// iOS 内联勾选列表单元格。
+/// 左侧固定显示勾选位，右侧可按列表配置显示系统拖拽手柄；副标题为空时标题垂直居中。
 /// </summary>
 internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
 {

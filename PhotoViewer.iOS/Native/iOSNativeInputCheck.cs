@@ -147,13 +147,20 @@ internal static class iOSNativeInputCheck
     {
         var built = RequirePhotoMenu(root);
         var actions = Flatten(built.Menu);
-        string[] expected = ["photo.open-folder", "photo.film", "photo.analysis", "photo.control", "photo.enhance", "photo.tools", "photo.settings.open"];
+        // MENU-01：手机形态在栏位组末尾多一项 EXIF 开关；宽形态不出现。
+        string[] expected = root.Form == ScreenForm.Wide
+            ? ["photo.open-folder", "photo.film", "photo.analysis", "photo.control", "photo.enhance", "photo.tools", "photo.settings.open"]
+            : ["photo.open-folder", "photo.film", "photo.analysis", "photo.control", "photo.exif", "photo.enhance", "photo.tools", "photo.settings.open"];
         if (!actions.Select(action => action.Id).SequenceEqual(expected))
             throw new InvalidOperationException($"主图菜单项与约定不符：{string.Join(",", actions.Select(action => action.Id))}");
         if (actions.Any(action => !action.HasImage)) throw new InvalidOperationException("主图菜单存在无 SF Symbols 图标的项");
-        if (actions[1].State != State(main.IsThumbnailViewVisible) || actions[2].State != State(main.IsAnalysisViewVisible)
-            || actions[3].State != State(main.IsControlViewVisible) || actions[4].State != State(session.IsEnhanced))
-            throw new InvalidOperationException("主图菜单勾选态与栏位显隐/增强开关不一致");
+        var stateById = actions.ToDictionary(action => action.Id, action => action.State, StringComparer.Ordinal);
+        if (stateById["photo.film"] != State(main.IsThumbnailViewVisible)
+            || stateById["photo.analysis"] != State(main.IsAnalysisViewVisible)
+            || stateById["photo.control"] != State(main.IsControlViewVisible)
+            || stateById["photo.enhance"] != State(session.IsEnhanced)
+            || (root.Form != ScreenForm.Wide && stateById["photo.exif"] != State(main.IsExifViewVisible)))
+            throw new InvalidOperationException("主图菜单勾选态与栏位显隐/增强/EXIF 开关不一致");
         lines.Add($"PASS 主图上下文菜单：{actions.Count} 项（{string.Join(" / ", actions.Select(action => action.Title))}），图标与勾选态正确（I5 入口均可用）");
 
         // MENU-07：无照片时只置灰"雾天增强"，其余项照常可用（工具仍可打开空态）。
@@ -756,6 +763,59 @@ internal static class iOSNativeInputCheck
     /// </summary>
     private static async Task VerifySettingsPropagationAsync(iOSNativeRootViewController root, MainViewModel main, List<string> lines)
     {
+        var list = main.FileVM.ThumbnailList;
+        if (root.Form != ScreenForm.Wide)
+        {
+            // 手机形态（SETTINGS-08、SETTINGS-17）：控制栏功能只列「上一张/下一张」，关闭回写后主屏即时重排；
+            // 宽形态命令与快捷键编辑不显示，已持久化绑定不改写且照常派发。
+            var phone = await OpenSettingsAsync(root, lines);
+            await iOSNativeSettingsCheck.RunAsync(root, phone, lines);
+            await UiDispatcher.InvokeAsync(() => phone.Session.WorkingSettings.ShowNavigationButtons = false);
+            if (root.TryExecuteKey(79, 0)) throw new InvalidOperationException("INPUT-01：设置页展示期间仍派发了照片快捷键");
+            await ApplyAndDismissSettingsAsync(root, phone);
+            await WaitAsync(() => !main.Settings.ShowNavigationButtons && root.PhoneNavigationGroup.Hidden,
+                "显示上下张按钮关闭传播");
+            await SettleAsync(root);
+            lines.Add("PASS 设置写回①（手机形态）：取消勾选「上一张/下一张」→ 主屏上下张合体即时收起；命令与绑定配置未改写");
+            var reopen = await OpenSettingsAsync(root, lines);
+            await UiDispatcher.InvokeAsync(() => reopen.Session.WorkingSettings.ShowNavigationButtons = true);
+            await ApplyAndDismissSettingsAsync(root, reopen);
+            await WaitAsync(() => main.Settings.ShowNavigationButtons && !root.PhoneNavigationGroup.Hidden,
+                "显示上下张按钮打开传播");
+            await UiDispatcher.InvokeAsync(() => list.SelectImageCommand(list.FilteredFiles[0]));
+            await SettleAsync(root);
+            if (!root.TryExecuteKey(79, 0)) throw new InvalidOperationException("手机形态既有快捷键绑定未生效");
+            await WaitAsync(() => list.FilteredFiles.IndexOf(main.CurrentFile!) == 1, "既有绑定执行");
+            lines.Add("PASS 设置写回①（手机形态）：重新打开后上下张合体恢复；既有快捷键绑定照常生效（→ 切下一张）");
+        }
+        else
+        {
+            await VerifyWideSettingsRoundtripAsync(root, main, list, lines);
+        }
+
+        // 第二轮：文件格式筛选反映到胶片栏列表与计数。
+        var second = await OpenSettingsAsync(root, lines);
+        var jpg = second.Session.WorkingSettings.FileFormats.FirstOrDefault(format =>
+            format.Extensions.Contains(".jpg", StringComparer.OrdinalIgnoreCase)) ?? throw new InvalidOperationException("设置里找不到 JPG 格式项");
+        await UiDispatcher.InvokeAsync(() => jpg.IsEnabled = false);
+        await ApplyAndDismissSettingsAsync(root, second);
+        await WaitAsync(() => list.FilteredFiles.Count == 0, "文件格式筛选传播");
+        if (main.Settings.SelectedFormats.Contains(".jpg"))
+            throw new InvalidOperationException("JPG 关闭后仍出现在已选格式中");
+        lines.Add($"PASS 设置写回②：关闭 JPG 后胶片栏筛选列表即时清空（计数 {list.FilteredFiles.Count}），已选格式同步");
+    }
+
+    /// <summary>
+    /// 宽形态设置写回：布局模式、控制栏命令显隐与顺序、快捷键重绑、评分与 EXIF 分组显隐，以及控制栏重建幂等性。
+    /// 手机形态不暴露这些编辑入口，改由 <see cref="VerifySettingsPropagationAsync"/> 的手机分支核对隐藏规则与既有绑定。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="list">胶片栏列表 VM。</param>
+    /// <param name="lines">报告行。</param>
+    private static async Task VerifyWideSettingsRoundtripAsync(iOSNativeRootViewController root, MainViewModel main,
+        PhotoViewer.ViewModels.Main.File.ThumbnailListViewModel list, List<string> lines)
+    {
         // 第一轮：布局模式 / 控制栏命令显隐与顺序 / 快捷键重绑 / 评分与 EXIF 显隐。
         var first = await OpenSettingsAsync(root, lines);
         await iOSNativeSettingsCheck.RunAsync(root, first, lines);
@@ -808,24 +868,12 @@ internal static class iOSNativeInputCheck
         lines.Add("PASS 控制栏重建：EXIF 项/评分/命令显隐连续三轮切换后文档上只有 EXIF 块、玻璃容器内容区只有星级控件与命令玻璃" +
             "（命令组只留逻辑矩形、无旧分组残留），分组零重叠、命令按共享偏移落在命令组矩形内、EXIF 标签/数值文字区域互不重叠");
 
-        var list = main.FileVM.ThumbnailList;
         int index = list.FilteredFiles.IndexOf(main.CurrentFile!);
         if (index < 0 || index + 1 >= list.FilteredFiles.Count) throw new InvalidOperationException("快捷键重绑核对需要中间位置的照片");
         if (root.TryExecuteKey(79, 0)) throw new InvalidOperationException("旧绑定（→）在重绑后仍然命中");
         if (!root.TryExecuteKey(62, 0)) throw new InvalidOperationException("重绑后的 F5 未执行下一张");
         await WaitAsync(() => list.FilteredFiles.IndexOf(main.CurrentFile!) == index + 1, "重绑快捷键执行");
         lines.Add("PASS 设置写回①：重绑立即生效——→ 不再命中，F5 执行下一张");
-
-        // 第二轮：文件格式筛选反映到胶片栏列表与计数。
-        var second = await OpenSettingsAsync(root, lines);
-        var jpg = second.Session.WorkingSettings.FileFormats.FirstOrDefault(format =>
-            format.Extensions.Contains(".jpg", StringComparer.OrdinalIgnoreCase)) ?? throw new InvalidOperationException("设置里找不到 JPG 格式项");
-        await UiDispatcher.InvokeAsync(() => jpg.IsEnabled = false);
-        await ApplyAndDismissSettingsAsync(root, second);
-        await WaitAsync(() => list.FilteredFiles.Count == 0, "文件格式筛选传播");
-        if (main.Settings.SelectedFormats.Contains(".jpg"))
-            throw new InvalidOperationException("JPG 关闭后仍出现在已选格式中");
-        lines.Add($"PASS 设置写回②：关闭 JPG 后胶片栏筛选列表即时清空（计数 {list.FilteredFiles.Count}），已选格式同步");
     }
 
     /// <summary>

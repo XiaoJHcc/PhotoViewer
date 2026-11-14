@@ -96,7 +96,7 @@
 13. **布局模式增加"手机"**（需求 3），与上下/左右/自动并列。
     - "手机"选项由平台能力开关控制，只在实现了手机形态的平台出现（本计划内只有 iOS）。
     - Mac/Windows 读到该值时按自动处理。
-    - iPhone 上隐藏整个布局模式分组，固定为手机。
+    - iPhone 上保留布局模式分组，但只列并选中「手机」，形态固定为手机。
 14. **规范落地策略**：
     - 已确定的规则直接按目标态写进 `Design/spec/`，其他平台在 `status.md` 记"待实现"，这是 Design/README §6 的既有流程。
     - 仍在试的点（含第 3 条图区避让）写在本计划，到确认后才升格进规范。
@@ -458,8 +458,8 @@ EXIF 开关关闭时筛选与更多上移到灵动岛/刘海两旁的显示区�
 
 - **卡片长按**（已提前在 U3 完成，U4 只做复核与套件收口）：大小两档卡片长按都弹出 U2 的星级弹窗，可以从长按直接滑动选择；条目按 RATING-04 格式显示文件名，冲突时逐条列出来源。指针辅助点按卡片同样打开。卡片上下文菜单删除。
 - **设置**：
-  - 布局模式四选一，iPhone 上隐藏该分组。
-  - 新增"显示上下张按钮"开关：
+  - 布局模式四选一；iPhone 保留分组但只列并选中「手机」。
+  - 「控制栏功能」新增"上一张/下一张"单项，沿用蓝色勾选、图标与文字，无排序把手：
     - 竖屏关闭后左侧让出空间，够宽时星级显示完整星排，右侧只留缩放适应和雾天增强；
     - 横屏关闭后只隐藏刘海侧左下角的上下张，控制列不变。
   - 用户选了手机布局或设备是 iPhone 时，不显示控制栏功能自定义；快捷键与键盘映射编辑按第 3 节第 9 条最简处理；既有绑定照常生效。
@@ -486,6 +486,48 @@ EXIF 开关关闭时筛选与更多上移到灵动岛/刘海两旁的显示区�
   范围：PhotoViewer.iOS、PhotoViewer.Shared、PhotoViewer/Core、PhotoViewer/ViewModels、Tools、Design、Plans。
   停止：某个既有行为在新结构下无法保持（例如某条 FILM 或 RATING 规则），记录冲突与可选方案，停下等作者裁定，不静默删除断言。
   ```
+
+**执行结论**：
+
+- 旧分区计算迁入共享 `ShellPaneLayout`（`SafeInsets` + `Partition`，栏位背景铺窗口缘、内容收安全区、分析/控制相邻时消除内部隔线），删除 `PhotoViewer.iOS/Native/iOSMainScreenLayout.cs`；根控制器与 layout/form 验收共用同一函数，宽形态与手机形态分别只读 `ShellPaneLayout` 与 `PhoneScreenLayout`。
+- 设置：控制页保留「边栏布局位置」，iPhone 只列并勾选「手机」，其他设备保留全部选项以便切回；「上一张/下一张」并入「控制栏功能」，复用蓝色勾选、文字与 52 点行高，图标取 `chevron.left.chevron.right`，单项无排序把手，手机形态只列这一项，宽形态与可排序命令同组。手机形态不创建宽形态命令排序与键盘映射（含行内绑定按钮），配置与已持久化绑定保留，页内切换形态就地重建分组；点行写共享 `ShowNavigationButtons`，关闭回写经 `Layout` 影响位即时重排——竖屏底行合体收起、让出的长度并入星级，横屏只收刘海侧上下张、控制列几何不变。
+- 输入与菜单：更多菜单与主图长按菜单同源、手机形态栏位组末尾多一项 EXIF；卡片长按/辅助点按打开星级弹窗、无上下文菜单；导航图、状态提示条、计算中药丸与加载浮层按 `FitRect` 落位（U3 已实现，本轮 layout/gesture 套件复验）。
+- 套件改写为新结构：layout 在手机形态改核共享槽位与上下张两态；input 在手机形态改核 iPhone 单选布局、控制栏功能单项列表、上下张传播与既有绑定派发；analysis 改核适应区让位、手机竖横屏瓦片轴与手机交叉轴；similarity/faults 在手机形态核"无入口、面板不呈现、共享状态照常"；edition 在手机形态核筛选入口与主图菜单；gesture 修正两处旧前提——半倍率时照片纵向小于适应区、该轴不可平移（改断言切图前真实可达中心），双击/捏合锚点改取照片显示矩形内的偏心点并先核对物理 100% 下可平移；input 既有「控制栏重建」失败已随结构改写消除。
+
+**验收证据**（模拟器 iOS 26.3；报告与截图在 `artifacts/acceptance/new-ui/u4/`）：
+
+| 套件 | iPad Pro 13 标准 / AI | iPhone 17 标准 / AI |
+|---|---|---|
+| photo | 13 / 13 | 13 / 13 |
+| gesture | 29 / 29 | 29 / 29 |
+| layout | 40 / 40 | 21 / 21 |
+| input | 57 / 57 | 50 / 50 |
+| analysis | 19 / 18 | 19 / 18 |
+| similarity | — / 10 | — / 2（手机形态无入口） |
+| tools | 14 / 14 | 14 / 14 |
+| faults | 8 / 9 | 8 / 9 |
+| edition | 5 / 9 | 5 / 9 |
+| form | 104 / 104 | 55 / 55 |
+| rating-control | 29 / 29 | 30 / 30 |
+
+- 含卡片长按评分（layout 的 Began/滑动/越界/辅助点按四段、rating-control 的入口与写回）与「显示上下张按钮」两态（layout 手机外壳、form 组合矩阵、rating-control 竖屏两态）。
+- iOS Release `ios-arm64` 两版 0 错误；`bash PhotoViewer.iOS/publish.sh --edition both --local` 通过（包扫描、IPA 生成、两版证据 JSON）。
+- CoreContractCheck 标准版 1943 / AI 版 1959 PASS，均 0 FAIL、1 非 Windows 路径 SKIP；新增共享 `ShellPaneLayout` 契约 19 项。令牌校验通过，Web 单测 344 项通过，Mac 标准版 layout / filmstrip 冒烟 PASS，Windows 类型检查 0 错误。
+- 零命中：`iOSFilterBar` / `iOSControlBar` / `iOSMainScreenLayout` / `iOSRatingSourcesPopover` / 卡片上下文菜单构建入口 / 阶段占位视图类名在代码中零命中；`PhotoViewer.iOS/` 与 `PhotoViewer.Apple/` 无 `IsIOSVersionAtLeast` 分支。手调外观仅剩自绘控件（提示条、诊断瓦片、相似面板外壳、细节预览、卡片、EXIF 块、DINO 诊断文本块、导航图/药丸、设置卡片）与星级弹窗徽标，没有系统控件手调圆角/阴影/模糊。
+- 截图：原形态截图在 `artifacts/acceptance/new-ui/u4/`；控制设置页调整后的截图与复跑报告在 `artifacts/acceptance/new-ui/u4-settings-refinement/`，包含 iPhone 单选「手机」及控制栏功能里的上一张/下一张单项列表。
+
+**本轮明确延期**（不宣称 U6 完成）：
+
+- FILTER-04 计数进筛选控件：后置到 U5 专项，本次未做计数 UI。
+- FILTER-08 细节：菜单展开期间的屏上勾选刷新与滚动保持仍为缺口；实际筛选结果正确、菜单重开后状态正确已由 input/layout 覆盖，视觉细节后置。
+- 星级控件触感、动效、与相邻玻璃的融合观感、VoiceOver 实际朗读等细磨后置；单次写回、冲突来源、失败恢复、触摸/指针分流与长按评分均未削弱。
+- iPad mini 1/3 分屏只容 3 张：已记录的既有例外，继续保持延期。
+- 真机旋转/分屏/台前调度、外设手感与 Release 观感仍待作者手验。
+
+**未覆盖与阻塞**：
+
+- Android：本机未安装 android workload（`NETSDK1147`），本轮无法构建最终树；此前记录的 `AndroidNativeSettingsPresenter` 中 `LayoutMode.Auto` 在源码中为完整限定写法，本环境无法复现，也未做临时绕过或扩大重构。
+- Android 仅一处注释指向共享 `ShellPaneLayout`，无行为改动。
 
 ### U5 筛选控件专项：计数进筛选按钮（未开始）
 

@@ -138,7 +138,14 @@ internal static class iOSNativeGestureCheck
                 VerifyNavigationIndicator(root, visible: false, lines);
 
                 // 一、真实捏合路径：SetZoomScale + 按 UIKit 语义调整 contentOffset，再逐帧断言屏幕锚点。
-                var pinchCenter = new CGPoint((double)root.Photo.Bounds.Width * .68, (double)root.Photo.Bounds.Height * .62);
+                // 捏合点取照片显示矩形内的偏心位置：按视口高度取点会在照片较矮时落到照片边缘之外，
+                // 目标倍率下锚点本来就会被平移极限钳制，锚点保持无从谈起。
+                var fitState = await UiDispatcher.InvokeAsync(() => (Fit: root.Photo.FitRect,
+                    Scale: root.Photo.Viewport.FitScale, Image: root.Photo.Viewport.ImageWidth,
+                    ImageH: root.Photo.Viewport.ImageHeight));
+                var pinchCenter = new CGPoint(
+                    (double)fitState.Fit.GetMidX() + fitState.Image * fitState.Scale * .1,
+                    (double)fitState.Fit.GetMidY() + fitState.ImageH * fitState.Scale * .05);
                 var anchorBefore = await UiDispatcher.InvokeAsync(() => root.Photo.ImagePointAt(pinchCenter));
                 // 目标 zoom 必须越过大屏/小屏布局下各自的"物理 100%"门槛，否则不会触发 Full 热替换（横屏真机视口更扁）。
                 double zoomTarget = await UiDispatcher.InvokeAsync(() =>
@@ -253,11 +260,12 @@ internal static class iOSNativeGestureCheck
                 // 七、双击：适应 → 以触点物理 100%，触点下的图像点保持；再双击回适应并隐藏导航图。
                 await UiDispatcher.InvokeAsync(() => root.Photo.FitToView());
                 await SettleAsync(root);
-                var tapPoint = new CGPoint((double)root.Photo.Bounds.Width * .62, (double)root.Photo.Bounds.Height * .58);
+                var tapPoint = await AnchorPointAsync(root, .1, -.05);
                 var tapAnchor = await UiDispatcher.InvokeAsync(() => root.Photo.ImagePointAt(tapPoint));
                 await UiDispatcher.InvokeAsync(() => root.Photo.DoubleTapAt(tapPoint));
                 await WaitAsync(() => Math.Abs(root.Photo.PhysicalScale - 1) < .03, "双击放大到物理 100%");
                 await SettleAsync(root);
+                await RequireCenterableAnchorAsync(root, tapAnchor, "双击");
                 var tapAnchorAfter = await UiDispatcher.InvokeAsync(() => root.Photo.ImagePointAt(tapPoint));
                 AssertImagePoint(tapAnchor, tapAnchorAfter, 2.5, root.Photo, "双击后触点下的图像点");
                 await AssertScrollInvariantsAsync(root, "双击后");
@@ -329,20 +337,30 @@ internal static class iOSNativeGestureCheck
                 await SettleAsync(root);
                 await UiDispatcher.InvokeAsync(() => root.Photo.CenterOnNormalizedPoint(.6, .58));
                 await SettleAsync(root);
+                // 50% 时照片纵向显示高度小于适应区高度，该轴没有平移余量、只能居中：请求中心只有能平移的轴可以到达。
+                // 切图前记下真实可达中心，切图与升 Full 后都必须逐项保持（不做轴间降级，两个轴分别核对）。
+                var halfTarget = await UiDispatcher.InvokeAsync(() => root.Photo.Viewport.CenterUV);
+                if (Math.Abs(halfTarget.U - .6) > .01)
+                    throw new InvalidOperationException($"半倍率横向中心未到达请求值：{halfTarget.U:0.####}");
+                if (Math.Abs(halfTarget.V - .58) > .01)
+                    lines.Add($"NOTE 半倍率切图：50% 时照片纵向小于适应区、该轴不可平移，请求中心 0.58 钳到 {halfTarget.V:0.###}；" +
+                        "断言改为保持切图前真实可达中心");
                 await SelectFileAsync(main, session, secondLarge, "切到第三张大色卡");
                 await SettleAsync(root);
                 var half = await UiDispatcher.InvokeAsync(() => (Scale: root.Photo.PhysicalScale, Proxy: session.IsProxy,
                     Center: root.Photo.Viewport.CenterUV));
                 if (Math.Abs(half.Scale - .5) > .02) throw new InvalidOperationException($"半倍率切图未保持倍率：{half.Scale:0.###}");
-                if (Math.Abs(half.Center.U - .6) > .01 || Math.Abs(half.Center.V - .58) > .01)
-                    throw new InvalidOperationException($"半倍率切图未保持归一化中心：({half.Center.U:0.####},{half.Center.V:0.####})");
+                if (Math.Abs(half.Center.U - halfTarget.U) > .01 || Math.Abs(half.Center.V - halfTarget.V) > .01)
+                    throw new InvalidOperationException(
+                        $"半倍率切图未保持归一化中心：({halfTarget.U:0.####},{halfTarget.V:0.####}) → ({half.Center.U:0.####},{half.Center.V:0.####})");
                 if (!half.Proxy) throw new InvalidOperationException($"半倍率切图应落代理档，实际已是非代理（{session.Image?.Width}×{session.Image?.Height}）");
                 await UiDispatcher.InvokeAsync(() => root.Photo.ZoomToPhysical(1));
                 await WaitAsync(() => !session.IsProxy && Math.Abs(root.Photo.PhysicalScale - 1) < .02, "切图后放大触发 Full");
                 await SettleAsync(root);
                 var upgraded = await UiDispatcher.InvokeAsync(() => root.Photo.Viewport.CenterUV);
-                if (Math.Abs(upgraded.U - .6) > .01 || Math.Abs(upgraded.V - .58) > .01)
-                    throw new InvalidOperationException($"代理→Full 热替换移动了视口中心：({upgraded.U:0.####},{upgraded.V:0.####})");
+                if (Math.Abs(upgraded.U - half.Center.U) > .01 || Math.Abs(upgraded.V - half.Center.V) > .01)
+                    throw new InvalidOperationException(
+                        $"代理→Full 热替换移动了视口中心：({half.Center.U:0.####},{half.Center.V:0.####}) → ({upgraded.U:0.####},{upgraded.V:0.####})");
                 await AssertScrollInvariantsAsync(root, "切图后升 Full");
                 lines.Add($"PASS 半倍率切图：代理档落地并保持中心 ({upgraded.U:0.###},{upgraded.V:0.###})，升 Full 不移动视口");
 
@@ -856,8 +874,14 @@ internal static class iOSNativeGestureCheck
         if (!root.Photo.IsFit)
             throw new InvalidOperationException("冷启动首图不是适应态（启动后不应带任何缩放）");
         var start = await UiDispatcher.InvokeAsync(() => (Physical: root.Photo.PhysicalScale,
-            Image: session.Image!, Bounds: root.Photo.Bounds.Size));
-        var tap = new CGPoint((double)start.Bounds.Width * .62, (double)start.Bounds.Height * .58);
+            Image: session.Image!, Bounds: root.Photo.Bounds.Size, Fit: root.Photo.FitRect,
+            FitScale: root.Photo.Viewport.FitScale));
+        // 锚点取照片显示矩形内的一处偏心位置（不是视口分数）：这样在物理 100% 下仍落在可平移范围内，
+        // 「触点下的图像点保持」才有意义；按视口高度取点会在照片较矮时落到照片下缘之外、进入钳制区。
+        double displayedWidth = start.Image.Width * start.FitScale;
+        double displayedHeight = start.Image.Height * start.FitScale;
+        var tap = new CGPoint((double)start.Fit.GetMidX() + displayedWidth * .1,
+            (double)start.Fit.GetMidY() - displayedHeight * .05);
         if (start.Physical >= .99)
         {
             // 预览尺寸素材（iOS RAW 走 ImageIO 内嵌预览，1616×1080 在 iPad 上适应态就已 ≥ 物理 100%）：
@@ -889,6 +913,7 @@ internal static class iOSNativeGestureCheck
         if (state.Max < expectedZoom - 1e-3)
             throw new InvalidOperationException($"滚动视图最大缩放 {state.Max:0.####} 小于物理 100% 目标 {expectedZoom:0.####}");
         var after = await UiDispatcher.InvokeAsync(() => root.Photo.ImagePointAt(tap));
+        await RequireCenterableAnchorAsync(root, anchor, "冷启动首图双击");
         AssertImagePoint(anchor, after, 2.5, root.Photo, "冷启动首图双击后触点下的图像点");
         await AssertScrollInvariantsAsync(root, "冷启动首图双击后");
         if (root.NavigationHost.Hidden) throw new InvalidOperationException("冷启动首图双击到 100% 后导航图未显示");
@@ -982,9 +1007,42 @@ internal static class iOSNativeGestureCheck
             if (format.DisplayName == "JPG") format.IsEnabled = true;
     }
 
+    /// <summary>照片显示矩形内的一处偏心点（视口坐标）：物理 100% 下锚点仍落在可平移范围内。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="dx">相对照片显示宽的横向偏移比例。</param>
+    /// <param name="dy">相对照片显示高的纵向偏移比例。</param>
+    /// <returns>视口坐标中的点。</returns>
+    private static async Task<CGPoint> AnchorPointAsync(iOSNativeRootViewController root, double dx, double dy)
+    {
+        var state = await UiDispatcher.InvokeAsync(() => (Fit: root.Photo.FitRect, Scale: root.Photo.Viewport.FitScale,
+            Width: root.Photo.Viewport.ImageWidth, Height: root.Photo.Viewport.ImageHeight));
+        return new CGPoint((double)state.Fit.GetMidX() + state.Width * state.Scale * dx,
+            (double)state.Fit.GetMidY() + state.Height * state.Scale * dy);
+    }
+
     /// <summary>
-    /// 按 UIKit 捏合语义一步缩放：先 SetZoomScale（触发 DidZoom），再按"手指下的内容点不动"调整 contentOffset
-    /// （触发 Scrolled）。这正是真实捏合过程中 UIKit 对滚动视图做的事，用来替代旧检查里只写 zoomScale 的假捏合。
+    /// 物理 100% 下锚点的可保持性前提：锚点须落在可平移范围（两端各让出半视口对应的图像比例）；
+    /// 越界时平移极限会先钳制偏移、锚点保持无从谈起，属于验收前提不成立，而不是产品回归。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="anchor">图像归一化锚点。</param>
+    /// <param name="label">报错标签。</param>
+    private static async Task RequireCenterableAnchorAsync(iOSNativeRootViewController root, (double U, double V) anchor, string label)
+    {
+        var geometry = await UiDispatcher.InvokeAsync(() => (Scale: root.Photo.Viewport.Scale,
+            FitW: root.Photo.Viewport.FitWidth, FitH: root.Photo.Viewport.FitHeight,
+            ImageW: root.Photo.Viewport.ImageWidth, ImageH: root.Photo.Viewport.ImageHeight));
+        double halfU = geometry.FitW / 2 / Math.Max(1e-9, geometry.ImageW * geometry.Scale);
+        double halfV = geometry.FitH / 2 / Math.Max(1e-9, geometry.ImageH * geometry.Scale);
+        if (anchor.U < halfU - 1e-6 || anchor.U > 1 - halfU + 1e-6 || anchor.V < halfV - 1e-6 || anchor.V > 1 - halfV + 1e-6)
+            throw new InvalidOperationException(
+                $"{label}锚点 ({anchor.U:0.####},{anchor.V:0.####}) 不在 100% 可平移范围" +
+                $"（U {halfU:0.###}–{1 - halfU:0.###}、V {halfV:0.###}–{1 - halfV:0.###}），验收前提不成立");
+    }
+
+    /// <summary>
+    /// 按 UIKit 捏合语义一步缩放：先 SetZoomScale（触发 DidZoom 与居中内边距重算），再按"手指下的图像点不动"
+    /// 写入 contentOffset（触发 Scrolled）；倍率被缩放上限夹住时按实际生效倍率计算，偏移夹在可滚动范围内。
     /// </summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="pinchCenter">捏合中心（主图视图坐标）。</param>
@@ -995,16 +1053,20 @@ internal static class iOSNativeGestureCheck
         return await UiDispatcher.InvokeAsync(() =>
         {
             var scroll = root.Photo.ScrollView;
-            double from = Math.Max(1e-6, (double)scroll.ZoomScale);
-            // 手指下的内容点（zoomScale=from 时的内容坐标）。
-            var content = new CGPoint(
-                ((double)pinchCenter.X + (double)scroll.ContentOffset.X) / from,
-                ((double)pinchCenter.Y + (double)scroll.ContentOffset.Y) / from);
+            // 手指下的图像点（UV）：缩放前后都按图像坐标表达，避免缩放回调重算居中内边距后，
+            // 旧口径的内容坐标把偏移写进可滚动范围之外。
+            var anchor = root.Photo.ImagePointAt(pinchCenter);
             scroll.SetZoomScale((nfloat)targetZoom, false);
+            // 缩放上限就是物理 100%：请求更大的倍率会被系统夹住，偏移按实际生效倍率与缩放后的内边距计算。
+            double applied = (double)scroll.ZoomScale;
+            double width = (double)scroll.ContentSize.Width, height = (double)scroll.ContentSize.Height;
+            var insets = scroll.ContentInset;
+            double minX = -(double)insets.Left, maxX = Math.Max(minX, width - (double)scroll.Bounds.Width + (double)insets.Right);
+            double minY = -(double)insets.Top, maxY = Math.Max(minY, height - (double)scroll.Bounds.Height + (double)insets.Bottom);
             scroll.SetContentOffset(new CGPoint(
-                (double)content.X * targetZoom - (double)pinchCenter.X,
-                (double)content.Y * targetZoom - (double)pinchCenter.Y), false);
-            return (double)scroll.ZoomScale;
+                Math.Clamp(anchor.U * width - (double)pinchCenter.X, minX, maxX),
+                Math.Clamp(anchor.V * height - (double)pinchCenter.Y, minY, maxY)), false);
+            return applied;
         });
     }
 
@@ -1047,7 +1109,8 @@ internal static class iOSNativeGestureCheck
             double x = (double)scroll.ContentOffset.X, y = (double)scroll.ContentOffset.Y;
             if (x < minX - SizeTolerance || x > maxX + SizeTolerance || y < minY - SizeTolerance || y > maxY + SizeTolerance)
                 throw new InvalidOperationException(
-                    $"{stage} contentOffset ({x:0.##},{y:0.##}) 超出合法范围 [{minX:0.##},{maxX:0.##}]×[{minY:0.##},{maxY:0.##}]");
+                    $"{stage} contentOffset ({x:0.##},{y:0.##}) 超出合法范围 [{minX:0.##},{maxX:0.##}]×[{minY:0.##},{maxY:0.##}]" +
+                    $"（contentSize {scroll.ContentSize}、bounds {scroll.Bounds.Size}、insets T{insets.Top:0.##} L{insets.Left:0.##} B{insets.Bottom:0.##} R{insets.Right:0.##}、zoom {zoom:0.####}）");
             if ((double)content.Frame.Width <= 0 || (double)content.Frame.Height <= 0)
                 throw new InvalidOperationException($"{stage} 缩放内容视图尺寸非法：{content.Frame}");
         });
@@ -1064,7 +1127,14 @@ internal static class iOSNativeGestureCheck
         {
             if (root.Photo.IsFit != true) throw new InvalidOperationException("适应态判定异常：导航图隐藏但不是适应态");
             lines.Add("PASS 导航图：适应态隐藏（与旧壳缩放指示器一致）");
+            return;
         }
+        // 导航图贴主图适应区右下角：宿主必须完整落在适应区内（栏位与裸按钮是浮层，指示器不能压上去）。
+        var fit = root.Photo.FitRect;
+        var host = root.NavigationHost.Frame;
+        if ((double)host.X < (double)fit.X - 1 || (double)host.Y < (double)fit.Y - 1
+            || (double)host.GetMaxX() > (double)fit.GetMaxX() + 1 || (double)host.GetMaxY() > (double)fit.GetMaxY() + 1)
+            throw new InvalidOperationException($"导航图宿主越出主图适应区：{host} / {fit}");
     }
 
     /// <summary>图层上是否有运行中的动画（隐式或显式），用于核对导航指示器没有过渡、缩放动画仍在播。</summary>

@@ -98,6 +98,29 @@ internal static class iOSNativeSimilarityCheck
                 if (root.FilterBar.SimilarityToggle!.Hidden) throw new InvalidOperationException("相似聚类 toggle 仍被隐藏（SCOPE-01 应解禁）");
                 lines.Add($"PASS 素材：{fixtures.Length} 张自有夹具 → 工作副本 {workspace}");
 
+                if (root.Form != ScreenForm.Wide)
+                {
+                    // 手机形态按需求不提供相似聚类入口（本计划范围外）：宽形态筛选控件与面板都不呈现，
+                    // 共享开关照常往返、展开时不占主图空间；面板几何/停靠区/提取/点选覆盖由宽形态分支保持。
+                    filter.IsSimilarityPanelOpen = false;
+                    await SettleAsync(root);
+                    if (!panel.Hidden) throw new InvalidOperationException("手机形态收起时相似面板应为隐藏");
+                    double fitWidth = (double)root.Photo.FitRect.Width;
+                    filter.IsSimilarityPanelOpen = true;
+                    await SettleAsync(root);
+                    if (!panel.Hidden) throw new InvalidOperationException("手机形态不应呈现相似聚类面板");
+                    if (Math.Abs((double)root.Photo.FitRect.Width - fitWidth) > .5)
+                        throw new InvalidOperationException("手机形态相似开关改变了主图适应区（面板不应占位）");
+                    if (!root.FilterBar.Hidden)
+                        throw new InvalidOperationException("手机形态不应呈现宽形态筛选控件（相似聚类开关随其一并隐藏）");
+                    if (!filter.IsSimilarityPanelOpen)
+                        throw new InvalidOperationException("手机形态相似开关未写共享状态");
+                    lines.Add("PASS 手机形态：无相似聚类入口与面板（宽形态筛选控件/开关不呈现），共享开关照常往返且展开不占主屏空间");
+                    await File.WriteAllLinesAsync(report, lines);
+                    Console.WriteLine($"[NativeSmoke] PASS similarity ({lines.Count} checks)");
+                    return;
+                }
+
                 // 一、toggle 与共享状态双向一致 + 真实点击开合。
                 filter.IsSimilarityPanelOpen = false;
                 await SettleAsync(root);

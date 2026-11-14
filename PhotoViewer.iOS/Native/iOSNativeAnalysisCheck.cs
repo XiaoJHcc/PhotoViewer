@@ -5,6 +5,7 @@ using PhotoViewer.Apple;
 using PhotoViewer.Core;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Color;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Settings;
@@ -131,12 +132,13 @@ internal static class iOSNativeAnalysisCheck
                         $"enabled=[{string.Join(",", enabled)}] bar=[{string.Join(",", root.ControlBar.Commands.Keys)}] " +
                         $"controlVisible={main.IsControlViewVisible} hidden={root.ControlBar.Hidden}");
                 }
-                double baselinePhoto = root.PhotoMainLength(true);
+                // 浮层外壳下主图视图恒铺满舞台：分析栏让出的是主图适应区，不是主图分区。
+                double baselinePhoto = (double)root.Photo.FitRect.Height;
                 await UiDispatcher.InvokeAsync(() => analysisButton.SendActionForControlEvents(UIControlEvent.TouchUpInside));
                 await WaitAsync(() => main.IsAnalysisViewVisible && !root.AnalysisPane.Hidden, "控制栏命令打开分析栏");
                 await SettleAsync(root);
-                if (root.PhotoMainLength(true) >= baselinePhoto)
-                    throw new InvalidOperationException("分析栏显示后主图未让出空间");
+                if ((double)root.Photo.FitRect.Height >= baselinePhoto)
+                    throw new InvalidOperationException("分析栏显示后主图适应区未让出空间");
                 lines.Add("PASS 入口：主图菜单含分析栏，控制栏 ToggleAnalysisView 真实点击后分析栏显示且主图让位");
 
                 // 二、瓦片顺序与角标（标准版无 DINO PCA / Cosine）。
@@ -161,13 +163,21 @@ internal static class iOSNativeAnalysisCheck
                     throw new InvalidOperationException("诊断瓦片背景层未压暗到 alpha 0.30");
                 lines.Add($"PASS 诊断瓦片：{diagnostics.Length} 张诊断瓦片最近邻放大 + 背景 alpha 0.30");
 
-                // 三、两向几何（显式布局模式）。
-                VerifyGeometry(root, row: true, lines);
-                await UiDispatcher.InvokeAsync(() => main.Settings.LayoutMode = LayoutMode.Col);
-                await SettleAsync(root);
-                VerifyGeometry(root, row: false, lines);
-                await UiDispatcher.InvokeAsync(() => main.Settings.LayoutMode = LayoutMode.Row);
-                await SettleAsync(root);
+                // 三、两向几何（显式布局模式；手机形态的轴向由屏幕方向决定，布局模式不参与）。
+                if (root.Form == ScreenForm.Wide)
+                {
+                    VerifyGeometry(root, row: true, lines);
+                    await UiDispatcher.InvokeAsync(() => main.Settings.LayoutMode = LayoutMode.Col);
+                    await SettleAsync(root);
+                    VerifyGeometry(root, row: false, lines);
+                    await UiDispatcher.InvokeAsync(() => main.Settings.LayoutMode = LayoutMode.Row);
+                    await SettleAsync(root);
+                }
+                else
+                {
+                    VerifyGeometry(root, row: root.Form == ScreenForm.PhonePortrait, lines);
+                    lines.Add($"NOTE 分析栏几何：手机形态轴向由屏幕方向决定（{root.Form}），布局模式不参与；另一朝向由 form 检查的旋转用例覆盖");
+                }
 
                 await UiDispatcher.InvokeAsync(() =>
                 {
@@ -304,10 +314,11 @@ internal static class iOSNativeAnalysisCheck
                 menu.Handlers["photo.analysis"]();
                 await WaitAsync(() => !main.IsAnalysisViewVisible && root.AnalysisPane.Hidden, "菜单关闭分析栏");
                 await SettleAsync(root);
-                if (Math.Abs(root.PhotoMainLength(true) - baselinePhoto) > 1)
-                    throw new InvalidOperationException($"关闭后主图未恢复占满：{root.PhotoMainLength(true)} 基线 {baselinePhoto}");
+                if (Math.Abs((double)root.Photo.FitRect.Height - baselinePhoto) > 1)
+                    throw new InvalidOperationException(
+                        $"关闭后主图适应区未恢复：{(double)root.Photo.FitRect.Height:0.##} 基线 {baselinePhoto:0.##}");
                 if (root.DetailHighlightVisible) throw new InvalidOperationException("关闭分析栏后主图绿框未收起");
-                lines.Add("PASS 关闭：主图恢复原始高度，绿框收起");
+                lines.Add("PASS 关闭：主图适应区恢复原始长度，绿框收起");
 
                 await RestoreAsync(root, main, snapshot, entryAnalysis, entryFilm, entryControl, entrySimilarity, entryAnalysisDisplay, entryEnhanceDisplay, originalFile);
                 await File.WriteAllLinesAsync(report, lines);
@@ -439,24 +450,47 @@ internal static class iOSNativeAnalysisCheck
         if (tiles.Count < minimumTiles) throw new InvalidOperationException($"分析栏瓦片数不足：{tiles.Count}");
         var bounds = root.View!.Bounds;
         var safe = root.View.SafeAreaInsets;
-        double available = row
-            ? (double)bounds.Width - (double)safe.Left - (double)safe.Right
-            : (double)bounds.Height - (double)safe.Top - (double)safe.Bottom;
+        bool phone = root.Form != ScreenForm.Wide;
+        bool portrait = root.Form == ScreenForm.PhonePortrait;
+        var input = root.PhoneSlotsInput;
+        // 左右布局（含手机横屏）的分析栏内容纵贯窗口全高，顶部/底部安全区只推瓦片起点、不缩主轴；
+        // 上下布局与手机竖屏的内容才收在安全区内（SHELL-11）。
+        double available = phone
+            ? portrait
+                ? (double)bounds.Width - input.Safe.Left - input.Safe.Right
+                : (double)bounds.Height - input.Safe.Top - input.Safe.Bottom
+            : row
+                ? (double)bounds.Width - (double)safe.Left - (double)safe.Right
+                : (double)bounds.Height;
         double expected = AnalysisPanelGeometry.TileSize(available, tiles.Count);
         var panes = root.Panes;
-        double cross = row ? (double)panes.Analysis.Height : (double)panes.Analysis.Width;
-        // 与控制栏相邻时工具区共用一条接缝（8），否则两侧各一份面板内边距（10）。
-        bool joined = !root.ControlScroll.Hidden;
-        double expectedCross = ToolRegionGeometry.AnalysisWidth(expected, joined);
+        var slots = root.PhoneSlots;
+        double cross = phone
+            ? portrait ? (double)slots.Analysis.Height : (double)slots.Analysis.Width
+            : row ? (double)panes.Analysis.Height : (double)panes.Analysis.Width;
+        // 竖屏分析栏在顶行下方，两侧各留一份行内间距；其余形态与控制内容相邻时共用接缝 8，独立时两侧各 10。
+        bool joined = phone ? !portrait && input.ControlVisible : !root.ControlScroll.Hidden;
+        double expectedCross = phone && portrait
+            ? expected + DesignTokens.ShellPhoneRowInset * 2
+            : ToolRegionGeometry.AnalysisWidth(expected, joined);
         if (Math.Abs(cross - expectedCross) > 1.5)
             throw new InvalidOperationException(
-                $"{(row ? "行" : "列")}布局分析栏交叉轴 {cross} 与边长 {expected} + {(joined ? "18（10 + 接缝 8）" : "20")} = {expectedCross} 不符");
+                $"{(phone ? (portrait ? "手机竖屏" : "手机横屏") : row ? "行" : "列")}布局分析栏交叉轴 {cross} " +
+                $"与边长 {expected} + {(phone && portrait ? $"{DesignTokens.ShellPhoneRowInset:0.#}×2" : joined ? "18（10 + 接缝 8）" : "20")} = {expectedCross} 不符");
         double crossOffset = row ? (double)tiles[0].Frame.Y : (double)tiles[0].Frame.X;
         double endGap = cross - crossOffset - expected;
-        if (Math.Abs(endGap - (joined ? ToolRegionGeometry.Spacing : AnalysisPanelGeometry.Padding)) > 1.5)
+        double expectedCrossOffset = phone && portrait
+            ? DesignTokens.ShellPhoneRowInset
+            : phone
+                ? (joined && !root.NotchOnLeft ? ToolRegionGeometry.Spacing : ToolRegionGeometry.Padding)
+                : AnalysisPanelGeometry.Padding;
+        double expectedEndGap = phone && portrait
+            ? DesignTokens.ShellPhoneRowInset
+            : joined ? ToolRegionGeometry.Spacing : AnalysisPanelGeometry.Padding;
+        if (Math.Abs(endGap - expectedEndGap) > 1.5)
             throw new InvalidOperationException(
-                $"{(row ? "行" : "列")}布局分析瓦片朝控制侧留白 {endGap} 不是{(joined ? "接缝 8" : "外侧 10")}");
-        double startInset = row ? (double)safe.Left : (double)safe.Top;
+                $"{(phone ? (portrait ? "手机竖屏" : "手机横屏") : row ? "行" : "列")}布局分析瓦片朝控制侧留白 {endGap} 不是 {expectedEndGap:0.#}");
+        double startInset = phone ? (portrait ? input.Safe.Left : input.Safe.Top) : row ? (double)safe.Left : (double)safe.Top;
         for (int index = 0; index < tiles.Count; index++)
         {
             var frame = tiles[index].Frame;
@@ -467,10 +501,11 @@ internal static class iOSNativeAnalysisCheck
             if (Math.Abs(offset - expectOffset) > 1.5)
                 throw new InvalidOperationException($"瓦片 {index} 主轴起点 {offset} 与 {expectOffset} 不符");
             double frameCrossOffset = row ? (double)frame.Y : (double)frame.X;
-            if (Math.Abs(frameCrossOffset - AnalysisPanelGeometry.Padding) > 1.5)
-                throw new InvalidOperationException($"瓦片 {index} 交叉轴内边距 {crossOffset} 应为 10");
+            if (Math.Abs(frameCrossOffset - expectedCrossOffset) > 1.5)
+                throw new InvalidOperationException($"瓦片 {index} 交叉轴起点 {frameCrossOffset} 应为 {expectedCrossOffset:0.#}");
         }
-        lines.Add($"PASS 几何 {(row ? "row" : "col")}：{tiles.Count} 张正方形瓦片 side={expected} gap=8 padding=10 cross={cross}");
+        lines.Add($"PASS 几何 {(phone ? (portrait ? "手机竖屏" : "手机横屏") : row ? "row" : "col")}：" +
+            $"{tiles.Count} 张正方形瓦片 side={expected} gap={AnalysisPanelGeometry.Spacing} 起点={expectedCrossOffset:0.#} cross={cross}");
     }
 
     /// <summary>验收环境自愈：确保 JPEG 格式启用（历史验收会话被强杀可能遗留全格式关闭）。</summary>

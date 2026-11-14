@@ -84,11 +84,26 @@ internal static class iOSNativeSettingsCheck
         await UiDispatcher.InvokeAsync(() => root.RowSelected(root.TableView, NSIndexPath.FromRowSection(2, 0)));
         await WaitForPage<iOSNativeControlSettingsViewController>(root);
         var control = (iOSNativeControlSettingsViewController)root.NavigationController!.TopViewController!;
-        await VerifyListPresentationAsync(control, settings, lines);
+        bool phoneForm = control.PhoneForm;
+        if (phoneForm)
+        {
+            await VerifyPhoneControlPageAsync(control, settings, lines);
+        }
+        else
+        {
+            await VerifyListPresentationAsync(control, settings, lines);
+            await VerifyInlineBindingAsync(control, settings, lines);
+            await VerifyPhoneFormRebuildAsync(control, settings, lines);
+            await VerifyCaptureAsync(root, control, settings, lines);
+        }
         await VerifySliderRowAsync(control, lines);
-        await VerifyInlineBindingAsync(control, settings, lines);
-        await VerifyCaptureAsync(root, control, settings, lines);
-        await VerifyExifListMatchesControlRowHeightAsync(root, lines);
+        if (phoneForm)
+        {
+            // 手机形态跳过了捕获层（不外设编辑入口），显式退回设置首页再进 EXIF。
+            await UiDispatcher.InvokeAsync(() => root.NavigationController!.PopToViewController(root, false));
+            await WaitForPage<iOSNativeSettingsRootViewController>(root);
+        }
+        await VerifyExifListMatchesControlRowHeightAsync(root, lines, phoneForm);
         await UiDispatcher.InvokeAsync(() => root.NavigationController!.PopToViewController(root, false));
         await VerifyAiSettingsPageAsync(root, settings, lines);
         await UiDispatcher.InvokeAsync(() =>
@@ -198,9 +213,10 @@ internal static class iOSNativeSettingsCheck
 
     /// <summary>
     /// SETTINGS-08：EXIF 显示表与控制栏功能表使用一致的标准行高；只有控制栏功能行带命令图标。
+    /// 手机形态控制栏功能只列上一张/下一张，另核 EXIF 显示表的行高、无图标与末行分隔线。
     /// </summary>
     private static async Task VerifyExifListMatchesControlRowHeightAsync(
-        iOSNativeSettingsRootViewController root, List<string> lines)
+        iOSNativeSettingsRootViewController root, List<string> lines, bool phoneForm)
     {
         await UiDispatcher.InvokeAsync(() => root.RowSelected(root.TableView, NSIndexPath.FromRowSection(3, 0)));
         await WaitForPage<iOSNativeExifSettingsViewController>(root);
@@ -222,7 +238,9 @@ internal static class iOSNativeSettingsCheck
             if ((double)last.SeparatorInset.Right <= (double)list.TableView.Bounds.Width)
                 throw new InvalidOperationException($"EXIF 显示表最后一行仍有底缘分隔线：{last.SeparatorInset}");
         });
-        lines.Add($"PASS SETTINGS-08 行高一致：控制栏功能与 EXIF 显示表同为 {iOSNativeSettingsMetrics.ListRowHeight} 点标准行高；命令图标只出现在控制栏功能行，两表末行均无底缘分隔线");
+        lines.Add(phoneForm
+            ? $"PASS SETTINGS-08/17 行高：EXIF 显示表为 {iOSNativeSettingsMetrics.ListRowHeight} 点标准行高、不带命令图标、末行无底缘分隔线（手机形态控制栏功能只列上一张/下一张）"
+            : $"PASS SETTINGS-08 行高一致：控制栏功能与 EXIF 显示表同为 {iOSNativeSettingsMetrics.ListRowHeight} 点标准行高；命令图标只出现在控制栏功能行，两表末行均无底缘分隔线");
         await UiDispatcher.InvokeAsync(() => root.NavigationController!.PopViewController(false));
         await WaitForPage<iOSNativeSettingsRootViewController>(root);
     }
@@ -452,6 +470,111 @@ internal static class iOSNativeSettingsCheck
         lines.Add($"PASS SETTINGS-07 键盘收起：Done 与空白点击收起后提交倍率，1.5s 后键盘保持收起、无焦点抢回（键盘区高度 {keyboardHeight:0}；空白点击为同一识别器动作注入，非手指实测）");
     }
 
+    /// <summary>
+    /// 手机形态控制页保留布局位置与控制栏功能；iPhone 的布局只有「手机」一项。
+    /// 控制栏功能只列「上一张/下一张」，蓝色勾选、图标与文字沿用命令列表，无排序把手或快捷键编辑。
+    /// </summary>
+    private static async Task VerifyPhoneControlPageAsync(iOSNativeControlSettingsViewController page,
+        SettingsViewModel settings, List<string> lines)
+    {
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            page.View!.LayoutIfNeeded();
+            var labels = Descendants(page.View).OfType<UILabel>().Select(label => label.Text ?? string.Empty).ToArray();
+            if (page.HotkeyList != null)
+                throw new InvalidOperationException("手机形态仍创建宽形态命令勾选排序列表");
+            if (page.KeyboardMappingSection != null)
+                throw new InvalidOperationException("手机形态仍创建键盘映射分组");
+            foreach (string required in new[] { "边栏布局位置", "控制栏功能" })
+                if (!labels.Contains(required, StringComparer.Ordinal))
+                    throw new InvalidOperationException($"手机形态缺少「{required}」分组");
+            foreach (string hidden in new[] { "键盘映射", "使用苹果键盘", "显示上下张按钮" })
+                if (labels.Contains(hidden, StringComparer.Ordinal))
+                    throw new InvalidOperationException($"手机形态仍显示旧控件「{hidden}」");
+            if (Descendants(page.View).OfType<UISwitch>().Any())
+                throw new InvalidOperationException("上下张仍使用独立开关行，未并入控制栏功能列表");
+
+            var picker = Descendants(page.View).OfType<iOSLayoutModePicker>().Single();
+            var layoutTable = picker.Subviews.OfType<UITableView>().Single();
+            bool phoneDevice = iOSNativeControlSettingsViewController.IsPhoneDevice;
+            nint expectedModes = phoneDevice ? 1 : settings.LayoutModes.Count;
+            if (layoutTable.Source!.RowsInSection(layoutTable, 0) != expectedModes)
+                throw new InvalidOperationException($"布局模式数量错误：{layoutTable.Source.RowsInSection(layoutTable, 0)}，应为 {expectedModes}");
+            if (phoneDevice)
+            {
+                var modeCell = layoutTable.CellAt(NSIndexPath.FromRowSection(0, 0))
+                    ?? throw new InvalidOperationException("iPhone 未生成唯一的「手机」布局行");
+                if (!Descendants(modeCell).OfType<UILabel>().Any(label => label.Text == "手机")
+                    || modeCell.Accessory != UITableViewCellAccessory.Checkmark)
+                    throw new InvalidOperationException(
+                        $"iPhone 布局位置不是单选并勾选的「手机」：accessory={modeCell.Accessory}，" +
+                        $"labels={string.Join("|", Descendants(modeCell).OfType<UILabel>().Select(label => label.Text))}");
+            }
+
+            var list = VerifyNavigationRow(page, settings);
+            bool before = settings.ShowNavigationButtons;
+            list.TableView.Source!.RowSelected(list.TableView, NSIndexPath.FromRowSection(0, 0));
+            if (settings.ShowNavigationButtons == before)
+                throw new InvalidOperationException("点选「上一张/下一张」列表行未写工作副本");
+            list.TableView.Source.RowSelected(list.TableView, NSIndexPath.FromRowSection(0, 0));
+            if (settings.ShowNavigationButtons != before)
+                throw new InvalidOperationException("恢复「上一张/下一张」勾选失败");
+        });
+        lines.Add($"PASS SETTINGS-08/17 手机形态控制页：保留边栏布局位置（{(iOSNativeControlSettingsViewController.IsPhoneDevice ? "仅单选「手机」" : "保留全部选项以便切回")}），" +
+            "控制栏功能只列「上一张/下一张」，蓝色勾选、图标、文字与标准行高一致，无排序把手；点行真实切换，快捷键编辑不显示");
+    }
+
+    /// <summary>核对上一张/下一张在控制栏功能里的单行列表样式。</summary>
+    private static iOSNativeEmbeddedCheckableReorderListView<string> VerifyNavigationRow(
+        iOSNativeControlSettingsViewController page, SettingsViewModel settings)
+    {
+        var list = page.NavigationList ?? throw new InvalidOperationException("控制栏功能缺少上一张/下一张列表");
+        if (iOSNativeControlSettingsViewController.NavigationIconSymbol != "chevron.left.chevron.right")
+            throw new InvalidOperationException("上一张/下一张未使用独立的双向箭头 SF Symbol");
+        if (list.TableView.Source!.RowsInSection(list.TableView, 0) != 1)
+            throw new InvalidOperationException("上一张/下一张列表不是单项列表");
+        var cell = list.TableView.CellAt(NSIndexPath.FromRowSection(0, 0)) as iOSNativeEmbeddedCheckableReorderCell
+            ?? throw new InvalidOperationException("未生成上一张/下一张真实列表行");
+        if (cell.TitleLabel.Text != "上一张/下一张" || cell.LeadingIconView.Hidden || cell.LeadingIconView.Image == null
+            || cell.CheckmarkView.Hidden != !settings.ShowNavigationButtons)
+            throw new InvalidOperationException("上一张/下一张行未保持文字、图标与蓝色勾选状态");
+        if (cell.CheckmarkView.TintColor?.IsEqual(UIColor.SystemBlue) != true)
+            throw new InvalidOperationException("上一张/下一张勾选不是系统蓝色");
+        if (cell.ShowsReorderControl || list.TableView.Source.CanMoveRow(list.TableView, NSIndexPath.FromRowSection(0, 0)))
+            throw new InvalidOperationException("上一张/下一张单项列表仍显示或允许拖拽排序");
+        if (Math.Abs((double)cell.Bounds.Height - iOSNativeSettingsMetrics.ListRowHeight) > .5)
+            throw new InvalidOperationException("上一张/下一张行高与控制栏功能列表不一致");
+        return list;
+    }
+
+    /// <summary>
+    /// 宽形态切到「手机」后，命令排序与键盘映射整组隐藏，控制栏功能只留上一张/下一张；
+    /// 切回宽形态后原配置恢复。
+    /// </summary>
+    private static async Task VerifyPhoneFormRebuildAsync(iOSNativeControlSettingsViewController page,
+        SettingsViewModel settings, List<string> lines)
+    {
+        var mode = settings.LayoutMode;
+        await UiDispatcher.InvokeAsync(() => settings.LayoutMode = PhotoViewer.Core.Settings.LayoutMode.Phone);
+        await Task.Delay(150);
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            page.View!.LayoutIfNeeded();
+            if (page.HotkeyList != null || page.KeyboardMappingSection != null)
+                throw new InvalidOperationException("选了「手机」布局后仍保留宽形态命令排序或键盘映射");
+            VerifyNavigationRow(page, settings);
+        });
+        await UiDispatcher.InvokeAsync(() => settings.LayoutMode = mode);
+        await Task.Delay(150);
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            if (page.HotkeyList == null || page.KeyboardMappingSection == null)
+                throw new InvalidOperationException("切回宽形态后控制页未恢复控制栏功能/键盘映射分组");
+            VerifyNavigationRow(page, settings);
+        });
+        lines.Add("PASS SETTINGS-08 形态切换：选「手机」后命令排序与键盘映射隐藏，控制栏功能只留上一张/下一张；切回宽形态原配置恢复");
+    }
+
     /// <summary>控制栏功能列表：纯触控只留勾选/名称/排序，外设连接后同一行就地出现主/次绑定按钮。</summary>
     private static async Task VerifyListPresentationAsync(iOSNativeControlSettingsViewController page, SettingsViewModel settings, List<string> lines)
     {
@@ -465,6 +588,8 @@ internal static class iOSNativeSettingsCheck
                 throw new InvalidOperationException("控制页布局分组标题不是“边栏布局位置”");
             if (labels.Contains("布局模式"))
                 throw new InvalidOperationException("控制页仍用旧分组标题“布局模式”");
+            // SETTINGS-17：宽形态也把上下张放进控制栏功能，单项无排序把手。
+            VerifyNavigationRow(page, settings);
             var picker = Descendants(page.View).OfType<iOSLayoutModePicker>().Single();
             var table = picker.Subviews.OfType<UITableView>().Single();
             if (Math.Abs((double)(table.ContentSize.Height - picker.Bounds.Height)) > 1)
