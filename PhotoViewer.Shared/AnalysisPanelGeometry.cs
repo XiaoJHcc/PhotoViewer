@@ -3,7 +3,8 @@ namespace PhotoViewer.Shared;
 /// <summary>
 /// 分析栏的平台中立几何（与旧壳 <c>AnalysisView</c> 同口径）：
 /// 正方形瓦片边长 = <c>floor((可用主轴长度 − 20 − 8×(n−1)) / n)</c>，从主轴内边距 10 起排、间距 8，
-/// 交叉轴尺寸 = 瓦片边长 + 20。宿主视图负责把结果落到原生瓦片 frame。
+/// <see cref="CrossSize"/> 给出独立分析栏的默认交叉轴尺寸；共同工具区取 <see cref="ToolRegionGeometry"/>，
+/// 手机竖屏由宿主使用行内间距。宿主视图负责把结果落到原生瓦片 frame。
 /// </summary>
 public static class AnalysisPanelGeometry
 {

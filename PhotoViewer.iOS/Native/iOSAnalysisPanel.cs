@@ -69,7 +69,7 @@ internal sealed class iOSAnalysisPanel : UIView
         _main = main;
         _session = session;
         BackgroundColor = UIColor.Clear;
-        _divider.BackgroundColor = UIColor.FromRGB(0x33, 0x33, 0x33);
+        _divider.BackgroundColor = iOSColors.FromToken(DesignTokens.ColorAnalysisDivider);
         AddSubview(_divider);
 
         _host = new iOSAnalysisHost(main, session);
@@ -96,15 +96,11 @@ internal sealed class iOSAnalysisPanel : UIView
     /// <summary>是否手机竖屏：分析栏接在顶行之下，不画顶部分隔线，交叉轴只留一份行内间距。</summary>
     internal bool PhonePortrait { get; set; }
 
-    /// <summary>
-    /// 手机横屏且控制栏可见：控制栏是面板的相邻侧，瓦片贴该侧零内边距，面板交叉轴只留朝主图一侧的
-    /// <see cref="AnalysisPanelGeometry.Padding"/>，瓦片到控制栏元素因此只有一份行内间距（SHELL-09／ANALYSIS-05）。
-    /// 控制栏关闭时置回 false，面板贴窗口外缘并恢复两侧内边距。
-    /// </summary>
-    internal bool PhoneAdjacent { get; set; }
+    /// <summary>与控制内容相邻时，共用工具区外边距，并在分析内容末端保留一份接缝间距。</summary>
+    internal bool JoinedToControls { get; set; }
 
     /// <summary>相邻控制栏在面板右侧（刘海在左时控制栏在右）；为 false 时相邻侧是面板左边。</summary>
-    internal bool PhoneAdjacentOnRight { get; set; }
+    internal bool ControlsOnRight { get; set; }
 
     /// <summary>朝主图一侧的分隔线当前是否可见（手机竖屏不画）。</summary>
     internal bool DividerVisible => !_divider.Hidden;
@@ -113,8 +109,7 @@ internal sealed class iOSAnalysisPanel : UIView
     internal double DividerX => (double)_divider.Frame.X;
 
     /// <summary>
-    /// 交叉轴尺寸：宽形态为瓦片边长 + 两侧 10 点内边距；手机竖屏只加两侧行内间距（8）；
-    /// 手机横屏控制栏可见时只加朝主图一侧的 10 点（相邻侧零内边距），否则两侧 10 点。
+    /// 交叉轴尺寸取共同工具区几何；手机竖屏保留顶栏的两侧行内间距。
     /// </summary>
     /// <param name="availableMain">主轴可用长度（不含安全区让位）。</param>
     /// <returns>需为面板分配的交叉轴长度。</returns>
@@ -122,9 +117,7 @@ internal sealed class iOSAnalysisPanel : UIView
     {
         double tile = AnalysisPanelGeometry.TileSize(availableMain, _order.Count);
         if (PhonePortrait) return tile + DesignTokens.ShellPhoneRowInset * 2;
-        return PhoneAdjacent
-            ? tile + AnalysisPanelGeometry.Padding
-            : AnalysisPanelGeometry.CrossSize(availableMain, _order.Count);
+        return ToolRegionGeometry.AnalysisWidth(tile, JoinedToControls);
     }
 
     /// <summary>
@@ -140,7 +133,7 @@ internal sealed class iOSAnalysisPanel : UIView
         _horizontal = horizontal;
         double tile = AnalysisPanelGeometry.TileSize(availableMain, _order.Count);
         _tileSize = tile;
-        double cross = CrossOffset(tile);
+        double cross = CrossOffset();
         // 与旧壳一致：瓦片从主轴内边距处起排，剩余不足一枚的零头留在末端。
         for (int i = 0; i < _order.Count; i++)
         {
@@ -151,7 +144,7 @@ internal sealed class iOSAnalysisPanel : UIView
         }
         _divider.Hidden = PhonePortrait;
         // 分隔线始终在朝主图一侧：相邻控制栏在右时面板左边朝主图，镜像时面板右边朝主图。
-        double dividerX = !horizontal && !PhoneAdjacentOnRight ? Math.Max(0, (double)Bounds.Width - 1) : 0;
+        double dividerX = !horizontal && !ControlsOnRight ? Math.Max(0, (double)Bounds.Width - 1) : 0;
         _divider.Frame = horizontal
             ? new CGRect(0, 0, Bounds.Width, 1)
             : new CGRect(dividerX, 0, 1, Bounds.Height);
@@ -160,16 +153,14 @@ internal sealed class iOSAnalysisPanel : UIView
     }
 
     /// <summary>
-    /// 瓦片的交叉轴起点：宽形态取面板内边距；手机竖屏取一份行内间距；
-    /// 手机横屏控制栏可见时贴相邻侧（相邻侧零内边距），控制栏关闭时恢复两侧内边距。
+    /// 瓦片的交叉轴起点：外侧留工具区内边距，镜像后相邻侧留接缝间距。
     /// </summary>
-    /// <param name="tile">瓦片边长。</param>
     /// <returns>交叉轴起点。</returns>
-    private double CrossOffset(double tile)
+    private double CrossOffset()
     {
         if (PhonePortrait) return DesignTokens.ShellPhoneRowInset;
-        if (!PhoneAdjacent) return AnalysisPanelGeometry.Padding;
-        return PhoneAdjacentOnRight ? Math.Max(0, (double)Bounds.Width - tile) : 0;
+        return !_horizontal && JoinedToControls && !ControlsOnRight
+            ? ToolRegionGeometry.Spacing : ToolRegionGeometry.Padding;
     }
 
     /// <summary>清除全部细节预览的绿框（分析栏隐藏或切图时由宿主调用）。</summary>

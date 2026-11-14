@@ -615,7 +615,7 @@ public static class DesignTokens
     public const double ShellGlassContainerSpacing = 8.0;
     /// <summary>shell.glass.group.gap（pt） SHELL-08：相邻按钮组（筛选、星级、缩放适应等）之间的间距。</summary>
     public const double ShellGlassGroupGap = 8.0;
-    /// <summary>shell.phone.edgeMargin（pt） SHELL-08：手机形态行/列元素到安全区边缘的横向边距。</summary>
+    /// <summary>shell.phone.edgeMargin（pt） SHELL-08：手机竖屏顶部行、底部行与耳区的边缘距离；横屏入口取 filter.margin，工具区取 toolbar.padding。</summary>
     public const double ShellPhoneEdgeMargin = 16.0;
     /// <summary>shell.phone.rowInset（pt） SHELL-11：手机形态行到安全区/栏缘的间距，也是栏背景超出元素的余量。</summary>
     public const double ShellPhoneRowInset = 8.0;
@@ -631,6 +631,8 @@ public static class DesignTokens
     public const double ShellTitlebarHotzoneHeight = 50.0;
     /// <summary>shell.titlebar.title.leftInset（pt） SHELL-02：标题文字前导间距：Windows 距标题栏左缘，macOS 距最右交通灯右缘；行布局悬停覆盖层同值作为标题文字到筛选挖空的尾部间距，窄宽度常驻栏同值作为到窗口按钮组或窗口右缘的尾部间距。</summary>
     public const double ShellTitlebarTitleLeftInset = 12.0;
+    /// <summary>shell.toolRegion.spacing（pt） SHELL-12：相邻分析内容与控制内容之间唯一的一份间距。</summary>
+    public const double ShellToolRegionSpacing = 8.0;
     /// <summary>shell.window.default.height（pt） SHELL-01：桌面主窗口默认高。</summary>
     public const double ShellWindowDefaultHeight = 850.0;
     /// <summary>shell.window.default.width（pt） SHELL-01：桌面主窗口默认宽；iOS/Android 为全屏窗口，无默认尺寸。</summary>

@@ -148,8 +148,9 @@ internal static class iOSNativeSimilarityCheck
                     {
                         if ((double)root.FileBarView.Frame.Width <= baselineFile)
                             throw new InvalidOperationException($"列布局展开后文件栏未扩宽：{root.FileBarView.Frame.Width} ≤ {baselineFile}");
-                        if (Math.Abs((double)panel.Frame.X - ((double)content.X + MainScreenLayout.FileBarContentWidth)) > Tolerance)
-                            throw new InvalidOperationException($"列布局相似面板未紧贴 116 栏右侧：panel {panel.Frame} content {content}");
+                        if (Math.Abs((double)panel.Frame.X - (double)content.MaxX) > Tolerance)
+                            throw new InvalidOperationException(
+                                $"列布局相似面板未紧贴左栏右缘（卡片带右缘）：panel {panel.Frame} content {content}");
                     }
                     if (panel.CrossSize < SimilarityPanelGeometry.MinWidth)
                         throw new InvalidOperationException($"相似面板交叉轴 {panel.CrossSize} 小于 MinWidth 106");

@@ -40,6 +40,9 @@ internal sealed class iOSToolbarView : UIView
     private bool _horizontal;
     private bool _hasRatingGroup;
 
+    internal bool JoinedToAnalysis { get; set; }
+    internal UIEdgeInsets MainInsets { get; set; }
+
     /// <summary>建立透明控制文档。</summary>
     /// <param name="changed">设置变化时请求宿主合并刷新。</param>
     internal iOSToolbarView(Action changed) : base(CGRect.Empty)
@@ -251,14 +254,18 @@ internal sealed class iOSToolbarView : UIView
     private CGSize Layout(bool horizontal, double availableMain)
     {
         _horizontal = horizontal;
-        double main = Math.Max(1, availableMain - ToolbarFlowLayout.Padding * 2);
+        double mainLeading = horizontal ? (double)MainInsets.Left : (double)MainInsets.Top;
+        double mainTrailing = horizontal ? (double)MainInsets.Right : (double)MainInsets.Bottom;
+        double available = Math.Max(1, availableMain - mainLeading - mainTrailing);
+        double main = Math.Max(1, available - ToolbarFlowLayout.Padding * 2);
         var sizes = Sizes(main, horizontal);
         var lines = ToolbarFlowLayout.PackLines(sizes, main);
-        double cross = ToolbarFlowLayout.Padding;
+        double crossLeading = ToolRegionGeometry.ControlLeadingInset(JoinedToAnalysis);
+        double cross = crossLeading;
         foreach (var line in lines)
         {
             double lineCross = ToolbarFlowLayout.LineCross(sizes, line);
-            double start = ToolbarFlowLayout.LineStart(availableMain, ToolbarFlowLayout.LineLength(sizes, line));
+            double start = mainLeading + ToolbarFlowLayout.LineStart(available, ToolbarFlowLayout.LineLength(sizes, line));
             foreach (int index in line)
             {
                 var size = sizes[index];
@@ -271,8 +278,10 @@ internal sealed class iOSToolbarView : UIView
             }
             cross += lineCross + ToolbarFlowLayout.GroupSpacing;
         }
-        var document = ToolbarFlowLayout.DocumentSize(sizes, horizontal, lines);
-        return new CGSize(document.Width, document.Height);
+        var document = ToolbarFlowLayout.DocumentSize(sizes, horizontal, lines, crossLeading);
+        return horizontal
+            ? new CGSize(document.Width + mainLeading + mainTrailing, document.Height)
+            : new CGSize(document.Width, document.Height + mainLeading + mainTrailing);
     }
 
     /// <summary>按分组类型求共享尺寸：EXIF 按块尺寸（列布局取无衬底变体）、星级按可用主轴、命令按圆按钮数与间距。</summary>

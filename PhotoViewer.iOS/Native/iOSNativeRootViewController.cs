@@ -57,18 +57,14 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private readonly UIView _photoPane = new();
     private readonly UIVisualEffectView _fileBar = BarBackground();
     private readonly UIView _fileDivider = new();
-    private readonly UIVisualEffectView _controlBackground = BarBackground();
+    private readonly UIVisualEffectView _toolBackground = BarBackground();
     private readonly UIView _controlDivider = new();
-    /// <summary>分析栏栏位背景（宽形态与手机横屏共用；竖屏分析栏在顶栏背景内，不单用）。</summary>
-    private readonly UIVisualEffectView _analysisBackground = BarBackground();
     /// <summary>手机竖屏顶栏背景。</summary>
     private readonly UIVisualEffectView _phoneTopBar = BarBackground();
     /// <summary>手机竖屏底栏背景。</summary>
     private readonly UIVisualEffectView _phoneBottomBar = BarBackground();
     /// <summary>手机横屏刘海侧栏背景。</summary>
     private readonly UIVisualEffectView _phoneLeadingBar = BarBackground();
-    /// <summary>手机横屏下巴侧栏背景。</summary>
-    private readonly UIVisualEffectView _phoneTrailingBar = BarBackground();
     private readonly UIScrollView _controlScroll = new();
     private readonly iOSToolbarView _controlBar;
     /// <summary>星级弹窗：窗口内玻璃面板，挂在根视图上（视图树就绪后创建）。</summary>
@@ -173,7 +169,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <summary>文件栏分隔线。</summary>
     internal UIView FileDividerView => _fileDivider;
     /// <summary>控制栏背景视图。</summary>
-    internal UIView ControlBackgroundView => _controlBackground;
+    internal UIView ControlBackgroundView => _toolBackground;
     /// <summary>控制栏分隔线。</summary>
     internal UIView ControlDividerView => _controlDivider;
     /// <summary>控制栏系统滚动容器。</summary>
@@ -277,13 +273,19 @@ internal sealed class iOSNativeRootViewController : UIViewController
     internal iOSGlassContainer PhoneGlassContainer => _phoneGlass;
     /// <summary>手机形态四条栏背景。</summary>
     internal (UIVisualEffectView Top, UIVisualEffectView Bottom, UIVisualEffectView Leading, UIVisualEffectView Trailing) PhoneBarBackgrounds
-        => (_phoneTopBar, _phoneBottomBar, _phoneLeadingBar, _phoneTrailingBar);
+        => (_phoneTopBar, _phoneBottomBar, _phoneLeadingBar, _toolBackground);
     /// <summary>胶片条顶端的滚动边缘交互（横屏挂接在筛选/更多合体上）。</summary>
     internal UIScrollEdgeElementContainerInteraction FilmstripTopEdgeInteraction => _filmstripTopEdge;
     /// <summary>胶片条底端的滚动边缘交互（横屏挂接在上下张合体上）。</summary>
     internal UIScrollEdgeElementContainerInteraction FilmstripBottomEdgeInteraction => _filmstripBottomEdge;
     /// <summary>分析栏栏位背景（宽形态与手机横屏共用）。</summary>
-    internal UIVisualEffectView AnalysisBarBackground => _analysisBackground;
+    internal UIVisualEffectView AnalysisBarBackground => _toolBackground;
+    internal UIVisualEffectView ToolBackgroundView => _toolBackground;
+    internal FilmSideMeasure FilmSide { get; private set; }
+    internal CGRect FilmEntryBandFrame { get; private set; }
+    internal CGRect ControlBandFrame => new(
+        _notchOnLeft ? (double)_stage.Bounds.Width - ToolRegionGeometry.Padding - DesignTokens.ShellGlassButtonSize : ToolRegionGeometry.Padding,
+        0, DesignTokens.ShellGlassButtonSize, _stage.Bounds.Height);
     /// <summary>更多菜单展开时取用的主图菜单子项（与主图长按菜单同一入口）。</summary>
     /// <returns>主图菜单的顶层子项。</returns>
     internal UIMenuElement[] PhotoMenuItems() => BuildPhotoMenu().Menu.Children;
@@ -492,10 +494,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _stage.AddSubview(_phoneTopBar);
         _stage.AddSubview(_phoneBottomBar);
         _stage.AddSubview(_phoneLeadingBar);
-        _stage.AddSubview(_phoneTrailingBar);
-        _stage.AddSubview(_analysisBackground);
+        _stage.AddSubview(_toolBackground);
         _stage.AddSubview(_fileBar);
-        _stage.AddSubview(_controlBackground);
         _stage.AddSubview(_fileDivider);
         _stage.AddSubview(_controlDivider);
         _stage.AddSubview(_controlScroll);
@@ -663,10 +663,12 @@ internal sealed class iOSNativeRootViewController : UIViewController
     }
 
     /// <summary>
-    /// INPUT-01：输入控件获焦或系统模态（设置页、文档选择器、上下文菜单提交页）展示期间，
-    /// 照片快捷键一律不派发。
+    /// INPUT-01：输入控件获焦、系统模态（设置页、文档选择器、上下文菜单提交页）展示期间，
+    /// 或星级弹窗打开（主图与栏位命令隔离在背景）时，照片快捷键一律不派发。
+    /// Esc 在 <see cref="PressesBegan"/> 里先于本守卫处理，因此弹窗仍可收起。
     /// </summary>
-    internal bool KeyboardInputBlocked => PresentedViewController != null || _editingTextInputs.Count > 0;
+    internal bool KeyboardInputBlocked => PresentedViewController != null || _editingTextInputs.Count > 0
+        || _ratingPopup is { IsOpen: true };
 
     /// <summary>OPEN-05：显式打开时主图回到适应态。</summary>
     private void OnFitToViewRequested() => _photo.FitToView();
@@ -800,19 +802,26 @@ internal sealed class iOSNativeRootViewController : UIViewController
     {
         HidePhoneLayers();
         bool row = _main.IsRowLayout;
+        bool filmVisible = _main.IsThumbnailViewVisible;
+        bool controlVisible = _main.IsControlViewVisible;
+        bool analysisVisible = _main.IsAnalysisViewVisible;
         _analysisPane.PhonePortrait = false;
-        _analysisPane.PhoneAdjacent = false;
-        _analysisPane.PhoneAdjacentOnRight = true;
-        var filterBand = ProbeBand(
-            row
-                ? new CGRect(0, safe.Top, width, DesignTokens.ShellGlassButtonSize)
-                : new CGRect(safe.Left, 0, FilmCardGeometry.BandThickness(FilmCardTier.Large, false), height),
+        _analysisPane.JoinedToControls = analysisVisible && controlVisible;
+        _analysisPane.ControlsOnRight = true;
+        _controlBar.JoinedToAnalysis = analysisVisible;
+        _controlBar.MainInsets = UIEdgeInsets.Zero;
+        const FilmCardTier tier = FilmCardTier.Large;
+        double band = FilmCardGeometry.BandThickness(tier, false);
+        FilmSide = FilmSideGeometry.Measure((double)safe.Left, band,
+            FilmCardGeometry.CrossLead(tier, false), FilmCardGeometry.CrossTrail(tier, false), iOSFilterLayout.GroupWidth);
+        FilmEntryBandFrame = row
+            ? new CGRect(0, safe.Top, width, DesignTokens.ShellGlassButtonSize)
+            : new CGRect(FilmSide.ContentTrailing - iOSFilterLayout.GroupWidth, 0, iOSFilterLayout.GroupWidth, height);
+        var filterBand = ProbeBand(FilmEntryBandFrame,
             row ? UIViewLayoutRegionAdaptivityAxis.Horizontal : UIViewLayoutRegionAdaptivityAxis.Vertical);
         double leadingInset = (row ? 0 : filterBand.Top) + MainScreenLayout.FilterMargin;
         double filterLeft = row ? Math.Max((double)safe.Left, filterBand.Left) : (double)safe.Left;
         double filterMain = _filterBar.MainLength(row, leadingInset);
-        bool filmVisible = _main.IsThumbnailViewVisible;
-        bool controlVisible = _main.IsControlViewVisible;
         double availableMain = row
             ? Math.Max(1, width - (double)safe.Left - (double)safe.Right)
             : Math.Max(1, height);
@@ -831,8 +840,6 @@ internal sealed class iOSNativeRootViewController : UIViewController
         // 标准版不创建相似面板，也不为它预留任何柱宽或高度。
         const double similarityColumn = 0;
 #endif
-        // 宽形态固定大档；容量选档只用于手机形态。
-        const FilmCardTier tier = FilmCardTier.Large;
 #if PHOTOVIEWER_DINO
         if (similarityOpen) _similarityPane.SetLayout(row, row ? FilmCardGeometry.BandThickness(tier, true) : availableMain);
         _similarityPane.Hidden = !similarityOpen;
@@ -841,16 +848,26 @@ internal sealed class iOSNativeRootViewController : UIViewController
         double fileMain = filmVisible
             ? (row
                 ? filterMain + FilmCardGeometry.BandThickness(tier, true) + MainScreenLayout.Divider
-                : FilmCardGeometry.BandThickness(tier, false) + MainScreenLayout.Divider
-                    + (double)safe.Left + similarityColumn)
+                : FilmSide.Width + MainScreenLayout.Divider + similarityColumn)
             : 0;
         var measure = controlVisible ? _controlBar.Measure(row, availableMain) : CGSize.Empty;
+        if (!row && controlVisible)
+        {
+            double leading = ToolRegionGeometry.ControlLeadingInset(analysisVisible);
+            var frame = new CGRect(width - (double)measure.Width + leading, 0,
+                Math.Max(1, (double)measure.Width - leading - ToolRegionGeometry.Padding), height);
+            var safeProbe = ProbeInsets(frame, UIViewLayoutRegionAdaptivityAxis.Vertical);
+            var cornerProbe = ProbeCornerInsets(frame, UIViewLayoutRegionAdaptivityAxis.Vertical);
+            double top = Math.Max((double)safeProbe.Top, (double)cornerProbe.Top);
+            double bottom = width > height ? (double)cornerProbe.Bottom : Math.Max((double)safeProbe.Bottom, (double)cornerProbe.Bottom);
+            _controlBar.MainInsets = new UIEdgeInsets((nfloat)top, 0, (nfloat)bottom, 0);
+            measure = _controlBar.Measure(row, availableMain);
+        }
         double controlMain = controlVisible ? MainScreenLayout.ControlBarMainLength(row ? (double)measure.Height : (double)measure.Width) : 0;
-        // 分析栏占主图与相邻栏位之间的一条：行布局在主图下方、列布局在主图右侧，
-        // 主轴可用长度取安全区内的内容长度，交叉轴尺寸（瓦片边长 + 20）与旧壳 AnalysisView 同口径。
-        bool analysisVisible = _main.IsAnalysisViewVisible;
+        // 分析栏的交叉轴尺寸按是否邻接控制栏取共同工具区几何。
         double analysisSize = analysisVisible ? _analysisPane.CrossSize(availableMain) : 0;
-        _panes = iOSMainScreenLayout.Compute(row, width, height, safe, fileMain, controlMain, analysisSize);
+        _panes = iOSMainScreenLayout.Compute(row, width, height, safe, fileMain, controlMain, analysisSize,
+            row ? null : FilmSide);
 
         var photo = _panes.Photo;
         ApplyPhotoFitInsets(new EdgeInsets(
@@ -866,16 +883,14 @@ internal sealed class iOSNativeRootViewController : UIViewController
             _analysisPane.ClearDetailHighlight();
             HideDetailHighlight();
         }
-        _analysisBackground.Frame = ToFrame(_panes.Analysis);
-        _analysisBackground.Hidden = !analysisVisible;
+        bool showsToolBackground = analysisVisible || controlVisible && _controlBar.ExifGroup is { ShownItemCount: > 0 };
+        ApplyBarBackground(_toolBackground, showsToolBackground ? _panes.ControlBackground : default);
         _fileBar.Frame = ToFrame(_panes.FileBar);
         _fileBar.Hidden = !filmVisible;
         _fileDivider.Frame = ToFrame(_panes.FileDivider);
         _fileDivider.Hidden = !filmVisible;
-        _controlBackground.Frame = ToFrame(_panes.ControlBackground);
-        _controlBackground.Hidden = !controlVisible;
         _controlDivider.Frame = ToFrame(_panes.ControlDivider);
-        _controlDivider.Hidden = !controlVisible;
+        _controlDivider.Hidden = !showsToolBackground || analysisVisible || !controlVisible;
         _controlScroll.Frame = ToFrame(_panes.ControlContent);
         _controlScroll.Hidden = !controlVisible;
         _filterBar.Hidden = !filmVisible;
@@ -886,9 +901,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
             var content = _panes.FileContent;
             // 列布局的文件栏内容宽就是卡片带厚（筛选条与胶片条同宽），行布局沿用内容区宽度。
             double contentWidth = row ? content.Width : FilmCardGeometry.BandThickness(tier, false);
-            double filterWidth = row ? Math.Max(1, width - filterLeft - (double)safe.Right) : contentWidth;
-            _filterBar.Frame = new CGRect(filterLeft, content.Y, filterWidth, filterMain);
-            _filterBar.Arrange(row, filterWidth, FilmCardGeometry.Width(tier), leadingInset);
+            double filterWidth = row ? Math.Max(1, width - filterLeft - (double)safe.Right) : FilmSide.Width;
+            _filterBar.Frame = new CGRect(row ? filterLeft : 0, content.Y, filterWidth, filterMain);
+            _filterBar.Arrange(row, filterWidth, FilmCardGeometry.Width(tier), leadingInset,
+                row ? null : FilmSide.ContentTrailing);
             double filmWidth = row ? Math.Max(1, contentWidth - similarityColumn) : contentWidth;
             var nextFilmstripFrame = new CGRect(content.X, row ? content.Y + filterMain : 0,
                 filmWidth, row ? Math.Max(1, content.Height - filterMain) : height);
@@ -911,7 +927,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         bool axisChanged = _filmstrip.Horizontal != row;
         _filmstrip.SetAxis(row);
         _filmstrip.SetTier(tier);
-        _filmstrip.SetEdgePadding(row ? 0 : filterMain, 0);
+        _filmstrip.SetEdgePadding(row ? 0 : Math.Max(0, filterMain - FilmCardGeometry.MainLead(tier, false)), 0);
         SetFilmstripEdgeEffects(false, !row && filmVisible);
         if (filmVisible) _stage.BringSubviewToFront(_filterBar);
         // 方向变化属于显式定位条件（[FILM-04] 登记的原生增强），普通尺寸变化只约束偏移。
@@ -958,9 +974,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
         double button = DesignTokens.ShellGlassButtonSize;
         double rowInset = _avoidanceTuning ?? DesignTokens.ShellPhoneRowInset;
         _notchOnLeft = ResolveNotchOnLeft();
-        // 手机横屏：控制栏可见时它是分析栏的相邻侧（瓦片贴该侧零内边距），控制栏关闭后恢复窗口侧内边距。
-        _analysisPane.PhoneAdjacent = !portrait && _main.IsControlViewVisible && _main.IsAnalysisViewVisible;
-        _analysisPane.PhoneAdjacentOnRight = _notchOnLeft;
+        // 手机横屏：控制栏邻接关系决定分析栏的接缝与窗口侧内边距。
+        _analysisPane.JoinedToControls = !portrait && _main.IsControlViewVisible && _main.IsAnalysisViewVisible;
+        _analysisPane.ControlsOnRight = _notchOnLeft;
         // 选档（[FILM-05]）：胶片条贯穿整个主轴，按整条主轴长度选档；带厚随之决定栏位厚度与横屏卡片列宽。
         var tier = FilmCardGeometry.ResolveTier(portrait ? width : height, portrait);
         double filmBand = FilmCardGeometry.BandThickness(tier, portrait);
@@ -995,7 +1011,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
             ButtonSize: button,
             EdgeMargin: DesignTokens.ShellPhoneEdgeMargin,
             RowInset: rowInset,
-            GroupGap: DesignTokens.ShellGlassGroupGap);
+            GroupGap: DesignTokens.ShellGlassGroupGap,
+            ShowRating: _main.Settings.ShowRating);
 
         // 先按系统安全区搭一份输入：贴角带的探测位置只取决于窗口、安全区与显隐（不依赖带本身）。
         var provisional = Input(plain, plain);
@@ -1011,7 +1028,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
             var rightProbe = ProbeBand(new CGRect(width / 2, rowTop, width / 2, button),
                 UIViewLayoutRegionAdaptivityAxis.Horizontal);
             lead = new EdgeInsets(leftProbe.Left, plain.Top, rightProbe.Right, 0);
-            // 底行：Home 指示条的安全内缩自带一份行内间距的视觉余量，行位置按这份余量压进安全区。
+            // SHELL-08：按底行压入 Home 安全区的产品规则确定探测位置。
             double bottomTop = height - Math.Max(plain.Bottom - rowInset, rowInset) - button;
             var controlProbe = ProbeBand(new CGRect(0, bottomTop, width, button),
                 UIViewLayoutRegionAdaptivityAxis.Horizontal);
@@ -1020,18 +1037,18 @@ internal sealed class iOSNativeRootViewController : UIViewController
         }
         else
         {
-            // 横屏刘海侧列：在共享给出的列宽上整列探测，只取上下两侧适应值（左右由系统安全区给出）。
-            // 下缘直接取该带位置上原生圆角适应的独立读数：横屏不为底部手势条留安全区，
-            // 而 Home 余量与屏幕圆角在安全区里按并集合并，从安全区读数里减基线或按阈值猜 Home 会把真实圆角一并削掉。
-            double leadStrip = PhoneScreenLayout.LeadStripWidth(in provisional);
-            var leadFrame = new CGRect(_notchOnLeft ? 0 : width - leadStrip, 0, leadStrip, height);
-            var leadSafe = ProbeInsets(leadFrame, UIViewLayoutRegionAdaptivityAxis.Vertical);
-            var leadCorner = ProbeCornerInsets(leadFrame, UIViewLayoutRegionAdaptivityAxis.Vertical);
+            // 入口合体带：取合体的实际横向范围与窗口全高，上下分别读取安全区与独立圆角适应值。
+            double leadingSafe = _notchOnLeft ? plain.Left : plain.Right;
+            FilmSide = FilmSideGeometry.Measure(leadingSafe, filmBand,
+                FilmCardGeometry.CrossLead(tier, false), FilmCardGeometry.CrossTrail(tier, false), button * 2);
+            FilmEntryBandFrame = new CGRect(_notchOnLeft ? FilmSide.ContentTrailing - button * 2 : width - FilmSide.ContentTrailing,
+                0, button * 2, height);
+            var leadSafe = ProbeInsets(FilmEntryBandFrame, UIViewLayoutRegionAdaptivityAxis.Vertical);
+            var leadCorner = ProbeCornerInsets(FilmEntryBandFrame, UIViewLayoutRegionAdaptivityAxis.Vertical);
             var (leadTop, leadBottom) = LandscapeBandEdges(leadSafe, leadCorner);
             lead = new EdgeInsets(plain.Left, leadTop, plain.Right, leadBottom);
             // 横屏控制栏：下巴侧对称的安全内缩不是实物遮挡，控制栏不避让；在自身的列宽上取上下带圆角适应值。
-            double controlStrip = PhoneScreenLayout.ControlStripWidth(in provisional);
-            var controlFrame = new CGRect(_notchOnLeft ? width - controlStrip : 0, 0, controlStrip, height);
+            var controlFrame = ControlBandFrame;
             var controlSafe = ProbeInsets(controlFrame, UIViewLayoutRegionAdaptivityAxis.Vertical);
             var controlCorner = ProbeCornerInsets(controlFrame, UIViewLayoutRegionAdaptivityAxis.Vertical);
             var (controlTop, controlBottom) = LandscapeBandEdges(controlSafe, controlCorner);
@@ -1055,7 +1072,6 @@ internal sealed class iOSNativeRootViewController : UIViewController
         // 宽形态专属浮层：旧筛选条、旧控制栏与其背景、文件栏背景、两条分隔线与相似面板。
         _fileBar.Hidden = true;
         _fileDivider.Hidden = true;
-        _controlBackground.Hidden = true;
         _controlDivider.Hidden = true;
         _controlScroll.Hidden = true;
         _filterBar.Hidden = true;
@@ -1066,8 +1082,14 @@ internal sealed class iOSNativeRootViewController : UIViewController
         ApplyBarBackground(_phoneTopBar, slots.TopBar);
         ApplyBarBackground(_phoneBottomBar, slots.BottomBar);
         ApplyBarBackground(_phoneLeadingBar, slots.LeadingBar);
-        ApplyBarBackground(_phoneTrailingBar, slots.TrailingBar);
-        _analysisBackground.Hidden = true;
+        ApplyBarBackground(_toolBackground, slots.TrailingBar);
+        if (!portrait && Has(slots.TrailingBar) && !analysisVisible)
+        {
+            var region = slots.TrailingBar;
+            double x = _notchOnLeft ? region.X : region.MaxX - MainScreenLayout.Divider;
+            _controlDivider.Frame = new CGRect(x, 0, MainScreenLayout.Divider, height);
+            _controlDivider.Hidden = false;
+        }
 
         var filmFrame = ToFrame(slots.Filmstrip);
         if (_filmstrip.Frame != filmFrame) _ratingPopup.CloseIfAnchoredTo(RatingPopupAnchor.Card);
@@ -1101,8 +1123,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
             HideDetailHighlight();
         }
 
-        // 筛选与更多在手机形态常驻：竖屏顶行耳区各一个圆按钮；横屏有胶片栏时为刘海侧合体按钮的两段，
-        // 胶片栏关闭让出整列后拆成刘海上下两耳区的独立圆按钮（与竖屏耳区同一口径）。
+        // 竖屏使用独立圆按钮；横屏保持同一末端锚点上的两段合体，不随列表显隐迁移。
         bool filterMoreGroup = !portrait && Has(slots.FilterMoreGroup);
         _phoneFilter.Hidden = filterMoreGroup || !Has(slots.Filter);
         _phoneMore.Hidden = filterMoreGroup || !Has(slots.More);
@@ -1127,7 +1148,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         iOSViewGeometry.SetRectIfNeeded(_phoneFitEnhance, ToFrame(slots.FitEnhance));
         _phoneFitEnhance.LayoutIfNeeded();
 
-        // 显示评分关闭时手机形态保留空槽位、控件隐藏（宽形态是整组移除）。
+        // 显示评分关闭时共享几何移除槽位，其余内容按可见分组排布。
         _phoneRating.Horizontal = portrait;
         _phoneRating.Hidden = !Has(slots.Rating) || !_main.Settings.ShowRating;
         iOSViewGeometry.SetRectIfNeeded(_phoneRating, ToFrame(slots.Rating));
@@ -1146,7 +1167,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _phoneTopBar.Hidden = true;
         _phoneBottomBar.Hidden = true;
         _phoneLeadingBar.Hidden = true;
-        _phoneTrailingBar.Hidden = true;
+        _toolBackground.Hidden = true;
         _phoneFilter.Hidden = true;
         _phoneMore.Hidden = true;
         _phoneFilterMore.Hidden = true;
@@ -1679,17 +1700,19 @@ internal sealed class iOSNativeRootViewController : UIViewController
         if (_main.CurrentFile is not { } file) return false;
         var direction = RatingControlGeometry.PopupDirection(_form, _main.IsRowLayout, _notchOnLeft,
             RatingPopupAnchor.Control);
-        _ratingPopup.Open(file, control.Capsule, RatingPopupAnchor.Control, direction, horizontalRow: control.Horizontal);
+        _ratingPopup.Open(file, control.Capsule, RatingPopupAnchor.Control, direction, horizontalRow: control.Horizontal,
+            focusTarget: control);
         return true;
     }
 
-    /// <summary>卡片冲突三角入口：锚点为整张卡片，星排横排。</summary>
+    /// <summary>卡片冲突三角入口：锚点为整张卡片，星排横排，关闭后焦点回到卡片的整卡选择按钮。</summary>
     /// <param name="file">目标照片。</param>
     /// <param name="anchor">卡片视图。</param>
     private void OpenCardPopup(ImageFile file, UIView anchor)
     {
         var direction = RatingControlGeometry.PopupDirection(_form, _main.IsRowLayout, _notchOnLeft, RatingPopupAnchor.Card);
-        _ratingPopup.Open(file, anchor, RatingPopupAnchor.Card, direction, horizontalRow: true);
+        _ratingPopup.Open(file, anchor, RatingPopupAnchor.Card, direction, horizontalRow: true,
+            focusTarget: anchor is iOSThumbnailCard card ? card.SelectButton : anchor);
     }
 
     /// <summary>卡片入口所在列表滚动：只关闭卡片锚定的弹窗。</summary>
@@ -1737,7 +1760,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         }
     }
 
-    /// <summary>执行共享命令；本阶段未接入的命令（缩放预设等）不生成按钮，故不会走到这里。</summary>
+    /// <summary>执行共享命令。</summary>
     /// <param name="command">共享命令标识。</param>
     private void Execute(string command)
     {

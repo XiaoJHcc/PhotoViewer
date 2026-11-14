@@ -38,7 +38,7 @@
 ## ANALYSIS-03 等边长与几何 · 必须
 
 - 所有瓦片等边长，边长 `analysis.tile.size` = `max(1, floor((analysis.availableMain − analysis.panel.padding × 2 − analysis.tile.spacing × (n − 1)) / n))`，n 为当前实际瓦片数（AI 版 6 或 7，标准版 4 或 5）。
-- 主轴从 `analysis.panel.padding`（10）起排，间距 `analysis.tile.spacing`（8），末端不足一枚的零头留空；交叉轴 = 边长 + `analysis.panel.padding` × 2（20），据此分配面板空间。
+- 主轴从 `analysis.panel.padding`（10）起排，间距 `analysis.tile.spacing`（8），末端不足一枚的零头留空；面板交叉轴尺寸按 ANALYSIS-05 分配。
 - 边长在测量/排列阶段统一给出，一次布局内全部瓦片共用同一值；首次打开、换向、窗口形变、瓦片增减后重算，不得"挤成一坨"或大小错位。
 - 不得采用"先读实际占位宽度、再异步回写子项尺寸"的写法，避免一轮布局内瓦片尺寸不一致。
 - 面板内不滚动、不横向溢出：所有瓦片必须落在一行（行布局）或一列（列布局）内。
@@ -55,9 +55,9 @@
 
 ## ANALYSIS-05 面板位置与让位 · 必须
 
-- 宽形态：行布局在主图下方、列布局在主图右侧；分析栏朝主图一侧有 `shell.analysis.divider.thickness`（1 点）分隔线（`color.analysis.divider`），面板底色与控件区一致。
-- 手机形态：竖屏在顶部行之下、顶栏背景之内（SHELL-08），不画顶部分隔线，瓦片到 EXIF/顶部行只留一份 `shell.phone.rowInset`（8）；横屏在右侧一列，自内向外依次是分析栏、控制栏；分析瓦片到控制栏元素只有一份 `shell.phone.rowInset`（8），面板在相邻侧不再叠加自身交叉轴内边距（SHELL-09）；控制栏隐藏时分析栏贴窗口外缘。横屏右栏背景由单一连续系统材质承载分析栏与控制栏（SHELL-12）。
-- 交叉轴尺寸 = 瓦片边长 + `analysis.panel.padding` × 2（20），手机竖屏改为瓦片边长 + `shell.phone.rowInset` × 2（16），手机横屏且控制栏可见时改为瓦片边长 + 朝主图一侧的 `analysis.panel.padding`（10），相邻控制栏侧不加面板内边距；隐藏分析栏时它占的空间全部并入主图的**适应区**，照片视图本身仍满窗口（SHELL-01、SHELL-11）。
+- 宽形态：行布局在主图下方、列布局在主图右侧。与控制栏相邻时并入同一个工具区（SHELL-12）；未与控制栏相邻时分析栏自带背景，朝主图一侧有 `shell.analysis.divider.thickness`（1 点）分隔线（`color.analysis.divider`），面板底色与控件区一致。
+- 手机形态：竖屏在顶部行之下、顶栏背景之内（SHELL-08），不画顶部分隔线，瓦片到 EXIF/顶部行只留一份 `shell.phone.rowInset`（8）；横屏在右侧一列，与控制栏同属右侧工具区（SHELL-09、SHELL-12），控制栏隐藏时分析栏贴窗口外缘。
+- 分析栏的交叉轴尺寸与相邻侧间距统一取 SHELL-12。隐藏分析栏时它占的空间全部并入主图的**适应区**，照片视图本身仍满窗口（SHELL-01、SHELL-11）。
 - 显隐、换向、全屏沿用当前显隐状态；视口尺寸变化的图像换算按 [image](image.md) 执行，不因分析栏出现而重置缩放。
 - 移动端按真实安全区排布，主图可满幅越过左右安全区；平台差异见 platforms.md（ANALYSIS-05@ios、ANALYSIS-05@android）。
 

@@ -44,40 +44,49 @@ internal static class iOSMainScreenLayout
     /// <param name="analysisCross">分析栏交叉轴长度（未启用时为 0）。</param>
     /// <returns>八个分区矩形。</returns>
     internal static iOSPaneFrames Compute(bool horizontal, double width, double height, UIEdgeInsets safe,
-        double fileMain, double controlMain, double analysisCross)
+        double fileMain, double controlMain, double analysisCross, FilmSideMeasure? fileSide = null)
     {
         double left = (double)safe.Left, right = (double)safe.Right, top = (double)safe.Top, bottom = (double)safe.Bottom;
+        bool joined = controlMain > 0 && analysisCross > 0;
+        double controlExtent = Math.Max(0, controlMain - (joined ? MainScreenLayout.Divider : 0));
         if (horizontal)
         {
-            // 行布局：主轴竖直，安全区上下让位从主轴扣除；栏位背景向上/向下补回屏幕边缘。
             double boxHeight = Math.Max(1, height - top - bottom);
-            var panes = MainScreenLayout.Partition(true, width, boxHeight, fileMain, controlMain, analysisCross);
+            var panes = MainScreenLayout.Partition(true, width, boxHeight, fileMain, controlExtent, analysisCross);
             var fileDivider = Shift(panes.FileDivider, top);
-            var controlDivider = Shift(panes.ControlDivider, top);
-            var controlContent = Shift(panes.ControlBar, top);
+            var analysis = analysisCross > 0 ? Shift(panes.Analysis, top) : default;
+            var controlDivider = controlMain > 0 && !joined ? Shift(panes.ControlDivider, top) : default;
+            double controlY = top + (joined ? panes.ControlDivider.Y : panes.ControlBar.Y);
+            double controlHeight = controlMain > 0 ? panes.ControlBar.Height + (joined ? MainScreenLayout.Divider : 0) : 0;
             double contentWidth = Math.Max(1, width - left - right);
+            double regionTop = analysisCross > 0 ? analysis.Y : controlDivider.Y;
+            var background = analysisCross > 0 || controlMain > 0
+                ? new LayoutRect(0, regionTop, width, Math.Max(0, height - regionTop)) : default;
             return new iOSPaneFrames(
                 new LayoutRect(0, 0, width, top + panes.FileBar.Height),
                 new LayoutRect(left, top, contentWidth, panes.FileBar.Height),
                 fileDivider,
                 Shift(panes.Photo, top),
-                Shift(panes.Analysis, top),
+                analysis,
                 controlDivider,
-                new LayoutRect(0, controlDivider.Y, width, Math.Max(0, height - controlDivider.Y)),
-                new LayoutRect(left, controlContent.Y, contentWidth, controlContent.Height));
+                background,
+                controlMain > 0 ? new LayoutRect(left, controlY, contentWidth, controlHeight) : default);
         }
-        // 列布局：主轴水平，内容纵贯窗口上下缘（不扣上下安全区）；左右让位只计入文件栏前导，栏位背景补回屏幕边缘。
-        var column = MainScreenLayout.Partition(false, width, height, fileMain, controlMain, analysisCross);
-        double contentHeight = Math.Max(1, height);
+        var column = MainScreenLayout.Partition(false, width, height, fileMain, controlExtent, analysisCross);
+        double controlX = joined ? column.ControlDivider.X : column.ControlBar.X;
+        double controlWidth = controlMain > 0 ? column.ControlBar.Width + (joined ? MainScreenLayout.Divider : 0) : 0;
+        double regionLeft = analysisCross > 0 ? column.Analysis.X : column.ControlDivider.X;
         return new iOSPaneFrames(
             column.FileBar,
-            new LayoutRect(left, 0, Math.Min(MainScreenLayout.FileBarContentWidth, Math.Max(0, column.FileBar.Width - left)), contentHeight),
+            fileSide is { } side
+                ? new LayoutRect(side.FilmstripX, 0, side.Width - side.FilmstripX, height)
+                : new LayoutRect(left, 0, Math.Min(MainScreenLayout.FileBarContentWidth, Math.Max(0, column.FileBar.Width - left)), height),
             column.FileDivider,
             column.Photo,
-            column.Analysis,
-            column.ControlDivider,
-            new LayoutRect(column.ControlBar.X, 0, Math.Max(0, width - column.ControlBar.X), height),
-            new LayoutRect(column.ControlBar.X, 0, column.ControlBar.Width, contentHeight));
+            analysisCross > 0 ? column.Analysis : default,
+            controlMain > 0 && !joined ? column.ControlDivider : default,
+            analysisCross > 0 || controlMain > 0 ? new LayoutRect(regionLeft, 0, width - regionLeft, height) : default,
+            controlMain > 0 ? new LayoutRect(controlX, 0, controlWidth, height) : default);
     }
 
     /// <summary>沿主轴平移矩形（行布局把安全区顶边让位补回主轴坐标）。</summary>

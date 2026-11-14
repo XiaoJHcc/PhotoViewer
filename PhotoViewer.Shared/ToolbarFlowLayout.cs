@@ -15,7 +15,7 @@ public readonly record struct ToolbarGroupSize(ControlBarGroupKind Kind, double 
 /// </summary>
 public static class ToolbarFlowLayout
 {
-    /// <summary>文档四周外边距（10 点）。</summary>
+    /// <summary>文档默认外边距（10 点）；共同工具区的交叉轴前导内边距可由调用方省略。</summary>
     public static double Padding => DesignTokens.ToolbarPadding;
 
     /// <summary>分组间距，换行后同时作为行距（10 点）。</summary>
@@ -107,22 +107,28 @@ public static class ToolbarFlowLayout
         return cross;
     }
 
-    /// <summary>包含四周外边距的文档尺寸；空文档保留纯外边距。</summary>
+    /// <summary>
+    /// 包含四周外边距的文档尺寸；空文档保留纯外边距。交叉轴的前导内边距可覆盖（与相邻工具区共边时传 0），
+    /// 尾随内边距恒为一份 <see cref="Padding"/>，主轴不变。
+    /// </summary>
     /// <param name="groups">分组尺寸。</param>
     /// <param name="horizontal">文档主轴是否为水平方向。</param>
     /// <param name="lines">分行结果。</param>
+    /// <param name="crossLeadingPadding">交叉轴前导内边距；为空时与尾随同取 <see cref="Padding"/>。</param>
     /// <returns>文档尺寸（宽、高）。</returns>
     public static (double Width, double Height) DocumentSize(
-        IReadOnlyList<ToolbarGroupSize> groups, bool horizontal, IReadOnlyList<List<int>> lines)
+        IReadOnlyList<ToolbarGroupSize> groups, bool horizontal, IReadOnlyList<List<int>> lines,
+        double? crossLeadingPadding = null)
     {
         double main = 0;
         double cross = 0;
         foreach (var line in lines) main = Math.Max(main, LineLength(groups, line));
         foreach (var line in lines) cross += LineCross(groups, line);
         cross += Math.Max(0, lines.Count - 1) * GroupSpacing;
+        double crossTotal = cross + (crossLeadingPadding ?? Padding) + Padding;
         return horizontal
-            ? (main + Padding * 2, cross + Padding * 2)
-            : (cross + Padding * 2, main + Padding * 2);
+            ? (main + Padding * 2, crossTotal)
+            : (crossTotal, main + Padding * 2);
     }
 
     /// <summary>行在文档主轴上的起点：整行居中，空间不足时退回外边距。</summary>

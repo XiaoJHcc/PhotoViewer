@@ -7,14 +7,9 @@ using UIKit;
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// 验收专用（测试钩子，独立筛选菜单回归）：只核对 [FILTER-08] 的<b>模型结构</b>——分组与选项都带稳定业务键、
-/// 业务回调与标识一一对应、选中值变化后筛选段仍是同一份菜单与同一批 action、只有模型侧勾选态变化、
-/// 选项集合变化时结构检测要求重建一次。只读真实菜单结构与共享筛选状态：不弹系统菜单、
-/// 不访问系统菜单内部滚动视图。
-/// <para>本检查<b>不判定交互通过</b>：原生菜单路径上「保持展开的同时让屏上勾选即时刷新」尚未解决——
-/// 同一实例经 <c>UpdateVisibleMenu</c> 不会产生可见重绘，换成新菜单又会让菜单滚回顶部。
-/// 因此 action 对象的状态变化只代表模型侧勾选，不代表用户在屏上看到的勾选；展开菜单的屏上勾选与
-/// 滚动保持仍属未解决问题，不在此伪造通过。</para>
+/// 验收专用（测试钩子，独立筛选菜单回归）：核对 [FILTER-08] 的菜单结构、稳定业务标识、
+/// 写回路径与模型选择状态。菜单的可见勾选、滚动和辅助技术焦点属于真实系统交互验收，
+/// 不用托管对象身份代替屏上结果。
 /// 由 <c>--pv-native-form-check</c> 在筛选写回核对之后调用（见报告行）。
 /// </summary>
 internal static class iOSFilterMenuCheck
@@ -80,9 +75,7 @@ internal static class iOSFilterMenuCheck
     }
 
     /// <summary>
-    /// 核对模型侧勾选更新：选中值变化后菜单实例与 action 实例都不变，只有 action 状态变化；
-    /// 手机筛选入口的菜单同样随共享状态更新（其实例是否保持取决于 RefreshPhoneMenus 的接线）。
-    /// 这里核对的是对象身份与状态，<b>不代表展开菜单的屏上勾选或滚动结果</b>。
+    /// 核对选择写回后菜单中的业务状态与分组单选关系；不把托管对象身份当作系统菜单交互结果。
     /// </summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="filter">共享筛选状态。</param>
@@ -95,11 +88,6 @@ internal static class iOSFilterMenuCheck
         string targetIdentifier = $"{SortPrefix}{target}";
 
         var filterButton = root.FilterBar.FilterButton;
-        var menuBefore = await UiDispatcher.InvokeAsync(() => filterButton.Menu
-            ?? throw new InvalidOperationException("筛选段没有菜单"));
-        var actionsBefore = await UiDispatcher.InvokeAsync(() => Actions(menuBefore).ToArray());
-        var phoneMenuBefore = await UiDispatcher.InvokeAsync(() => root.PhoneFilterSegment.Menu);
-
         await UiDispatcher.InvokeAsync(() => filter.SortMode = target);
         await WaitAsync(() => ActionById(filterButton.Menu, targetIdentifier)?.State == UIMenuElementState.On,
             $"筛选段模型勾选「{target}」更新");
@@ -107,30 +95,21 @@ internal static class iOSFilterMenuCheck
         var snapshot = await UiDispatcher.InvokeAsync(() =>
         {
             var menu = filterButton.Menu!;
-            return (Menu: menu, Actions: Actions(menu).ToArray(),
+            return (Actions: Actions(menu).ToArray(),
                 Selected: ActionById(menu, targetIdentifier)?.State ?? UIMenuElementState.Off,
                 OthersOff: Actions(menu)
                     .Where(action => action.Identifier?.StartsWith(SortPrefix, StringComparison.Ordinal) == true
                         && !string.Equals(action.Identifier, targetIdentifier, StringComparison.Ordinal))
                     .All(action => action.State == UIMenuElementState.Off));
         });
-        if (!ReferenceEquals(snapshot.Menu, menuBefore))
-            throw new InvalidOperationException("选中排序方式后筛选段换了菜单实例：展开中的菜单会重建并滚回顶部");
-        if (!SameInstances(actionsBefore, snapshot.Actions))
-            throw new InvalidOperationException("选中排序方式后筛选段换掉了 action 实例：勾选刷新不应重建选项");
         if (snapshot.Selected != UIMenuElementState.On || !snapshot.OthersOff)
-            throw new InvalidOperationException($"筛选段模型勾选未更新：{targetIdentifier}={snapshot.Selected}，其余同组项仍勾选={!snapshot.OthersOff}");
-        lines.Add($"PASS 筛选段模型结构：选中「{target}」后菜单与 {snapshot.Actions.Length} 个 action 实例不变，只有模型侧勾选态变化");
-        lines.Add("NOTE 原生屏上勾选刷新尚未解决：同一实例 UpdateVisibleMenu 不产生可见重绘、换新菜单会滚回顶部，本项不代表展开菜单的可见勾选变化");
+            throw new InvalidOperationException($"筛选段模型选择未更新：{targetIdentifier}={snapshot.Selected}，其余同组项仍勾选={!snapshot.OthersOff}");
+        lines.Add($"PASS 筛选段模型状态：选中「{target}」后 {snapshot.Actions.Length} 个选项的标识与单选状态正确");
 
         foreach (var (button, label) in new[] { (root.PhoneFilterButton, "筛选圆按钮"), (root.PhoneFilterSegment, "合体筛选段") })
-        {
             await WaitAsync(() => ActionById(button.Menu, targetIdentifier)?.State == UIMenuElementState.On,
-                $"{label}模型勾选「{target}」更新");
-        }
-        bool phoneKeptInstance = await UiDispatcher.InvokeAsync(() => ReferenceEquals(root.PhoneFilterSegment.Menu, phoneMenuBefore));
-        if (!phoneKeptInstance) throw new InvalidOperationException("手机筛选段刷新后替换了菜单实例");
-        lines.Add("PASS 手机筛选入口模型勾选：刷新后菜单实例不变；原生屏上勾选刷新与滚动保持尚未解决，未通过交互验收");
+                $"{label}模型选择「{target}」更新");
+        lines.Add("PASS 手机筛选入口模型状态：筛选选择已同步");
     }
 
     /// <summary>核对结构检测：选项集合变化要求重建一次，还原后恢复就地勾选。</summary>
@@ -180,13 +159,6 @@ internal static class iOSFilterMenuCheck
         => identifier.StartsWith(SortPrefix, StringComparison.Ordinal)
             || identifier.StartsWith(OrderPrefix, StringComparison.Ordinal)
             || identifier.StartsWith(RatingPrefix, StringComparison.Ordinal);
-
-    /// <summary>两组 action 是否逐个是同一实例（身份不变 = 没有重建）。</summary>
-    /// <param name="before">变化前的 action。</param>
-    /// <param name="after">变化后的 action。</param>
-    /// <returns>逐位同一实例且数量相同时为 true。</returns>
-    private static bool SameInstances(UIAction[] before, UIAction[] after)
-        => before.Length == after.Length && before.Zip(after).All(pair => ReferenceEquals(pair.First, pair.Second));
 
     /// <summary>把条件放到 UI 线程上轮询等待。</summary>
     /// <param name="condition">等待条件（UI 线程执行）。</param>

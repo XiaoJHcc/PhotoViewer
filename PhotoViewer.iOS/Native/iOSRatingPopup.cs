@@ -44,7 +44,10 @@ internal sealed class iOSRatingPopup : IDisposable
         UIFontWeight.Semibold) ?? throw new InvalidOperationException("系统字体不可用");
     private readonly UIFont _metaFont = UIFont.SystemFontOfSize((nfloat)DesignTokens.PopupRatingSourcesMetaFontSize)
         ?? throw new InvalidOperationException("系统字体不可用");
+    private readonly UIVisualEffect _glassEffect = new UIGlassEffect();
     private UIView? _catcher;
+    private ClosingPanel? _closing;
+    private UIView? _focusView;
     private bool _horizontalRow = true;
     private bool _busy;
     private bool _refreshing;
@@ -116,6 +119,9 @@ internal sealed class iOSRatingPopup : IDisposable
     /// <summary>全窗透明拦截层（点按外部关闭）。</summary>
     internal UIView? Catcher => _catcher;
 
+    /// <summary>关闭后读屏应落回的入口：打开时由调用方明确给出（星级控件或卡片选择按钮），仍需在窗口内且祖先可见。</summary>
+    internal UIView? FocusTargetForEntry => ResolveFocusTarget();
+
     /// <summary>验收缝：减少动态效果时只淡入淡出。</summary>
     internal Func<bool> ReduceMotionProvider { get; set; } = () => UIAccessibility.IsReduceMotionEnabled;
 
@@ -128,8 +134,10 @@ internal sealed class iOSRatingPopup : IDisposable
     /// <param name="anchorKind">入口类型。</param>
     /// <param name="direction">展开方向。</param>
     /// <param name="horizontalRow">星排是否横排（竖排控件入口为 false）。</param>
+    /// <param name="focusTarget">关闭后读屏应落回的可访问入口（星级控件或卡片选择按钮）；
+    /// 未给时取锚点自身（仅当它是读屏元素）。</param>
     internal void Open(ImageFile file, UIView anchor, RatingPopupAnchor anchorKind, RatingPopupDirection direction,
-        bool horizontalRow)
+        bool horizontalRow, UIView? focusTarget = null)
     {
         if (_disposed) return;
         CloseImmediately();
@@ -138,6 +146,7 @@ internal sealed class iOSRatingPopup : IDisposable
         AnchorKind = anchorKind;
         Direction = direction;
         _horizontalRow = horizontalRow;
+        _focusView = focusTarget ?? (anchor.IsAccessibilityElement ? anchor : null);
         AnchorRect = RectOf(anchor);
         Mode = file.HasRatingConflict ? RatingPopupMode.Sources : RatingPopupMode.Single;
         _main.ShowRatingSources(file);
@@ -151,15 +160,18 @@ internal sealed class iOSRatingPopup : IDisposable
             Frame = _host.Bounds,
             BackgroundColor = UIColor.Clear,
             AutoresizingMask = UIViewAutoresizing.FlexibleWidth | UIViewAutoresizing.FlexibleHeight,
+            IsAccessibilityElement = false,
+            AccessibilityElementsHidden = true,
         };
         _host.AddSubview(_catcher);
         _host.AddSubview(panel);
-        iOSRatingHaptics.Prepare();
         AnimateIn(panel);
+        FocusOnOpen(panel);
     }
 
     /// <summary>
-    /// 关闭弹窗（幂等）：立即标记收起、退订、移走拦截层，把来源 VM 带回关闭态，再淡出面板。
+    /// 关闭弹窗（幂等）：立即标记收起、退订、移走拦截层并清空条目列表，再让面板淡出。
+    /// 面板与其中的星排在退场动画结束后才显式释放，避免在同手势 <c>TrackEnded</c> 回调栈内释放正在调用的星排。
     /// </summary>
     internal void Close()
     {
@@ -168,22 +180,27 @@ internal sealed class iOSRatingPopup : IDisposable
         Unsubscribe();
         if (_main.RatingSources.IsOpen) _main.RatingSources.Close();
         RemoveCatcher();
+        ClearLists();
         if (Panel is not { } panel) return;
         Panel = null;
-        double duration = ReduceMotionProvider() ? .15 : DesignTokens.MotionRatingPopupClose / 1000.0;
-        UIView.AnimateNotify(duration, () => panel.Alpha = 0, _ => panel.RemoveFromSuperview());
+        panel.UserInteractionEnabled = false;
+        var closing = new ClosingPanel(panel);
+        _closing = closing;
+        AnimateOut(closing);
     }
 
-    /// <summary>立即关闭并移走面板（不做退场动效，切图/重开前使用）。</summary>
+    /// <summary>立即关闭：移走面板并同步释放其中的子视图与星排（切图、重开前与销毁时使用）。</summary>
     internal void CloseImmediately()
     {
         IsOpen = false;
         Unsubscribe();
         if (_main.RatingSources.IsOpen) _main.RatingSources.Close();
         RemoveCatcher();
-        Panel?.RemoveFromSuperview();
+        ClearLists();
+        if (_closing is { } closing) FinishClose(closing);
+        if (Panel is not { } panel) return;
         Panel = null;
-        ClearContent();
+        RetirePanel(panel);
     }
 
     /// <summary>
@@ -394,12 +411,12 @@ internal sealed class iOSRatingPopup : IDisposable
             foreach (var item in items)
             {
                 entries.Add(RatingPopupLayout.Source(Measure(item.Name, _nameFont), BadgeWidth(item.Kind),
-                    Measure(item.Status, _metaFont) + 4, pitch));
+                    Measure(item.Status, _metaFont), pitch));
             }
         }
         else
         {
-            double timeWidth = time == null ? 0 : Measure(time, _metaFont) + 4;
+            double timeWidth = time == null ? 0 : Measure(time, _metaFont);
             entries.Add(horizontal
                 ? RatingPopupLayout.SingleRow(Measure(file.DisplayName, _nameFont), timeWidth, pitch)
                 : RatingPopupLayout.SingleColumn(Measure(file.DisplayName, _nameFont), timeWidth, pitch));
@@ -440,19 +457,18 @@ internal sealed class iOSRatingPopup : IDisposable
         var size = RatingPopupLayout.PanelSize(entries);
         PanelFrame = RatingControlGeometry.PlacePopup(AnchorRect, bounds, size.Width, size.Height, Direction,
             DesignTokens.RatingPopupGap);
-        panel.Transform = CGAffineTransform.MakeIdentity();
-        panel.Alpha = 1;
-        panel.Frame = new CGRect(PanelFrame.X, PanelFrame.Y, PanelFrame.Width, PanelFrame.Height);
+        iOSViewGeometry.SetRectIfNeeded(panel, new CGRect(PanelFrame.X, PanelFrame.Y, PanelFrame.Width, PanelFrame.Height));
     }
 
-    /// <summary>新建玻璃面板：系统玻璃材质 + 令牌圆角，固定深色外观。</summary>
+    /// <summary>新建玻璃面板：系统玻璃材质 + 令牌圆角，固定深色外观；材质由入场动效从无到有过渡。</summary>
     /// <returns>面板视图。</returns>
-    private static UIVisualEffectView CreatePanel() => new(new UIGlassEffect())
+    private static UIVisualEffectView CreatePanel() => new((UIVisualEffect?)null)
     {
         CornerConfiguration = UICornerConfiguration.CreateUniformCorners(
             UICornerRadius.CreateFixed((nfloat)DesignTokens.RatingPopupCornerRadius)),
         OverrideUserInterfaceStyle = UIUserInterfaceStyle.Dark,
         ClipsToBounds = true,
+        AccessibilityViewIsModal = true,
     };
 
     /// <summary>可放置边界：宿主安全区再内缩来源弹窗的贴边余量。</summary>
@@ -543,20 +559,20 @@ internal sealed class iOSRatingPopup : IDisposable
     private static double Vertically(UIFont font)
         => (RatingPopupLayout.InfoHeight - (double)font.LineHeight) / 2;
 
-    /// <summary>系统字体下的单行文本宽度。</summary>
+    /// <summary>系统字体下的单行文本宽度（向上取整到整点）。</summary>
     /// <param name="text">文本。</param>
     /// <param name="font">字体。</param>
     /// <returns>宽度。</returns>
     private static double Measure(string? text, UIFont font)
         => string.IsNullOrEmpty(text)
             ? 0
-            : new NSString(text).GetSizeUsingAttributes(new UIStringAttributes { Font = font }).Width;
+            : Math.Ceiling(new NSString(text).GetSizeUsingAttributes(new UIStringAttributes { Font = font }).Width);
 
-    /// <summary>来源标签总宽：文字宽 + 两侧内边距 + UILabel 自带的约 4 点控件内边距。</summary>
+    /// <summary>来源标签总宽：文本实测宽度（向上取整）加两侧明确的内边距。</summary>
     /// <param name="kind">来源标签文本。</param>
     /// <returns>底衬宽度。</returns>
     private double BadgeWidth(string? kind)
-        => Math.Ceiling(Measure(kind, _metaFont)) + DesignTokens.PopupRatingSourcesBadgePaddingX * 2 + 4;
+        => Measure(kind, _metaFont) + DesignTokens.PopupRatingSourcesBadgePaddingX * 2;
 
     /// <summary>单行只读标签。</summary>
     private static UILabel Label(string? text, UIFont font, UIColor color, UILineBreakMode breakMode,
@@ -572,23 +588,53 @@ internal sealed class iOSRatingPopup : IDisposable
         Lines = 1,
     };
 
-    /// <summary>移除上一轮内容；面板实例保留（刷新时只换内容与几何）。</summary>
+    /// <summary>移除上一轮内容；面板实例保留（刷新时只换内容与几何，不碰材质与内容淡变状态）。</summary>
     private void ClearContent()
     {
-        if (Panel is { } panel)
-        {
-            foreach (var subview in panel.ContentView.Subviews)
-            {
-                subview.RemoveFromSuperview();
-                subview.Dispose();
-            }
-        }
+        if (Panel is { } panel) DisposeSubviews(panel.ContentView);
+        ClearLists();
+    }
+
+    /// <summary>清空条目引用（不触碰视图；退场期间子视图由 <see cref="RetirePanel"/> 释放）。</summary>
+    private void ClearLists()
+    {
         _names.Clear();
         _times.Clear();
         _badges.Clear();
         _statuses.Clear();
         _dividers.Clear();
         _rows.Clear();
+    }
+
+    /// <summary>逐个摘除并显式释放内容子视图（星排的 <c>Dispose</c> 会摘掉触感交互）。</summary>
+    /// <param name="content">面板内容视图。</param>
+    private static void DisposeSubviews(UIView content)
+    {
+        foreach (var subview in content.Subviews)
+        {
+            subview.RemoveFromSuperview();
+            subview.Dispose();
+        }
+    }
+
+    /// <summary>退场结束（或立即关闭）时释放旧面板：摘离子视图、释放内容与面板本体。</summary>
+    /// <param name="closing">本次关闭持有的面板。</param>
+    private void FinishClose(ClosingPanel closing)
+    {
+        if (closing.Panel is not { } panel) return;
+        closing.Panel = null;
+        if (ReferenceEquals(_closing, closing)) _closing = null;
+        RetirePanel(panel);
+    }
+
+    /// <summary>摘除并释放一个已结束展示的面板；内容子视图先逐个释放，面板随后解绑。</summary>
+    /// <param name="panel">要释放的面板。</param>
+    private static void RetirePanel(UIVisualEffectView panel)
+    {
+        panel.Layer.RemoveAllAnimations();
+        panel.RemoveFromSuperview();
+        DisposeSubviews(panel.ContentView);
+        panel.Dispose();
     }
 
     /// <summary>退订来源 VM 与目标照片。</summary>
@@ -605,14 +651,26 @@ internal sealed class iOSRatingPopup : IDisposable
         _catcher = null;
     }
 
-    /// <summary>入场：面板从入口一侧略小并偏向入口，弹簧放大到原位；减少动态效果时只淡入。</summary>
+    /// <summary>
+    /// 入场：面板 alpha 恒为 1，玻璃材质从无到有、内容在 <c>ContentView</c> 内淡入，
+    /// 普通动态效果另叠加入口方向的弹簧位移与缩放；减少动态效果时只淡变、不做缩放。
+    /// </summary>
     /// <param name="panel">面板视图。</param>
     private void AnimateIn(UIVisualEffectView panel)
     {
-        panel.Alpha = 0;
+        // UIVisualEffectView 与任何祖先的 alpha 小于 1 都会让系统材质失效或错渲，材质视图 alpha 必须保持 1。
+        panel.Alpha = 1;
+        var content = panel.ContentView;
+        content.Alpha = 0;
         if (ReduceMotionProvider())
         {
-            UIView.Animate(.15, () => panel.Alpha = 1);
+            panel.Transform = CGAffineTransform.MakeIdentity();
+            UIView.AnimateNotify(FadeDuration, 0, (nfloat)1, 0, UIViewAnimationOptions.BeginFromCurrentState,
+                () =>
+                {
+                    panel.Effect = _glassEffect;
+                    content.Alpha = 1;
+                }, null);
             return;
         }
         double dx = (double)(AnchorRect.X + AnchorRect.Width / 2) - (double)panel.Center.X;
@@ -635,12 +693,85 @@ internal sealed class iOSRatingPopup : IDisposable
             UIViewAnimationOptions.BeginFromCurrentState,
             () =>
             {
-                panel.Alpha = 1;
+                panel.Effect = _glassEffect;
+                content.Alpha = 1;
                 panel.Transform = CGAffineTransform.MakeIdentity();
             }, null);
     }
 
-    /// <summary>全窗透明拦截层：吞掉外部点按并关闭弹窗。</summary>
+    /// <summary>
+    /// 退场：与入场反向——内容淡出、玻璃材质退回无，面板 alpha 仍恒为 1；
+    /// 动画结束后释放面板，并在没有新的打开会话时把读屏焦点交还入口。
+    /// </summary>
+    /// <param name="closing">本次关闭持有的面板。</param>
+    private void AnimateOut(ClosingPanel closing)
+    {
+        if (closing.Panel is not { } panel) return;
+        bool reduce = ReduceMotionProvider();
+        double duration = reduce ? FadeDuration : DesignTokens.MotionRatingPopupClose / 1000.0;
+        var content = panel.ContentView;
+        UIView.AnimateNotify(duration, 0, (nfloat)1, 0, UIViewAnimationOptions.BeginFromCurrentState,
+            () =>
+            {
+                content.Alpha = 0;
+                panel.Effect = null;
+            },
+            _ =>
+            {
+                // 退场期间没有重开或立即关闭时，这次关闭仍持有面板会话；否则焦点已属于新的入口/会话。
+                bool current = ReferenceEquals(_closing, closing);
+                FinishClose(closing);
+                if (current && !_disposed) RestoreFocus();
+            });
+    }
+
+    /// <summary>减少动态效果与退场通用的淡变时长（秒）。</summary>
+    private const double FadeDuration = .15;
+
+    /// <summary>打开后把读屏焦点移入面板：优先第一条星排（可调节元素），没有星排时取面板内容。</summary>
+    /// <param name="panel">刚上屏的面板。</param>
+    private void FocusOnOpen(UIVisualEffectView panel)
+    {
+        UIView element = _rows.Count > 0 ? _rows[0] : panel.ContentView;
+        UIAccessibility.PostNotification(UIAccessibilityPostNotification.ScreenChanged, element);
+    }
+
+    /// <summary>关闭后把读屏焦点交还入口；入口不可用时不移动焦点（不落到已消失的旧入口）。</summary>
+    private void RestoreFocus()
+    {
+        if (IsOpen || ResolveFocusTarget() is not { } target) return;
+        UIAccessibility.PostNotification(UIAccessibilityPostNotification.ScreenChanged, target);
+    }
+
+    /// <summary>关闭后读屏应落回的入口：打开时由调用方明确给出，且仍在窗口内、祖先链可见。</summary>
+    /// <returns>可访问入口；入口已失效时为 null。</returns>
+    private UIView? ResolveFocusTarget()
+    {
+        if (_focusView is not { IsAccessibilityElement: true } target) return null;
+        if (_host.Window == null || target.Window == null) return null;
+        return target.IsDescendantOfView(_host) && IsVisibleInHost(target) ? target : null;
+    }
+
+    /// <summary>入口到宿主之间的祖先链是否都可见（含入口自身）。</summary>
+    /// <param name="view">入口视图。</param>
+    /// <returns>全部可见时为 true。</returns>
+    private bool IsVisibleInHost(UIView view)
+    {
+        for (UIView? current = view; current != null; current = current.Superview)
+        {
+            if (current.Hidden || current.Alpha < .01 || current.AccessibilityElementsHidden) return false;
+            if (ReferenceEquals(current, _host)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>一次关闭持有的面板（动画结束或立即关闭时置空，保证只释放一次）。</summary>
+    private sealed class ClosingPanel(UIVisualEffectView panel)
+    {
+        internal UIVisualEffectView? Panel { get; set; } = panel;
+    }
+
+    /// <summary>全窗透明拦截层：吞掉外部点按并关闭弹窗，不作为读屏元素。</summary>
     private sealed class DismissCatcher(iOSRatingPopup owner) : UIView
     {
         /// <summary>点按外部：关闭弹窗，不把这次触摸继续交给下面的主图。</summary>

@@ -424,7 +424,7 @@ internal static class iOSNativeAnalysisCheck
         return ColorEngine.ToSrgb8(linear);
     }
 
-    /// <summary>核对两向瓦片几何：交叉轴 = 边长 + 20，瓦片正方形、间距 8、内边距 10、主轴起点含安全区让位。</summary>
+    /// <summary>核对两向瓦片几何：交叉轴 = 边长 + 朝主图 10 + 相邻控制接缝 8（独立时外侧 10），瓦片正方形、间距 8、内边距 10、主轴起点含安全区让位。</summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="row">是否行布局。</param>
     /// <param name="lines">报告行。</param>
@@ -445,8 +445,17 @@ internal static class iOSNativeAnalysisCheck
         double expected = AnalysisPanelGeometry.TileSize(available, tiles.Count);
         var panes = root.Panes;
         double cross = row ? (double)panes.Analysis.Height : (double)panes.Analysis.Width;
-        if (Math.Abs(cross - (expected + AnalysisPanelGeometry.Padding * 2)) > 1.5)
-            throw new InvalidOperationException($"{(row ? "行" : "列")}布局分析栏交叉轴 {cross} 与边长 {expected} + 20 不符");
+        // 与控制栏相邻时工具区共用一条接缝（8），否则两侧各一份面板内边距（10）。
+        bool joined = !root.ControlScroll.Hidden;
+        double expectedCross = ToolRegionGeometry.AnalysisWidth(expected, joined);
+        if (Math.Abs(cross - expectedCross) > 1.5)
+            throw new InvalidOperationException(
+                $"{(row ? "行" : "列")}布局分析栏交叉轴 {cross} 与边长 {expected} + {(joined ? "18（10 + 接缝 8）" : "20")} = {expectedCross} 不符");
+        double crossOffset = row ? (double)tiles[0].Frame.Y : (double)tiles[0].Frame.X;
+        double endGap = cross - crossOffset - expected;
+        if (Math.Abs(endGap - (joined ? ToolRegionGeometry.Spacing : AnalysisPanelGeometry.Padding)) > 1.5)
+            throw new InvalidOperationException(
+                $"{(row ? "行" : "列")}布局分析瓦片朝控制侧留白 {endGap} 不是{(joined ? "接缝 8" : "外侧 10")}");
         double startInset = row ? (double)safe.Left : (double)safe.Top;
         for (int index = 0; index < tiles.Count; index++)
         {
@@ -457,8 +466,8 @@ internal static class iOSNativeAnalysisCheck
             double expectOffset = startInset + AnalysisPanelGeometry.TileOffset(index, expected);
             if (Math.Abs(offset - expectOffset) > 1.5)
                 throw new InvalidOperationException($"瓦片 {index} 主轴起点 {offset} 与 {expectOffset} 不符");
-            double crossOffset = row ? (double)frame.Y : (double)frame.X;
-            if (Math.Abs(crossOffset - AnalysisPanelGeometry.Padding) > 1.5)
+            double frameCrossOffset = row ? (double)frame.Y : (double)frame.X;
+            if (Math.Abs(frameCrossOffset - AnalysisPanelGeometry.Padding) > 1.5)
                 throw new InvalidOperationException($"瓦片 {index} 交叉轴内边距 {crossOffset} 应为 10");
         }
         lines.Add($"PASS 几何 {(row ? "row" : "col")}：{tiles.Count} 张正方形瓦片 side={expected} gap=8 padding=10 cross={cross}");

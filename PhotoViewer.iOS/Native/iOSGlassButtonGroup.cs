@@ -5,8 +5,8 @@ using UIKit;
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// 手机形态的合体玻璃按钮：一个系统玻璃材质容器内按横轴或纵轴排布若干方形按钮段，
-/// 每段边长取 <see cref="DesignTokens.ShellGlassButtonSize"/>（命中区不小于 44 点）。
+/// 合体玻璃按钮：一个系统玻璃材质容器内按横轴或纵轴排布若干按钮段，
+/// 段主轴长度默认取 <see cref="DesignTokens.ShellGlassButtonSize"/>（命中区不小于 44 点），宿主可按区域几何覆盖。
 /// 段数、显隐与方向由宿主决定，本类只把可见段依次铺进内容区；胶囊外形交给系统
 /// <see cref="UIGlassEffect"/> 与 <see cref="UICornerConfiguration"/>，不自绘圆角或阴影。
 /// </summary>
@@ -18,6 +18,9 @@ internal sealed class iOSGlassButtonGroup : UIVisualEffectView
 
     /// <summary>各段的按钮实例（顺序即排布顺序，隐藏段跳过排布）。</summary>
     internal IReadOnlyList<UIButton> Buttons => _buttons;
+
+    /// <summary>单段沿排布轴的长度；默认 44，宽形态筛选段为 48。</summary>
+    internal double SegmentLength { get; set; } = DesignTokens.ShellGlassButtonSize;
 
     /// <summary>是否纵向排布（横屏控制列用纵排，其余横排）。</summary>
     internal bool Vertical
@@ -64,11 +67,11 @@ internal sealed class iOSGlassButtonGroup : UIVisualEffectView
         return button;
     }
 
-    /// <summary>按方向把可见段依次铺满内容区，每段保持设计令牌的方形边长。</summary>
+    /// <summary>按方向把可见段依次铺进内容区，段长取 <see cref="SegmentLength"/>。</summary>
     public override void LayoutSubviews()
     {
         base.LayoutSubviews();
-        double size = DesignTokens.ShellGlassButtonSize;
+        double length = SegmentLength;
         int visible = _buttons.Count(button => !button.Hidden);
         int index = 0;
         foreach (var button in _buttons)
@@ -76,8 +79,8 @@ internal sealed class iOSGlassButtonGroup : UIVisualEffectView
             if (button.Hidden) continue;
             int slot = Mirrored ? visible - 1 - index : index;
             iOSViewGeometry.SetRectIfNeeded(button, Vertical
-                ? new CGRect(0, slot * size, Bounds.Width, size)
-                : new CGRect(slot * size, 0, size, Bounds.Height));
+                ? new CGRect(0, slot * length, Bounds.Width, length)
+                : new CGRect(slot * length, 0, length, Bounds.Height));
             index++;
         }
     }

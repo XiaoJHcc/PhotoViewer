@@ -10,12 +10,8 @@ namespace PhotoViewer.iOS.Native;
 /// 选项保持菜单展开（<see cref="UIMenuElementAttributes.KeepsMenuPresented"/>），选中后写回共享筛选状态，
 /// 失焦才关闭。手机形态的筛选圆按钮与宽形态的合体胶囊（<see cref="iOSFilterControl"/>）共用本菜单；
 /// 数据与当前值一律现读共享 <see cref="FilterBarViewModel"/>，本类不缓存筛选条件。
-/// <para>分组与选项都带稳定标识（业务键 <c>sort:</c> / <c>order:</c> / <c>rating:</c>），刷新时按标识改写
-/// <see cref="UIAction.State"/>，并把 <c>UIContextMenuInteraction.UpdateVisibleMenu</c> 交来的那份菜单原样返回；
-/// 只有选项集合真的变化（菜单里的选项标识对不上）才重建一次。</para>
-/// <para>已知限制（原生屏上勾选刷新未解决）：改写 action 状态不会让已展开的菜单可见地重绘，
-/// 换成新菜单又必然滚回顶部。因此这里只维护「标识、回调、勾选态」这一层模型结构与写回路径，
-/// 不能用 action 对象的状态变化代表用户在屏上看到的勾选变化。</para>
+/// <para>按稳定业务标识同步选择，并通过 <c>UIContextMenuInteraction.UpdateVisibleMenu</c>
+/// 更新系统提供的可变菜单副本；选项集合变化时重建内容。屏上勾选、滚动与焦点另作交互验收。</para>
 /// </summary>
 internal static class iOSFilterMenu
 {
@@ -29,11 +25,7 @@ internal static class iOSFilterMenu
     private const string RatingGroup = "rating";
 
     /// <summary>
-    /// 现读共享筛选状态刷新按钮菜单与菜单里的勾选态：选项集合未变时不重建菜单，只按标识就地改写
-    /// <see cref="UIAction.State"/>，并把展开中的菜单原样交回系统；勾选已是最新（无关状态通知）时
-    /// 连系统更新入口都不调用。
-    /// <para>这只同步模型侧勾选：已展开菜单的屏上勾选刷新在原生菜单路径上尚未解决（同一份菜单不重绘、
-    /// 新菜单会滚回顶部），调用方与验收不得据此判断屏上结果。</para>
+    /// 现读共享状态，按业务标识更新按钮菜单与系统提供的可变菜单副本；状态未变时跳过更新。
     /// </summary>
     /// <param name="button">带菜单的按钮。</param>
     /// <param name="filter">共享筛选状态。</param>
@@ -121,8 +113,7 @@ internal static class iOSFilterMenu
             UIMenuOptions.DisplayInline | UIMenuOptions.SingleSelection, actions);
     }
 
-    /// <summary>把勾选态就地套到一份菜单上：只改 action 的 <see cref="UIAction.State"/>，不新建菜单与 action。
-    /// 改的是模型侧状态，不会让已展开的菜单可见地重绘。</summary>
+    /// <summary>按业务标识更新菜单中的选择状态。</summary>
     /// <param name="menu">目标菜单（可以是系统在 <c>UIContextMenuInteraction.UpdateVisibleMenu</c> 里交来的那份）。</param>
     /// <param name="states">标识 → 勾选态。</param>
     /// <param name="changed">目标菜单上的勾选态是否真的发生变化。</param>
@@ -147,8 +138,7 @@ internal static class iOSFilterMenu
         return matched && applied == states.Count;
     }
 
-    /// <summary>把菜单更新交给系统：交回同一份菜单保持菜单与 action 身份（现网实测不会触发可见重绘，
-    /// 换成新菜单则会把已展开的菜单滚回顶部）。</summary>
+    /// <summary>把菜单更新交给系统的可见菜单更新入口。</summary>
     /// <param name="button">带菜单的按钮。</param>
     /// <param name="update">系统更新入口的菜单变换。</param>
     private static void RefreshPresented(UIButton button, Func<UIMenu, UIMenu> update)

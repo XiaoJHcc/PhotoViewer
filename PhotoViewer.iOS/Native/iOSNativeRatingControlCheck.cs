@@ -16,11 +16,11 @@ namespace PhotoViewer.iOS.Native;
 
 /// <summary>
 /// 验收专用（非产品行为，测试钩子）：<c>--pv-native-rating-control-check &lt;目录&gt;</c> 程序化核对星级控件与星级弹窗——
-/// [RATING-07] 展开/紧凑两态的形态阈值、点按与滑动预览（触感计数）、取消带与取消、紧凑态弹窗落位与同手势续接、
-/// 弹窗外点/ Esc / 切图 / 入口移动四种收起路径、减少动态效果、竖排紧凑弹窗、读屏增减与禁用态；
+/// [RATING-07] 展开/紧凑两态的形态阈值、点按与滑动预览（触感计数与每行生成器实例复用）、取消带与取消、紧凑态弹窗落位与同手势续接、
+/// 弹窗标签实测宽度排版（时间/来源信息按 UILabel 实测宽 + 明确内边距）、弹窗外点/ Esc / 切图 / 入口移动四种收起路径、减少动态效果、竖排紧凑弹窗、读屏增减与禁用态；
 /// [RATING-04] 冲突三角打开来源弹窗、整组写回与冲突消解、卡片三角入口；iPhone 竖屏紧凑/展开、横屏两种刘海方向
 /// （真实 <c>RequestGeometryUpdate</c> 旋转、控制列竖排次序与方向表、旋转收起弹窗）；iPad 宽形态行/列控制栏的
-/// 星级分组、胶囊尺寸、命令圆按钮、[TOOLBAR-03]「显示评分」显隐，以及 [SHELL-12] 共同玻璃容器内容区里的平级效果元素、
+/// 星级分组、胶囊尺寸、命令圆按钮、[TOOLBAR-03]「显示评分」显隐（无需保留空槽），以及 [SHELL-12] 共同玻璃容器内容区里的平级效果元素、
 /// 无衬底 EXIF 列与星级/命令同列等宽、真值刷新与同尺寸重排不拆控件不碰交互几何（星排按压缩放跨重排保持、取消回弹后几何一致）。
 /// 输入只经接缝方法驱动（星排/控件的 Track*、读屏入口、卡片按钮动作），坐标一律由真实视图 frame 换算。
 /// 素材先复制到 App 自建的可写工作副本 <c>Documents/rating-control-fixtures-work</c>，收尾删除；
@@ -197,7 +197,7 @@ internal static class iOSNativeRatingControlCheck
                 _main.IsThumbnailViewVisible = true;
                 _main.IsControlViewVisible = true;
                 _main.IsAnalysisViewVisible = false;
-                // 本轮规则以手机 EXIF 开关打开为默认核对态（横屏控制栏带 EXIF 列），收尾还原进入时的值。
+                // 默认以手机 EXIF 开关打开为核对态（横屏控制栏带 EXIF 列），收尾还原进入时的值。
                 _main.IsExifViewVisible = true;
                 _main.FileVM.FilterBar.SelectedRatingFilter = "All";
                 foreach (var format in _main.Settings.FileFormats)
@@ -214,6 +214,7 @@ internal static class iOSNativeRatingControlCheck
 
             VerifyThresholds();
             await VerifyExpandedTapAsync();
+            await VerifyHapticsLifetimeAsync();
             await VerifyExpandedSlideAsync();
             await VerifyExpandedCancelAsync();
             await VerifyCompactTapAsync();
@@ -221,6 +222,8 @@ internal static class iOSNativeRatingControlCheck
             await VerifyCompactCancelAsync();
             await VerifyPopupClosingAsync();
             await VerifyReduceMotionAsync();
+            await VerifyPopupMaterialAsync();
+            await VerifyPopupInputIsolationAsync();
             await VerifyConflictAsync();
             await VerifyCardTriangleAsync();
             await VerifyVerticalCompactAsync();
@@ -333,7 +336,7 @@ internal static class iOSNativeRatingControlCheck
             {
                 if (_main.CurrentFile is not { } file) return false;
                 _root.RatingPopup.Open(file, control.Capsule, RatingPopupAnchor.Control, direction(),
-                    horizontalRow: control.Horizontal);
+                    horizontalRow: control.Horizontal, focusTarget: control);
                 return true;
             };
             control.Popup = _root.RatingPopup;
@@ -691,6 +694,57 @@ internal static class iOSNativeRatingControlCheck
             }
         }
 
+        /// <summary>
+        /// RATING-07 触感复用：同一星排三次真实 Track* 提交复用同一对生成器，交互数不增，
+        /// 触感计数与磁盘真值逐次到位。
+        /// </summary>
+        /// <returns>任务。</returns>
+        private async Task VerifyHapticsLifetimeAsync()
+        {
+            var file = _representative;
+            await OpenFileAsync(file);
+            await SetRatingAsync(file, 0);
+            var control = CreateStandalone(Centered(260, 44, .40), true, DefaultDirection);
+            try
+            {
+                RefreshControl(control);
+                var row = control.Row;
+                var selection = row.Interactions.OfType<UISelectionFeedbackGenerator>().Single();
+                var impact = row.Interactions.OfType<UIImpactFeedbackGenerator>().Single();
+                int interactions = row.Interactions.Length;
+                var baseline = Haptics();
+                foreach (int value in new[] { 2, 4, 5 })
+                {
+                    int before = _commits.Count;
+                    var point = SlotCenter(row, value);
+                    row.TrackBegan(point);
+                    row.TrackEnded(point);
+                    await WaitAsync(() => _commits.Count == before + 1, $"触感复用写入 {value} 星");
+                    if (_commits[before].Value != value)
+                        throw new InvalidOperationException($"触感复用写回 {_commits[before].Value} ≠ {value}");
+                    await WaitForFileRatingAsync(file, value, $"触感复用写入 {value} 星");
+                    RefreshControl(control);
+                    if (row.Interactions.Length != interactions
+                        || row.Interactions.OfType<UISelectionFeedbackGenerator>().Single().Handle != selection.Handle
+                        || row.Interactions.OfType<UIImpactFeedbackGenerator>().Single().Handle != impact.Handle)
+                        throw new InvalidOperationException("重复提交后星排的触感生成器或交互数发生变化");
+                }
+                var after = Haptics();
+                if (selection.View is not { } selectionView || selectionView.Handle != row.Handle
+                    || impact.View is not { } impactView || impactView.Handle != row.Handle)
+                    throw new InvalidOperationException("触感生成器未以该星排为归属（不应使用无参生成器）");
+                if (after.Selection != baseline.Selection || after.Commit != baseline.Commit + 3)
+                    throw new InvalidOperationException(
+                        $"触感增量 selection={after.Selection - baseline.Selection}、commit={after.Commit - baseline.Commit}（期望 0/3）");
+                _lines.Add($"PASS RATING-07 触感复用：同一星排三次真实点按提交复用同一对生成器，" +
+                    $"交互数恒为 {interactions}（选择/轻冲击各 1），提交触感 +3、选择触感 0，磁盘真值逐次到位");
+            }
+            finally
+            {
+                RemoveView(control);
+            }
+        }
+
         /// <summary>RATING-07 展开态滑动：预览逐档跟随、每跨一档一次选择触感，抬手前不写盘。</summary>
         /// <returns>任务。</returns>
         private async Task VerifyExpandedSlideAsync()
@@ -833,6 +887,20 @@ internal static class iOSNativeRatingControlCheck
                     throw new InvalidOperationException("单条目弹窗没有可续接的星排");
                 if (tracking.Preview != null)
                     throw new InvalidOperationException($"小于点按阈值的移动出现了预览 {tracking.Preview}");
+                // 时间行按 UILabel 实测宽度（向上取整）排版，不再补虚构的控件内边距。
+                var metaFont = UIFont.SystemFontOfSize((nfloat)DesignTokens.PopupRatingSourcesMetaFontSize)
+                    ?? throw new InvalidOperationException("系统字体不可用");
+                if (popup.TimeLabels.Count != 1)
+                    throw new InvalidOperationException($"单条目弹窗没有时间行（{popup.TimeLabels.Count}）");
+                var timeLabel = popup.TimeLabels[0];
+                double measuredTime = Math.Ceiling(new NSString(timeLabel.Text ?? string.Empty)
+                    .GetSizeUsingAttributes(new UIStringAttributes { Font = metaFont }).Width);
+                if (Math.Abs((double)timeLabel.Frame.Width - measuredTime) > Tolerance)
+                    throw new InvalidOperationException(
+                        $"单条目时间框宽 {timeLabel.Frame.Width:0.#} ≠ 实测 {measuredTime:0.#}");
+                if ((double)popup.NameLabels[0].Frame.GetMaxX() + RatingPopupLayout.LabelGap
+                    > (double)timeLabel.Frame.X + Tolerance)
+                    throw new InvalidOperationException("单条目文件名与时间行没有按实测宽度留出间距");
                 control.TrackEnded(nudged);
                 if (!popup.IsOpen)
                     throw new InvalidOperationException("点按抬手关闭了弹窗");
@@ -851,7 +919,8 @@ internal static class iOSNativeRatingControlCheck
                 if (control.Value != 2)
                     throw new InvalidOperationException($"写回后控件显示 {control.Value} ≠ 2");
                 _lines.Add($"PASS RATING-07 紧凑态点按：起手打开单条目弹窗（方向 Up，底边在胶囊顶上方 ≥{gap:0.#} 点、面板在安全区内），" +
-                    $"小于点按阈值的移动不预览、抬手 0 次写回并保持弹窗；点弹窗 2 号星写回 1 次（值 2）后弹窗收起、控件显示 2");
+                    $"小于点按阈值的移动不预览、抬手 0 次写回并保持弹窗；点弹窗 2 号星写回 1 次（值 2）后弹窗收起、控件显示 2；" +
+                    "时间标签宽 = UILabel 实测宽（向上取整），文件名与时间按实测宽度留出间距");
             }
             finally
             {
@@ -968,6 +1037,26 @@ internal static class iOSNativeRatingControlCheck
                 int panelIndex = popup.Panel is { } panel ? Array.IndexOf(subviews, panel) : -2;
                 if (catcherIndex < 0 || panelIndex != catcherIndex + 1)
                     throw new InvalidOperationException($"拦截层未紧贴面板下方（拦截层 {catcherIndex}，面板 {panelIndex}）");
+
+                // 刷新重建内容只重新落位，不重置入场/外部写入的 transform 与内容淡变状态。
+                await Task.Delay(500); // 等入场动效结束，避免它把测试写入的变换动画回单位矩阵
+                var effectPanel = popup.Panel ?? throw new InvalidOperationException("弹窗面板不存在");
+                var content = effectPanel.ContentView;
+                effectPanel.Transform = CGAffineTransform.MakeTranslation((nfloat)7, (nfloat)3);
+                content.Alpha = .7f;
+                var oldName = popup.NameLabels[0];
+                await SetRatingAsync(file, 5);
+                await WaitAsync(() => popup.NameLabels.Count == 1 && !ReferenceEquals(popup.NameLabels[0], oldName),
+                    "星级真值变化触发弹窗内容重建");
+                if (Math.Abs((double)effectPanel.Transform.Tx - 7) > .01
+                    || Math.Abs((double)effectPanel.Transform.Ty - 3) > .01
+                    || Math.Abs((double)content.Alpha - .7) > .01)
+                    throw new InvalidOperationException(
+                        $"刷新重建重置了面板 transform/内容淡变（{effectPanel.Transform} / {content.Alpha:0.##}）");
+                effectPanel.Transform = CGAffineTransform.MakeIdentity();
+                content.Alpha = 1;
+                _lines.Add("PASS RATING-07 弹窗刷新：评分真值通知触发内容重建时不重置面板 transform/内容淡变（布局只经 SetRectIfNeeded）");
+
                 popup.Close();
                 await WaitAsync(() => !popup.IsOpen, "Close() 收起弹窗");
 
@@ -1007,7 +1096,7 @@ internal static class iOSNativeRatingControlCheck
             }
         }
 
-        /// <summary>RATING-07 减少动态效果：打开弹窗不做缩放位移入场，面板 transform 保持单位矩阵。</summary>
+        /// <summary>RATING-07 减少动态效果：打开弹窗不做缩放位移入场，材质视图 alpha 仍恒为 1，只淡变玻璃与内容。</summary>
         /// <returns>任务。</returns>
         private async Task VerifyReduceMotionAsync()
         {
@@ -1023,9 +1112,17 @@ internal static class iOSNativeRatingControlCheck
                 var panel = popup.Panel ?? throw new InvalidOperationException("减少动态效果检查：弹窗未打开");
                 if (!IsIdentity(panel.Transform))
                     throw new InvalidOperationException($"减少动态效果时面板仍有入场变换 {panel.Transform}");
+                if (panel.Alpha != 1)
+                    throw new InvalidOperationException($"减少动态效果时材质视图 alpha 为 {panel.Alpha} ≠ 1");
+                if (panel.Effect is not UIGlassEffect)
+                    throw new InvalidOperationException($"减少动态效果入场没有从无到有改用玻璃材质：{panel.Effect?.GetType().Name ?? "null"}");
+                await WaitAsync(() => panel.ContentView.Alpha == 1, "减少动态效果内容淡入完成");
+                if (!IsIdentity(panel.Transform))
+                    throw new InvalidOperationException($"减少动态效果淡入结束时出现缩放 {panel.Transform}");
                 control.TrackCancelled();
                 await EnsurePopupClosedAsync();
-                _lines.Add("PASS RATING-07 减少动态效果：提供器返回 true 时打开弹窗不做缩放/位移入场（面板 transform 为单位矩阵）");
+                _lines.Add("PASS RATING-07 减少动态效果：提供器返回 true 时打开弹窗不做缩放/位移入场（面板 transform 为单位矩阵），" +
+                    "材质视图 alpha 保持 1、玻璃经 Effect 过渡、内容在 ContentView 内淡入");
             }
             finally
             {
@@ -1033,6 +1130,237 @@ internal static class iOSNativeRatingControlCheck
                     _popupReduceMotion ?? (() => UIAccessibility.IsReduceMotionEnabled);
                 RemoveView(control);
                 await EnsurePopupClosedAsync();
+            }
+        }
+
+        /// <summary>
+        /// RATING-07 弹窗材质与生命周期：材质视图 alpha 恒为 1（入场/退场模型态与中间帧）、玻璃经 <c>Effect</c> 过渡、
+        /// 内容在 <c>ContentView</c> 内淡变、模态读屏隔离（面板 modal、拦截层不是读屏元素）、
+        /// 普通关闭/立即关闭/关闭后立即重开互不干扰，且星排在关闭完成时被显式释放。
+        /// </summary>
+        /// <returns>任务。</returns>
+        private async Task VerifyPopupMaterialAsync()
+        {
+            var file = _representative;
+            await OpenFileAsync(file);
+            await SetRatingAsync(file, 3);
+            var control = CreateStandalone(Centered(150, 44, .55), true, DefaultDirection);
+            try
+            {
+                RefreshControl(control);
+                await EnsurePopupClosedAsync();
+                var popup = _root.RatingPopup;
+                var host = _root.View!;
+                int baseline = iOSRatingRow.LiveCount;
+                var capsule = CapsuleCenter(control);
+
+                control.TrackBegan(capsule);
+                if (!popup.IsOpen) throw new InvalidOperationException("材质检查：弹窗未打开");
+                var panel = popup.Panel ?? throw new InvalidOperationException("材质检查：弹窗没有面板");
+                if (panel.Alpha != 1)
+                    throw new InvalidOperationException($"入场时材质视图 alpha 为 {panel.Alpha} ≠ 1（系统玻璃会失效）");
+                if (!panel.AccessibilityViewIsModal)
+                    throw new InvalidOperationException("弹窗面板没有声明 AccessibilityViewIsModal");
+                if (popup.Catcher is not { } catcher)
+                    throw new InvalidOperationException("材质检查：弹窗没有全窗拦截层");
+                if (catcher.IsAccessibilityElement || !catcher.AccessibilityElementsHidden)
+                    throw new InvalidOperationException(
+                        $"拦截层暴露为读屏元素（IsAccessibilityElement={catcher.IsAccessibilityElement}，" +
+                        $"AccessibilityElementsHidden={catcher.AccessibilityElementsHidden}）");
+                if (panel.Effect is not UIGlassEffect)
+                    throw new InvalidOperationException($"入场没有把玻璃材质交给 Effect：{panel.Effect?.GetType().Name ?? "null"}");
+                if (popup.Rows.Count != 1)
+                    throw new InvalidOperationException($"单条目弹窗应有 1 条星排，实际 {popup.Rows.Count}");
+                var row = popup.Rows[0];
+                if (row.Interactions.Length < 3)
+                    throw new InvalidOperationException(
+                        $"星排交互不足（{row.Interactions.Length}）：应含指针交互与两种触感生成器");
+                if (iOSRatingRow.LiveCount != baseline + 1)
+                    throw new InvalidOperationException(
+                        $"弹窗打开后星排实例数 {iOSRatingRow.LiveCount} ≠ 基线 {baseline} + 1");
+                if (!ReferenceEquals(popup.FocusTargetForEntry, control))
+                    throw new InvalidOperationException(
+                        $"控件胶囊不是读屏元素时焦点目标应为星级控件，实际 {popup.FocusTargetForEntry?.GetType().Name ?? "null"}");
+
+                // 入场中间帧：材质视图 alpha 恒为 1，内容在动画过程中仍处于半透明（系统提供展示层读数时才核对）。
+                bool sawPresentation = false;
+                bool sawContentFade = false;
+                for (int attempt = 0; attempt < 5; attempt++)
+                {
+                    await Task.Delay(30);
+                    if (panel.ContentView.Layer.PresentationLayer is { } entering)
+                    {
+                        sawPresentation = true;
+                        if (entering.Opacity < .999f) sawContentFade = true;
+                    }
+                    if (panel.Layer.PresentationLayer is { } chrome && chrome.Opacity < .999f)
+                        throw new InvalidOperationException($"入场中间帧材质视图自身被淡到 {chrome.Opacity:0.###}，系统玻璃会失效");
+                }
+                if (sawPresentation && !sawContentFade)
+                    throw new InvalidOperationException("入场中间帧内容已完全不透明，没有淡入过程");
+                await Task.Delay(260);
+                if (panel.Alpha != 1 || panel.ContentView.Alpha != 1 || !IsIdentity(panel.Transform)
+                    || panel.Effect is not UIGlassEffect)
+                    throw new InvalidOperationException(
+                        $"入场完成后材质状态不符（alpha={panel.Alpha}，内容 alpha={panel.ContentView.Alpha}，" +
+                        $"transform={panel.Transform}，effect={panel.Effect?.GetType().Name ?? "null"}）");
+
+                // 普通关闭：模型态立即反转入场，材质视图 alpha 仍为 1，星排等退场动画结束才释放。
+                popup.Close();
+                if (popup.IsOpen || popup.Panel != null || popup.Rows.Count != 0)
+                    throw new InvalidOperationException("Close() 后弹窗状态未收起（IsOpen/Panel/Rows 仍有残留）");
+                if (panel.Alpha != 1)
+                    throw new InvalidOperationException($"退场时材质视图 alpha 为 {panel.Alpha} ≠ 1");
+                if (panel.Effect != null)
+                    throw new InvalidOperationException("退场没有把玻璃材质退回无");
+                if (panel.ContentView.Alpha != 0)
+                    throw new InvalidOperationException($"退场内容没有淡出（alpha={panel.ContentView.Alpha}）");
+                if (panel.UserInteractionEnabled)
+                    throw new InvalidOperationException("退场中的旧面板仍接收触摸");
+                if (!host.Subviews.Contains(panel))
+                    throw new InvalidOperationException("退场动画还没有结束，旧面板已提前摘除");
+                await Task.Delay(30);
+                if (panel.ContentView.Layer.PresentationLayer is { } leaving && leaving.Opacity > .999f)
+                    throw new InvalidOperationException($"退场中间帧内容仍完全不透明（{leaving.Opacity:0.###}），没有淡出过程");
+                await WaitAsync(() => !host.Subviews.Contains(panel), "退场结束后摘除旧面板", 5);
+                if (iOSRatingRow.LiveCount != baseline)
+                    throw new InvalidOperationException(
+                        $"退场结束后星排未释放：实例数 {iOSRatingRow.LiveCount} ≠ 基线 {baseline}");
+                if (!ReferenceEquals(popup.FocusTargetForEntry, control))
+                    throw new InvalidOperationException("关闭后焦点目标不再是有效入口（星级控件）");
+
+                // 立即关闭：同步摘除面板并释放星排。
+                control.TrackBegan(capsule);
+                if (!popup.IsOpen) throw new InvalidOperationException("立即关闭检查：弹窗未打开");
+                var quickPanel = popup.Panel ?? throw new InvalidOperationException("立即关闭检查：弹窗没有面板");
+                popup.CloseImmediately();
+                if (popup.IsOpen || popup.Panel != null || popup.Rows.Count != 0)
+                    throw new InvalidOperationException("CloseImmediately() 后弹窗状态未清空");
+                if (host.Subviews.Contains(quickPanel))
+                    throw new InvalidOperationException("CloseImmediately() 后旧面板仍在宿主视图里");
+                if (iOSRatingRow.LiveCount != baseline)
+                    throw new InvalidOperationException(
+                        $"CloseImmediately() 后星排未同步释放：实例数 {iOSRatingRow.LiveCount} ≠ 基线 {baseline}");
+
+                // 关闭后立即重开：旧面板的退场不碰新会话的星排，也不把读屏焦点拉回旧入口。
+                control.TrackBegan(capsule);
+                if (!popup.IsOpen) throw new InvalidOperationException("重开检查：弹窗未打开");
+                var first = popup.Panel ?? throw new InvalidOperationException("重开检查：弹窗没有面板");
+                if (popup.Rows.Count != 1) throw new InvalidOperationException("重开检查：星排数不为 1");
+                var firstRow = popup.Rows[0];
+                popup.Close();
+                control.TrackBegan(capsule);
+                if (!popup.IsOpen) throw new InvalidOperationException("关闭后立即重开失败：弹窗未打开");
+                var second = popup.Panel ?? throw new InvalidOperationException("重开检查：新弹窗没有面板");
+                if (ReferenceEquals(first, second))
+                    throw new InvalidOperationException("关闭后立即重开复用了正在退场的旧面板");
+                if (popup.Rows.Count != 1 || ReferenceEquals(popup.Rows[0], firstRow))
+                    throw new InvalidOperationException("关闭后立即重开没有换成新的星排实例");
+                await Task.Delay(320);
+                if (host.Subviews.Contains(first))
+                    throw new InvalidOperationException("重开后旧面板没有被退场清理");
+                if (iOSRatingRow.LiveCount != baseline + 1)
+                    throw new InvalidOperationException(
+                        $"重开后星排实例数 {iOSRatingRow.LiveCount} ≠ 基线 {baseline} + 1（旧面板误清新弹窗或漏释放）");
+                if (second.Alpha != 1 || second.Effect is not UIGlassEffect || second.ContentView.Alpha != 1)
+                    throw new InvalidOperationException(
+                        $"重开后新面板材质状态不符（alpha={second.Alpha}，内容 alpha={second.ContentView.Alpha}，" +
+                        $"effect={second.Effect?.GetType().Name ?? "null"}）");
+                if (!ReferenceEquals(popup.FocusTargetForEntry, control))
+                    throw new InvalidOperationException("重开后焦点目标不是新会话的入口");
+
+                // Esc 关闭，入口仍有效；入口隐藏后不再给焦点目标（不落到已消失的入口）。
+                if (!_root.HandleEscapeKey())
+                    throw new InvalidOperationException("Esc 未关闭重开的弹窗");
+                await WaitAsync(() => !popup.IsOpen, "Esc 收起重开后的弹窗");
+                await WaitAsync(() => !host.Subviews.Contains(second), "Esc 关闭后旧面板退场清理", 5);
+                if (iOSRatingRow.LiveCount != baseline)
+                    throw new InvalidOperationException($"Esc 关闭后星排未释放：{iOSRatingRow.LiveCount} ≠ {baseline}");
+                control.Hidden = true;
+                if (popup.FocusTargetForEntry != null)
+                    throw new InvalidOperationException("入口隐藏后仍返回焦点目标");
+                control.Hidden = false;
+                if (!ReferenceEquals(popup.FocusTargetForEntry, control))
+                    throw new InvalidOperationException("入口恢复后焦点目标未回到星级控件");
+                _lines.Add("PASS RATING-07 弹窗材质与生命周期：材质视图 alpha 恒为 1（入场/退场模型态与中间帧）、玻璃经 Effect " +
+                    "从无到有/退回无、内容在 ContentView 内淡入淡出；面板 AccessibilityViewIsModal、拦截层不暴露读屏；" +
+                    "普通关闭在退场结束后显式释放星排（Dispose → RemoveInteraction），CloseImmediately 同步释放，" +
+                    "关闭后立即重开换用新面板与新星排且旧面板不误清新会话，焦点目标始终指向有效入口");
+            }
+            finally
+            {
+                RemoveView(control);
+                await EnsurePopupClosedAsync();
+            }
+        }
+
+        /// <summary>
+        /// RATING-07 弹窗打开期间的背景命令隔离：卡片 A 的弹窗打开、主图为 B 时，
+        /// 评分快捷键不写任何一张照片；Esc 收起后键盘恢复可用。
+        /// </summary>
+        /// <returns>任务。</returns>
+        private async Task VerifyPopupInputIsolationAsync()
+        {
+            var current = _representative;
+            await OpenFileAsync(current);
+            await SetRatingAsync(current, 3);
+            if (!_main.IsThumbnailViewVisible)
+                await UiDispatcher.InvokeAsync(() => _main.IsThumbnailViewVisible = true);
+            await SettleAsync();
+            var other = _main.FileVM.ThumbnailList.FilteredFiles.FirstOrDefault(file => !ReferenceEquals(file, current))
+                ?? throw new InvalidOperationException("输入隔离检查需要另一张照片");
+            await SetRatingAsync(other, 4);
+            int otherIndex = _main.FileVM.ThumbnailList.FilteredFiles.IndexOf(other);
+            var card = await WaitForCardAsync(otherIndex, "输入隔离检查");
+            var popup = _root.RatingPopup;
+            await EnsurePopupClosedAsync();
+            int before = _commits.Count;
+            try
+            {
+                var direction = RatingControlGeometry.PopupDirection(_root.Form, _main.IsRowLayout, _root.NotchOnLeft,
+                    RatingPopupAnchor.Card);
+                popup.Open(other, card, RatingPopupAnchor.Card, direction, horizontalRow: true,
+                    focusTarget: card.SelectButton);
+                if (!popup.IsOpen || !ReferenceEquals(popup.Target, other))
+                    throw new InvalidOperationException("输入隔离检查：卡片弹窗没有打开到卡片照片");
+                if (!ReferenceEquals(_main.CurrentFile, current))
+                    throw new InvalidOperationException("输入隔离检查：主图在打开弹窗前已切换");
+                if (!_root.KeyboardInputBlocked)
+                    throw new InvalidOperationException("弹窗打开时 KeyboardInputBlocked 仍为 false");
+                var focus = popup.FocusTargetForEntry
+                    ?? throw new InvalidOperationException("卡片入口没有可访问的焦点目标");
+                if (!focus.IsAccessibilityElement || !focus.IsDescendantOfView(card) || ReferenceEquals(focus, card))
+                    throw new InvalidOperationException(
+                        $"卡片焦点目标不是卡片内的可访问控件：{focus.GetType().Name}（卡片刻意不是读屏元素）");
+                bool handled = _root.TryExecuteKey(30, 0);
+                await Task.Delay(250);
+                if (handled)
+                    throw new InvalidOperationException("弹窗打开时 1 星快捷键仍被派发");
+                if (_commits.Count != before)
+                    throw new InvalidOperationException("弹窗打开时快捷键触发了评分写回事件");
+                if (await ReadDiskRatingAsync(other) != 4)
+                    throw new InvalidOperationException("弹窗打开时快捷键改写了卡片照片 A");
+                if (await ReadDiskRatingAsync(current) != 3)
+                    throw new InvalidOperationException("弹窗打开时快捷键改写了主图 B");
+                if (!popup.IsOpen)
+                    throw new InvalidOperationException("弹窗在快捷键被拦截后自行关闭");
+                if (!_root.HandleEscapeKey())
+                    throw new InvalidOperationException("Esc 没有关闭卡片弹窗");
+                await WaitAsync(() => !popup.IsOpen, "Esc 收起卡片弹窗");
+                if (_root.KeyboardInputBlocked)
+                    throw new InvalidOperationException("弹窗关闭后 KeyboardInputBlocked 仍为 true");
+                bool restored = _root.TryExecuteKey(30, 0);
+                if (!restored)
+                    throw new InvalidOperationException("弹窗关闭后评分快捷键仍不可用");
+                await WaitForFileRatingAsync(current, 1, "关闭后快捷键写回主图");
+                await SetRatingAsync(current, 3);
+                _lines.Add("PASS RATING-07 弹窗输入隔离：卡片 A 的弹窗打开、主图为 B 时 KeyboardInputBlocked=true，" +
+                    "1 星快捷键不派发、A 与 B 的磁盘真值都不变且弹窗保持；Esc 收起后快捷键恢复并写回主图");
+            }
+            finally
+            {
+                await EnsurePopupClosedAsync();
+                if (await ReadDiskRatingAsync(other) != 4) await SetRatingAsync(other, 4);
             }
         }
 
@@ -1073,6 +1401,25 @@ internal static class iOSNativeRatingControlCheck
                 if (popup.DividerViews.Count != sourceCount - 1)
                     throw new InvalidOperationException($"来源弹窗分隔线 {popup.DividerViews.Count} ≠ 来源数 − 1（{sourceCount - 1}）");
 
+                // 来源徽标/状态框宽 = UILabel 实测宽（向上取整）+ 明确内边距，不再补虚构的控件内边距。
+                var metaFont = UIFont.SystemFontOfSize((nfloat)DesignTokens.PopupRatingSourcesMetaFontSize)
+                    ?? throw new InvalidOperationException("系统字体不可用");
+                double badgePadding = DesignTokens.PopupRatingSourcesBadgePaddingX;
+                for (int index = 0; index < popup.BadgeViews.Count; index++)
+                {
+                    var badgeLabel = popup.BadgeViews[index].Subviews.OfType<UILabel>().Single();
+                    double measuredBadge = Math.Ceiling(new NSString(badgeLabel.Text ?? string.Empty)
+                        .GetSizeUsingAttributes(new UIStringAttributes { Font = metaFont }).Width);
+                    double measuredStatus = Math.Ceiling(new NSString(popup.StatusLabels[index].Text ?? string.Empty)
+                        .GetSizeUsingAttributes(new UIStringAttributes { Font = metaFont }).Width);
+                    if (Math.Abs((double)popup.BadgeViews[index].Frame.Width - (measuredBadge + badgePadding * 2)) > Tolerance)
+                        throw new InvalidOperationException(
+                            $"来源徽标宽 {popup.BadgeViews[index].Frame.Width:0.#} ≠ 实测 {measuredBadge:0.#} + 两侧 {badgePadding:0.#}");
+                    if (Math.Abs((double)popup.StatusLabels[index].Frame.Width - measuredStatus) > Tolerance)
+                        throw new InvalidOperationException(
+                            $"来源状态框宽 {popup.StatusLabels[index].Frame.Width:0.#} ≠ 实测 {measuredStatus:0.#}");
+                }
+
                 var entry = popup.Rows[0];
                 entry.SetNeedsLayout();
                 entry.LayoutIfNeeded();
@@ -1098,8 +1445,8 @@ internal static class iOSNativeRatingControlCheck
                 if (control.Row.ClearSymbol != "xmark")
                     throw new InvalidOperationException($"冲突消解后 0 号槽位仍为 {control.Row.ClearSymbol}");
                 _lines.Add($"PASS RATING-04 冲突来源弹窗：0 号槽位为 exclamationmark.triangle.fill（color.star.conflict），" +
-                    $"落三角 0 次写回即打开来源弹窗（{sourceCount} 条、分隔线 {sourceCount - 1} 条）；" +
-                    "点任一行 3 号星整组写回 3 星，全部来源磁盘真值 3、冲突解除、弹窗收起、0 号回到 xmark");
+                    $"落三角 0 次写回即打开来源弹窗（{sourceCount} 条、分隔线 {sourceCount - 1} 条，徽标/状态框宽 = " +
+                    "UILabel 实测宽 + 明确内边距）；点任一行 3 号星整组写回 3 星，全部来源磁盘真值 3、冲突解除、弹窗收起、0 号回到 xmark");
             }
             finally
             {
@@ -1168,6 +1515,11 @@ internal static class iOSNativeRatingControlCheck
                 throw new InvalidOperationException("卡片三角弹窗没有锚定整张卡片");
             if (popup.Mode != iOSRatingPopup.RatingPopupMode.Sources)
                 throw new InvalidOperationException($"卡片冲突弹窗形态为 {popup.Mode} ≠ Sources");
+            var focus = popup.FocusTargetForEntry
+                ?? throw new InvalidOperationException("卡片入口没有可访问的焦点目标");
+            if (!focus.IsAccessibilityElement || ReferenceEquals(focus, card) || !focus.IsDescendantOfView(card))
+                throw new InvalidOperationException(
+                    $"卡片焦点目标应是卡片内的可访问控件（卡片自身不是读屏元素），实际 {focus.GetType().Name}");
             var expected = RatingControlGeometry.PopupDirection(_root.Form, _main.IsRowLayout, _root.NotchOnLeft,
                 RatingPopupAnchor.Card);
             if (popup.Direction != expected)
@@ -1351,6 +1703,25 @@ internal static class iOSNativeRatingControlCheck
             // 竖屏 · 上下张开启 → 槽位放不下 → 紧凑
             await UiDispatcher.InvokeAsync(() => _main.Settings.ShowNavigationButtons = true);
             await SettleAsync();
+            // SHELL-09「显示评分」关闭：竖屏只移除评分槽，导航组与增强组位置不另重排（横屏释放长度给 EXIF 另行核对）。
+            var navigationBefore = _root.PhoneSlots.Navigation;
+            var fitEnhanceBefore = _root.PhoneSlots.FitEnhance;
+            await UiDispatcher.InvokeAsync(() => _main.Settings.ShowRating = false);
+            await SettleAsync();
+            await WaitAsync(() => !Has(_root.PhoneSlots.Rating) && phone.Hidden, "显示评分关闭移除竖屏评分槽");
+            if (Has(_root.PhoneSlots.Rating) || !phone.Hidden)
+                throw new InvalidOperationException("显示评分关闭后竖屏仍保留评分槽或控件");
+            if (_root.PhoneSlotsInput.ShowRating)
+                throw new InvalidOperationException("显示评分关闭后槽位输入 ShowRating 仍为 true");
+            if (_root.PhoneSlots.Navigation != navigationBefore || _root.PhoneSlots.FitEnhance != fitEnhanceBefore)
+                throw new InvalidOperationException(
+                    $"显示评分关闭改变了竖屏左右组位置：导航 {Rect(_root.PhoneSlots.Navigation)} / 增强 {Rect(_root.PhoneSlots.FitEnhance)}");
+            await UiDispatcher.InvokeAsync(() => _main.Settings.ShowRating = true);
+            await SettleAsync();
+            await WaitAsync(() => Has(_root.PhoneSlots.Rating) && !phone.Hidden, "显示评分恢复竖屏评分槽");
+            if (!Has(_root.PhoneSlots.Rating) || phone.Hidden)
+                throw new InvalidOperationException("显示评分恢复后竖屏评分槽未还原");
+            _lines.Add("PASS SHELL-09 显示评分关闭（竖屏）：评分槽为空、控件隐藏，导航组与增强组位置不变，恢复后槽位还原");
             var slot = _root.PhoneSlots.Rating;
             if (slot.Width >= RatingControlGeometry.ExpandedLength)
                 throw new InvalidOperationException($"竖屏开启上下张后星级槽位 {slot.Width:0.#} 仍放得下展开长度 224");
@@ -1586,7 +1957,7 @@ internal static class iOSNativeRatingControlCheck
             bool exifShown = Has(_root.PhoneSlots.Exif);
             if (!exifShown)
                 throw new InvalidOperationException($"{suite} 横屏控制栏缺少 EXIF 列（EXIF 开关打开且 AC 有显示项）");
-            // 本轮口径：控制栏先保住紧凑态最短长度，剩余长度才给 EXIF，因此带 EXIF 时星级是紧凑态。
+            // 控制栏先保住紧凑态最短长度，剩余长度才给 EXIF，因此带 EXIF 时星级是紧凑态。
             if (phone.Form != RatingControlForm.Compact)
                 throw new InvalidOperationException(
                     $"{suite} 带 EXIF 时星级槽位高 {slot.Height:0.#} 为 {phone.Form} ≠ Compact");
@@ -1641,6 +2012,36 @@ internal static class iOSNativeRatingControlCheck
             _lines.Add($"PASS RATING-07/04 {suite}：EXIF 列在控制栏顶端，星级槽位高 {slot.Height:0.#} → 紧凑竖排胶囊（宽 44、铺满槽位）；" +
                 $"起手打开单条目弹窗（方向 {expected}、面板落在该侧），点弹窗 2 号星写回 2，冲突三角打开来源弹窗且 0 次写回");
 
+            // SHELL-09「显示评分」关闭：评分槽与一道组间距移出测量，EXIF 列直接接命令组并重新居中。
+            int baselineExifItems = _root.PhoneSlots.ExifItems;
+            await UiDispatcher.InvokeAsync(() => _main.Settings.ShowRating = false);
+            await SettleAsync();
+            await WaitAsync(() => !Has(_root.PhoneSlots.Rating) && phone.Hidden, $"{suite} 显示评分关闭移除竖排评分槽");
+            var hiddenSlots = _root.PhoneSlots;
+            var hiddenInput = _root.PhoneSlotsInput;
+            if (Has(hiddenSlots.Rating) || !phone.Hidden || hiddenInput.ShowRating)
+                throw new InvalidOperationException($"{suite} 显示评分关闭后竖排控件仍保留评分槽/可见/输入未关闭");
+            if (!Has(hiddenSlots.Exif) || hiddenSlots.ExifItems < baselineExifItems)
+                throw new InvalidOperationException(
+                    $"{suite} 显示评分关闭未把长度释放给 EXIF：{hiddenSlots.ExifItems}/{baselineExifItems} 项");
+            if (Math.Abs(hiddenSlots.FitEnhance.Y - (hiddenSlots.Exif.MaxY + ToolRegionGeometry.GroupSpacing)) > Tolerance)
+                throw new InvalidOperationException(
+                    $"{suite} 显示评分关闭后 EXIF 未直接接命令组：增强 Y {hiddenSlots.FitEnhance.Y:0.#}，EXIF 末端 {hiddenSlots.Exif.MaxY:0.#}");
+            double hiddenTop = Math.Max(hiddenInput.Safe.Top, hiddenInput.ControlBand.Top) + ToolRegionGeometry.Padding;
+            double hiddenBottom = (double)_root.Stage.Bounds.Height
+                - Math.Max(hiddenInput.Safe.Bottom, hiddenInput.ControlBand.Bottom) - ToolRegionGeometry.Padding;
+            if (Math.Abs((hiddenSlots.Exif.Y - hiddenTop) - (hiddenBottom - hiddenSlots.FitEnhance.MaxY)) > Tolerance)
+                throw new InvalidOperationException(
+                    $"{suite} 显示评分关闭后整组未重新居中：上余量 {hiddenSlots.Exif.Y - hiddenTop:0.#}，"
+                    + $"下余量 {hiddenBottom - hiddenSlots.FitEnhance.MaxY:0.#}");
+            await UiDispatcher.InvokeAsync(() => _main.Settings.ShowRating = true);
+            await SettleAsync();
+            await WaitAsync(() => Has(_root.PhoneSlots.Rating) && !phone.Hidden, $"{suite} 显示评分恢复竖排评分槽");
+            if (!Has(_root.PhoneSlots.Rating) || phone.Hidden)
+                throw new InvalidOperationException($"{suite} 显示评分恢复后竖排评分槽未还原");
+            _lines.Add($"PASS SHELL-09 {suite}：显示评分关闭后评分槽为空、EXIF 项 {baselineExifItems}→{hiddenSlots.ExifItems} 并直接接命令组，" +
+                $"整组在工具区内边距 10 的可用区间内重新居中；恢复后评分槽还原");
+
             // EXIF 关闭：星级槽位取剩余长度并封顶展开态固有长度，整组在可用纵向区间居中（末端按钮不贴底），
             // 保留展开态星列滑动覆盖。
             await UiDispatcher.InvokeAsync(() => _main.IsExifViewVisible = false);
@@ -1649,12 +2050,12 @@ internal static class iOSNativeRatingControlCheck
                 throw new InvalidOperationException($"{suite} EXIF 关闭后仍显示 EXIF 列");
             slot = _root.PhoneSlots.Rating;
             var controlInput = _root.PhoneSlotsInput;
-            double columnTop = Math.Max(controlInput.Safe.Top, controlInput.ControlBand.Top) + controlInput.RowInset;
+            double columnTop = Math.Max(controlInput.Safe.Top, controlInput.ControlBand.Top) + ToolRegionGeometry.Padding;
             double columnBottom = (double)_root.Stage.Bounds.Height
-                - Math.Max(controlInput.Safe.Bottom, controlInput.ControlBand.Bottom) - controlInput.RowInset;
+                - Math.Max(controlInput.Safe.Bottom, controlInput.ControlBand.Bottom) - ToolRegionGeometry.Padding;
             double columnLength = Math.Max(0, columnBottom - columnTop);
             double expectedSlot = Math.Min(RatingControlGeometry.ExpandedLength,
-                Math.Max(0, columnLength - controlInput.GroupGap - controlInput.ButtonSize * 2));
+                Math.Max(0, columnLength - ToolRegionGeometry.GroupSpacing - controlInput.ButtonSize * 2));
             if (Math.Abs(slot.Height - expectedSlot) > Tolerance)
                 throw new InvalidOperationException(
                     $"{suite} EXIF 关闭后星级槽位高 {slot.Height:0.#} ≠ 剩余长度封顶 {expectedSlot:0.#}"

@@ -311,6 +311,7 @@ const tokens = Object.freeze({
     "shell.titlebar.height": 32,
     "shell.titlebar.hotzone.height": 50,
     "shell.titlebar.title.leftInset": 12,
+    "shell.toolRegion.spacing": 8,
     "shell.window.default.height": 850,
     "shell.window.default.width": 1200,
     "shell.window.min.height": 480,

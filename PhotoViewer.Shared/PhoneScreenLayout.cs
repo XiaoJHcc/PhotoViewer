@@ -14,8 +14,8 @@ public readonly record struct EdgeInsets(double Left, double Top, double Right, 
 /// <param name="Height">窗口高。</param>
 /// <param name="Safe">系统安全区（刘海、圆角与 Home 指示条的避让），不含任何按元素带适配的额外距离；
 /// 横屏主屏不为底部手势条保留安全区，宿主在宽大于高时把 <c>Bottom</c> 传 0。</param>
-/// <param name="LeadBand">贴角元素带必须保持的绝对窗口缘距离：竖屏为顶行（用左右两侧，须在 <see cref="PhoneScreenLayout.TopRowY"/> 给出的行位置探测），横屏为刘海侧列（用上下两侧）；数值已含安全区与该带的圆角/窗口控件适配。横屏下缘取该带位置上原生圆角适应值，与 Home 指示条无关。</param>
-/// <param name="ControlBand">控制栏带的绝对窗口缘距离：竖屏为底行（用左右两侧），横屏为下巴侧控制栏整列（用上下两侧，在 <see cref="PhoneScreenLayout.ControlStripWidth"/> 给出的列宽上探测）；横屏下缘同样取该带位置的原生圆角适应值，不从安全区里减 Home 指示条。</param>
+/// <param name="LeadBand">贴角元素带必须保持的绝对窗口缘距离：竖屏为顶行（用左右两侧，须在 <see cref="PhoneScreenLayout.TopRowY"/> 给出的行位置探测），横屏为入口合体的实际范围贯穿窗口全高（用上下两侧）；数值已含安全区与该带的圆角/窗口控件适配。</param>
+/// <param name="ControlBand">控制栏带的绝对窗口缘距离：竖屏为底行（用左右两侧），横屏为实际控制内容列（用上下两侧，探测范围不含背景留白）；横屏下缘同样取该带位置的原生圆角适应值，不从安全区里减 Home 指示条。</param>
 /// <param name="FilmVisible">胶片栏开关：胶片条，横屏另含刘海侧列的上一张/下一张。</param>
 /// <param name="ControlVisible">控制栏开关：星级控件与同栏按钮（竖屏底行、横屏下巴侧控制栏）。</param>
 /// <param name="ExifVisible">手机形态 EXIF 开关：竖屏单独决定 EXIF 块，横屏还要控制栏可见。</param>
@@ -23,17 +23,18 @@ public readonly record struct EdgeInsets(double Left, double Top, double Right, 
 /// <param name="ShowNavigation">是否显示上一张/下一张合体按钮。</param>
 /// <param name="FilterWidth">竖屏筛选控件的固有宽度；横屏筛选与更多每段按 <paramref name="ButtonSize"/>。</param>
 /// <param name="FilmBand">胶片条交叉轴厚度：竖屏为横向胶片条高度，横屏为刘海侧列内容宽。</param>
-/// <param name="FilmOuterPad">横屏胶片条靠刘海一侧的卡片交叉轴内边距；卡片贴刘海安全区时把它让进安全区。</param>
-/// <param name="AnalysisCross">分析栏交叉轴（竖屏为高，横屏为宽）。</param>
+/// <param name="FilmOuterPad">横屏纵向胶片条交叉轴两侧的卡片内边距（两侧同值）：靠刘海一侧让进安全区，靠主图一侧把卡片外框收进入口锚点。</param>
+/// <param name="AnalysisCross">分析栏交叉轴：竖屏为高，横屏为区域宽（已含按邻接测出的内边距与接缝间距）。</param>
 /// <param name="ExifCount">启用的 EXIF 项数；0 表示没有 EXIF 显示项。</param>
 /// <param name="ExifWidth">EXIF 固有宽：竖屏为带衬底的横排块；横屏的无衬底纵排列与玻璃按钮等宽同轴，不使用本值。</param>
 /// <param name="ExifHeight">EXIF 固有高（同上，横屏为全部项纵排的总高）。</param>
 /// <param name="ExifItemSpacing">EXIF 相邻项间距；横屏按整项裁掉放不下的末尾项时使用。</param>
 /// <param name="RatingMinLength">横屏控制栏里星级控件至少保留的主轴长度（紧凑态最短长度）。</param>
 /// <param name="ButtonSize">圆玻璃按钮与合体按钮每段的边长。</param>
-/// <param name="EdgeMargin">行/列元素沿带方向到窗口缘（或贴角带）的边距。</param>
-/// <param name="RowInset">行内间距：无实物遮挡边上行与窗口缘的最小距离、栏背景超出元素的余量与主图距栏缘的避让口径。</param>
-/// <param name="GroupGap">相邻按钮组之间的间距。</param>
+/// <param name="EdgeMargin">竖屏行沿带方向到窗口缘（或贴角带）的边距；手机横屏两侧工具区改用一份工具区内边距。</param>
+/// <param name="RowInset">行内间距：无实物遮挡边上行与窗口缘的最小距离、栏背景超出元素的余量与主图距栏缘的避让口径；横屏刘海侧列不使用它。</param>
+/// <param name="GroupGap">竖屏底行相邻按钮组之间的间距。</param>
+/// <param name="ShowRating">是否显示星级控件：关闭时竖屏不保留评分槽，横屏释放星级占位（含最短长度与组间距）。</param>
 public readonly record struct PhoneLayoutInput(
     bool Landscape,
     bool NotchOnLeft,
@@ -59,25 +60,27 @@ public readonly record struct PhoneLayoutInput(
     double ButtonSize,
     double EdgeMargin,
     double RowInset,
-    double GroupGap);
+    double GroupGap,
+    bool ShowRating = true);
 
 /// <summary>手机形态槽位结果；空槽位宽高为 0，栏背景宽或高为 0 表示不绘制。</summary>
-/// <param name="Filter">筛选控件：竖屏在顶行前导侧；横屏有胶片栏时为合体按钮的筛选段，否则独立落在刘海旁的上耳区。</param>
-/// <param name="More">更多菜单：竖屏在顶行末端；横屏有胶片栏时为合体按钮的更多段，否则独立落在刘海旁的下耳区。</param>
-/// <param name="FilterMoreGroup">横屏有胶片栏时刘海侧合体按钮的外接矩形；其余情况为空。</param>
+/// <param name="Filter">筛选控件：竖屏在顶行前导侧；横屏为刘海侧 88 合体按钮的筛选段（常驻，不随胶片栏开关拆分）。</param>
+/// <param name="More">更多菜单：竖屏在顶行末端；横屏为合体按钮的更多段（常驻）。</param>
+/// <param name="FilterMoreGroup">横屏刘海侧 88 合体按钮的外接矩形；竖屏为空。</param>
 /// <param name="Exif">EXIF：竖屏为顶行中间的块，横屏为控制栏顶端的无衬底纵排列（只含 <paramref name="ExifItems"/> 项）。</param>
 /// <param name="ExifItems">实际显示的 EXIF 项数（横屏放不下时裁掉末尾项）；不显示时为 0。</param>
 /// <param name="Navigation">上一张/下一张合体按钮。</param>
 /// <param name="Rating">星级控件。</param>
 /// <param name="FitEnhance">缩放适应/雾天增强合体按钮。</param>
-/// <param name="Filmstrip">胶片条：竖屏横贯整窗宽、横屏纵贯整窗高，卡片在末端留白处停靠。</param>
+/// <param name="Filmstrip">胶片条：竖屏横贯整窗宽、横屏纵贯整窗高并靠主图侧收进列尾，卡片在末端留白处停靠。</param>
 /// <param name="Analysis">分析栏。</param>
 /// <param name="TopBar">竖屏顶栏背景。</param>
 /// <param name="BottomBar">竖屏底栏背景。</param>
 /// <param name="LeadingBar">横屏刘海侧栏背景。</param>
 /// <param name="TrailingBar">横屏连续右栏背景（有分析栏或 EXIF 时，从内侧栏缘铺到窗口外缘）。</param>
 /// <param name="PhotoAvoidance">主图适应区相对窗口四边的避让内边距（栏缘口径，与栏背景是否绘制无关）。</param>
-/// <param name="FilmstripPadding">胶片条滚动两端的内容留白：各边到卡片停靠线的距离，主轴两侧有效、交叉轴恒为 0。</param>
+/// <param name="FilmstripPadding">胶片条滚动两端的内容留白：各边到卡片停靠线的距离，主轴两侧有效、交叉轴恒为 0。
+/// 横屏按绝对停靠线给出：首卡停在合体按钮下缘 + 10，末卡停在上下张上缘上方 10（无上下张时距底部圆角 10）。</param>
 public readonly record struct PhoneLayout(
     LayoutRect Filter,
     LayoutRect More,
@@ -98,14 +101,20 @@ public readonly record struct PhoneLayout(
 
 /// <summary>
 /// 手机形态槽位几何（平台中立纯函数）：竖屏为顶行（筛选 / EXIF / 更多）、胶片条与底行；横屏为刘海侧列
-/// （筛选更多、胶片条、上下张）与下巴侧控制栏（EXIF、星级、缩放增强自上而下），分析栏在控制栏内侧。
+/// （筛选更多合体按钮、胶片条、上下张）与下巴侧控制栏（EXIF、星级、缩放增强自上而下），分析栏在控制栏内侧。
 /// 结果同时给出每个槽位矩形、胶片条内容留白与主图适应区的四边避让。
+/// <para>横屏刘海侧列靠主图侧右对齐：筛选 + 更多的 88 合体按钮、上下张与卡片外框的右缘统一落在由
+/// <see cref="FilmSideGeometry.Measure"/> 给出的 ContentTrailing 上，列宽再往外带一份卡片尾侧内边距。
+/// 入口组常驻且不随胶片栏开关移动，胶片栏关闭时只收起栏背景、列表与上下张，主图避让仍到同一列缘。</para>
 /// <para>贴实物遮挡（灵动岛、刘海）的系统安全内缩已含视觉边距：元素直接贴安全区边，不再叠加行内间距；
-/// Home 指示条的安全内缩同样含一份行内间距的余量，底行压进这份余量但不比本行两端更贴边；
+/// 竖屏底行按产品规则最多压入 Home 安全区一份行内间距，且不比本行两端更贴边；
 /// 横屏下巴侧的系统对称安全内缩不是实物遮挡，控制栏不避让它，横屏主屏也不为底部手势条保留安全区
 /// （调用方在横屏传 <c>Safe.Bottom = 0</c>；真实的屏幕圆角与刘海由 <c>LeadBand</c>／<c>ControlBand</c>
 /// 的贴角距离给出，不受这条规则影响）。横屏控制栏的 EXIF、星级与两段按钮同轴，整组在可用纵向区间居中；
 /// 星级槽位封顶展开态固有长度，多出的余量留在整组两端，末端按钮不固定在底边。</para>
+/// <para>横屏控制区与分析区共用一列工具区内边距（<see cref="ToolRegionGeometry"/>）：控制按钮外缘距窗口缘一份
+/// 工具区内边距，分析栏相邻时控制区省略前导内边距、接缝由分析栏末端持有；主图避让取完整组合区宽，
+/// 与栏背景是否绘制无关。星级隐藏时评分槽连同最短长度与组间距一起释放，独立控制区仍是透明玻璃。</para>
 /// </summary>
 public static class PhoneScreenLayout
 {
@@ -155,28 +164,28 @@ public static class PhoneScreenLayout
             : EarOffset(input.Safe.Top, input.ButtonSize, input.EdgeMargin, input.RowInset);
 
     /// <summary>
-    /// 横屏刘海侧列从刘海侧窗口缘起算的宽度（列缘）：有胶片栏时为胶片条与两段宽按钮共同决定的列缘，
-    /// 否则为耳区按钮的内缘。宿主在这条列上探测刘海侧贴角带。
+    /// 横屏刘海侧列从刘海侧窗口缘起算的宽度：入口组与卡片带共同决定的列宽（见 <see cref="FilmSideGeometry.Measure"/>），
+    /// 胶片栏开关不改变它；刘海在右时按右侧安全区取同一口径。贴角探测取入口合体的实际范围。
     /// </summary>
     /// <param name="input">槽位输入（按刘海在左理解左右）。</param>
     /// <returns>列宽。</returns>
     public static double LeadStripWidth(in PhoneLayoutInput input)
-    {
-        double lead = input.NotchOnLeft ? input.Safe.Left : input.Safe.Right;
-        return input.FilmVisible
-            ? LeadColumnRight(lead, input)
-                : EarOffset(lead, input.ButtonSize, input.EdgeMargin, input.RowInset) + input.ButtonSize;
-    }
+        => FilmColumnRight(input.NotchOnLeft ? input.Safe.Left : input.Safe.Right, input).Width;
+
+    /// <summary>横屏刘海侧列测量：卡片交叉轴内边距两侧同值，入口组宽为筛选 + 更多两段按钮。</summary>
+    private static FilmSideMeasure FilmColumnRight(double leadingSafe, in PhoneLayoutInput input)
+        => FilmSideGeometry.Measure(leadingSafe, input.FilmBand, input.FilmOuterPad, input.FilmOuterPad,
+            input.ButtonSize * 2);
 
     /// <summary>
-    /// 横屏控制栏从下巴侧窗口缘起算的宽度：按钮外缘距窗口缘 <c>EdgeMargin</c>。
-    /// EXIF 无衬底列的透明容器与玻璃按钮等宽同轴，列宽因此只由按钮边长决定，EXIF 开关不改变它。
-    /// 宿主在这条列上探测控制栏的上下贴角距离。
+    /// 横屏控制栏从下巴侧窗口缘起算的宽度：即实际控制区宽（内容 + 尾随内边距 + 与相邻分析栏共边时省略的前导内边距）。
+    /// EXIF 无衬底列的透明容器与玻璃按钮等宽同轴，列宽因此只由按钮边长与分析栏邻接关系决定，EXIF 开关不改变它。
+    /// 上下贴角探测取实际控制内容列，不含区域内边距。
     /// </summary>
     /// <param name="input">槽位输入。</param>
-    /// <returns>列宽（不含栏背景外扩）。</returns>
+    /// <returns>控制区宽度（独立 64 / 相邻分析栏 54，按钮边长 44 时）。</returns>
     public static double ControlStripWidth(in PhoneLayoutInput input)
-        => input.EdgeMargin + input.ButtonSize;
+        => ToolRegionGeometry.ControlWidth(input.ButtonSize, input.AnalysisVisible);
 
     private static PhoneLayout ComputePortrait(in PhoneLayoutInput input)
     {
@@ -218,7 +227,7 @@ public static class PhoneScreenLayout
 
         double controlLeft = Math.Max(safe.Left, control.Left) + edge;
         double controlRight = input.Width - Math.Max(safe.Right, control.Right) - edge;
-        // Home 指示条的安全内缩自带一份行内间距的视觉余量：底行压进这份余量，但不比本行两端更贴窗口缘。
+        // SHELL-08：底行最多压入 Home 安全区一份行内间距，且不比本行两端更贴窗口缘。
         double bottomGap = Math.Max(
             Math.Max(safe.Bottom - inset, Math.Min(controlLeft, input.Width - controlRight)), inset);
         double bottomEdge = input.Height - bottomGap;
@@ -234,9 +243,12 @@ public static class PhoneScreenLayout
 
             fitEnhance = Rect(controlRight - button * 2, bottomTop, button * 2, button);
 
-            double ratingLeft = Has(navigation) ? navigation.MaxX + gap : controlLeft;
-            double ratingRight = fitEnhance.X - gap;
-            rating = Rect(ratingLeft, bottomTop, ratingRight - ratingLeft, button);
+            if (input.ShowRating)
+            {
+                double ratingLeft = Has(navigation) ? navigation.MaxX + gap : controlLeft;
+                double ratingRight = fitEnhance.X - gap;
+                rating = Rect(ratingLeft, bottomTop, ratingRight - ratingLeft, button);
+            }
         }
 
         var filmstrip = default(LayoutRect);
@@ -270,84 +282,76 @@ public static class PhoneScreenLayout
         var lead = input.LeadBand;
         var control = input.ControlBand;
         double button = input.ButtonSize;
-        double edge = input.EdgeMargin;
-        double inset = input.RowInset;
-        double gap = input.GroupGap;
+        double gap = ToolRegionGeometry.GroupSpacing;
+        double padding = FilmSideGeometry.Padding;
 
-        double leadTop = Math.Max(safe.Top, lead.Top) + inset;
-        double leadBottomEdge = input.Height - Math.Max(Math.Max(safe.Bottom, lead.Bottom), inset);
+        // 刘海侧列的贴角距离统一取 safe/corner 带读数各加一份入口与停靠间距，首末卡与入口组共用。
+        double leadTop = Math.Max(safe.Top, lead.Top) + padding;
+        double leadBottomEdge = input.Height - Math.Max(safe.Bottom, lead.Bottom) - padding;
 
-        LayoutRect filter, more;
-        var group = default(LayoutRect);
-        var navigation = default(LayoutRect);
-        var filmstrip = default(LayoutRect);
-        var leadingBar = default(LayoutRect);
-        EdgeInsets filmstripPadding;
-        double avoidLeft;
-        if (input.FilmVisible)
-        {
-            double columnRight = LeadColumnRight(safe.Left, input);
-            double groupX = columnRight - inset - button * 2;
-            group = Rect(groupX, leadTop, button * 2, button);
-            filter = Rect(groupX, leadTop, button, button);
-            more = Rect(groupX + button, leadTop, button, button);
+        // 入口组（筛选 + 更多）常驻且不随胶片栏开关移动；列表的刘海避让只约束卡片外框，
+        // 列宽 = max(卡片外框右缘, 入口宽 88 + 一份内边距) + 卡片尾侧内边距，列表靠主图侧收进列尾。
+        var column = FilmColumnRight(safe.Left, input);
+        var group = FilmSideGeometry.AlignTrailing(column.ContentTrailing, leadTop, button * 2, button);
+        var filter = new LayoutRect(group.X, leadTop, button, button);
+        var more = new LayoutRect(group.MaxX - button, leadTop, button, button);
 
-            if (input.ShowNavigation)
-                navigation = Rect(columnRight - inset - button * 2, leadBottomEdge - button, button * 2, button);
+        var navigation = input.FilmVisible && input.ShowNavigation
+            ? FilmSideGeometry.AlignTrailing(column.ContentTrailing, leadBottomEdge - button, button * 2, button)
+            : default;
 
-            filmstrip = Rect(columnRight - input.FilmBand, 0, input.FilmBand, input.Height);
-            filmstripPadding = new EdgeInsets(
-                0,
-                group.MaxY + inset,
-                0,
-                Has(navigation) ? input.Height - navigation.Y + inset : input.Height - leadBottomEdge);
-            leadingBar = Rect(0, 0, columnRight, input.Height);
-            avoidLeft = columnRight;
-        }
-        else
-        {
-            // 没有胶片栏时筛选与更多各占刘海上下两旁的显示区，与竖屏顶行的耳区同一口径。
-            double earX = EarOffset(safe.Left, button, edge, inset);
-            filter = Rect(earX, leadTop, button, button);
-            more = Rect(earX, leadBottomEdge - button, button, button);
-            filmstripPadding = new EdgeInsets(0, leadTop, 0, input.Height - leadBottomEdge);
-            avoidLeft = Math.Max(safe.Left, earX + button + inset);
-        }
+        var filmstrip = input.FilmVisible ? Rect(column.FilmstripX, 0, input.FilmBand, input.Height) : default;
+        var filmstripPadding = new EdgeInsets(
+            0,
+            group.MaxY + padding,
+            0,
+            Has(navigation) ? input.Height - navigation.Y + padding : input.Height - leadBottomEdge);
+        var leadingBar = input.FilmVisible ? Rect(0, 0, column.Width, input.Height) : default;
+        double avoidLeft = column.Width;
 
         var exif = default(LayoutRect);
         int exifItems = 0;
         var rating = default(LayoutRect);
         var fitEnhance = default(LayoutRect);
         var trailingBar = default(LayoutRect);
-        double controlEdge = input.Width;
+        // 控制区宽由内容与是否邻接分析栏决定，EXIF/星级开关不改变它；分析栏截止到这条栏缘。
+        double controlEdge = input.Width - ToolRegionGeometry.ControlWidth(button, input.AnalysisVisible);
         if (input.ControlVisible)
         {
-            double buttonX = input.Width - edge - button;
+            double buttonX = input.Width - ToolRegionGeometry.Padding - button;
             double axis = buttonX + button / 2;
-            double columnTop = Math.Max(safe.Top, control.Top) + inset;
-            double columnBottom = input.Height - Math.Max(safe.Bottom, control.Bottom) - inset;
+            double columnTop = Math.Max(safe.Top, control.Top) + ToolRegionGeometry.Padding;
+            double columnBottom = input.Height - Math.Max(safe.Bottom, control.Bottom) - ToolRegionGeometry.Padding;
             double columnLength = Math.Max(0, columnBottom - columnTop);
+            double commands = button * 2;
+            double ratingMin = input.ShowRating ? input.RatingMinLength : 0;
+            // 可见星级与命令组之间恒有一道组间距，EXIF 存在时再占一道。
+            double gaps = ToolRegionGeometry.GroupSpacing * (input.ShowRating ? 2 : 1);
             double pitch = input.ExifCount > 0
                 ? (input.ExifHeight + input.ExifItemSpacing) / input.ExifCount
                 : 0;
 
             if (LandscapeExifShown(input))
             {
-                // EXIF 只按整项显示：星级控件先保住紧凑态最短长度，剩余长度能放几项放几项，裁掉的是末尾项。
-                double room = columnLength - button * 2 - gap * 2 - input.RatingMinLength;
+                // EXIF 只按整项显示：先给可见星级保住紧凑态最短长度与命令组，剩余长度能放几项放几项，裁掉的是末尾项。
+                double room = columnLength - commands - ratingMin - gaps;
                 exifItems = Math.Clamp(
                     (int)Math.Floor((room + input.ExifItemSpacing) / pitch + 1e-9), 0, input.ExifCount);
             }
 
             double exifHeight = exifItems > 0 ? exifItems * pitch - input.ExifItemSpacing : 0;
-            // 星级槽位取剩余长度并封顶展开态固有长度：多出的余量留在整组两端，不把末端按钮推到底边。
             double exifGap = exifHeight > 0 ? gap : 0;
-            double ratingLength = Math.Min(
-                RatingControlGeometry.ExpandedLength,
-                Math.Max(0, columnLength - exifHeight - exifGap - gap - button * 2));
+            // 星级槽位取剩余长度并封顶展开态固有长度：多出的余量留在整组两端，不把末端按钮推到底边。
+            double ratingLength = input.ShowRating
+                ? Math.Min(
+                    RatingControlGeometry.ExpandedLength,
+                    Math.Max(0, columnLength - exifHeight - exifGap - gap - commands))
+                : 0;
+            bool ratingShown = ratingLength > 0;
+            double ratingGap = ratingShown ? gap : 0;
             // 整组（EXIF 可见项 + 星级实际长度 + 两按钮）在可用纵向区间居中。
-            double total = exifHeight + exifGap + ratingLength + gap + button * 2;
-            double groupTop = columnTop + Math.Max(0, (columnLength - total) / 2);
+            double total = exifHeight + exifGap + ratingLength + ratingGap + commands;
+            double groupTop = ToolRegionGeometry.CenteredStart(columnTop, columnLength, total);
 
             if (exifHeight > 0)
             {
@@ -357,11 +361,8 @@ public static class PhoneScreenLayout
             }
 
             double ratingTop = groupTop + exifHeight + exifGap;
-            rating = Rect(buttonX, ratingTop, button, ratingLength);
-            fitEnhance = Rect(buttonX, ratingTop + ratingLength + gap, button, button * 2);
-
-            // EXIF 容器与按钮等宽同轴，控制列内缘恒为按钮列，不随 EXIF 开关移动。
-            controlEdge = buttonX - inset;
+            if (ratingShown) rating = Rect(buttonX, ratingTop, button, ratingLength);
+            fitEnhance = Rect(buttonX, ratingTop + ratingLength + ratingGap, button, commands);
         }
 
         var analysis = default(LayoutRect);
@@ -387,16 +388,6 @@ public static class PhoneScreenLayout
                 default, default, leadingBar, trailingBar,
                 new EdgeInsets(avoidLeft, safe.Top, avoidRight, 0),
                 filmstripPadding);
-    }
-
-    /// <summary>
-    /// 横屏刘海侧列缘：卡片贴刘海安全区（靠刘海一侧的卡片内边距让进安全区，无刘海时不越过窗口缘），
-    /// 且列宽不小于「边距 + 两段宽按钮 + 行内间距」。
-    /// </summary>
-    private static double LeadColumnRight(double leadSafe, in PhoneLayoutInput input)
-    {
-        double filmX = Math.Max(0, leadSafe - input.FilmOuterPad);
-        return Math.Max(filmX + input.FilmBand, input.EdgeMargin + input.ButtonSize * 2 + input.RowInset);
     }
 
     /// <summary>贴一条窗口边排布的行：有实物遮挡时贴安全区边，否则距窗口缘一份行内间距。</summary>

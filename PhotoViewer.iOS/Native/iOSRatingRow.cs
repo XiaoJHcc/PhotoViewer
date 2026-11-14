@@ -8,11 +8,24 @@ namespace PhotoViewer.iOS.Native;
 
 /// <summary>
 /// 星级触感：手指沿星排跨档时一次选择触感，抬手提交时一次轻冲击。
-/// 计数器只服务验收（每个手势的触发次数可读），不参与业务判定。
+/// 每个星排持有一份实例——两种生成器在构造时各挂成发起视图上的一项交互，手势期间只提前唤醒与触发，
+/// 不再每次提交新建生成器。计数器仍为静态，只服务验收（不参与业务判定）。
 /// </summary>
-internal static class iOSRatingHaptics
+internal sealed class iOSRatingHaptics : IDisposable
 {
-    private static UISelectionFeedbackGenerator? _selection;
+    private readonly UIView _source;
+    private readonly UISelectionFeedbackGenerator _selection;
+    private readonly UIImpactFeedbackGenerator _impact;
+    private bool _disposed;
+
+    /// <summary>把两种触感生成器挂到发起视图上（各一项交互，实例复用）。</summary>
+    /// <param name="source">发起手势的星排视图。</param>
+    internal iOSRatingHaptics(UIView source)
+    {
+        _source = source;
+        _selection = UISelectionFeedbackGenerator.GetFeedbackGenerator(source);
+        _impact = UIImpactFeedbackGenerator.GetFeedbackGenerator(UIImpactFeedbackStyle.Light, source);
+    }
 
     /// <summary>预览跨档的选择触感次数。</summary>
     internal static int SelectionCount { get; private set; }
@@ -20,27 +33,36 @@ internal static class iOSRatingHaptics
     /// <summary>提交冲击触感次数。</summary>
     internal static int CommitCount { get; private set; }
 
-    /// <summary>提前唤醒选择触感引擎，避免起手第一档延迟。</summary>
-    internal static void Prepare()
+    /// <summary>提前唤醒两种触感引擎，避免起手第一档延迟。</summary>
+    internal void Prepare()
     {
-        _selection ??= new UISelectionFeedbackGenerator();
         _selection.Prepare();
+        _impact.Prepare();
     }
 
     /// <summary>预览跨一档。</summary>
-    internal static void Selection()
+    internal void Selection()
     {
         SelectionCount++;
-        Prepare();
-        _selection!.SelectionChanged();
+        _selection.SelectionChanged();
     }
 
-    /// <summary>一次提交：轻冲击挂在发起视图上（新 API 以视图为归属，不再持有全局生成器）。</summary>
-    /// <param name="source">发起提交的星排视图。</param>
-    internal static void Commit(UIView source)
+    /// <summary>一次提交：轻冲击。</summary>
+    internal void Commit()
     {
         CommitCount++;
-        UIImpactFeedbackGenerator.GetFeedbackGenerator(UIImpactFeedbackStyle.Light, source).ImpactOccurred();
+        _impact.ImpactOccurred();
+    }
+
+    /// <summary>释放生成器：先摘掉各自挂在发起视图上的交互，再释放实例。</summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _source.RemoveInteraction(_selection);
+        _source.RemoveInteraction(_impact);
+        _selection.Dispose();
+        _impact.Dispose();
     }
 }
 
@@ -54,6 +76,7 @@ internal sealed class iOSRatingRow : UIView
 {
     private readonly UIImageView[] _slots = new UIImageView[RatingControlGeometry.SlotCount];
     private readonly UILongPressGestureRecognizer _press;
+    private readonly iOSRatingHaptics _haptics;
     private readonly double _pitch;
     private readonly double _glyphSize;
     private readonly double _clearGlyphSize;
@@ -70,6 +93,10 @@ internal sealed class iOSRatingRow : UIView
     private bool _renderedConflict;
     private bool _renderedEnabled = true;
     private bool _renderedPending;
+    private bool _released;
+
+    /// <summary>当前尚未释放的星排实例数（只服务验收：核对弹窗关闭时显式释放行视图）。</summary>
+    internal static int LiveCount { get; private set; }
 
     /// <summary>建立星排。</summary>
     /// <param name="pitch">每格步长。</param>
@@ -100,9 +127,11 @@ internal sealed class iOSRatingRow : UIView
         };
         AddGestureRecognizer(_press);
         AddInteraction(new UIPointerInteraction(new PointerDelegate(this)));
+        _haptics = new iOSRatingHaptics(this);
         IsAccessibilityElement = true;
         AccessibilityTraits = UIAccessibilityTrait.Adjustable;
         AccessibilityLabel = "星级";
+        LiveCount++;
         Render();
     }
 
@@ -232,6 +261,7 @@ internal sealed class iOSRatingRow : UIView
     internal void TrackBegan(CGPoint pointInRow, bool deferPreview = false)
     {
         if (!_enabled) return;
+        _haptics.Prepare();
         _gesture = new RatingGesture(_value, deferPreview, ForceCommit, ZeroOpensPopup);
         var (main, cross) = MainCross(pointInRow);
         int value = ValueAt(main);
@@ -252,7 +282,7 @@ internal sealed class iOSRatingRow : UIView
         Preview = preview;
         if (preview is { } value) PressSlot(value);
         else ReleasePress();
-        if (changed) iOSRatingHaptics.Selection();
+        if (changed) _haptics.Selection();
     }
 
     /// <summary>抬手：按共享手势状态机给出结束语义并触发提交/开弹窗回调。</summary>
@@ -273,7 +303,7 @@ internal sealed class iOSRatingRow : UIView
             case RatingGestureOutcome.Commit:
                 Preview = result.Value;
                 Pending = true;
-                iOSRatingHaptics.Commit(this);
+                _haptics.Commit();
                 Committed?.Invoke(result.Value);
                 break;
             case RatingGestureOutcome.OpenPopup:
@@ -311,6 +341,19 @@ internal sealed class iOSRatingRow : UIView
             var rect = RatingControlGeometry.SlotRect(value, main, cross, _horizontal, _pitch);
             iOSViewGeometry.SetRectIfNeeded(_slots[value], new CGRect(rect.X, rect.Y, rect.Width, rect.Height));
         }
+    }
+
+    /// <summary>释放星排：摘掉挂在自身上的两种触感交互并释放生成器。</summary>
+    /// <param name="disposing">是否由显式释放调用。</param>
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing && !_released)
+        {
+            _released = true;
+            LiveCount--;
+            _haptics.Dispose();
+        }
+        base.Dispose(disposing);
     }
 
     /// <summary>读屏增减：直接提交相邻星级（与点选同一写回路径）。</summary>

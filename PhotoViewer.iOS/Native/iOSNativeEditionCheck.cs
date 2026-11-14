@@ -196,7 +196,7 @@ internal static class iOSNativeEditionCheck
     }
 
     /// <summary>
-    /// 核对宽形态筛选控件（FILTER-07）：一个合体玻璃胶囊内并排两个 44 点段——筛选段弹出与手机相同的
+    /// 核对宽形态筛选控件（FILTER-07）：一个与大档卡片同宽的合体玻璃胶囊内并排两个 48×44 点段——筛选段弹出与手机相同的
     /// 三分组筛选菜单，更多段承接与手机「更多」同源的主图菜单（单个延迟元素）；AI 版另有相似聚类开关，
     /// 标准版不创建也不为它留矩形。行布局主轴固定为 44 + 2 × 外边距，没有计数、也没有空槽。
     /// </summary>
@@ -216,7 +216,7 @@ internal static class iOSNativeEditionCheck
                 $"筛选 / 更多段可见性不符：筛选隐藏={bar.FilterButton.Hidden}，更多隐藏={bar.MoreButton.Hidden}");
         if (Math.Abs((double)frames.Control.Width - iOSFilterLayout.GroupWidth) > 1)
             throw new InvalidOperationException(
-                $"合体胶囊宽 {frames.Control.Width:0.##} ≠ {iOSFilterLayout.GroupWidth:0.##}（2 × 44）");
+                $"合体胶囊宽 {frames.Control.Width:0.##} ≠ {iOSFilterLayout.GroupWidth:0.##}（2 × 48）");
         if (bar.FilterButton.Menu is not { } filterMenu)
             throw new InvalidOperationException("筛选段没有菜单");
         if (filterMenu.Children.Length != 3)
@@ -240,7 +240,7 @@ internal static class iOSNativeEditionCheck
         if (Math.Abs(bar.MainLength(true, 0) - expected) > 1)
             throw new InvalidOperationException($"行布局筛选控件主轴长度 {bar.MainLength(true, 0):0.##} ≠ {expected:0.##}");
         lines.Add($"PASS 筛选控件：{iOSAppCapabilities.EditionName} 版{(iOSAppCapabilities.HasDino ? "含" : "无")}相似聚类开关，" +
-            $"合体胶囊 2 × 44（筛选段三分组菜单、更多段与手机同源），行布局主轴 {expected:0.##} 点（无计数、无空槽）");
+            $"合体胶囊 2 × 48（筛选段三分组菜单、更多段与手机同源），行布局主轴 {expected:0.##} 点（无计数、无空槽）");
     }
 
 #if PHOTOVIEWER_DINO

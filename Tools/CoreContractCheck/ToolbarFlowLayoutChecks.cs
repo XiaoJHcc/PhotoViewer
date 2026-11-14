@@ -97,6 +97,11 @@ internal static class ToolbarFlowLayoutChecks
         var emptyDoc = ToolbarFlowLayout.DocumentSize([], true, []);
         c.True("空文档保留纯外边距", Near(emptyDoc.Width, 20) && Near(emptyDoc.Height, 20),
             $"{emptyDoc.Width}×{emptyDoc.Height}");
+        var joinedDoc = ToolbarFlowLayout.DocumentSize(
+            [groups[0], groups[1]], true, [[0, 1]], crossLeadingPadding: 0);
+        c.True("交叉轴前导内边距可与相邻工具区共边（44 + 0 + 10），主轴不变",
+            Near(joinedDoc.Width, 402) && Near(joinedDoc.Height, 54),
+            $"{joinedDoc.Width}×{joinedDoc.Height}");
 
         c.Equal("行在可用区内居中", 85d, ToolbarFlowLayout.LineStart(500, 330));
         c.Equal("可用区不足时退回外边距", 10d, ToolbarFlowLayout.LineStart(300, 330));

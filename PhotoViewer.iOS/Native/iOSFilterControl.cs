@@ -22,17 +22,20 @@ internal readonly record struct iOSFilterFrames(
     double MainLength);
 
 /// <summary>
-/// 宽形态筛选控件的纯几何（FILTER-07，iOS）：筛选/更多两段合体宽 88（2 × 44），列布局在 116 带内居中，
+/// 宽形态筛选控件的纯几何（FILTER-07，iOS）：筛选/更多两段合体宽 96（2 × 48），与大档卡片同宽，列布局按卡片外框的内容末端对齐，
 /// 行布局把合体与相似聚类开关当成一组按自然宽居中；列布局开关 96 宽落在合体下方隔 8 点。
 /// 全部以点为单位，只做算术，不依赖 UIKit。
 /// </summary>
 internal static class iOSFilterLayout
 {
-    /// <summary>单段边长（也是控件高）。</summary>
+    /// <summary>控件高。</summary>
     internal static double Segment => DesignTokens.ShellGlassButtonSize;
 
-    /// <summary>两段合体宽（筛选 + 更多）。</summary>
-    internal static double GroupWidth => Segment * 2;
+    /// <summary>两段合体宽：与大档胶片卡片外框同宽。</summary>
+    internal static double GroupWidth => FilmCardGeometry.Width(FilmCardTier.Large);
+
+    /// <summary>单段宽：筛选与更多等分合体。</summary>
+    internal static double SegmentWidth => GroupWidth / 2;
 
     /// <summary>控件与相似聚类开关之间的间距。</summary>
     internal static double Gap => DesignTokens.ShellGlassGroupGap;
@@ -52,14 +55,15 @@ internal static class iOSFilterLayout
 
     /// <summary>
     /// 计算合体胶囊、两段与相似聚类开关的矩形：行布局整组（含开关）自然宽居中，
-    /// 列布局合体在内容带内居中、开关在合体下方隔 <see cref="Gap"/>。
+    /// 列布局的合体与开关共用卡片外框的内容末端，开关在合体下方隔 <see cref="Gap"/>。
     /// </summary>
     /// <param name="row">是否行布局。</param>
-    /// <param name="contentWidth">文件栏内容区宽度（列布局即 116 带）。</param>
+    /// <param name="contentWidth">文件栏内容区宽度（列布局含实际遮挡后的占用范围）。</param>
     /// <param name="leadingInset">列布局的前导让位。</param>
     /// <param name="toggleWidth">相似聚类开关宽度（行布局为自然宽，列布局为卡片列宽）；0 表示没有开关。</param>
     /// <returns>各矩形与主轴长度。</returns>
-    internal static iOSFilterFrames Compute(bool row, double contentWidth, double leadingInset, double toggleWidth)
+    internal static iOSFilterFrames Compute(bool row, double contentWidth, double leadingInset, double toggleWidth,
+        double? contentTrailing = null)
     {
         bool includeToggle = toggleWidth > 0;
         if (row)
@@ -73,9 +77,10 @@ internal static class iOSFilterLayout
             return new iOSFilterFrames(control, SegmentRect(0), SegmentRect(1), toggle, Segment + Margin * 2);
         }
 
-        var column = new LayoutRect((contentWidth - GroupWidth) / 2, leadingInset, GroupWidth, Segment);
+        double trailing = contentTrailing ?? contentWidth - Margin;
+        var column = FilmSideGeometry.AlignTrailing(trailing, leadingInset, GroupWidth, Segment);
         var columnToggle = includeToggle
-            ? new LayoutRect((contentWidth - toggleWidth) / 2, column.MaxY + Gap, toggleWidth, Segment)
+            ? FilmSideGeometry.AlignTrailing(trailing, column.MaxY + Gap, toggleWidth, Segment)
             : default;
         return new iOSFilterFrames(column, SegmentRect(0), SegmentRect(1), columnToggle,
             leadingInset + Segment + (includeToggle ? Gap + Segment : 0) + Margin);
@@ -84,16 +89,16 @@ internal static class iOSFilterLayout
     /// <summary>第几段的局部矩形：两段沿主轴首尾相接，高占满控件。</summary>
     /// <param name="index">段序（0 = 筛选，1 = 更多）。</param>
     /// <returns>相对胶囊左上角的矩形。</returns>
-    private static LayoutRect SegmentRect(int index) => new(index * Segment, 0, Segment, Segment);
+    private static LayoutRect SegmentRect(int index) => new(index * SegmentWidth, 0, SegmentWidth, Segment);
 }
 
 /// <summary>
 /// 宽形态筛选控件（FILTER-07）：一个交互式玻璃胶囊内并排两段——筛选段弹出与手机形态相同的三分组菜单
 /// （点选保持展开、失焦关闭），更多段承接宿主传入的主图菜单（与手机「更多」同源，
 /// 经 <see cref="SetMoreMenu"/> 一次性接入）。AI 版另有相似聚类开关，行布局紧随合体、列布局落在合体下方同宽。
-/// <para>几何取本文件内的纯函数 <see cref="iOSFilterLayout"/>：合体宽 88（2 × 44），列布局在 116 带内居中，
+/// <para>几何取本文件内的纯函数 <see cref="iOSFilterLayout"/>：合体宽 96（2 × 48），与大档卡片同宽，列布局按卡片外框的内容末端对齐，
 /// 行布局整组（含开关）自然宽居中；本类只把结果落成 UIKit frame，并把筛选菜单交
-/// <see cref="iOSFilterMenu"/> 按稳定 action 标识更新模型侧勾选。旧的三段合体与单胶囊形态不再创建。</para>
+/// <see cref="iOSFilterMenu"/> 按稳定业务标识更新选择状态。</para>
 /// </summary>
 internal sealed class iOSFilterControl : UIView
 {
@@ -106,6 +111,8 @@ internal sealed class iOSFilterControl : UIView
     private readonly UIButton _more;
     private readonly UIButton? _similarity;
     private iOSFilterFrames _frames;
+    private bool? _toggleOpen;
+    private int _toggleConfigurationUpdates;
 
     /// <summary>筛选/更多合体胶囊（宿主据此挂系统滚动边缘交互）。</summary>
     internal iOSGlassButtonGroup CombinedGroup => _group;
@@ -119,6 +126,9 @@ internal sealed class iOSFilterControl : UIView
     /// <summary>相似聚类开关；标准版不创建该控件，为 null。</summary>
     internal UIButton? SimilarityToggle => _similarity;
 
+    /// <summary>验收读数：相似聚类开关配置实际写入的次数（展开状态未变时不重写）。</summary>
+    internal int ToggleConfigurationUpdates => _toggleConfigurationUpdates;
+
     /// <summary>最近一次排布算出的各矩形与主轴长度。</summary>
     internal iOSFilterFrames Frames => _frames;
 
@@ -128,7 +138,7 @@ internal sealed class iOSFilterControl : UIView
     {
         _main = main;
         BackgroundColor = UIColor.Clear;
-        _group = new iOSGlassButtonGroup();
+        _group = new iOSGlassButtonGroup { SegmentLength = iOSFilterLayout.SegmentWidth };
         _filter = _group.Add("line.3.horizontal.decrease", "筛选", null);
         _filter.ShowsMenuAsPrimaryAction = true;
         _filter.AccessibilityHint = "下拉选择排序、方向与星级筛选";
@@ -165,9 +175,7 @@ internal sealed class iOSFilterControl : UIView
     /// <summary>
     /// 同步共享筛选状态到原生控件：筛选段菜单按稳定标识更新模型侧的勾选态（<see cref="UIAction.State"/>），
     /// 读屏值取当前星级筛选，相似聚类开关同步外观。
-    /// <para>已知限制：系统不会因同一份菜单的 action 状态变化而重绘已展开的菜单，换成新菜单又会让菜单滚回顶部，
-    /// 因此「菜单保持展开 + 屏上勾选即时刷新」在原生菜单路径上尚未解决；本方法只保证模型侧勾选与共享状态一致，
-    /// 不代表展开菜单的可见结果。</para>
+    /// 展开菜单的可见选择、滚动与焦点由独立交互验收核对。
     /// </summary>
     internal void Refresh()
     {
@@ -191,19 +199,21 @@ internal sealed class iOSFilterControl : UIView
     /// 按纯几何落位：合体胶囊、两段与相似聚类开关。
     /// </summary>
     /// <param name="row">是否行布局。</param>
-    /// <param name="contentWidth">文件栏内容区宽度（列布局为 116 带）。</param>
-    /// <param name="cardWidth">列布局的胶片卡片列宽（相似聚类开关与卡片列同宽）。</param>
+    /// <param name="contentWidth">文件栏内容区宽度（列布局含实际遮挡后的占用范围）。</param>
+    /// <param name="cardWidth">列布局的胶片卡片列宽（相似聚类开关保留自身内容宽度）。</param>
     /// <param name="leadingInset">列布局的前导让位。</param>
     /// <returns>各矩形与主轴长度。</returns>
-    internal iOSFilterFrames Arrange(bool row, double contentWidth, double cardWidth, double leadingInset)
+    internal iOSFilterFrames Arrange(bool row, double contentWidth, double cardWidth, double leadingInset,
+        double? contentTrailing = null)
     {
         double toggleWidth = _similarity == null ? 0 : row ? NaturalWidth(_similarity) : cardWidth;
-        var frames = iOSFilterLayout.Compute(row, contentWidth, leadingInset, toggleWidth);
+        var frames = iOSFilterLayout.Compute(row, contentWidth, leadingInset, toggleWidth, contentTrailing);
         _frames = frames;
         _group.Vertical = false;
-        _group.Frame = ToCGRect(frames.Control);
+        iOSViewGeometry.SetRectIfNeeded(_group, ToCGRect(frames.Control));
         _group.LayoutIfNeeded();
-        if (_similarity != null) _similarity.Frame = ToCGRect(frames.Toggle);
+        if (_similarity != null)
+            iOSViewGeometry.SetRectIfNeeded(_similarity, ToCGRect(frames.Toggle));
         return frames;
     }
 
@@ -220,12 +230,17 @@ internal sealed class iOSFilterControl : UIView
         return configuration;
     }
 
-    /// <summary>同步相似聚类开关的外观与读屏值。</summary>
+    /// <summary>同步相似聚类开关的外观与读屏值：配置只在展开状态变化时重写，读屏值每次按真值刷新。</summary>
     private void RefreshToggle()
     {
         if (_similarity == null) return;
         bool open = _main.FileVM.FilterBar.IsSimilarityPanelOpen;
-        _similarity.Configuration = ToggleConfiguration(open);
+        if (_toggleOpen != open)
+        {
+            _toggleOpen = open;
+            _similarity.Configuration = ToggleConfiguration(open);
+            _toggleConfigurationUpdates++;
+        }
         _similarity.AccessibilityValue = open ? "已展开" : "已收起";
     }
 
