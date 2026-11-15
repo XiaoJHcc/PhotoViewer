@@ -1,14 +1,9 @@
 /**
- * 相似聚类面板让位几何（SIM-07）。
- * columnSimilarity(t) → 列布局面板宽与占位（面板宽 + sim.panel.margin）。
- * rowSimilarityWidth({ availableWidth, itemCount, dockTexts, measureText }, t) → 行布局从胶片栏右端切出的宽度；
- * 内容宽 = 卡片数 × 96 + sim.list.padding + 2 × 描边 + 停靠区宽（列表态才有），
- * 停靠区宽 = max(sim.action.width, 文本自然宽) + 2 × sim.dock.margin；
- * 面板宽 = clamp(内容宽, sim.panel.minWidth, 可用宽 × sim.panel.maxWidthRatio)，占位再加 sim.panel.margin。
- * rowSimilarityHeight(t) → 行布局面板交叉轴高 = sim.list.cross。
+ * 相似聚类面板让位几何（SIM-07、FILM-05）。
+ * 面板始终使用大档卡片；列布局接在文件栏内容右缘，行布局从胶片带右端切出。
+ * rowSimilarityWidth 的内容宽 = 卡片数 × film.card.width + 列表内边距 + 两侧描边 + 停靠区宽。
  */
 import { approximateTextWidth } from "./text.js";
-
 
 export function columnSimilarity(t) {
     const width = Math.max(t("sim.panel.width"), t("sim.panel.minWidth"));
@@ -51,14 +46,13 @@ export function rowSimilarityWidth({ availableWidth, itemCount, dockTexts = [], 
 }
 
 export function rowSimilarityHeight(t) {
-    return t("sim.list.cross");
+    return t("film.band.height");
 }
 
 export function similarityGeometry({ expanded, axis, availableWidth, itemCount, dockTexts = [] }, t, measureText = approximateTextWidth) {
     const base = axis === "vertical"
         ? columnSimilarity(t)
         : { ...rowSimilarityWidth({ availableWidth, itemCount, dockTexts, measureText }, t), height: rowSimilarityHeight(t) };
-    const height = axis === "vertical" ? null : base.height;
     return {
         expanded: Boolean(expanded),
         axis: base.axis,
@@ -67,7 +61,7 @@ export function similarityGeometry({ expanded, axis, availableWidth, itemCount, 
         minWidth: base.minWidth,
         maxWidth: base.maxWidth ?? null,
         dockWidth: base.dockWidth,
-        height,
+        height: axis === "vertical" ? null : base.height,
         itemCount,
     };
 }

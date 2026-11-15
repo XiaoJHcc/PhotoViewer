@@ -3,7 +3,8 @@ using PhotoViewer.Shared;
 namespace CoreContractCheck;
 
 /// <summary>
-/// 宽形态控制栏流式排布：命令/星级/EXIF 分组尺寸、整组换行、行长与交叉轴、文档尺寸与行内居中。
+/// 宽形态控制栏流式排布：命令/星级/EXIF 分组尺寸（含无衬底变体）、整组换行、行长与交叉轴、
+/// 文档尺寸、行内居中与完整分组矩形。
 /// </summary>
 internal static class ToolbarFlowLayoutChecks
 {
@@ -63,6 +64,24 @@ internal static class ToolbarFlowLayoutChecks
         }
         c.True("EXIF 分组尺寸与 EXIF 块几何一致（0–7 项、两向）", exifMatchesBlock);
 
+        var bareColumn = ToolbarFlowLayout.Exif(3, false, bare: true);
+        c.True("无衬底纵排三项主轴 112、交叉轴默认取命令按钮边长 44",
+            Near(bareColumn.Main, 112) && Near(bareColumn.Cross, ToolbarFlowLayout.CommandSize)
+            && Near(bareColumn.Cross, 44),
+            $"{bareColumn.Main}×{bareColumn.Cross}");
+        var bareRow = ToolbarFlowLayout.Exif(3, true, bare: true);
+        c.True("无衬底横排三项主轴 160、交叉轴 44",
+            Near(bareRow.Main, 160) && Near(bareRow.Cross, 44),
+            $"{bareRow.Main}×{bareRow.Cross}");
+        var paddedColumn = ToolbarFlowLayout.Exif(3, false);
+        c.True("默认有衬底纵排三项保持主轴 124、交叉轴 64",
+            Near(paddedColumn.Main, 124) && Near(paddedColumn.Cross, 64),
+            $"{paddedColumn.Main}×{paddedColumn.Cross}");
+        var emptyBare = ToolbarFlowLayout.Exif(0, false, bare: true);
+        c.True("无衬底变体无项时尺寸为零",
+            Near(emptyBare.Main, 0) && Near(emptyBare.Cross, 0),
+            $"{emptyBare.Main}×{emptyBare.Cross}");
+
         var groups = new[]
         {
             ToolbarFlowLayout.Commands(3),
@@ -105,7 +124,126 @@ internal static class ToolbarFlowLayoutChecks
 
         c.Equal("行在可用区内居中", 85d, ToolbarFlowLayout.LineStart(500, 330));
         c.Equal("可用区不足时退回外边距", 10d, ToolbarFlowLayout.LineStart(300, 330));
+        c.Equal("内容主轴扣两端外边距", 80d, ToolbarFlowLayout.ContentMain(100));
+        c.Equal("内容主轴在可用长度 0 时取 1", 1d, ToolbarFlowLayout.ContentMain(0));
+
+        c.Section("控制栏完整流式排布");
+        Arrangement(c);
     }
+
+    private static void Arrangement(Checks c)
+    {
+        var lineGroups = new[]
+        {
+            ToolbarFlowLayout.Commands(3),
+            ToolbarFlowLayout.Rating(500),
+            ToolbarFlowLayout.Exif(3, true),
+        };
+
+        var exact = ToolbarFlowLayout.Arrange(lineGroups, true, 584);
+        c.True("横排单行：文档 584×64、分组从外边距起排",
+            Near(exact.Width, 584) && Near(exact.Height, 64)
+            && FramesEqual(exact.Groups,
+                new LayoutRect(10, 10, 148, 44),
+                new LayoutRect(168, 10, 224, 44),
+                new LayoutRect(402, 10, 172, 44)),
+            Describe(exact));
+
+        var centered = ToolbarFlowLayout.Arrange(lineGroups, true, 620);
+        c.True("横排单行在可用区内居中、文档尺寸仍取内容",
+            Near(centered.Width, 584) && Near(centered.Height, 64)
+            && FramesEqual(centered.Groups,
+                new LayoutRect(28, 10, 148, 44),
+                new LayoutRect(186, 10, 224, 44),
+                new LayoutRect(420, 10, 172, 44)),
+            Describe(centered));
+
+        var wrapped = ToolbarFlowLayout.Arrange(lineGroups, true, 420);
+        c.True("横排两行：第二行另起并各自居中、行距 10",
+            Near(wrapped.Width, 402) && Near(wrapped.Height, 118)
+            && FramesEqual(wrapped.Groups,
+                new LayoutRect(19, 10, 148, 44),
+                new LayoutRect(177, 10, 224, 44),
+                new LayoutRect(124, 64, 172, 44)),
+            Describe(wrapped));
+
+        var joined = ToolbarFlowLayout.Arrange(
+            [ToolbarFlowLayout.Commands(2), ToolbarFlowLayout.Exif(2, false)], true, 212, crossLeadingPadding: 0);
+        c.True("交叉轴前导为 0 时分组贴交叉轴起点、矩形拉伸到行高",
+            Near(joined.Width, 212) && Near(joined.Height, 74)
+            && FramesEqual(joined.Groups,
+                new LayoutRect(10, 0, 96, 64),
+                new LayoutRect(116, 0, 86, 64)),
+            Describe(joined));
+
+        var vertical = ToolbarFlowLayout.Arrange(lineGroups, false, 584);
+        c.True("纵排单列：文档 64×584、分组自上而下",
+            Near(vertical.Width, 64) && Near(vertical.Height, 584)
+            && FramesEqual(vertical.Groups,
+                new LayoutRect(10, 10, 44, 148),
+                new LayoutRect(10, 168, 44, 224),
+                new LayoutRect(10, 402, 44, 172)),
+            Describe(vertical));
+
+        var verticalWrapped = ToolbarFlowLayout.Arrange(
+            [ToolbarFlowLayout.Commands(2), ToolbarFlowLayout.Exif(2, false)], false, 200);
+        c.True("纵排两列：列宽取各自行高并逐列后移",
+            Near(verticalWrapped.Width, 138) && Near(verticalWrapped.Height, 116)
+            && FramesEqual(verticalWrapped.Groups,
+                new LayoutRect(10, 52, 44, 96),
+                new LayoutRect(64, 57, 64, 86)),
+            Describe(verticalWrapped));
+
+        var overflow = ToolbarFlowLayout.Arrange(
+            [ToolbarFlowLayout.Commands(5), ToolbarFlowLayout.Commands(1)], true, 100);
+        c.True("超长分组保持完整尺寸、文档按内容溢出、每行从外边距起排",
+            Near(overflow.Width, 272) && Near(overflow.Height, 118)
+            && FramesEqual(overflow.Groups,
+                new LayoutRect(10, 10, 252, 44),
+                new LayoutRect(28, 64, 44, 44)),
+            Describe(overflow));
+
+        var empty = ToolbarFlowLayout.Arrange([], true, 500);
+        c.True("无分组时文档为纯外边距且无矩形",
+            Near(empty.Width, 20) && Near(empty.Height, 20) && empty.Groups.Count == 0,
+            Describe(empty));
+
+        var commandsOnly = ToolbarFlowLayout.Arrange([ToolbarFlowLayout.Commands(2)], true, 116);
+        c.True("仅命令组（无评分、无 EXIF）",
+            Near(commandsOnly.Width, 116) && Near(commandsOnly.Height, 64)
+            && FramesEqual(commandsOnly.Groups, new LayoutRect(10, 10, 96, 44)),
+            Describe(commandsOnly));
+
+        var ratingOnly = ToolbarFlowLayout.Arrange(
+            [ToolbarFlowLayout.Rating(ToolbarFlowLayout.ContentMain(244))], true, 244);
+        c.True("仅评分组（无 EXIF、无命令）",
+            Near(ratingOnly.Width, 244) && Near(ratingOnly.Height, 64)
+            && FramesEqual(ratingOnly.Groups, new LayoutRect(10, 10, 224, 44)),
+            Describe(ratingOnly));
+
+        var exifOnly = ToolbarFlowLayout.Arrange([ToolbarFlowLayout.Exif(2, false)], true, 106);
+        c.True("仅 EXIF 组（无评分、无命令）",
+            Near(exifOnly.Width, 106) && Near(exifOnly.Height, 84)
+            && FramesEqual(exifOnly.Groups, new LayoutRect(10, 10, 86, 64)),
+            Describe(exifOnly));
+    }
+
+    private static bool FramesEqual(IReadOnlyList<LayoutRect> actual, params LayoutRect[] expected)
+    {
+        if (actual.Count != expected.Length) return false;
+        for (int index = 0; index < expected.Length; index++)
+        {
+            var frame = actual[index];
+            var want = expected[index];
+            if (!Near(frame.X, want.X) || !Near(frame.Y, want.Y)
+                || !Near(frame.Width, want.Width) || !Near(frame.Height, want.Height)) return false;
+        }
+        return true;
+    }
+
+    private static string Describe(ToolbarFlowDocument document)
+        => $"{document.Width}×{document.Height} "
+            + string.Join(" ", document.Groups.Select(frame => $"({frame.X},{frame.Y},{frame.Width},{frame.Height})"));
 
     private static bool Near(double first, double second) => Math.Abs(first - second) <= Epsilon;
 

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Android.Graphics;
 using Android.OS;
 using Android.Views;
 using PhotoViewer.Android.Core;
@@ -76,7 +77,8 @@ internal static partial class AndroidNativeChecks
         };
         try
         {
-            bool consumed = root.Photo.OnGenericMotionEvent(ScrollEvent(.4f, InputSourceType.Touchpad));
+            // 横图在竖屏适应区里纵向已完全可见，精确滚动改用横向轴验证平移。
+            bool consumed = root.Photo.OnGenericMotionEvent(ScrollEvent(0f, InputSourceType.Touchpad, horizontal: .4f));
             await Task.Delay(250);
             bool scaleKept = Math.Abs(viewport.Scale - scale) < 1e-6;
             bool moved = Math.Abs(viewport.PanX - panX) > .5 || Math.Abs(viewport.PanY - panY) > .5;
@@ -114,8 +116,8 @@ internal static partial class AndroidNativeChecks
             var viewport = root.Photo.Viewport;
             double panX = viewport.PanX, panY = viewport.PanY;
             int wheelBefore = wheel;
-            bool first = root.Photo.OnGenericMotionEvent(ScrollEvent(.5f, InputSourceType.Mouse));
-            bool second = root.Photo.OnGenericMotionEvent(ScrollEvent(.5f, InputSourceType.Mouse));
+            bool first = root.Photo.OnGenericMotionEvent(ScrollEvent(.5f, InputSourceType.Mouse, horizontal: .5f));
+            bool second = root.Photo.OnGenericMotionEvent(ScrollEvent(.5f, InputSourceType.Mouse, horizontal: .5f));
             await Task.Delay(300);
             bool moved = Math.Abs(viewport.PanX - panX) > .5 || Math.Abs(viewport.PanY - panY) > .5;
             Check("INPUT-04 非整格增量按精确滚动",
@@ -267,6 +269,28 @@ internal static partial class AndroidNativeChecks
         var root = _root!;
         var main = _main!;
         await Task.Delay(200);
+        if (root.Form != ScreenForm.Wide)
+        {
+            var nav = root.PhoneNavigation;
+            var fit = root.PhoneFitEnhance;
+            var rating = root.PhoneRating;
+            bool slots = nav.Visibility == ViewStates.Visible
+                && fit.Visibility == ViewStates.Visible
+                && rating.Visibility == (main.Settings.ShowRating ? ViewStates.Visible : ViewStates.Gone);
+            bool names = nav.First.ContentDescription == "上一张" && nav.Second.ContentDescription == "下一张"
+                && fit.First.ContentDescription == "缩放适应" && fit.Second.ContentDescription == "雾天增强";
+            var ratingRects = new List<Rect>();
+            for (int value = 1; value <= 5; value++) ratingRects.Add(rating.SlotRectPx(value));
+            bool cluster = rating.Form == RatingControlForm.Compact
+                && ratingRects.All(rect => rect.Width() > 0 && rect.Height() > 0
+                    && rect.Left >= 0 && rect.Top >= 0 && rect.Right <= rating.Width && rect.Bottom <= rating.Height)
+                && ratingRects.Select(rect => $"{rect.Left},{rect.Top}").Distinct().Count() == 5;
+            bool noZero = main.CurrentFile?.HasRatingConflict == true || rating.SlotRectPx(0).Width() == 0;
+            Check("TOOLBAR-11 手机固定槽位与紧凑星簇", slots && names && cluster && noZero,
+                $"slots={slots} names={names} form={rating.Form} rects={string.Join("/", ratingRects.Select(r => $"{r.Left},{r.Top}"))} "
+                + $"zero={rating.SlotRectPx(0)} conflict={main.CurrentFile?.HasRatingConflict}");
+            return;
+        }
         var nodes = root.ControlBar.NodesForChecks();
         if (nodes.Count == 0)
         {

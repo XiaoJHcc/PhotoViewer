@@ -1,11 +1,12 @@
 import { el, place, setText, touches } from "./dom.js";
 import { icon, solidIcon } from "./icons.js";
+import { tooltipText } from "../core/input.js";
+import { controlRatingPopoverDirection } from "../core/layout/ratingpopover.js";
 
-const REGIONS = ["layout", "toolbar", "current", "settings", "panes", "window"];
+const REGIONS = ["layout", "toolbar", "current", "settings", "panes", "window", "viewport"];
 const RATING_COUNT = 6;
-const GROUP_ORDER = ["exif", "rating", "command"];
+const GROUP_ORDER = ["rating", "command"];
 
-// TOOLBAR-04：命令 → icon.* 令牌；四端与 Web 同一字形。
 const COMMAND_ICONS = {
     Open: "icon.command.open",
     Previous: "icon.command.previous",
@@ -20,8 +21,6 @@ const COMMAND_ICONS = {
     ToggleEnhance: "icon.command.toggleEnhance",
 };
 
-// 实心星（fi-ss-star，uicons solid-straight）：点亮态、评分快捷命令星内叠数字。
-
 function ratingValueOf(command) {
     const match = /^SetRating([0-5])$/.exec(command);
     return match ? Number(match[1]) : null;
@@ -31,7 +30,6 @@ function commandGlyph(command, t) {
     const value = ratingValueOf(command);
     if (value !== null) {
         if (value === 0) return icon(t, "icon.clear", "pv-command-icon");
-        // TOOLBAR-04：1–5 为星形内叠数字，数字取按钮底色。
         return el("span", { class: "pv-command-rating", "aria-hidden": "true" },
             solidIcon(t, "icon.starFilled", "pv-command-rating-star"),
             el("span", { class: "pv-command-rating-digit" }, String(value)));
@@ -70,7 +68,7 @@ function reorder(container, nodes) {
 }
 
 export function mountControlBar(host, ctx) {
-    const { t } = ctx;
+    const { app, t } = ctx;
     const scroll = el("div", {
         class: "pv-control-scroll is-row",
         role: "group",
@@ -79,45 +77,46 @@ export function mountControlBar(host, ctx) {
     const documentLayer = el("div", { class: "pv-control-document" });
     const indicator = el("div", { class: "pv-control-indicator", "aria-hidden": "true" });
     indicator.hidden = true;
+    const phoneLayer = el("div", { class: "pv-control-phone" });
+    phoneLayer.hidden = true;
+    const exifHost = el("div", { class: "pv-control-exif-host" });
+    const navCapsule = el("div", {
+        class: "pv-control-capsule is-nav",
+        role: "group",
+        "aria-label": "上一张/下一张",
+    });
+    const utilityCapsule = el("div", {
+        class: "pv-control-capsule is-utility",
+        role: "group",
+        "aria-label": "缩放适应/雾天增强",
+    });
+    navCapsule.hidden = true;
+    utilityCapsule.hidden = true;
+    phoneLayer.append(navCapsule, utilityCapsule);
     scroll.append(documentLayer);
-    host.append(scroll, indicator);
+    documentLayer.append(exifHost);
+    host.append(scroll, indicator, phoneLayer);
 
     const groups = new Map();
-    const exifBlocks = [];
     const ratingButtons = [];
     const commandButtons = new Map();
     let layoutRef = null;
     let metrics = null;
     let drag = null;
     let ratingConflict = false;
+    let phoneMode = false;
 
     function ensureGroup(kind) {
         let node = groups.get(kind);
         if (!node) {
             node = el("div", { class: `pv-control-group pv-control-${kind}` });
-            if (kind === "exif") {
-                node.setAttribute("role", "group");
-                node.setAttribute("aria-label", "EXIF 摘要");
-            } else if (kind === "rating") {
-                node.setAttribute("role", "group");
-                node.setAttribute("aria-label", "评分");
-            } else {
-                node.setAttribute("role", "group");
-                node.setAttribute("aria-label", "命令");
-            }
+            node.setAttribute("role", "group");
+            node.setAttribute("aria-label", kind === "rating" ? "评分" : "命令");
+            if (kind === "rating") node.classList.add("pv-control-rating");
             groups.set(kind, node);
             documentLayer.append(node);
         }
         return node;
-    }
-
-    function createExifBlock() {
-        const label = el("span", { class: "pv-control-exif-label" });
-        const value = el("span", { class: "pv-control-exif-value" });
-        const block = el("div", { class: "pv-control-exif-block" }, label, value);
-        block.labelNode = label;
-        block.valueNode = value;
-        return block;
     }
 
     function createRatingButton(value) {
@@ -133,17 +132,26 @@ export function mountControlBar(host, ctx) {
         }, glyph);
         button.dataset.rating = String(value);
         button.addEventListener("click", () => {
-            // RATING-04：冲突三角只打开来源浮窗；横排控制栏向上、竖排控制栏向左。
             if (value === 0 && ratingConflict) {
                 ctx.ratingPopover?.open(button, {
                     mode: "control",
                     axis: layoutRef?.axis ?? "horizontal",
+                    direction: controlRatingPopoverDirection(app.state.layout),
                 });
                 return;
             }
-            ctx.app.rate(undefined, value);
+            app.rate(undefined, value);
         });
         return button;
+    }
+
+    function commandTooltip(command) {
+        const row = app.settings.hotkeys.find((entry) => entry.command === command);
+        if (!row) return command;
+        const bindings = { primary: row.primary ?? null, secondary: row.secondary ?? null };
+        return tooltipText(command, row.name, { bindingsOf: () => bindings }, {
+            apple: app.settings.appleKeyboard,
+        });
     }
 
     function createCommandButton(command) {
@@ -151,7 +159,18 @@ export function mountControlBar(host, ctx) {
         const button = el("button", { type: "button", class: "pv-control-command-button" });
         if (glyph) button.append(glyph);
         button.dataset.command = command;
-        button.addEventListener("click", () => ctx.app.runCommand(command));
+        button.dataset.tooltip = commandTooltip(command);
+        button.setAttribute("aria-label", button.dataset.tooltip);
+        button.addEventListener("click", () => app.runCommand(command));
+        return button;
+    }
+
+    function ensureCommand(command) {
+        let button = commandButtons.get(command);
+        if (!button) {
+            button = createCommandButton(command);
+            commandButtons.set(command, button);
+        }
         return button;
     }
 
@@ -159,29 +178,8 @@ export function mountControlBar(host, ctx) {
         ratingButtons.push(createRatingButton(value));
     }
 
-    function updateExif(group, items) {
-        const container = groups.get("exif");
-        while (exifBlocks.length < items.length) {
-            const block = createExifBlock();
-            exifBlocks.push(block);
-            container.append(block);
-        }
-        for (let index = 0; index < items.length; index += 1) {
-            const block = exifBlocks[index];
-            const child = group.children[index];
-            place(block, child);
-            setText(block.labelNode, items[index].label);
-            setText(block.valueNode, items[index].value);
-            block.dataset.tooltip = items[index].tooltip;
-            block.setAttribute("aria-label", items[index].tooltip);
-        }
-        for (let index = items.length; index < exifBlocks.length; index += 1) {
-            place(exifBlocks[index], null);
-        }
-    }
-
-    function updateRating(group, rating, axis) {
-        const container = groups.get("rating");
+    function updateRating(container, group, rating, axis) {
+        container.classList.toggle("is-compact", Boolean(group.compact));
         const order = visualOrder(group, axis);
         for (const child of order) {
             const button = ratingButtons[child.index];
@@ -191,7 +189,6 @@ export function mountControlBar(host, ctx) {
         for (let value = 0; value < RATING_COUNT; value += 1) {
             ratingButtons[value].disabled = !rating.enabled;
         }
-        // RATING-04：组级冲突时 0 号按钮保持 30×30 与命中区，只换成红色警示三角。
         const conflict = Boolean(rating.conflict);
         if (conflict !== ratingConflict) {
             ratingConflict = conflict;
@@ -210,7 +207,6 @@ export function mountControlBar(host, ctx) {
     }
 
     function updateCommandButton(button, item) {
-        // TOOLBAR-04：悬停提示自绘（data-tooltip），读屏名称同文案。
         button.dataset.tooltip = item.tooltip;
         button.setAttribute("aria-label", item.tooltip);
         button.disabled = item.enabled === false;
@@ -218,31 +214,151 @@ export function mountControlBar(host, ctx) {
         else button.removeAttribute("aria-pressed");
     }
 
-    function updateCommands(group, commands, axis) {
-        const container = groups.get("command");
+    function updateCommands(container, group, commands, axis) {
         const order = visualOrder(group, axis);
         const used = new Set();
         for (const child of order) {
             const item = commands[child.index];
             if (!item) continue;
-            let button = commandButtons.get(item.command);
-            if (!button) {
-                button = createCommandButton(item.command);
-                commandButtons.set(item.command, button);
-                container.append(button);
-            }
+            const button = ensureCommand(item.command);
             used.add(button);
+            button.hidden = false;
             place(button, child);
             updateCommandButton(button, item);
         }
         for (const button of commandButtons.values()) {
-            if (!used.has(button)) place(button, null);
+            if (!used.has(button) && !phoneMode) button.hidden = true;
         }
         const nodes = order
             .map((child) => commands[child.index])
             .filter(Boolean)
-            .map((item) => commandButtons.get(item.command));
+            .map((item) => ensureCommand(item.command));
         reorder(container, nodes);
+    }
+
+    function placeSlotRating(slot, rating, axis) {
+        const group = ensureGroup("rating");
+        if (phoneMode && group.parentNode !== phoneLayer) phoneLayer.append(group);
+        group.hidden = false;
+        const visual = slot.visual ?? slot;
+        place(group, visual);
+        const compact = Boolean(slot.compact);
+        group.classList.toggle("is-compact", compact);
+        const pseudo = { children: slot.children ?? [] };
+        const order = visualOrder(pseudo, axis);
+        for (const child of order) {
+            const button = ratingButtons[child.index];
+            if (button) {
+                button.hidden = false;
+                place(button, child);
+            }
+        }
+        reorder(group, order.map((child) => ratingButtons[child.index]).filter(Boolean));
+        for (let value = 0; value < RATING_COUNT; value += 1) ratingButtons[value].disabled = !rating.enabled;
+        const conflict = Boolean(rating.conflict);
+        if (conflict !== ratingConflict) {
+            ratingConflict = conflict;
+            const zero = ratingButtons[0];
+            zero.classList.toggle("is-conflict", conflict);
+            zero.classList.toggle("is-clear", !conflict);
+        }
+        for (let value = 1; value < RATING_COUNT; value += 1) {
+            const on = rating.value >= value;
+            ratingButtons[value].classList.toggle("is-on", on);
+            ratingButtons[value].classList.toggle("is-off", !on);
+        }
+    }
+
+    function placeCapsule(capsule, first, second, commands, commandItem) {
+        const buttons = commands.map((command) => ensureCommand(command));
+        if (!first || !second) {
+            capsule.hidden = true;
+            for (const button of buttons) button.hidden = true;
+            return;
+        }
+        const x = Math.min(first.x, second.x);
+        const y = Math.min(first.y, second.y);
+        const w = Math.max(first.x + first.w, second.x + second.w) - x;
+        const h = Math.max(first.y + first.h, second.y + second.h) - y;
+        capsule.hidden = false;
+        place(capsule, { x, y, w, h });
+        [first, second].forEach((slot, index) => {
+            const button = buttons[index];
+            button.hidden = false;
+            button.classList.add("is-capsule-segment");
+            capsule.append(button);
+            place(button, { x: slot.x - x, y: slot.y - y, w: slot.w, h: slot.h });
+            updateCommandButton(button, commandItem(commands[index]));
+        });
+    }
+
+    function applyPhone(layout, state) {
+        phoneMode = true;
+        scroll.hidden = true;
+        phoneLayer.hidden = false;
+        indicator.hidden = true;
+        const ratingNode = groups.get("rating");
+        if (ratingNode && ratingNode.parentNode !== phoneLayer) phoneLayer.append(ratingNode);
+        if (exifHost.parentNode !== phoneLayer) phoneLayer.append(exifHost);
+        const slots = layout.slots ?? {};
+        const rating = state.toolbar.rating;
+        const commands = new Map(state.toolbar.commands.map((item) => [item.command, item]));
+        const commandItem = (command) => commands.get(command) ?? {
+            command,
+            name: app.settings.hotkeys.find((row) => row.command === command)?.name ?? command,
+            enabled: command === "Open" || Boolean(state.photo),
+            tooltip: commandTooltip(command),
+        };
+        if (slots.rating && rating.visible) placeSlotRating(slots.rating, rating, layout.axis);
+        else groups.get("rating") && (groups.get("rating").hidden = true);
+        if (navCapsule.parentNode !== phoneLayer) phoneLayer.append(navCapsule);
+        if (utilityCapsule.parentNode !== phoneLayer) phoneLayer.append(utilityCapsule);
+        placeCapsule(navCapsule, slots.previous, slots.next, ["Previous", "Next"], commandItem);
+        placeCapsule(utilityCapsule, slots.fit, slots.enhance, ["Fit", "ToggleEnhance"], commandItem);
+        for (const [command, button] of commandButtons) {
+            if (["Previous", "Next", "Fit", "ToggleEnhance"].includes(command)) continue;
+            button.hidden = true;
+        }
+        for (const node of groups.values()) {
+            if (node !== groups.get("rating")) node.hidden = true;
+        }
+        const ratingGroup = groups.get("rating");
+        if (ratingGroup) ratingGroup.hidden = !(slots.rating && rating.visible);
+    }
+
+    function applyWide(layout, state) {
+        phoneMode = false;
+        scroll.hidden = false;
+        phoneLayer.hidden = true;
+        navCapsule.hidden = true;
+        utilityCapsule.hidden = true;
+        for (const command of ["Previous", "Next", "Fit", "ToggleEnhance"]) {
+            commandButtons.get(command)?.classList.remove("is-capsule-segment");
+        }
+        if (exifHost.parentNode !== documentLayer) documentLayer.append(exifHost);
+        layoutRef = layout;
+        const vertical = layout.axis === "vertical";
+        scroll.classList.toggle("is-row", !vertical);
+        scroll.classList.toggle("is-col", vertical);
+        documentLayer.style.width = `${layout.document.w}px`;
+        documentLayer.style.height = `${layout.document.h}px`;
+        const seen = new Set();
+        for (const group of layout.groups) {
+            if (group.kind === "exif") continue;
+            const node = ensureGroup(group.kind);
+            node.hidden = false;
+            place(node, group);
+            seen.add(group.kind);
+            if (group.kind === "rating") updateRating(node, group, state.toolbar.rating, layout.axis);
+            else updateCommands(node, group, state.toolbar.commands, layout.axis);
+        }
+        for (const [kind, node] of groups) {
+            if (!seen.has(kind)) node.hidden = true;
+            if (node.parentNode !== documentLayer) documentLayer.append(node);
+        }
+        reorder(documentLayer, GROUP_ORDER.map((kind) => groups.get(kind)).filter(Boolean));
+        clampScroll();
+        updateIndicator();
     }
 
     function clampScroll() {
@@ -256,7 +372,7 @@ export function mountControlBar(host, ctx) {
 
     function updateIndicator() {
         const layout = layoutRef;
-        if (!layout) return;
+        if (!layout || phoneMode) return;
         const width = scroll.clientWidth;
         const height = scroll.clientHeight;
         const doc = layout.document;
@@ -296,35 +412,9 @@ export function mountControlBar(host, ctx) {
         indicator.hidden = true;
     }
 
-    function applyLayout(layout, state) {
-        layoutRef = layout;
-        const vertical = layout.axis === "vertical";
-        scroll.classList.toggle("is-row", !vertical);
-        scroll.classList.toggle("is-col", vertical);
-        documentLayer.style.width = `${layout.document.w}px`;
-        documentLayer.style.height = `${layout.document.h}px`;
-
-        const seen = new Set();
-        for (const group of layout.groups) {
-            const node = ensureGroup(group.kind);
-            place(node, group);
-            seen.add(group.kind);
-            if (group.kind === "exif") updateExif(group, state.toolbar.exif);
-            else if (group.kind === "rating") updateRating(group, state.toolbar.rating, layout.axis);
-            else updateCommands(group, state.toolbar.commands, layout.axis);
-        }
-        for (const [kind, node] of groups) {
-            if (!seen.has(kind)) node.hidden = true;
-        }
-        reorder(documentLayer, GROUP_ORDER.map((kind) => groups.get(kind)).filter(Boolean));
-        clampScroll();
-        updateIndicator();
-    }
-
     const onScroll = () => updateIndicator();
-    // TOOLBAR-08：行布局下把普通滚轮的纵向增量转成横向滚动，内容不被裁切。
     const onWheel = (event) => {
-        if (!layoutRef || layoutRef.axis !== "horizontal" || event.ctrlKey) return;
+        if (!layoutRef || phoneMode || layoutRef.axis !== "horizontal" || event.ctrlKey) return;
         const max = scroll.scrollWidth - scroll.clientWidth;
         if (max <= 0) return;
         const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? scroll.clientWidth : 1;
@@ -337,7 +427,6 @@ export function mountControlBar(host, ctx) {
     scroll.addEventListener("scroll", onScroll, { passive: true });
     scroll.addEventListener("wheel", onWheel, { passive: false });
 
-    // TOOLBAR-08：悬浮滚动条可拖动；不占布局，也不改变文档几何。
     const onIndicatorDown = (event) => {
         if (!metrics || event.button !== 0) return;
         drag = {
@@ -372,7 +461,8 @@ export function mountControlBar(host, ctx) {
         if (!touches(regions, ...REGIONS)) return;
         const layout = state.layout && state.layout.control;
         if (!layout) return;
-        applyLayout(layout, state);
+        if (layout.mode === "phone") applyPhone(layout, state);
+        else applyWide(layout, state);
     }
 
     function destroy() {
@@ -386,5 +476,5 @@ export function mountControlBar(host, ctx) {
         indicator.remove();
     }
 
-    return { update, destroy };
+    return { update, destroy, exifHost };
 }

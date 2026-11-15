@@ -262,15 +262,30 @@ internal static class NativeToolsAcceptance
         Console.WriteLine("[NativeSmoke] PASS tools");
     }
 
-    /// <summary>真实鼠标按下控制栏 EXIF 整组（与用户点击同一条 GroupView 回调）。</summary>
+    /// <summary>真实鼠标按下控制栏 EXIF 整组：命中必须穿过模糊材质与块内文字，落到整块入口。</summary>
     /// <param name="window">主窗口。</param>
     private static void TapExifGroup(MacMainWindow window)
     {
         var group = window.ControlBar.Groups.FirstOrDefault()
             ?? throw new InvalidOperationException("控制栏缺少 EXIF 分组");
-        using var click = NSEvent.MouseEvent(NSEventType.LeftMouseDown, new CGPoint(5, 5), 0,
+        var tile = group.Subviews.FirstOrDefault()
+            ?? throw new InvalidOperationException("控制栏 EXIF 整组缺少信息项");
+        var insideTile = new CGPoint(tile.Bounds.Width / 2, tile.Bounds.Height / 2);
+        var hit = group.HitTest(tile.ConvertPointToView(insideTile, group.Superview))
+            ?? throw new InvalidOperationException("EXIF 块内文字位置命中不到任何视图");
+        if (hit is NSTextField || !IsInside(hit, group))
+            throw new InvalidOperationException($"EXIF 块内文字吞掉了整块点击：{hit.GetType().Name}");
+        using var click = NSEvent.MouseEvent(NSEventType.LeftMouseDown, insideTile, 0,
             NSProcessInfo.ProcessInfo.SystemUptime, window.Window.WindowNumber, null!, 1, 1, 1)!;
-        group.MouseDown(click);
+        hit.MouseDown(click);
+    }
+
+    /// <summary>命中视图是否落在指定祖先之内（含自身）。</summary>
+    private static bool IsInside(NSView view, NSView ancestor)
+    {
+        for (var current = view; current != null; current = current.Superview)
+            if (current == ancestor) return true;
+        return false;
     }
 
     /// <summary>测量 EXIF 页在一次展示与逐段滚动中的耗时，输出行数、标签数与已实例化文本控件数。</summary>

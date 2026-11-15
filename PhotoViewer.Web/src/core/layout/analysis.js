@@ -1,37 +1,47 @@
 /**
- * 分析栏几何（ANALYSIS-03/05）。
- * analysisTileSize({ mainSize, tileCount }, t) → 等边长；analysisCrossSize(...) → 边长 + 两侧内边距。
- * analysisGeometry({ axis, pane, tileCount }, t) → { axis, tileCount, tileSize, cross, padding, spacing, tiles }；
- * axis "vertical" 为列布局（瓦片竖排，主轴取面板高），"horizontal" 为行布局（横排，主轴取面板宽）。
+ * 分析栏几何（ANALYSIS-03/05、SHELL-12）。
+ * analysisTileSize({ mainSize, tileCount, padding, spacing }, t) → 等边长；
+ * analysisGeometry({ axis, pane, tileCount, padding, spacing, depthStart, depthEnd }, t) → { tileSize, cross, tiles }。
+ * 宽形态独立分析栏两侧各 analysis.panel.padding；与工具区相邻时朝主图一侧取 toolbar.padding + 接缝。
+ * 手机竖屏取 shell.phone.rowInset，横屏与宽形态同轴。
  */
 
-export function analysisTileSize({ mainSize, tileCount }, t) {
-    const padding = t("analysis.panel.padding");
-    const spacing = t("analysis.tile.spacing");
-    return Math.max(1, Math.floor((mainSize - padding * 2 - spacing * (tileCount - 1)) / tileCount));
+export function analysisTileSize(spec = {}, t) {
+    const padding = spec.padding ?? t("analysis.panel.padding");
+    const spacing = spec.spacing ?? t("analysis.tile.spacing");
+    const count = Math.max(1, spec.tileCount ?? 1);
+    return Math.max(1, Math.floor((spec.mainSize - padding * 2 - spacing * (count - 1)) / count));
 }
 
-export function analysisCrossSize({ mainSize, tileCount }, t) {
-    return analysisTileSize({ mainSize, tileCount }, t) + t("analysis.panel.padding") * 2;
+export function analysisCrossSize(spec, t) {
+    const padding = spec.padding ?? t("analysis.panel.padding");
+    return analysisTileSize(spec, t) + padding * 2;
 }
 
-export function analysisGeometry({ axis, pane, tileCount }, t) {
-    const padding = t("analysis.panel.padding");
-    const spacing = t("analysis.tile.spacing");
+export function analysisGeometry(spec, t) {
+    const {
+        axis,
+        pane,
+        tileCount,
+        padding = t("analysis.panel.padding"),
+        spacing = t("analysis.tile.spacing"),
+        depthStart = padding,
+        depthEnd = padding,
+    } = spec;
     const mainSize = axis === "vertical" ? pane.h : pane.w;
-    const tileSize = analysisTileSize({ mainSize, tileCount }, t);
+    const tileSize = analysisTileSize({ mainSize, tileCount, padding, spacing }, t);
     const tiles = [];
-    for (let index = 0; index < tileCount; index++) {
-        const offset = padding + index * (tileSize + spacing);
+    for (let index = 0; index < tileCount; index += 1) {
+        const offset = depthStart + index * (tileSize + spacing);
         tiles.push(axis === "vertical"
-            ? { index, x: padding, y: offset, w: tileSize, h: tileSize }
-            : { index, x: offset, y: padding, w: tileSize, h: tileSize });
+            ? { index, x: depthStart, y: offset, w: tileSize, h: tileSize }
+            : { index, x: offset, y: depthStart, w: tileSize, h: tileSize });
     }
     return {
         axis,
         tileCount,
         tileSize,
-        cross: tileSize + padding * 2,
+        cross: tileSize + depthStart + depthEnd,
         padding,
         spacing,
         tiles,

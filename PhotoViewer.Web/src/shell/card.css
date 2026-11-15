@@ -197,3 +197,46 @@
 .pv-card-surface.is-rating-hidden .pv-card-star {
     display: none;
 }
+
+/* FILM-05：小档卡片只有照片区、星级角标、文件名与圆形抖动点。 */
+.pv-card-small .pv-card-name {
+    font-size: var(--pv-film-card-small-name-fontSize);
+    line-height: 1.1;
+}
+
+.pv-card-small-badge {
+    position: absolute;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 0;
+    background: transparent;
+    color: #fff;
+    font-size: var(--pv-film-card-small-badge-fontSize);
+    line-height: 1;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+.pv-card-small-star {
+    color: var(--pv-color-star-on);
+    font-size: var(--pv-film-card-small-badge-fontSize);
+}
+
+.pv-card-small-warning {
+    color: var(--pv-color-star-conflict);
+    font-size: var(--pv-film-card-small-badge-fontSize);
+}
+
+.pv-card-small-number {
+    color: #fff;
+    font-weight: 700;
+}
+
+.pv-card-shake-dot {
+    position: absolute;
+    border-radius: 50%;
+    background: var(--pv-color-film-shakeBadge);
+    pointer-events: none;
+}

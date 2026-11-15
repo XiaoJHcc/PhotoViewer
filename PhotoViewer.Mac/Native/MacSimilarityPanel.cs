@@ -366,9 +366,10 @@ internal sealed class MacSimilarityPanel : NSView
     /// </summary>
     internal double DockMeasureWidth()
     {
-        double text = Math.Max(ActionWidth, MeasureWidth(_unindexed, MeasureLimit));
-        double error = _dockError.Hidden ? 0 : Math.Min(ErrorMaxWidth, MeasureWidth(_dockError, MeasureLimit));
-        return Math.Max(text, error) + DockRowMargin * 2;
+        double available = Bounds.Width > 0 ? Bounds.Width : MeasureLimit;
+        double text = Math.Max(ActionWidth, MeasureWidth(_unindexed, available));
+        double error = _dockError.Hidden ? 0 : Math.Min(ErrorMaxWidth, Math.Max(1, available - DockRowMargin * 2));
+        return Math.Min(available, Math.Max(text, error) + DockRowMargin * 2);
     }
 
     /// <summary>验收读取停靠区错误标签的可见态。</summary>

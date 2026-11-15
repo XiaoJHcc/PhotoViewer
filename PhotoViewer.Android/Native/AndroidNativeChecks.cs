@@ -95,66 +95,22 @@ internal static partial class AndroidNativeChecks
         var root = _root!;
         var main = _main!;
         var session = _session!;
+        double density = AndroidUiTheme.Density(root.Context!);
         Phase("主屏几何");
         Check("首图上屏", session.Image != null, session.Image == null ? "无图像" : $"{session.Image.Width}x{session.Image.Height}");
         Check("安全区非负", root.SafeInsets.Left >= 0 && root.SafeInsets.Top >= 0 && root.SafeInsets.Right >= 0 && root.SafeInsets.Bottom >= 0,
             $"{root.SafeInsets}");
-        var panes = root.Panes;
-        bool layoutRow = main.IsRowLayout;
-        double screenWidthDp = root.Width / AndroidUiTheme.Density(root.Context!);
-        double screenHeightDp = root.Height / AndroidUiTheme.Density(root.Context!);
-        Check("文件栏背景铺边",
-            Math.Abs(panes.FileBar.X) < .5 && Math.Abs(panes.FileBar.Y) < .5
-            && (layoutRow
-                ? Math.Abs(panes.FileBar.Width - screenWidthDp) < .5
-                : Math.Abs(panes.FileBar.Height - screenHeightDp) < .5),
-            $"{panes.FileBar} row={layoutRow}");
-        if (layoutRow)
-        {
-            Check("分区无重叠且顺序正确",
-                Near(panes.FileBar.MaxY, panes.FileDivider.Y) && Near(panes.FileDivider.MaxY, panes.Photo.Y)
-                && Near(panes.Photo.MaxY, panes.ControlDivider.Y) && Near(panes.ControlDivider.Y, panes.ControlBackground.Y),
-                $"file={panes.FileBar.MaxY:0.#} div={panes.FileDivider.Y:0.#} photo={panes.Photo.Y:0.#}..{panes.Photo.MaxY:0.#} controlDiv={panes.ControlDivider.Y:0.#}");
-        }
-        else
-        {
-            Check("分区无重叠且顺序正确",
-                Near(panes.FileBar.MaxX, panes.FileDivider.X) && Near(panes.FileDivider.MaxX, panes.Photo.X)
-                && Near(panes.Photo.MaxX, panes.ControlDivider.X) && Near(panes.ControlDivider.MaxX, panes.ControlBackground.X),
-                $"file={panes.FileBar.MaxX:0.#} div={panes.FileDivider.X:0.#} photo={panes.Photo.X:0.#}..{panes.Photo.MaxX:0.#} controlDiv={panes.ControlDivider.X:0.#}");
-        }
-
-        var content = panes.FileContent;
-        var filter = root.FilterBar;
-        // EDITION-02：标准版末项是计数，AI 版末项才是相似聚类开关；末项决定这一行的实际内容宽度。
-        var filterTail = AndroidFilterBar.ShowsSimilarityToggle ? filter.SimilarityFrame : filter.CountFrame;
-        Check("筛选条在文件栏内容区内",
-            (layoutRow
-                ? filter.SortFrame.X >= 0 && filterTail.MaxX <= content.Width + .5
-                : filter.SortFrame.Y >= 0 && filterTail.MaxY <= content.Height + .5)
-            && filter.SortFrame.Height is >= 31 and <= 33
-            && (AndroidFilterBar.ShowsSimilarityToggle
-                ? filterTail.Height is >= 26 and <= 28
-                : filterTail.Height is >= 16 and <= 18),
-            $"sort={filter.SortFrame} tail={filterTail} toggle={AndroidFilterBar.ShowsSimilarityToggle} content={content}");
-        Check("筛选条计数宽度有限", filter.CountWidthDp is > 8 and < 200, $"{filter.CountWidthDp:0.#}dp");
-
+        CheckMainScreenGeometry(root, main, AndroidUiTheme.Density(root.Context!), "main");
         var files = main.FileVM.ThumbnailList.FilteredFiles;
         Check("胶片栏项数=筛选列表", root.Filmstrip.Files.Count == files.Count && files.Count > 0, $"{files.Count}");
         var card = root.Filmstrip.CardAt(0);
-        double density = AndroidUiTheme.Density(root.Context!);
-        double expectedCardWidth = layoutRow ? 96 : 116;
-        Check($"卡片 {expectedCardWidth:0}×144dp", card != null
-            && Math.Abs(card.Width / density - expectedCardWidth) < 1.5 && Math.Abs(card.Height / density - 144) < 1.5,
-            card == null ? "首卡未创建" : $"{card.Width / density:0.#}×{card.Height / density:0.#}dp");
         Check("首卡绑定筛选首项", card != null && ReferenceEquals(card.BoundFile, files[0]), card?.BoundFile?.Name ?? "null");
-
-        Check("控制栏三分组", root.ControlBar.GroupCount == 3, $"{root.ControlBar.GroupCount}");
-        Check("控制栏命令含 Next/Fit", root.ControlBar.Commands.Contains("Next") && root.ControlBar.Commands.Contains("Fit"),
+        Check("控制栏命令含 Next/Fit", root.Form != ScreenForm.Wide
+                || (root.ControlBar.Commands.Contains("Next") && root.ControlBar.Commands.Contains("Fit")),
             string.Join(",", root.ControlBar.Commands));
-        Check("控制栏雾天增强显示对比度半圆",
-            root.ControlBar.CommandIconForChecks("ToggleEnhance") == AndroidUiTheme.IconGlyph(DesignTokens.IconCommandToggleEnhance),
-            $"icon={DescribeGlyph(root.ControlBar.CommandIconForChecks("ToggleEnhance") ?? string.Empty)} token={DesignTokens.IconCommandToggleEnhance}");
+        Check("控制栏雾天增强显示对比度半圆", root.Form != ScreenForm.Wide
+                || root.ControlBar.CommandIconForChecks("ToggleEnhance") == AndroidUiTheme.IconGlyph(DesignTokens.IconCommandToggleEnhance),
+            $"form={root.Form} icon={DescribeGlyph(root.ControlBar.CommandIconForChecks("ToggleEnhance") ?? string.Empty)}");
 
         // Fit ↔ 物理 100% 往返（大素材才具备向上空间；小素材按契约夹回适应态也算通过）。
         bool canZoom = session.Image!.SourceWidth > 0 && root.Photo.Viewport.FitScale < 1 / density - 1e-9;
@@ -379,26 +335,37 @@ internal static partial class AndroidNativeChecks
         if (Wants("similarity") || Wants("all"))
         {
         Phase("similarity 相似面板");
+        var filter = root.FilterBar;
 #if PHOTOVIEWER_DINO
-        // 相似面板开合。
-        main.FileVM.FilterBar.IsSimilarityPanelOpen = true;
-        await System.Threading.Tasks.Task.Delay(900);
-        Check("相似聚类面板可见", root.SimilarityPane.Visibility == global::Android.Views.ViewStates.Visible,
-            $"{root.SimilarityPane.Visibility}");
-        main.FileVM.FilterBar.IsSimilarityPanelOpen = false;
-        await System.Threading.Tasks.Task.Delay(400);
+        if (root.Form == ScreenForm.Wide)
+        {
+            // 相似面板开合：宽形态的 AI 开关与面板。
+            main.FileVM.FilterBar.IsSimilarityPanelOpen = true;
+            await System.Threading.Tasks.Task.Delay(900);
+            Check("相似聚类面板可见", root.SimilarityPane.Visibility == global::Android.Views.ViewStates.Visible,
+                $"{root.SimilarityPane.Visibility}");
+            main.FileVM.FilterBar.IsSimilarityPanelOpen = false;
+            await System.Threading.Tasks.Task.Delay(400);
+        }
+        else
+        {
+            // FILTER-07：手机形态不出现相似聚类开关，面板也不显示。
+            main.FileVM.FilterBar.IsSimilarityPanelOpen = true;
+            await System.Threading.Tasks.Task.Delay(500);
+            Check("手机形态无相似聚类入口与面板",
+                root.SimilarityPane.Visibility != global::Android.Views.ViewStates.Visible
+                && filter.SimilarityFrame.Width <= 0,
+                $"panel={root.SimilarityPane.Visibility} toggle={filter.SimilarityFrame} form={root.Form}");
+            main.FileVM.FilterBar.IsSimilarityPanelOpen = false;
+            await System.Threading.Tasks.Task.Delay(300);
+        }
 #else
-        // EDITION-02：标准版没有相似聚类入口、面板与关联任务，筛选条末项直接是计数，
-        // 行布局的需要宽度也不含 toggle 槽位。
-        bool standardTail = filter.Horizontal
-            ? filter.CountFrame.X > filter.RatingFrame.MaxX - .6
-                && Math.Abs(filter.RequiredWidthDp
-                    - (Math.Max(filter.CountFrame.MaxX, filter.RatingFrame.MaxX) + MainScreenLayout.FilterMargin)) < .6
-            : filter.CountFrame.Y > filter.RatingFrame.MaxY - .6;
-        Check("标准版筛选条末项为计数且无 toggle 空槽",
-            !AndroidFilterBar.ShowsSimilarityToggle && filter.CountFrame.Width > 0 && standardTail,
-            $"toggle={AndroidFilterBar.ShowsSimilarityToggle} count={filter.CountFrame}"
-                + $" required={filter.RequiredWidthDp:0.#} rating={filter.RatingFrame} row={filter.Horizontal}");
+        // EDITION-02：标准版没有相似聚类入口、面板与关联任务。
+        Check("标准版筛选控件 44 高且无 toggle 空槽",
+            !AndroidFilterBar.ShowsSimilarityToggle && Near(filter.ControlFrame.Height, WideFilterLayout.Height)
+                && filter.SimilarityFrame.Width <= 0 && filter.CountFrame.Width <= 0,
+            $"toggle={AndroidFilterBar.ShowsSimilarityToggle} control={filter.ControlFrame}"
+                + $" count={filter.CountFrame} similarity={filter.SimilarityFrame} form={root.Form}");
 #endif
         }
 
@@ -413,6 +380,33 @@ internal static partial class AndroidNativeChecks
         Check("设置工作副本可用", sheet != null, "CurrentSheet=null");
         if (sheet != null)
         {
+            if (root.Form != ScreenForm.Wide)
+            {
+                // SETTINGS-08/17：手机形态只保留布局模式与「上一张/下一张」单项，宽命令排序与快捷键编辑不显示。
+                sheet.ShowPageForChecks("control");
+                await System.Threading.Tasks.Task.Delay(300);
+                Check("手机控制页只列上下张", sheet.PhoneControlListForChecks && sheet.ControlRowCountForChecks == 1,
+                    $"phoneOnly={sheet.PhoneControlListForChecks} rows={sheet.ControlRowCountForChecks} "
+                    + $"page={sheet.Page} form={root.Form} mode={sheet.LayoutModeNameForChecks()} "
+                    + $"desc={sheet.LayoutModeDescriptionForChecks()}");
+                Check("手机布局模式显示为手机", sheet.LayoutModeNameForChecks() == "手机",
+                    $"name={sheet.LayoutModeNameForChecks()} desc={sheet.LayoutModeDescriptionForChecks()}");
+                var navRow = sheet.NavigationRowLayoutForChecks();
+                var navSnapshot = sheet.NavigationRowSnapshotForChecks();
+                int compactRow = (int)AndroidUiTheme.Dp(_activity!, DesignTokens.SettingsAndroidListRowMinHeight);
+                Check("上下张为 Material 勾选行",
+                    navSnapshot is { } snapshot && snapshot.AccessibilityText.Contains("上一张/下一张"),
+                    navSnapshot is { } value ? value.AccessibilityText : "row=null");
+                Check("上下张行单行紧凑行高",
+                    navRow is { } layout && Math.Abs(layout.MinHeight - compactRow) <= 1,
+                    navRow is { } nav ? $"minHeight={nav.MinHeight}px expected={compactRow}px" : "row=null");
+                Check("手机不显示宽命令排序/快捷键编辑", sheet.HotkeyRowSnapshotForChecks(0) == null,
+                    "HotkeyRowSnapshotForChecks(0)=null");
+                sheet.ShowPageForChecks("root");
+                await System.Threading.Tasks.Task.Delay(150);
+            }
+            else
+            {
             var settings = sheet.Settings;
             int hotkeyCount = settings.Hotkeys.Count;
             var firstHotkey = settings.Hotkeys[0];
@@ -662,6 +656,7 @@ internal static partial class AndroidNativeChecks
             await System.Threading.Tasks.Task.Delay(150);
             // SETTINGS-04 / SETTINGS-15：内容区手势、行高、分类箭头、勾选对齐、命令图标与脚注。
             await RunSettingsExperienceChecksAsync(sheet);
+            }
         }
         AndroidNativeSettingsPresenter.HandleBack();
         await System.Threading.Tasks.Task.Delay(500);
@@ -895,16 +890,18 @@ internal static partial class AndroidNativeChecks
                 $"enhanced={session.IsEnhanced} found={found} items=[{DescribePhotoMenu(items)}]");
 
             // 触屏没有悬停提示，前置图标是唯一的命令符号：逐项核对顺序与字形语义（MENU-06）。
-            var expectedIcons = new (string Text, string Token)[]
+            var expectedIconList = new System.Collections.Generic.List<(string Text, string Token)>
             {
                 ("打开文件夹…", DesignTokens.IconMenuOpenFolder),
                 ("胶片栏", DesignTokens.IconMenuFilmstrip),
                 ("分析栏", DesignTokens.IconMenuAnalysis),
                 ("控制栏", DesignTokens.IconMenuControl),
-                ("雾天增强", DesignTokens.IconCommandToggleEnhance),
-                ("工具…", DesignTokens.IconMenuTools),
-                ("设置…", DesignTokens.IconMenuSettings),
             };
+            if (root.Form != ScreenForm.Wide) expectedIconList.Add(("EXIF", DesignTokens.IconMenuControl));
+            expectedIconList.Add(("雾天增强", DesignTokens.IconCommandToggleEnhance));
+            expectedIconList.Add(("工具…", DesignTokens.IconMenuTools));
+            expectedIconList.Add(("设置…", DesignTokens.IconMenuSettings));
+            var expectedIcons = expectedIconList.ToArray();
             bool iconsOk = items.Count == expectedIcons.Length;
             string iconMismatch = string.Empty;
             for (int index = 0; iconsOk && index < expectedIcons.Length; index++)
@@ -1265,5 +1262,5 @@ internal static partial class AndroidNativeChecks
     /// <summary>
     /// 独立模式按精确模式名匹配，不并入 <c>all</c>；素材入口见模块手册。
     /// </summary>
-    private static bool IsStandaloneMode => _mode is "faults" or "layout" or "input" or "storage" or "filter" or "zoom" or "color" or "perf" or "background" or "edition";
+    private static bool IsStandaloneMode => _mode is "faults" or "form" or "layout" or "input" or "storage" or "filter" or "zoom" or "color" or "perf" or "background" or "edition";
 }

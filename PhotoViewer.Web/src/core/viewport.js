@@ -56,6 +56,7 @@ export class Viewport {
         this._allowBelowFit = Boolean(allowBelowFit);
         this._viewW = 0;
         this._viewH = 0;
+        this._fitRect = null;
         this._srcW = 0;
         this._srcH = 0;
         this._focus = null;
@@ -94,18 +95,40 @@ export class Viewport {
         const w = finite(width) ? Math.max(0, width) : 0;
         const h = finite(height) ? Math.max(0, height) : 0;
         const changed = w !== this._viewW || h !== this._viewH;
+        if (!changed) return false;
+        const center = !this._fit && this.hasImage ? this._imageAtFitCenter() : null;
         this._viewW = w;
         this._viewH = h;
-        if (!this.hasImage) return changed;
+        if (!this.hasImage) return true;
         if (this._fit) {
             this._scale = this._fitScale();
-            this._offX = 0;
-            this._offY = 0;
+            this._applyFit();
         } else {
-            // IMAGE-05：尺寸变化只约束偏移，倍率与居中图像点不变。
+            if (center) this._centerImagePoint(center);
             this._applyOffsets();
         }
-        return changed;
+        return true;
+    }
+
+    setFitRect(rect) {
+        const next = rect && finite(rect.w) && finite(rect.h) && rect.w > 0 && rect.h > 0
+            ? { x: finite(rect.x) ? rect.x : 0, y: finite(rect.y) ? rect.y : 0, w: rect.w, h: rect.h }
+            : null;
+        const previous = this._fitRect;
+        const changed = !previous || !next
+            || previous.x !== next.x || previous.y !== next.y || previous.w !== next.w || previous.h !== next.h;
+        if (!changed) return false;
+        const center = !this._fit && this.hasImage ? this._imageAtFitCenter() : null;
+        this._fitRect = next;
+        if (!this.hasImage) return true;
+        if (this._fit) {
+            this._scale = this._fitScale();
+            this._applyFit();
+        } else {
+            if (center) this._centerImagePoint(center);
+            this._applyOffsets();
+        }
+        return true;
     }
 
     setDpr(dpr) {
@@ -147,19 +170,19 @@ export class Viewport {
             // IMAGE-02 / OPEN-05：适应态切图保持适应，显式打开总是回到适应。
             this._fit = true;
             this._scale = this._fitScale();
-            this._offX = 0;
-            this._offY = 0;
+            this._applyFit();
             this._follow = false;
             return true;
         }
         this._fit = false;
+        const fitOffset = this._fitOffset();
         if (wasFollowing && this._focus) {
             // IMAGE-02：跟随对焦时切图居中到新照片对焦点。
-            this._offX = (0.5 - this._focus.x) * this._displayWidth();
-            this._offY = (0.5 - this._focus.y) * this._displayHeight();
+            this._offX = fitOffset.x + (0.5 - this._focus.x) * this._displayWidth();
+            this._offY = fitOffset.y + (0.5 - this._focus.y) * this._displayHeight();
         } else if (center) {
-            this._offX = (0.5 - center.u) * this._displayWidth();
-            this._offY = (0.5 - center.v) * this._displayHeight();
+            this._offX = fitOffset.x + (0.5 - center.u) * this._displayWidth();
+            this._offY = fitOffset.y + (0.5 - center.v) * this._displayHeight();
         }
         this._applyOffsets();
         this._follow = wasFollowing && this._focus != null;
@@ -179,8 +202,7 @@ export class Viewport {
         if (!this._fit) {
             this._fit = true;
             this._scale = fit;
-            this._offX = 0;
-            this._offY = 0;
+            this._applyFit();
             this._follow = false;
             return true;
         }
@@ -199,12 +221,14 @@ export class Viewport {
             this._follow = this._geometricFollow();
         } else if (this._focus) {
             // Fit 命令：以对焦点为中心并进入跟随。
-            this._offX = (0.5 - this._focus.x) * this._displayWidth();
-            this._offY = (0.5 - this._focus.y) * this._displayHeight();
+            const fitOffset = this._fitOffset();
+            this._offX = fitOffset.x + (0.5 - this._focus.x) * this._displayWidth();
+            this._offY = fitOffset.y + (0.5 - this._focus.y) * this._displayHeight();
             this._follow = true;
         } else {
-            this._offX = 0;
-            this._offY = 0;
+            const fitOffset = this._fitOffset();
+            this._offX = fitOffset.x;
+            this._offY = fitOffset.y;
             this._follow = false;
         }
         this._applyOffsets();
@@ -264,13 +288,13 @@ export class Viewport {
             // IMAGE-09：物理 100% 不高于适应倍率时保持适应。
             this._fit = true;
             this._scale = fit;
-            this._offX = 0;
-            this._offY = 0;
+            this._applyFit();
         } else {
             this._fit = false;
             this._scale = target;
-            this._offX = (0.5 - u) * this._displayWidth();
-            this._offY = (0.5 - v) * this._displayHeight();
+            const fitOffset = this._fitOffset();
+            this._offX = fitOffset.x + (0.5 - u) * this._displayWidth();
+            this._offY = fitOffset.y + (0.5 - v) * this._displayHeight();
             this._applyOffsets();
         }
         return !this._sameState(before);
@@ -280,8 +304,9 @@ export class Viewport {
         // IMAGE-06：拖动导航图只改视口中心，倍率与适应态不变；中心按 IMAGE-05 钳制。
         if (!this.hasImage || !finite(u) || !finite(v)) return false;
         const before = this._state();
-        this._offX = (0.5 - u) * this._displayWidth();
-        this._offY = (0.5 - v) * this._displayHeight();
+        const fitOffset = this._fitOffset();
+        this._offX = fitOffset.x + (0.5 - u) * this._displayWidth();
+        this._offY = fitOffset.y + (0.5 - v) * this._displayHeight();
         this._applyOffsets();
         this._recomputeFollow();
         return !this._sameState(before);
@@ -328,10 +353,11 @@ export class Viewport {
         if (!(rect.w > 0) || !(rect.h > 0)) {
             return { visible: false, thumbWidth, thumbHeight, frame: { x: 0, y: 0, w: 0, h: 0 } };
         }
-        const u0 = clamp(-rect.x / rect.w, 0, 1);
-        const u1 = clamp((this._viewW - rect.x) / rect.w, 0, 1);
-        const v0 = clamp(-rect.y / rect.h, 0, 1);
-        const v1 = clamp((this._viewH - rect.y) / rect.h, 0, 1);
+        const fit = this._fitRectOrDefault();
+        const u0 = clamp((fit.x - rect.x) / rect.w, 0, 1);
+        const u1 = clamp((fit.x + fit.w - rect.x) / rect.w, 0, 1);
+        const v0 = clamp((fit.y - rect.y) / rect.h, 0, 1);
+        const v1 = clamp((fit.y + fit.h - rect.y) / rect.h, 0, 1);
         return {
             // IMAGE-06：可见框只表达非适应态，设置开关由集成方叠加。
             visible: !this._fit,
@@ -375,14 +401,49 @@ export class Viewport {
             isFit: this.isFit,
             followsFocus: this._follow,
             offset: { x: this._offX, y: this._offY },
+            fitRect: this._fitRectOrDefault(),
             rect: this.imageRect(),
             percent: this.percentText(),
         };
     }
 
     _fitScale() {
-        if (!this.hasImage || this._viewW <= 0 || this._viewH <= 0) return 0;
-        return Math.min(this._viewW / this._srcW, this._viewH / this._srcH);
+        if (!this.hasImage) return 0;
+        const fit = this._fitRectOrDefault();
+        if (fit.w <= 0 || fit.h <= 0) return 0;
+        return Math.min(fit.w / this._srcW, fit.h / this._srcH);
+    }
+
+    _fitRectOrDefault() {
+        if (this._fitRect) return this._fitRect;
+        return { x: 0, y: 0, w: this._viewW, h: this._viewH };
+    }
+
+    _fitOffset() {
+        const fit = this._fitRectOrDefault();
+        return {
+            x: fit.x + fit.w / 2 - this._viewW / 2,
+            y: fit.y + fit.h / 2 - this._viewH / 2,
+        };
+    }
+
+    _applyFit() {
+        const offset = this._fitOffset();
+        this._offX = offset.x;
+        this._offY = offset.y;
+    }
+
+    _imageAtFitCenter() {
+        return this.viewToImage(
+            this._fitRectOrDefault().x + this._fitRectOrDefault().w / 2,
+            this._fitRectOrDefault().y + this._fitRectOrDefault().h / 2,
+        );
+    }
+
+    _centerImagePoint(point) {
+        const offset = this._fitOffset();
+        this._offX = offset.x + (0.5 - point.u) * this._displayWidth();
+        this._offY = offset.y + (0.5 - point.v) * this._displayHeight();
     }
 
     _displayWidth(scale = this._scale) {
@@ -394,10 +455,12 @@ export class Viewport {
     }
 
     _clampOffsets(x, y, scale) {
-        // IMAGE-05：钳制为“显示尺寸 − 视口尺寸”的一半；小于视口的轴居中。
-        const maxX = Math.max(0, (this._displayWidth(scale) - this._viewW) / 2);
-        const maxY = Math.max(0, (this._displayHeight(scale) - this._viewH) / 2);
-        return [clamp(x, -maxX, maxX), clamp(y, -maxY, maxY)];
+        // IMAGE-05 / SHELL-11：照片边缘贴到适应区边缘，适应区外仍可越界画到窗口边缘。
+        const fit = this._fitRectOrDefault();
+        const center = this._fitOffset();
+        const maxX = Math.max(0, (this._displayWidth(scale) - fit.w) / 2);
+        const maxY = Math.max(0, (this._displayHeight(scale) - fit.h) / 2);
+        return [clamp(x, center.x - maxX, center.x + maxX), clamp(y, center.y - maxY, center.y + maxY)];
     }
 
     _applyOffsets() {
@@ -418,8 +481,7 @@ export class Viewport {
             // IMAGE-05：缩回适应后平移归零。
             this._fit = true;
             this._scale = fit;
-            this._offX = 0;
-            this._offY = 0;
+            this._applyFit();
             this._follow = false;
             return true;
         }

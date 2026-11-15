@@ -143,6 +143,8 @@ public static class AndroidNativeShell
 
         if (_main == null)
         {
+            // SHELL-07：Android 实现手机形态；能力位在共享 VM 读取布局模式列表之前置位。
+            LayoutCapabilities.PhoneLayoutSupported = true;
             var settingsRepository = CreateSettingsRepository();
             // 打开请求通道先于 VM 建立：外部打开在界面就绪前即可投递，由 OpenCoordinator 顺序消费。
             _openRequests ??= new OpenRequestChannel();

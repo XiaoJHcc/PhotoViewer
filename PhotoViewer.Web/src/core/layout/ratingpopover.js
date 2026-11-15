@@ -10,7 +10,7 @@ export const RATING_SOURCE_COUNT = 6;
 export const RATING_SOURCE_INFO_HEIGHT = 16;
 
 export function ratingSourcesMetrics(t) {
-    const starSize = t("toolbar.rating.button.size");
+    const starSize = t("rating.control.slot");
     const entryPadding = t("popup.ratingSources.entryPadding");
     const padding = t("popup.padding");
     const labelGap = t("popup.ratingSources.labelGap");
@@ -47,8 +47,18 @@ export function ratingSourcesHeight(t, longFlags = []) {
     return metrics.padding * 2 + entries + Math.max(0, longFlags.length - 1) * metrics.entrySpacing;
 }
 
-export function resolveRatingSourcesDirection({ mode, axis = "horizontal", anchor, host, height, t }) {
+export function controlRatingPopoverDirection(layout) {
+    if (!layout) return "up";
+    if (layout.form === "phone") {
+        if (layout.orientation === "portrait") return "up";
+        return layout.safe?.notchSide === "right" ? "right" : "left";
+    }
+    return layout.control?.axis === "vertical" ? "left" : "up";
+}
+
+export function resolveRatingSourcesDirection({ mode, axis = "horizontal", anchor, host, height, t, direction = null }) {
     const gap = t("popup.ratingSources.arrowMargin");
+    if (direction) return { direction, gap };
     // RATING-04：底部横排控制栏向上，右侧竖排控制栏向左。
     if (mode === "control") return { direction: axis === "vertical" ? "left" : "up", gap };
     const needed = height + gap;
@@ -70,6 +80,9 @@ export function placeRatingSources({ anchor, host, width, height, direction, gap
         y = anchor.y - gap - height;
     } else if (direction === "left") {
         x = anchor.x - gap - width;
+        y = anchor.y + anchor.h / 2 - height / 2;
+    } else if (direction === "right") {
+        x = anchor.x + anchor.w + gap;
         y = anchor.y + anchor.h / 2 - height / 2;
     } else {
         x = anchor.x + anchor.w / 2 - width / 2;

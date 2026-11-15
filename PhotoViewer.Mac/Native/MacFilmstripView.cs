@@ -5,10 +5,16 @@ using PhotoViewer.Apple;
 
 namespace PhotoViewer.Mac.Native;
 
-/// <summary>单轴胶片栏布局；内容长度由项目数决定，跨轴始终只有一行或一列。</summary>
+/// <summary>单轴胶片栏布局；宽形态固定大档，几何全部取自共享 <see cref="FilmCardGeometry"/>。</summary>
 internal sealed class MacFilmstripLayout : NSCollectionViewFlowLayout
 {
     private int Count => (int)(CollectionView?.GetNumberOfItems(0) ?? 0);
+
+    /// <summary>宽形态固定大档，不因窗口缩小或相似面板出现而降档。</summary>
+    internal FilmCardTier Tier { get; set; } = FilmCardTier.Large;
+
+    /// <summary>主轴前导内容留白：列布局为首卡停在筛选带下方的让位，行布局为 0。</summary>
+    internal double EdgePadding { get; set; }
 
     /// <summary>上下布局使用横向胶片栏，左右布局使用纵向胶片栏。</summary>
     internal bool Horizontal
@@ -23,21 +29,28 @@ internal sealed class MacFilmstripLayout : NSCollectionViewFlowLayout
         get
         {
             var viewport = CollectionView?.EnclosingScrollView?.ContentView.Bounds.Size ?? CGSize.Empty;
-            var content = FilmstripGeometry.ContentSize(Horizontal, (double)viewport.Width, (double)viewport.Height, Count);
-            return new CGSize(content.Width, content.Height);
+            var content = FilmCardGeometry.ContentSize(Tier, Horizontal,
+                (double)viewport.Width, (double)viewport.Height, Count);
+            double viewportMain = Horizontal ? (double)viewport.Width : (double)viewport.Height;
+            double main = Math.Max(viewportMain, (Horizontal ? content.Width : content.Height) + (Count > 0 ? EdgePadding : 0));
+            return Horizontal
+                ? new CGSize(main, content.Height)
+                : new CGSize(content.Width, main);
         }
     }
 
     /// <summary>无需流式换行计算；保留 FlowLayout 的滚动方向契约供 AppKit 配置原生滚动轴。</summary>
     public override void PrepareLayout() { }
 
-    /// <summary>为单一项目提供固定方形图片卡片的几何，索引顺序就是屏幕顺序。</summary>
+    /// <summary>为单一项目提供固定卡片的几何，索引顺序就是屏幕顺序。</summary>
     public override NSCollectionViewLayoutAttributes? GetLayoutAttributesForItem(NSIndexPath indexPath)
     {
         if (indexPath.Section != 0 || indexPath.Item < 0 || indexPath.Item >= Count) return null;
         var attributes = NSCollectionViewLayoutAttributes.CreateForItem(indexPath);
-        var card = FilmstripGeometry.ItemFrame(Horizontal, (int)indexPath.Item, Count, (double)CollectionViewContentSize.Width);
-        attributes.Frame = new CGRect(card.X, card.Y, card.Width, card.Height);
+        var card = FilmCardGeometry.ItemFrame(Tier, Horizontal, (int)indexPath.Item, Count, (double)CollectionViewContentSize.Width);
+        attributes.Frame = Horizontal
+            ? new CGRect(card.X + EdgePadding, card.Y, card.Width, card.Height)
+            : new CGRect(card.X, card.Y + EdgePadding, card.Width, card.Height);
         return attributes;
     }
 
@@ -46,8 +59,10 @@ internal sealed class MacFilmstripLayout : NSCollectionViewFlowLayout
     {
         if (Count <= 0) return [];
         double contentWidth = (double)CollectionViewContentSize.Width;
-        var range = FilmstripGeometry.VisibleRange(Count, FilmstripGeometry.ItemStart(Horizontal, contentWidth, Count),
-            FilmstripGeometry.Step(Horizontal), Horizontal ? (double)rect.X : (double)rect.Y, Horizontal ? (double)rect.Width : (double)rect.Height);
+        var range = FilmstripGeometry.VisibleRange(Count,
+            EdgePadding + FilmCardGeometry.ItemStart(Tier, Horizontal, contentWidth, Count),
+            FilmCardGeometry.Step(Tier, Horizontal), Horizontal ? (double)rect.X : (double)rect.Y,
+            Horizontal ? (double)rect.Width : (double)rect.Height);
         if (range.Last < range.First) return [];
         var attributes = new List<NSCollectionViewLayoutAttributes>(range.Last - range.First + 1);
         for (int index = range.First; index <= range.Last; index++)

@@ -187,8 +187,9 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
             Action<bool> setChecked, string? accessibilityDescription = null,
             SettingsViewModel.HotkeyItem? hotkey = null, Func<bool>? recordingEnabled = null,
             Action<bool>? beginRecording = null, Action<bool>? clearBinding = null,
-            Func<bool, bool>? isRecording = null)
+            Func<bool, bool>? isRecording = null, bool showHandle = true)
         {
+            ShowHandle = showHandle;
             Title = title;
             Subtitle = subtitle;
             GetChecked = getChecked;
@@ -216,6 +217,8 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
         internal Action<bool>? ClearBinding { get; }
         /// <summary>主/次绑定是否正在录制。</summary>
         internal Func<bool, bool>? IsRecording { get; }
+        /// <summary>是否显示行尾排序把手；单项开关行（上一张/下一张）为 false。</summary>
+        internal bool ShowHandle { get; }
     }
 
     /// <summary>设配器：行数取工作副本，内容在绑定时读取。</summary>
@@ -432,6 +435,8 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
                 ? !(item.RecordingEnabled?.Invoke() ?? false)
                 : string.IsNullOrWhiteSpace(item.Subtitle));
             _title.Text = item.Title;
+            // SETTINGS-17：上一张/下一张是单项开关行，不显示排序把手，也不支持拖动。
+            _handle.Visibility = item.ShowHandle ? ViewStates.Visible : ViewStates.Gone;
             // SETTINGS-01：控制栏功能行在勾选与命令名之间显示命令图标；文件格式与 EXIF 行不带图标。
             var hotkey = item.Hotkey;
             if (hotkey == null) _icon.Visibility = ViewStates.Gone;
@@ -507,7 +512,9 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
             }
             ContentDescription = description;
             _check.ContentDescription = description;
-            _handle.ContentDescription = $"{_item.Title} 排序把手：轻点打开上移/下移菜单，长按拖动";
+            _handle.ContentDescription = _item.ShowHandle
+                ? $"{_item.Title} 排序把手：轻点打开上移/下移菜单，长按拖动"
+                : string.Empty;
         }
 
         /// <summary>真实视图状态快照（验收）。</summary>

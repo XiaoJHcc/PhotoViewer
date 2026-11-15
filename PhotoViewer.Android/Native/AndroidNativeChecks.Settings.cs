@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using Android.App;
 using Android.Graphics;
@@ -121,6 +122,28 @@ internal static partial class AndroidNativeChecks
         await Task.Delay(300);
         AndroidInputDevices.SetChecksOverride(false, false);
         await Task.Delay(350);
+        bool phoneControl = _root!.Form != ScreenForm.Wide;
+        if (phoneControl)
+        {
+            // SETTINGS-08/17：手机形态控制页只有布局模式与「上一张/下一张」，不展示宽命令表。
+            var navLayout = sheet.NavigationRowLayoutForChecks();
+            var navSnapshot = sheet.NavigationRowSnapshotForChecks();
+            var phoneMode = sheet.Settings.LayoutModes.FirstOrDefault(
+                item => item.Value == PhotoViewer.Core.Settings.LayoutMode.Phone);
+            Check("settings 手机控制页仅上下张",
+                sheet.PhoneControlListForChecks && sheet.ControlRowCountForChecks == 1
+                && sheet.HotkeyRowLayoutForChecks(0) == null,
+                $"phoneOnly={sheet.PhoneControlListForChecks} rows={sheet.ControlRowCountForChecks}");
+            Check("settings 手机上下张为 Material 勾选行",
+                navLayout is { } nav && nav.MinHeight == compactRow
+                && navSnapshot is { } snapshot && snapshot.AccessibilityText.Contains("上一张/下一张"),
+                navLayout is { } layout ? $"minHeight={layout.MinHeight}px snapshot={navSnapshot?.AccessibilityText}" : "row=null");
+            Check("settings 手机布局说明复用 LayoutModes",
+                phoneMode != null && sheet.LayoutModeDescriptionForChecks() == phoneMode.Description,
+                $"actual=\"{sheet.LayoutModeDescriptionForChecks()}\" expected=\"{phoneMode?.Description}\"");
+        }
+        else
+        {
         var controlRow = sheet.HotkeyRowLayoutForChecks(0);
         Check("纯触控控制行统一 48dp 最小行高",
             controlRow is { } row0 && Math.Abs(row0.Height - compactRow) <= 1 && row0.MinHeight == compactRow,
@@ -176,6 +199,7 @@ internal static partial class AndroidNativeChecks
             LayoutText(boundRow, $">{standardRow}px"));
         AndroidInputDevices.SetChecksOverride(null, null);
         await Task.Delay(250);
+        }
 
         // 文件格式行：副标题（扩展名）完整显示，行高随多行内容增高。
         sheet.ShowPageForChecks("files");

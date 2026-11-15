@@ -4,7 +4,7 @@ import { createCard } from "./card.js";
 const KEYBOARD_STEP = 40;
 
 export function mountSimilarity(host, ctx) {
-    const { app, t } = ctx;
+    const { app } = ctx;
 
     const list = el("div", {
         class: "pv-sim-list",
@@ -42,25 +42,10 @@ export function mountSimilarity(host, ctx) {
     let itemKeys = "";
 
     function panelRect(state) {
-        const layout = state.layout;
-        const sim = layout?.similarity;
-        const pane = layout?.panes?.filePane;
-        // SIM-01：面板可见性只由共享状态决定，不可见时不占位。
-        if (!sim || !pane || !sim.expanded || !state.similarity.visible) return null;
-        if (sim.axis === "vertical") {
-            // SIM-07：列布局面板接在 116 宽文件栏右侧，与胶片栏同顶（筛选条下方）到文件栏底。
-            const top = layout.filter?.bar.h ?? 0;
-            return { x: t("shell.filebar.content.width"), y: top, w: sim.width, h: Math.max(0, pane.h - top) };
-        }
-        const band = layout.film?.scroll;
-        if (!band) return null;
-        // SIM-07：行布局从胶片带右端切出，右侧留 sim.panel.margin，面板高 = sim.list.cross。
-        return {
-            x: pane.w - t("sim.panel.margin") - sim.width,
-            y: band.y,
-            w: sim.width,
-            h: sim.height ?? band.h,
-        };
+        const sim = state.layout?.similarity;
+        // SIM-01 / FILTER-07：面板可见性只由共享状态决定；手机形态没有相似面板。
+        if (!sim || !sim.panel || !sim.expanded || !state.similarity.visible) return null;
+        return sim.panel;
     }
 
     function syncItems(state, items) {

@@ -65,7 +65,7 @@ export function createMenu({ host, t, onOpenChange = () => {} }) {
                 tabindex: "-1",
                 "aria-disabled": item.enabled === false ? "true" : "false",
                 "aria-checked": item.type === "check" || item.type === "radio" ? String(Boolean(item.checked)) : null,
-                dataset: { id: item.id },
+                dataset: item.group ? { id: item.id, group: item.group } : { id: item.id },
             });
             if (hasCheckColumn) {
                 row.append(el("span", {

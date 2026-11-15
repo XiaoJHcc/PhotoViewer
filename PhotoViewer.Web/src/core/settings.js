@@ -56,6 +56,7 @@ export function defaultSettings() {
         showZoomIndicator: true,
         zoomPresets: [12.5, 25, 33.333, 50, 75, 100, 200, 400],
         showRating: true,
+        showNavigationButtons: true,
         safeSetRating: true,
         sameNameAsOne: true,
         formats: FORMATS.map((f) => ({ ...f, exts: [...f.exts] })),

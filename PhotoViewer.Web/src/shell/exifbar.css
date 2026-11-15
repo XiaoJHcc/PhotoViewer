@@ -1,0 +1,74 @@
+/* EXIF 摘要（TOOLBAR-05）：横排有衬底块 / 左右布局与手机横屏无衬底纵排。 */
+.pv-exif-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+.pv-control-exif-block {
+    position: absolute;
+    box-sizing: border-box;
+    background: var(--pv-color-toolbar-block-background);
+    border-radius: var(--pv-toolbar-exif-cornerRadius);
+    backdrop-filter: var(--pv-material-blur);
+    -webkit-backdrop-filter: var(--pv-material-blur);
+    overflow: hidden;
+}
+
+/* 无衬底变体：没有模糊衬底与块内边距，只剩项目与项距。 */
+.pv-control-exif-block.is-bare {
+    background: transparent;
+    border-radius: 0;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    overflow: visible;
+}
+
+.pv-control-exif-item {
+    position: absolute;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+    padding: 0 2px;
+    overflow: hidden;
+}
+
+.pv-control-exif-block.is-bare .pv-control-exif-item {
+    padding: 0;
+}
+
+.pv-control-exif-label,
+.pv-control-exif-value {
+    display: block;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.1;
+    text-align: center;
+}
+
+.pv-control-exif-label {
+    font-size: var(--pv-toolbar-exif-label-fontSize);
+    color: var(--pv-color-text-secondary);
+}
+
+.pv-control-exif-value {
+    font-size: var(--pv-toolbar-exif-value-fontSize);
+    font-weight: 600;
+    color: var(--pv-color-text-primary);
+}
+
+/* 宽形态与手机横屏的 EXIF 挂在控制宿主内，随控制文档滚动/固定槽位落位。 */
+.pv-control-exif-host {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+.pv-control-exif-host > * {
+    pointer-events: auto;
+}

@@ -14,6 +14,7 @@ internal static class AndroidShellPreferences
     private const string PreferenceName = "cc.xiaojh.PhotoViewer.Native";
     private const string ShowFilmKey = "PhotoViewer.Native.ShowFilm";
     private const string ShowControlsKey = "PhotoViewer.Native.ShowControls";
+    private const string ShowExifKey = "PhotoViewer.Native.ShowExif";
 
     /// <summary>读取文件栏显隐。</summary>
     /// <returns>已存值；未存过时为 true（默认显示）。</returns>
@@ -23,6 +24,10 @@ internal static class AndroidShellPreferences
     /// <returns>已存值；未存过时为 true（默认显示）。</returns>
     internal static bool LoadShowControls() => Load(ShowControlsKey);
 
+    /// <summary>读取手机形态 EXIF 开关。</summary>
+    /// <returns>已存值；未存过时为 true（默认开）。</returns>
+    internal static bool LoadShowExif() => Load(ShowExifKey);
+
     /// <summary>保存文件栏显隐。</summary>
     /// <param name="value">是否显示。</param>
     internal static void SaveShowFilm(bool value) => Save(ShowFilmKey, value);
@@ -30,6 +35,10 @@ internal static class AndroidShellPreferences
     /// <summary>保存控制栏显隐。</summary>
     /// <param name="value">是否显示。</param>
     internal static void SaveShowControls(bool value) => Save(ShowControlsKey, value);
+
+    /// <summary>保存手机形态 EXIF 开关。</summary>
+    /// <param name="value">是否显示。</param>
+    internal static void SaveShowExif(bool value) => Save(ShowExifKey, value);
 
     /// <summary>读取通用布尔界面状态；未存过时返回 null（区别于显式 false）。</summary>
     /// <param name="key">偏好键。</param>

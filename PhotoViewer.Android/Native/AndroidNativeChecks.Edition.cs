@@ -89,48 +89,47 @@ internal static partial class AndroidNativeChecks
 #endif
     }
 
-    /// <summary>EDITION-02：筛选条按版本实际项数构成；标准版末项为计数，AI 版末项为相似聚类开关。</summary>
+    /// <summary>EDITION-02：筛选入口按版本构成；标准版无 AI 入口与空槽，AI 版行布局开关取自然宽、列布局 96×44，手机形态不出现。</summary>
     private static async Task VerifyEditionFilterBarAsync(AndroidNativeRootView root, MainViewModel main)
     {
         var bar = root.FilterBar;
-        var content = root.Panes.FileContent;
-        bool row = main.IsRowLayout;
-        var tail = AndroidFilterBar.ShowsSimilarityToggle ? bar.SimilarityFrame : bar.CountFrame;
-        Check("发行版筛选条末项与入口匹配",
+        bool wide = root.Form == ScreenForm.Wide;
+        Check("发行版筛选入口与能力匹配",
             AndroidFilterBar.ShowsSimilarityToggle == AndroidAppCapabilities.HasDino
-            && bar.CountFrame.Width > 0 && tail.Width > 0
-            && (row ? tail.MaxX <= content.Width + .6 : tail.MaxY <= content.Height + .6)
-            && (row
-                ? (AndroidFilterBar.ShowsSimilarityToggle
-                    ? bar.SimilarityFrame.X > bar.CountFrame.MaxX - .6
-                    : bar.CountFrame.X > bar.RatingFrame.MaxX - .6)
-                : bar.CountFrame.Y > bar.RatingFrame.MaxY - .6),
-            $"toggle={AndroidFilterBar.ShowsSimilarityToggle} row={row} sort={bar.SortFrame} count={bar.CountFrame}"
-                + $" tail={tail} content={content}");
+            && Near(bar.ControlFrame.Height, WideFilterLayout.Height)
+            && bar.CountFrame.Width <= 0,
+            $"toggle={AndroidFilterBar.ShowsSimilarityToggle} control={bar.ControlFrame} count={bar.CountFrame} form={root.Form}");
 #if PHOTOVIEWER_DINO
-        bool wasOpen = main.FileVM.FilterBar.IsSimilarityPanelOpen;
-        try
+        if (wide)
         {
-            main.FileVM.FilterBar.IsSimilarityPanelOpen = true;
-            await Task.Delay(600);
-            Check("AI 版相似聚类入口可用",
-                root.SimilarityPane.Visibility == ViewStates.Visible,
-                $"{root.SimilarityPane.Visibility}");
+            bool wasOpen = main.FileVM.FilterBar.IsSimilarityPanelOpen;
+            try
+            {
+                main.FileVM.FilterBar.IsSimilarityPanelOpen = true;
+                await Task.Delay(600);
+                Check("AI 版相似聚类入口可用",
+                    root.SimilarityPane.Visibility == ViewStates.Visible
+                    && Near(bar.SimilarityFrame.Width,
+                        main.IsRowLayout ? bar.ToggleNaturalWidthForChecks : FilmCardGeometry.Width(FilmCardTier.Large))
+                    && Near(bar.SimilarityFrame.Height, 44),
+                    $"panel={root.SimilarityPane.Visibility} toggle={bar.SimilarityFrame}");
+            }
+            finally
+            {
+                main.FileVM.FilterBar.IsSimilarityPanelOpen = wasOpen;
+                await Task.Delay(300);
+            }
         }
-        finally
+        else
         {
-            main.FileVM.FilterBar.IsSimilarityPanelOpen = wasOpen;
-            await Task.Delay(300);
+            Check("AI 版手机形态无相似聚类入口",
+                bar.SimilarityFrame.Width <= 0 && root.SimilarityPane.Visibility != ViewStates.Visible,
+                $"toggle={bar.SimilarityFrame} panel={root.SimilarityPane.Visibility}");
         }
 #else
-        bool standardTail = row
-            ? bar.CountFrame.X > bar.RatingFrame.MaxX - .6
-                && Math.Abs(bar.RequiredWidthDp
-                    - (Math.Max(bar.CountFrame.MaxX, bar.RatingFrame.MaxX) + MainScreenLayout.FilterMargin)) < .6
-            : bar.CountFrame.Y > bar.RatingFrame.MaxY - .6;
-        Check("标准版筛选条末项为计数且无 toggle 空槽",
-            !AndroidFilterBar.ShowsSimilarityToggle && bar.CountFrame.Width > 0 && standardTail,
-            $"toggle={AndroidFilterBar.ShowsSimilarityToggle} count={bar.CountFrame} required={bar.RequiredWidthDp:0.#} row={row}");
+        Check("标准版无相似聚类入口与空槽",
+            !AndroidFilterBar.ShowsSimilarityToggle && bar.SimilarityFrame.Width <= 0 && bar.CountFrame.Width <= 0,
+            $"toggle={AndroidFilterBar.ShowsSimilarityToggle} similarity={bar.SimilarityFrame} count={bar.CountFrame}");
 #endif
     }
 

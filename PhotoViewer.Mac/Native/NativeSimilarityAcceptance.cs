@@ -277,6 +277,8 @@ internal static class NativeSimilarityAcceptance
             await WaitAsync(() => similarity.SimilarItems.Count == 2, "两个相似项");
             await WaitAsync(() => similarity.HasUnindexed && !similarity.IsStateIndexing, "列表态停靠区（未提取计数）出现");
             if (!similarity.ShowActionArea) throw new InvalidOperationException("列表态动作区未显示，无法核对停靠区宽度");
+            // 停靠区出现会改变共享 RowWidth 的预留宽，等主窗口合并后的布局提交完成再取实际列表宽。
+            await Task.Delay(160);
             double twoItemList = ListWidth();
             double twoItemExpected = 2 * FilmstripGeometry.CardWidth + SimilarityPanelGeometry.ListPadding;
             if (Math.Abs(twoItemList - twoItemExpected) > 1.5)

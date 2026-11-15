@@ -174,7 +174,7 @@ export function mountPhoto(host, ctx) {
         hintDetail.hidden = !empty;
         if (!empty) return;
         setText(hintTitle, state.edition === "ai" ? "PhotoViewer AI" : "PhotoViewer");
-        place(hint, { x: 0, y: 0, w: pane.w, h: pane.h });
+        place(hint, pane);
         const frames = state.layout.overlays.hintFrames(pane);
         // STATE-01：产品名主标题与操作副标题作为整体居中，「/」单独使用三级文字色。
         place(hintTitle, rel(frames.title, pane));
@@ -187,8 +187,8 @@ export function mountPhoto(host, ctx) {
         if (!visible) return;
         const width = Math.min(pane.w, Math.ceil(measureText(LOADING_TEXT, t("image.hint.detail.fontSize"))) + 16);
         place(loading, {
-            x: (pane.w - width) / 2,
-            y: (pane.h - LOADING_LINE_HEIGHT) / 2,
+            x: pane.x + (pane.w - width) / 2,
+            y: pane.y + (pane.h - LOADING_LINE_HEIGHT) / 2,
             w: width,
             h: LOADING_LINE_HEIGHT,
         });
@@ -199,7 +199,7 @@ export function mountPhoto(host, ctx) {
         errorLayer.hidden = !error;
         if (!error) return;
         const frames = state.layout.overlays.hintFrames(pane);
-        place(errorLayer, { x: 0, y: 0, w: pane.w, h: pane.h });
+        place(errorLayer, pane);
         setText(errorTitle, error.title);
         setText(errorDetail, error.detail ?? "");
         place(errorTitle, rel(frames.title, pane));
@@ -221,7 +221,7 @@ export function mountPhoto(host, ctx) {
             return;
         }
         const hostFrame = state.layout.overlays.navigatorFrame(pane, navigator.thumbWidth, navigator.thumbHeight);
-        place(navEl, rel(hostFrame, pane));
+        place(navEl, hostFrame);
         place(navThumb, {
             x: hostFrame.thumb.x - hostFrame.x,
             y: hostFrame.thumb.y - hostFrame.y,
@@ -282,7 +282,7 @@ export function mountPhoto(host, ctx) {
 
     function syncBusy(state, pane) {
         busy.hidden = !state.session.busy;
-        if (state.session.busy) place(busy, rel(state.layout.overlays.busyPillFrame(pane), pane));
+        if (state.session.busy) place(busy, state.layout.overlays.busyPillFrame(pane));
     }
 
     function syncToast(state, pane) {
@@ -295,7 +295,7 @@ export function mountPhoto(host, ctx) {
         const textWidth = lines.reduce((max, line) => Math.max(max, measureText(line, fontSize)), 0);
         const textHeight = lines.length * TOAST_LINE_HEIGHT;
         setText(toast, lines.join("\n"));
-        place(toast, rel(state.layout.overlays.toastFrame(pane, textWidth, textHeight, state.session.busy), pane));
+        place(toast, state.layout.overlays.toastFrame(pane, textWidth, textHeight, state.session.busy));
     }
 
     function syncHighlight(state) {
@@ -317,19 +317,21 @@ export function mountPhoto(host, ctx) {
     }
 
     function sync(state, redraw) {
-        const pane = state.layout.panes.photoPane;
+        const view = state.layout.panes.photoView;
+        const fit = state.layout.panes.fitRect;
         const dpr = state.viewport.dpr || 1;
-        place(canvas, { x: 0, y: 0, w: pane.w, h: pane.h });
-        sizeCanvas(canvas, pane.w, pane.h, dpr);
+        place(canvas, { x: 0, y: 0, w: view.w, h: view.h });
+        sizeCanvas(canvas, view.w, view.h, dpr);
         const photo = state.photo;
+        host.dataset.fitRect = `${fit.x},${fit.y},${fit.w},${fit.h}`;
         canvas.setAttribute("aria-label", photo ? `照片 ${photo.name}` : "主图");
         host.classList.toggle("is-zoomed", Boolean(photo) && state.viewport.hasImage && !state.viewport.isFit);
-        syncHint(state, pane, !photo);
-        syncLoading(state, pane);
-        syncError(state, pane);
-        syncNavigator(state, pane);
-        syncBusy(state, pane);
-        syncToast(state, pane);
+        syncHint(state, fit, !photo);
+        syncLoading(state, fit);
+        syncError(state, fit);
+        syncNavigator(state, fit);
+        syncBusy(state, fit);
+        syncToast(state, fit);
         syncHighlight(state);
         if (redraw) requestDraw();
     }

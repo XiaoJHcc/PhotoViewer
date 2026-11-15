@@ -44,6 +44,10 @@ internal sealed class AndroidControlBarScrollHost : ViewGroup
 
     /// <summary>当前滚动偏移（px，验收核对）。</summary>
     internal int ScrollOffset => _scroll;
+    /// <summary>当前文档主轴长度（px，验收核对）。</summary>
+    internal int DocumentMainForChecks => _contentMain;
+    /// <summary>当前最大滚动距离（px，验收核对尾部可达）。</summary>
+    internal int MaxScrollForChecks => MaxScroll;
 
     /// <summary>滚动偏移真实发生变化（拖动、惯性、换向夹取）；浮层锚点据此失效。</summary>
     internal event Action? ScrollChanged;
@@ -55,7 +59,8 @@ internal sealed class AndroidControlBarScrollHost : ViewGroup
     internal void Configure(bool horizontal, int viewportMainPx, int contentMainPx)
     {
         _horizontal = horizontal;
-        _contentMain = Math.Max(Math.Max(0, viewportMainPx), contentMainPx);
+        // 保存真实文档长度（可短于视口）；测量/滚动范围再按需取 max，避免把视口冒充文档。
+        _contentMain = Math.Max(0, contentMainPx);
         ClampScroll();
         Invalidate();
     }

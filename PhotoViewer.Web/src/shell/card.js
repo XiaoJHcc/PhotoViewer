@@ -1,6 +1,6 @@
 import { el, place, setText } from "./dom.js";
 import { codepoint, icon, solidIcon } from "./icons.js";
-import { cardFrames } from "../core/layout/card.js";
+import { cardFrames, smallBadgeFrame } from "../core/layout/card.js";
 import { formatTakenFull, formatTakenShort } from "../core/exifformat.js";
 import { LongPressRecognizer } from "../core/input.js";
 import { displayStars, hasRatingConflict } from "../core/rating.js";
@@ -28,13 +28,14 @@ function clampRatio(value) {
     return Math.max(0, Math.min(1, number));
 }
 
-export function createCard(ctx, { mode = "film" } = {}) {
-    const { app, t, thumbs, clock, menu } = ctx;
-    const frames = cardFrames(t);
+export function createCard(ctx, { mode = "film", tier = "large" } = {}) {
+    const { app, t, thumbs, clock, menu, measureText } = ctx;
+    const frames = cardFrames(t, tier, measureText);
     const similarity = mode === "similarity";
+    const small = tier === "small";
 
     const root = el("div", {
-        class: `pv-card pv-card-${mode}`,
+        class: `pv-card pv-card-${mode}${small ? " pv-card-small" : ""}`,
         role: similarity ? "group" : "listitem",
         tabindex: "-1",
     });
@@ -48,6 +49,11 @@ export function createCard(ctx, { mode = "film" } = {}) {
     }, codepoint(t("icon.photoPlaceholder")));
     const cached = el("div", { class: "pv-card-cached" });
     const badge = el("div", { class: "pv-card-badge" }, "抖");
+    const smallWarning = icon(t, "icon.warning", "pv-card-small-warning");
+    const smallStar = solidIcon(t, "icon.starFilled", "pv-card-small-star");
+    const smallNumber = el("span", { class: "pv-card-small-number" });
+    const smallBadge = el("div", { class: "pv-card-small-badge" }, smallWarning, smallStar, smallNumber);
+    const shakeDot = el("div", { class: "pv-card-shake-dot" });
     const name = el("div", { class: "pv-card-name" });
     const second = el("div", { class: "pv-card-second" });
     const dateText = el("div", { class: "pv-card-date" });
@@ -61,11 +67,13 @@ export function createCard(ctx, { mode = "film" } = {}) {
     dateText.hidden = similarity;
     bar.hidden = !similarity;
     well.append(canvas, placeholder, cached);
-    surface.append(well, badge, name, second);
+    surface.append(well, name);
+    if (small) surface.append(smallBadge, shakeDot);
+    else surface.append(badge, second);
     root.append(surface);
 
     const stars = [];
-    for (let index = 0; index < 6; index += 1) {
+    for (let index = 0; index < 6 && !small; index += 1) {
         const button = el("button", { type: "button", class: "pv-card-star", tabindex: "-1" });
         const label = index === 0 ? "无星级" : `${index} 星`;
         button.setAttribute("aria-label", label);
@@ -102,9 +110,14 @@ export function createCard(ctx, { mode = "film" } = {}) {
     place(well, frames.image);
     place(canvas, { x: 0, y: 0, w: frames.image.w, h: frames.image.h });
     place(cached, { x: 0, y: 0, w: frames.image.w, h: frames.image.h });
-    place(badge, frames.shake);
+    if (small) {
+        place(smallBadge, frames.badge);
+        place(shakeDot, frames.shake);
+    } else {
+        place(badge, frames.shake);
+        place(second, frames.date);
+    }
     place(name, frames.name);
-    place(second, frames.date);
     if (!similarity) place(root, frames.root);
 
     let currentCard = null;
@@ -306,7 +319,20 @@ export function createCard(ctx, { mode = "film" } = {}) {
             lastShowRating = showRating;
         }
 
-        if (conflict !== lastConflict) {
+        if (small) {
+            const value = Math.max(0, Math.min(5, Math.round(Number(rating) || 0)));
+            const visible = showRating && (conflict || value > 0);
+            smallBadge.hidden = !visible;
+            smallBadge.dataset.rating = String(value);
+            smallBadge.dataset.conflict = String(conflict);
+            smallWarning.hidden = !conflict;
+            smallStar.hidden = value <= 0;
+            setText(smallNumber, value > 0 ? String(value) : "");
+            if (visible) {
+                place(smallBadge, smallBadgeFrame(frames, t, { rating: value, conflict }, measureText));
+            }
+        }
+        if (conflict !== lastConflict && !small) {
             // RATING-04：冲突时 0 号槽位换成红色警示三角，几何与命中区不变。
             const zero = stars[0];
             zero.classList.toggle("is-conflict", conflict);
@@ -319,7 +345,7 @@ export function createCard(ctx, { mode = "film" } = {}) {
             lastConflict = conflict;
         }
 
-        if (rating !== lastRating) {
+        if (rating !== lastRating && !small) {
             for (let index = 0; index < stars.length; index += 1) {
                 const button = stars[index];
                 const active = index === 0 ? rating === 0 && !conflict : rating >= index;
@@ -337,7 +363,8 @@ export function createCard(ctx, { mode = "film" } = {}) {
             lastCached = cachedOn;
         }
         if (shakeOn !== lastShake) {
-            badge.hidden = !shakeOn;
+            if (small) shakeDot.hidden = !shakeOn;
+            else badge.hidden = !shakeOn;
             lastShake = shakeOn;
         }
 

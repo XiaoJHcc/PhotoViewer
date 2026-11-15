@@ -20,6 +20,7 @@ internal static class ShellPaneLayoutChecks
         Row(checks);
         Column(checks);
         Joined(checks);
+        ZeroPanes(checks);
         FileContentOverride(checks);
     }
 
@@ -97,6 +98,40 @@ internal static class ShellPaneLayoutChecks
             row.ControlBackground.ToString());
         checks.True("行布局相邻时主图吸收两侧栏位后的剩余高度（相接处只留一条分隔线）",
             Near(row.Photo.Height, Height - 224 - 64 - 84), row.Photo.ToString());
+    }
+
+    private static void ZeroPanes(Checks checks)
+    {
+        var safe = new EdgeInsets(12, 24, 8, 20);
+        var row = ShellPaneLayout.Partition(true, Width, Height, safe, 224, 0, 0);
+        checks.True("行布局控制栏隐藏时控制分隔线、工具区背景与内容归零",
+            row.ControlDivider == default && row.ControlBackground == default && row.ControlContent == default,
+            $"{row.ControlDivider} / {row.ControlBackground} / {row.ControlContent}");
+        checks.True("行布局控制栏隐藏后主图占到安全区底边",
+            Near(row.Photo.MaxY, Height - safe.Bottom), row.Photo.ToString());
+
+        var column = ShellPaneLayout.Partition(false, Width, Height, safe, 117, 0, 0);
+        checks.True("列布局控制栏隐藏时控制栏矩形归零、主图贴到窗口右缘",
+            column.ControlDivider == default && column.ControlBackground == default
+            && column.ControlContent == default && Near(column.Photo.MaxX, Width),
+            $"{column.ControlDivider} / {column.ControlBackground} / {column.ControlContent} / {column.Photo}");
+
+        var rowAnalysis = ShellPaneLayout.Partition(true, Width, Height, safe, 224, 0, 64);
+        checks.True("行布局仅有分析栏时分析区贴住安全区底边、工具区背景铺到窗口底边",
+            Near(rowAnalysis.Analysis.Y, Height - safe.Bottom - 64)
+            && Near(rowAnalysis.Analysis.MaxY, Height - safe.Bottom)
+            && Near(rowAnalysis.ControlBackground.Y, rowAnalysis.Analysis.Y)
+            && Near(rowAnalysis.ControlBackground.MaxY, Height)
+            && rowAnalysis.ControlContent == default && rowAnalysis.ControlDivider == default,
+            $"{rowAnalysis.Analysis} / {rowAnalysis.ControlBackground}");
+
+        var columnAnalysis = ShellPaneLayout.Partition(false, Width, Height, safe, 117, 0, 64);
+        checks.True("列布局仅有分析栏时工具区背景从分析栏铺到窗口右缘",
+            Near(columnAnalysis.Analysis.X, Width - 64)
+            && Near(columnAnalysis.ControlBackground.X, columnAnalysis.Analysis.X)
+            && Near(columnAnalysis.ControlBackground.Width, 64)
+            && columnAnalysis.ControlContent == default && columnAnalysis.ControlDivider == default,
+            $"{columnAnalysis.Analysis} / {columnAnalysis.ControlBackground}");
     }
 
     private static void FileContentOverride(Checks checks)

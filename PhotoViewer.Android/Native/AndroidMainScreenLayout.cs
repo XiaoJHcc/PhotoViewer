@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using PhotoViewer.Shared;
 
 namespace PhotoViewer.Android.Native;
@@ -9,22 +11,56 @@ namespace PhotoViewer.Android.Native;
 /// <param name="Bottom">下内边距。</param>
 internal readonly record struct AndroidInsets(double Left, double Top, double Right, double Bottom);
 
+/// <summary>窗口内的显示挖孔矩形（dp，窗口坐标）；API 29+ 才有内容，低版本为空。</summary>
+/// <param name="Left">左缘。</param>
+/// <param name="Top">上缘。</param>
+/// <param name="Right">右缘。</param>
+/// <param name="Bottom">下缘。</param>
+internal readonly record struct AndroidCutoutRect(double Left, double Top, double Right, double Bottom)
+{
+    /// <summary>矩形中心横坐标。</summary>
+    internal double CenterX => (Left + Right) / 2;
+    /// <summary>矩形宽。</summary>
+    internal double Width => Right - Left;
+    /// <summary>矩形高。</summary>
+    internal double Height => Bottom - Top;
+}
+
 /// <summary>
-/// 窗口 Insets 原始读数（dp）：系统栏与显示挖孔分开记录，另存导航栏与可点元素的底部 Insets，
-/// 用来区分手势导航与三键导航。布局安全区每次都按当前方向从这里重新派生，旋转后不沿用旧值。
+/// 屏幕圆角读数（dp）：<see cref="Android.Views.WindowInsets"/> 的 <c>RoundedCorner</c>（API 31+）给出圆心与半径，
+/// 这里只保留四角半径；低版本与无圆角的窗口（如多数模拟器）全部为 0，几何因此不产生额外避让。
+/// </summary>
+/// <param name="TopLeft">左上角半径。</param>
+/// <param name="TopRight">右上角半径。</param>
+/// <param name="BottomRight">右下角半径。</param>
+/// <param name="BottomLeft">左下角半径。</param>
+internal readonly record struct AndroidCornerRadii(double TopLeft, double TopRight, double BottomRight, double BottomLeft)
+{
+    /// <summary>是否读到任何圆角。</summary>
+    internal bool Any => TopLeft > .5 || TopRight > .5 || BottomRight > .5 || BottomLeft > .5;
+}
+
+/// <summary>
+/// 窗口 Insets 原始读数（dp）：系统栏、显示挖孔、导航栏与可点元素的底部读数分开记录，
+/// 另存公开 <c>DisplayCutout</c> 的矩形与 <c>RoundedCorner</c> 半径。布局安全区每次都按当前方向
+/// 从这里重新派生，旋转后不沿用旧值。
 /// </summary>
 /// <param name="SystemBars">系统状态栏与导航栏 Insets。</param>
 /// <param name="Cutout">显示挖孔 Insets。</param>
 /// <param name="NavigationBottom">导航栏底部 Insets。</param>
 /// <param name="TappableBottom">导航栏可点元素底部 Insets（三键导航与导航栏同位，手势导航为 0）。</param>
-internal readonly record struct AndroidWindowInsets(AndroidInsets SystemBars, AndroidInsets Cutout, double NavigationBottom, double TappableBottom)
+/// <param name="Cutouts">显示挖孔矩形（dp，窗口坐标）；API 29 以下为空。</param>
+/// <param name="Corners">屏幕四角半径（dp）；API 31 以下或窗口无圆角时为 0。</param>
+internal readonly record struct AndroidWindowInsets(AndroidInsets SystemBars, AndroidInsets Cutout,
+    double NavigationBottom, double TappableBottom,
+    IReadOnlyList<AndroidCutoutRect>? Cutouts = null, AndroidCornerRadii Corners = default)
 {
     /// <summary>手势导航：导航栏底部大于可点区底部；三键导航的可点按钮覆盖整条导航栏，两者同位。</summary>
     internal bool IsGestureNavigation => NavigationBottom > TappableBottom + .5;
 
     /// <summary>
     /// 派生布局安全区：与系统栏、刘海取并集；横屏只忽略手势导航条底部，
-    /// 三键导航遮挡与刘海照常扣除（系统 Insets 不单列屏幕圆角）；竖屏与系统 Insets 一致。
+    /// 三键导航遮挡与刘海照常扣除；屏幕圆角不进布局安全区，由贴角元素带单独避让。
     /// </summary>
     /// <param name="landscape">是否横屏（宽大于高）。</param>
     /// <returns>布局安全区。</returns>
@@ -32,25 +68,58 @@ internal readonly record struct AndroidWindowInsets(AndroidInsets SystemBars, An
     {
         double bottom = landscape && IsGestureNavigation
             ? Cutout.Bottom
-            : System.Math.Max(SystemBars.Bottom, Cutout.Bottom);
+            : Math.Max(SystemBars.Bottom, Cutout.Bottom);
         return new AndroidInsets(
-            System.Math.Max(SystemBars.Left, Cutout.Left),
-            System.Math.Max(SystemBars.Top, Cutout.Top),
-            System.Math.Max(SystemBars.Right, Cutout.Right),
+            Math.Max(SystemBars.Left, Cutout.Left),
+            Math.Max(SystemBars.Top, Cutout.Top),
+            Math.Max(SystemBars.Right, Cutout.Right),
             bottom);
+    }
+
+    /// <summary>
+    /// 窗口某个横向位置上的圆角避让（dp）：圆角半径 r 的圆心距窗口角为 r，带的上缘距窗口缘 y（0 ≤ y ≤ r）时，
+    /// 该处圆角边界到窗口缘的距离为 <c>r − √(r² − (r−y)²)</c>；y ≥ r 时完全离开圆角方块，避让为 0。
+    /// 半径与位置都是公开 <c>RoundedCorner</c> 读数，圆角为 0 的平台不会产生任何位移。
+    /// </summary>
+    /// <param name="radius">圆角半径（dp）。</param>
+    /// <param name="edgeDistance">元素带近缘到窗口缘的距离（dp，负值按 0）。</param>
+    /// <returns>沿带方向需要的额外让位（dp）。</returns>
+    internal static double CornerInset(double radius, double edgeDistance)
+    {
+        if (radius <= .5) return 0;
+        double y = Math.Clamp(edgeDistance, 0, radius);
+        double dx = radius - y;
+        return Math.Max(0, radius - Math.Sqrt(Math.Max(0, radius * radius - dx * dx)));
+    }
+
+    /// <summary>
+    /// 窗口最左侧/最右侧的挖孔矩形中心：手机横屏据此判定刘海在左还是镜像（API 29+ 真实矩形）。
+    /// 读不到矩形时返回 null。
+    /// </summary>
+    /// <returns>挖孔中心横坐标（dp）；无挖孔矩形时为 null。</returns>
+    internal double? CutoutCenterX => Cutouts is { Count: > 0 } list ? list[0].CenterX : null;
+
+    /// <summary>所有挖孔矩形的可读文本（验收报告用）。</summary>
+    /// <returns>形如 <c>(0,0)-(148,32)</c> 的逗号分隔串；无挖孔时为 <c>none</c>。</returns>
+    internal string DescribeCutouts()
+    {
+        if (Cutouts is not { Count: > 0 } list) return "none";
+        var parts = new List<string>(list.Count);
+        foreach (var rect in list)
+            parts.Add(FormattableString.Invariant($"[{rect.Left:0.#},{rect.Top:0.#} {rect.Width:0.#}x{rect.Height:0.#}]"));
+        return string.Join(",", parts);
     }
 }
 
 /// <summary>
-/// Android 主屏分区（A3）：与共享 <c>ShellPaneLayout</c>（iOS 宽形态）同一套安全区口径——
-/// 栏位背景铺满屏幕边缘，内容收在安全区内，主图满幅；行布局栏位在上下、列布局在左右。
-/// 安全区来自 <see cref="AndroidWindowInsets.DeriveSafe"/>：横屏不为手势导航条保留底部空间，
-/// 三键导航与刘海照常扣除。
+/// Android 宽形态主屏分区：安全区口径与共享 <see cref="ShellPaneLayout"/> 完全一致——由
+/// <see cref="AndroidWindowInsets.DeriveSafe"/> 派生真实安全区后直接交给共享分区函数，
+/// 栏位背景铺满屏幕边缘、内容收在安全区内；主图视图满窗口，适应区由共享分区给出。
 /// </summary>
 /// <param name="FileBar">文件栏背景分区。</param>
 /// <param name="FileContent">文件栏内容区（筛选条与胶片栏可用范围）。</param>
 /// <param name="FileDivider">文件栏与主图之间的分隔线。</param>
-/// <param name="Photo">主图分区。</param>
+/// <param name="Photo">主图分区（同时是适应区）。</param>
 /// <param name="Analysis">分析栏分区（交叉轴 0 表示未显示）。</param>
 /// <param name="ControlDivider">控制栏与主图之间的分隔线。</param>
 /// <param name="ControlBackground">控制栏背景分区（铺到屏幕边缘）。</param>
@@ -58,56 +127,28 @@ internal readonly record struct AndroidWindowInsets(AndroidInsets SystemBars, An
 internal readonly record struct AndroidPaneFrames(LayoutRect FileBar, LayoutRect FileContent, LayoutRect FileDivider, LayoutRect Photo,
     LayoutRect Analysis, LayoutRect ControlDivider, LayoutRect ControlBackground, LayoutRect ControlContent);
 
-/// <summary>Android 主屏分区计算（纯函数，便于程序化对拍）。</summary>
+/// <summary>Android 宽形态分区入口：把真实安全区交给共享 <see cref="ShellPaneLayout.Partition"/>。</summary>
 internal static class AndroidMainScreenLayout
 {
     /// <summary>计算两向分区：行布局栏位在上下、列布局在左右，隐藏的栏位压成零并把空间让给主图。</summary>
     /// <param name="horizontal">是否行布局。</param>
     /// <param name="width">屏幕宽度（dp）。</param>
     /// <param name="height">屏幕高度（dp）。</param>
-    /// <param name="safe">安全区（dp）。</param>
+    /// <param name="safe">布局安全区（dp，横屏已去掉手势导航条底部）。</param>
     /// <param name="fileMain">文件栏主轴长度（含分隔线；0 表示隐藏）。</param>
     /// <param name="controlMain">控制栏主轴长度（含分隔线；0 表示隐藏）。</param>
     /// <param name="analysisCross">分析栏交叉轴长度（0 表示未显示）。</param>
+    /// <param name="fileContentX">列布局文件栏内容起点（dp，默认安全区前导）。</param>
+    /// <param name="fileContentWidth">列布局文件栏内容宽度（dp，默认卡片带厚）。</param>
     /// <returns>八个分区矩形。</returns>
     internal static AndroidPaneFrames Compute(bool horizontal, double width, double height, AndroidInsets safe,
-        double fileMain, double controlMain, double analysisCross)
+        double fileMain, double controlMain, double analysisCross, double? fileContentX = null,
+        double? fileContentWidth = null)
     {
-        double left = safe.Left, right = safe.Right, top = safe.Top, bottom = safe.Bottom;
-        if (horizontal)
-        {
-            double boxHeight = System.Math.Max(1, height - top - bottom);
-            var panes = MainScreenLayout.Partition(true, width, boxHeight, fileMain, controlMain, analysisCross);
-            var fileDivider = Shift(panes.FileDivider, top);
-            var controlDivider = Shift(panes.ControlDivider, top);
-            var controlContent = Shift(panes.ControlBar, top);
-            double contentWidth = System.Math.Max(1, width - left - right);
-            return new AndroidPaneFrames(
-                new LayoutRect(0, 0, width, top + panes.FileBar.Height),
-                new LayoutRect(left, top, contentWidth, panes.FileBar.Height),
-                fileDivider,
-                Shift(panes.Photo, top),
-                Shift(panes.Analysis, top),
-                controlDivider,
-                new LayoutRect(0, controlDivider.Y, width, System.Math.Max(0, height - controlDivider.Y)),
-                new LayoutRect(left, controlContent.Y, contentWidth, controlContent.Height));
-        }
-        var column = MainScreenLayout.Partition(false, width, height, fileMain, controlMain, analysisCross);
-        double contentHeight = System.Math.Max(1, height - top - bottom);
-        return new AndroidPaneFrames(
-            column.FileBar,
-            new LayoutRect(left, top, System.Math.Min(MainScreenLayout.FileBarContentWidth, System.Math.Max(0, column.FileBar.Width - left)), contentHeight),
-            column.FileDivider,
-            column.Photo,
-            column.Analysis,
-            column.ControlDivider,
-            new LayoutRect(column.ControlBar.X, 0, System.Math.Max(0, width - column.ControlBar.X), height),
-            new LayoutRect(column.ControlBar.X, top, column.ControlBar.Width, contentHeight));
+        var panes = ShellPaneLayout.Partition(horizontal, width, height,
+            new EdgeInsets(safe.Left, safe.Top, safe.Right, safe.Bottom),
+            fileMain, controlMain, analysisCross, fileContentX, fileContentWidth);
+        return new AndroidPaneFrames(panes.FileBar, panes.FileContent, panes.FileDivider, panes.Photo,
+            panes.Analysis, panes.ControlDivider, panes.ControlBackground, panes.ControlContent);
     }
-
-    /// <summary>沿主轴平移矩形。</summary>
-    /// <param name="rect">原始矩形。</param>
-    /// <param name="offset">主轴偏移。</param>
-    /// <returns>平移后的矩形。</returns>
-    private static LayoutRect Shift(LayoutRect rect, double offset) => new(rect.X, rect.Y + offset, rect.Width, rect.Height);
 }

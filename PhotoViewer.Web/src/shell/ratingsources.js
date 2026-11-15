@@ -13,6 +13,7 @@ import {
     placeRatingSources,
     ratingSourcesMetrics,
     resolveRatingSourcesDirection,
+    controlRatingPopoverDirection,
 } from "../core/layout/ratingpopover.js";
 
 function badgeTextOf(source) {
@@ -157,9 +158,14 @@ export function mountRatingPopover(host, ctx) {
         const anchor = anchorBox(current.anchor);
         const width = current.root.offsetWidth;
         const height = current.root.offsetHeight;
+        const directionOverride = current.mode === "control"
+            ? controlRatingPopoverDirection(app.state.layout)
+            : current.direction;
+        current.direction = directionOverride;
         const { direction, gap } = resolveRatingSourcesDirection({
             mode: current.mode,
             axis: current.axis,
+            direction: directionOverride,
             anchor,
             host: { width: anchor.hostWidth, height: anchor.hostHeight },
             height,
@@ -230,12 +236,17 @@ export function mountRatingPopover(host, ctx) {
         }
         if (!card) return false;
         if (current) {
-            if (current.anchor === anchor) {
+            // 显式方向（控制栏）每次重开都重建，避免复用旧方向的 dataset/位置。
+            const nextDirection = options.direction;
+            const sameAnchor = current.anchor === anchor
+                && (nextDirection == null || current.direction === nextDirection);
+            if (sameAnchor) {
                 current.card = card;
                 current.key = card.key ?? null;
                 current.photoId = card.photo?.id ?? null;
                 current.displayedId = state.displayedId;
                 current.axis = options.axis === "vertical" ? "vertical" : "horizontal";
+                current.direction = nextDirection ?? null;
                 current.anchorBox = anchorBox(anchor);
                 refresh(card);
                 position();
@@ -257,6 +268,7 @@ export function mountRatingPopover(host, ctx) {
             anchor,
             mode,
             axis: options.axis === "vertical" ? "vertical" : "horizontal",
+            direction: options.direction ?? null,
             key: card.key ?? null,
             photoId: card.photo?.id ?? null,
             displayedId: state.displayedId,

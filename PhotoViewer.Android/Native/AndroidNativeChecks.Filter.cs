@@ -34,7 +34,13 @@ internal static partial class AndroidNativeChecks
 
         var filter = root.FilterBar;
         Check("filter 筛选条可见", filter.Visibility == ViewStates.Visible && filter.SortFrame.Width > 0,
-            $"visible={filter.Visibility} sort={filter.SortFrame} row={main.IsRowLayout}");
+            $"visible={filter.Visibility} sort={filter.SortFrame} row={main.IsRowLayout} capsule={filter.IsCapsuleForChecks} phone={filter.IsPhone}");
+
+        if (filter.IsPhone || filter.IsCapsuleForChecks)
+        {
+            await RunGroupedFilterChecksAsync();
+            return;
+        }
 
         foreach (var kind in new[] { FilterKind.Sort, FilterKind.Order, FilterKind.Rating })
             await RunStepAsync($"filter {kind} 下拉", () => CheckDropdownLifetimeAsync(kind));
@@ -44,6 +50,78 @@ internal static partial class AndroidNativeChecks
         await RunStepAsync("filter 行选择", CheckRowSelectionAsync);
         await RunStepAsync("filter 锚点隐藏", CheckHiddenClosesAsync);
         await RunStepAsync("filter 旋转与窄屏", CheckAnchorAndNarrowAsync);
+    }
+
+    /// <summary>单胶囊/手机入口：分组菜单保持展开、重排不挪位不改宽，行选择立即写回且菜单不收起。</summary>
+    private static async Task RunGroupedFilterChecksAsync()
+    {
+        var root = _root!;
+        var main = _main!;
+        var filter = root.FilterBar;
+        root.DismissFilterDropdown();
+        await Task.Delay(120);
+        bool opened = OpenGroupedMenu(root);
+        Check("filter 分组菜单实际点按打开", opened && filter.IsDropdownOpen && filter.DropdownKindForChecks == "Grouped",
+            $"open={filter.IsDropdownOpen} kind={filter.DropdownKindForChecks} anchor={filter.DropdownAnchorForChecks}");
+        if (!opened) return;
+        var instance = filter.DropdownInstanceForChecks;
+        var anchor = filter.DropdownAnchorForChecks;
+        for (int pass = 0; pass < 3; pass++)
+        {
+            root.RequestLayout();
+            await Task.Delay(220);
+            filter.CommitLayout();
+        }
+        Check("filter 分组菜单重排不挪位不改宽",
+            ReferenceEquals(filter.DropdownInstanceForChecks, instance) && filter.IsDropdownOpen
+            && filter.DropdownAnchorForChecks == anchor,
+            $"same={ReferenceEquals(filter.DropdownInstanceForChecks, instance)} open={filter.IsDropdownOpen} "
+            + $"anchor={anchor}→{filter.DropdownAnchorForChecks}");
+
+        var filterVm = main.FileVM.FilterBar;
+        var previousSort = filterVm.SortMode;
+        bool clicked = ClickMenuText(filter.DropdownContentViewForChecks, "拍摄时间");
+        await Task.Delay(250);
+        Check("filter 分组菜单行选择保持展开",
+            clicked && filterVm.SortMode == SortMode.Date && filter.IsDropdownOpen
+            && ReferenceEquals(filter.DropdownInstanceForChecks, instance),
+            $"clicked={clicked} sort={filterVm.SortMode} open={filter.IsDropdownOpen}");
+        filterVm.SortMode = previousSort;
+        await Task.Delay(150);
+
+        bool dismissed = root.DismissFilterDropdown();
+        Check("filter 分组菜单返回键收起", dismissed && !filter.IsDropdownOpen,
+            $"dismissed={dismissed} open={filter.IsDropdownOpen}");
+    }
+
+    private static bool OpenGroupedMenu(AndroidNativeRootView root)
+    {
+        var filter = root.FilterBar;
+        var frame = filter.IsPhone ? filter.PhoneFilterFrame : filter.ControlFrame;
+        if (frame.Width <= 0) return false;
+        double density = AndroidUiTheme.Density(root.Context!);
+        float x = (float)((frame.X + frame.Width / 2) * density);
+        float y = (float)((frame.Y + frame.Height / 2) * density);
+        long now = global::Android.OS.SystemClock.UptimeMillis();
+        using (var down = MotionEvent.Obtain(now, now, MotionEventActions.Down, x, y, 0))
+            filter.OnTouchEvent(down);
+        using (var up = MotionEvent.Obtain(now, now + 10, MotionEventActions.Up, x, y, 0))
+            filter.OnTouchEvent(up);
+        return filter.IsDropdownOpen;
+    }
+
+    private static bool ClickMenuText(View? view, string text)
+    {
+        if (view == null) return false;
+        if (view is TextView label && string.Equals(label.Text, text, StringComparison.Ordinal))
+        {
+            if (label.Parent is View row) row.PerformClick();
+            return true;
+        }
+        if (view is ViewGroup group)
+            for (int index = 0; index < group.ChildCount; index++)
+                if (ClickMenuText(group.GetChildAt(index), text)) return true;
+        return false;
     }
 
     /// <summary>单个下拉：真实点按打开 → 跨三个 2s 周期同一实例仍开 → 重复布局/同几何 Arrange 仍开 → 返回键收起。</summary>

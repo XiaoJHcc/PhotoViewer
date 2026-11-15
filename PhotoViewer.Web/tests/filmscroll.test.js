@@ -8,10 +8,8 @@ import {
     itemStart,
     visibleRange,
     centerOffset,
-    easeOutCubic,
-    FilmScroller,
-    FilmPositioner,
-} from "../src/core/filmscroll.js";
+} from "../src/core/layout/film.js";
+import { easeOutCubic, FilmScroller, FilmPositioner } from "../src/core/filmscroll.js";
 
 const t = createTokens();
 
@@ -48,7 +46,13 @@ function fakeScroller() {
 }
 
 function geometry(index = 3, count = 10, axis = "x", viewportLength = 500) {
-    return { index, count, axis, viewportLength };
+    return {
+        index,
+        count,
+        axis,
+        viewportLength,
+        offset: centerOffset(index, count, axis, viewportLength, t),
+    };
 }
 
 test("FILM-02：按令牌推导卡片宽高、步长与列表内边距", () => {

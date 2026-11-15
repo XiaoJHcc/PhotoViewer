@@ -30,48 +30,44 @@
 
 .pv-control-group {
     position: absolute;
+    pointer-events: none;
 }
 
-/* TOOLBAR-10：EXIF 块与评分组同用深色块底，命令按钮单独带描边。 */
-.pv-control-exif-block {
+.pv-control-group > * {
+    pointer-events: auto;
+}
+
+/* TOOLBAR-03 / RATING-07：评分组是玻璃胶囊外框，内部星排沿用现有业务。 */
+.pv-control-phone {
     position: absolute;
-    box-sizing: border-box;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 1px;
-    padding: 0 3px;
-    overflow: hidden;
-    background: var(--pv-color-toolbar-block-background);
-    border-radius: var(--pv-toolbar-cornerRadius);
+    inset: 0;
+    pointer-events: none;
 }
 
-.pv-control-exif-label,
-.pv-control-exif-value {
-    display: block;
-    max-width: 100%;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    line-height: 1.1;
-    text-align: center;
-}
-
-.pv-control-exif-label {
-    font-size: var(--pv-toolbar-exif-label-fontSize);
-    color: var(--pv-color-text-secondary);
-}
-
-.pv-control-exif-value {
-    font-size: var(--pv-toolbar-exif-value-fontSize);
-    font-weight: 600;
-    color: var(--pv-color-text-primary);
+.pv-control-phone > * {
+    pointer-events: auto;
 }
 
 .pv-control-rating {
-    background: var(--pv-color-toolbar-block-background);
-    border-radius: var(--pv-toolbar-cornerRadius);
+    position: absolute;
+    box-sizing: border-box;
+    background: var(--pv-glass-background);
+    backdrop-filter: var(--pv-material-blur);
+    -webkit-backdrop-filter: var(--pv-material-blur);
+    border-radius: var(--pv-glass-radius);
+}
+
+.pv-rating-glyph {
+    display: block;
+    font-size: var(--pv-rating-control-glyph-fontSize);
+}
+
+.pv-rating-clear {
+    font-size: var(--pv-rating-control-clearGlyph-fontSize);
+}
+
+.pv-control-rating.is-compact .pv-rating-glyph {
+    font-size: var(--pv-rating-compact-glyph-fontSize);
 }
 
 .pv-control-rating-button {
@@ -96,23 +92,14 @@
 }
 
 /* TOOLBAR-03/04：星与叉取 icon.* 字体字形；点亮用实心星、未点亮用描边星。 */
-.pv-rating-glyph {
-    display: block;
-    font-size: var(--pv-toolbar-rating-glyph-fontSize);
-}
-
-.pv-rating-clear {
-    font-size: var(--pv-toolbar-rating-clearGlyph-fontSize);
-}
-
 .pv-control-rating-button.is-clear {
     color: var(--pv-color-star-clear);
 }
 
-/* RATING-04：组级冲突时 0 号槽位换成红色警示三角 toolbar.rating.glyph.fontSize（16）。 */
+/* RATING-04：组级冲突时 0 号槽位换成红色警示三角 rating.control.glyph.fontSize。 */
 .pv-rating-conflict {
     display: none;
-    font-size: var(--pv-toolbar-rating-glyph-fontSize);
+    font-size: var(--pv-rating-control-glyph-fontSize);
 }
 
 .pv-control-rating-button.is-conflict {
@@ -164,7 +151,9 @@
     padding: 0;
     background: var(--pv-color-toolbar-command-background);
     border: 1px solid var(--pv-color-toolbar-command-border);
-    border-radius: var(--pv-toolbar-cornerRadius);
+    border-radius: var(--pv-glass-radius);
+    backdrop-filter: var(--pv-material-blur);
+    -webkit-backdrop-filter: var(--pv-material-blur);
     color: var(--pv-color-text-primary);
     cursor: default;
 }
@@ -224,4 +213,53 @@
     border-radius: 3px;
     cursor: default;
     touch-action: none;
+}
+
+/* 手机横屏的上一张/下一张属于刘海侧列，由控制栏承载但可以落在控制宿主外。 */
+.pv-window[data-form="phone"] .pv-pane-control {
+    overflow: visible;
+}
+
+/* SHELL-08/09/12：手机上一张/下一张与缩放/增强是同一胶囊宿主内的两段，不是两颗独立圆按钮。 */
+.pv-control-capsule {
+    position: absolute;
+    box-sizing: border-box;
+    background: var(--pv-glass-background);
+    backdrop-filter: var(--pv-material-blur);
+    -webkit-backdrop-filter: var(--pv-material-blur);
+    border-radius: var(--pv-glass-radius);
+    overflow: hidden;
+    pointer-events: auto;
+}
+
+.pv-control-capsule .pv-control-command-button.is-capsule-segment {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+
+.pv-control-capsule .pv-control-command-button.is-capsule-segment:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.pv-control-capsule .pv-control-command-button.is-capsule-segment:active:not(:disabled) {
+    background: rgba(255, 255, 255, 0.14);
+}
+
+.pv-control-capsule .pv-control-command-button.is-capsule-segment:disabled {
+    background: transparent;
+    border: 0;
+    color: rgba(255, 255, 255, 0.3);
+}
+
+.pv-control-capsule .pv-control-command-button.is-capsule-segment:focus-visible {
+    outline: 2px solid var(--pv-accent);
+    outline-offset: -2px;
+}
+
+.pv-control-capsule .pv-control-command-button.is-capsule-segment[aria-pressed="true"] {
+    background: rgba(10, 132, 255, 0.22);
+    border: 0;
 }

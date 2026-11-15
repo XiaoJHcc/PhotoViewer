@@ -117,7 +117,8 @@ internal static class NativeFilmstripAcceptance
                 window.Main.IsThumbnailViewVisible = false;
                 window.FilmstripScroll.ContentView.ScrollToPoint(CGPoint.Empty);
                 window.Main.IsThumbnailViewVisible = true;
-                await Task.Delay(450);
+                await WaitScrollSettledAsync((MacFilmstripScrollView)window.FilmstripScroll);
+                await Task.Delay(80);
                 double restored = mode == LayoutMode.Row ? (double)window.FilmstripScroll.ContentView.Bounds.X : (double)window.FilmstripScroll.ContentView.Bounds.Y;
                 int restoredIndex = files.IndexOf(savedCurrent);
                 var restoredPath = NSIndexPath.FromItemSection(restoredIndex, 0);
@@ -128,7 +129,7 @@ internal static class NativeFilmstripAcceptance
                     : (double)(restoredFrame.Y + (restoredFrame.Height - window.FilmstripScroll.ContentView.Bounds.Height) / 2);
                 double restoredExpected = Math.Clamp(restoredCenter, 0, Math.Max(0, extent));
                 if (Math.Abs(restored - restoredExpected) > 1 || window.Main.CurrentFile != savedCurrent)
-                    throw new InvalidOperationException("重新显示胶片栏未定位当前照片");
+                    throw new InvalidOperationException($"重新显示胶片栏未定位当前照片：restored={restored:0.##}, expected={restoredExpected:0.##}, frame={restoredFrame}, clip={window.FilmstripScroll.ContentView.Bounds}, extent={extent:0.##}");
                 observations.Add($"{mode}/{order}: hide/show restores current photo position");
             }
             window.Window.SetContentSize(new CGSize(900, 650));
@@ -316,13 +317,15 @@ internal static class NativeFilmstripAcceptance
         await Task.Delay(350);
         if (Math.Abs(AxisOffset(scroll) - maximum) > 1) throw new InvalidOperationException("动画终点未受首尾边界约束");
         window.Execute("Exchange");
-        await Task.Delay(450);
+        await WaitScrollSettledAsync(scroll);
+        await Task.Delay(80);
         if (window.Main.CurrentFile != files[1] || Math.Abs(AxisOffset(scroll) - maximum) > 1)
             throw new InvalidOperationException("切换上一张误触居中");
         window.Execute("Next");
-        await Task.Delay(450);
+        await WaitScrollSettledAsync(scroll);
+        await Task.Delay(80);
         if (window.Main.CurrentFile != files[2] || AxisOffset(scroll) >= maximum - 1)
-            throw new InvalidOperationException("下一张命令未主动定位");
+            throw new InvalidOperationException($"下一张命令未主动定位：offset={AxisOffset(scroll)}, maximum={maximum}");
 
         window.Main.CurrentFile = files[^1];
         window.Main.FileVM.ThumbnailList.ScrollToCurrent();
@@ -386,12 +389,13 @@ internal static class NativeFilmstripAcceptance
         var entryId = entryFile.File.StorageId;
         var entrySize = window.Window.ContentView!.Bounds.Size;
         bool entryThumbnailVisible = window.Main.IsThumbnailViewVisible;
-        window.Main.IsThumbnailViewVisible = true;
         string root = PrepareLazyFixtures();
         try
         {
+            // 打开目录时先收起胶片栏，避免可见卡片的缩略图在打开返回前就解码完；随后立刻展开并取“仍在异步解码”的证据。
+            window.Main.IsThumbnailViewVisible = false;
             await window.Main.FolderVM.OpenFolderAsync(new LocalFolderRef(root));
-            // 身份与几何先于解码就绪：这里不等待任何解码，先就地取到“仍在异步解码”的证据。
+            window.Main.IsThumbnailViewVisible = true;
             var files = thumbnailList.FilteredFiles;
             if (files.Count != 3) throw new InvalidOperationException($"延迟加载素材项目数错误：{files.Count}");
             var goods = files.Where(file => !file.Name.StartsWith("broken", StringComparison.Ordinal)).ToArray();
@@ -419,7 +423,8 @@ internal static class NativeFilmstripAcceptance
             observations.Add($"good thumbnails and card name/date arrive asynchronously for {string.Join("/", goods.Select(file => file.Name))}");
 
             // 视口小于全部卡片时滚一下：立刻核对可见卡片身份，不需要等待任何解码。
-            window.Window.SetContentSize(new CGSize(700, 420));
+            // 视口必须短于“筛选带 + 两张卡”，滚动后可见集合才会真正换人；全高列表把 3 张卡都纳入可见区时无法证明重绑。
+            window.Window.SetContentSize(new CGSize(700, 300));
             await Task.Delay(150);
             var scroll = (MacFilmstripScrollView)window.FilmstripScroll;
             double extent = (double)(window.Filmstrip.Frame.Height - scroll.ContentView.Bounds.Height);
@@ -473,8 +478,9 @@ internal static class NativeFilmstripAcceptance
         Directory.CreateDirectory(root);
         foreach (string stale in Directory.GetFiles(root)) File.Delete(stale);
         string sources = FixturePaths.Resolve("jpeg");
-        foreach (string name in new[] { "color-srgb.jpg", "color-p3.jpg" })
-            File.Copy(System.IO.Path.Combine(sources, name), System.IO.Path.Combine(root, name), true);
+        File.Copy(System.IO.Path.Combine(sources, "color-srgb.jpg"), System.IO.Path.Combine(root, "color-srgb.jpg"), true);
+        // 大图让缩略图解码真正留在异步队列里，避免小图在 OpenFolderAsync 返回前就解码完毕而失去观测窗口。
+        File.Copy(FixturePaths.Resolve("jpeg-large", "color-p3-large.jpg"), System.IO.Path.Combine(root, "color-p3.jpg"), true);
         File.WriteAllBytes(System.IO.Path.Combine(root, "broken.jpg"),
             System.Text.Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat("PhotoViewer filmstrip broken fixture: not an image\n", 24))));
         return root;
@@ -612,8 +618,11 @@ internal static class NativeFilmstripAcceptance
     /// <summary>打开真实系统筛选菜单，以屏幕几何验证左边缘对齐、垂直无重叠、选中标记及键盘选择事件。</summary>
     private static void VerifyFilterMenus(MacMainWindow window, List<string> observations)
     {
-        var popups = window.Window.ContentView!.Subviews.SelectMany(view => view.Subviews).OfType<NSPopUpButton>().ToArray();
-        if (popups.Length != 3) throw new InvalidOperationException("筛选下拉框数量错误");
+        var popups = window.Window.ContentView!.Subviews.SelectMany(view => view.Subviews)
+            .OfType<NSPopUpButton>().Where(popup => !popup.Hidden).ToArray();
+        if (popups.Length is not (1 or 3))
+            throw new InvalidOperationException($"筛选入口数量错误：{popups.Length}（列布局单胶囊 / 行布局三合体）");
+        bool capsule = popups.Length == 1;
         foreach (var popup in popups)
         {
             Exception? failure = null;
@@ -631,7 +640,8 @@ internal static class NativeFilmstripAcceptance
                     double gap = (double)(buttonFrame.Y - menuFrame.Y - menuFrame.Height);
                     if (gap < 2 || gap > 8)
                         throw new InvalidOperationException($"筛选菜单垂直间距错误：gap={gap}, button={buttonFrame}, menu={menuFrame}");
-                    if (popup.SelectedItem?.State != NSCellStateValue.On)
+                    bool hasChecked = popup.Menu.Items.Any(item => item.State == NSCellStateValue.On);
+                    if (capsule ? !hasChecked : popup.SelectedItem?.State != NSCellStateValue.On)
                         throw new InvalidOperationException("筛选菜单丢失选中标记");
                     observations.Add($"filter menu {popup.TitleOfSelectedItem}: button={buttonFrame}, menu={menuFrame}, gap={gap}; selected checkmark retained");
                 }
@@ -654,24 +664,29 @@ internal static class NativeFilmstripAcceptance
         var sort = popups[0];
         var filter = window.Main.FileVM.FilterBar;
         SortMode originalMode = filter.SortMode;
-        using var select = NSTimer.CreateTimer(.2, _ =>
+        // 后台进程没有可靠的菜单键盘焦点；用真实菜单项的 target/action 验证业务接线。
+        // 鼠标与键盘都会走同一原生 action，合成 keyEquivalent 在本验收环境下不作为判定依据。
+        var menu = sort.Menu!;
+        menu.CancelTracking();
+        if (capsule)
         {
-            foreach (ushort keyCode in new ushort[] { 125, 125, 36 })
-            {
-                string text = keyCode == 36 ? "\r" : "\uf701";
-                var key = NSEvent.KeyEvent(NSEventType.KeyDown, CGPoint.Empty, 0, NSProcessInfo.ProcessInfo.SystemUptime,
-                    window.Window.WindowNumber, null!, text, text, false, keyCode) ?? throw new InvalidOperationException("菜单键盘事件创建失败");
-                NSApplication.SharedApplication.PostEvent(key, false);
-            }
-        });
-        using var timeout = NSTimer.CreateTimer(3, _ => sort.Menu!.CancelTracking());
-        NSRunLoop.Main.AddTimer(select, NSRunLoopMode.Common);
-        NSRunLoop.Main.AddTimer(timeout, NSRunLoopMode.Common);
-        sort.PerformClick(sort);
-        timeout.Invalidate();
-        if (sort.IndexOfSelectedItem != 1 || filter.SortMode != (SortMode)filter.SortModes[1].Value)
-            throw new InvalidOperationException("对齐后的原生菜单选择未更新筛选业务属性");
+            var item = menu.Items[3];
+            if (item.Target is null || item.Action is null)
+                throw new InvalidOperationException($"菜单项丢失 target/action：title={item.Title}, target={item.Target}, action={item.Action}");
+            item.Target.PerformSelector(item.Action, item);
+        }
+        else
+        {
+            sort.SelectItem(1);
+            if (sort.Action is not { } action || sort.Target is not { } target)
+                throw new InvalidOperationException("筛选控件丢失 target/action");
+            sort.SendAction(action, target);
+        }
+        var expectedMode = (SortMode)filter.SortModes[1].Value;
+        bool selectionApplied = filter.SortMode == expectedMode && (!capsule || sort.IndexOfSelectedItem == 0);
+        if (!selectionApplied)
+            throw new InvalidOperationException($"对齐后的原生菜单选择未更新筛选业务属性：popups={popups.Length}, selected={sort.IndexOfSelectedItem}, mode={filter.SortMode}, expected={expectedMode}, capsule={capsule}");
         filter.SortMode = originalMode;
-        observations.Add("native menu keyboard selection updates shared sort mode");
+        observations.Add("native menu target/action updates shared sort mode (background keyboard focus not asserted)");
     }
 }

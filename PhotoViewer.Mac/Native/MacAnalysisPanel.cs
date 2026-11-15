@@ -15,7 +15,7 @@ namespace PhotoViewer.Mac.Native;
 /// 细节预览（中心 / 对焦点）、直方图与 4 张 DINO/CV 诊断图。
 /// 几何与旧壳 <c>AnalysisView</c> 同口径：正方形瓦片边长 = <c>floor((可用主轴长度 - 20 - 8×(n-1)) / n)</c>，
 /// 行布局排在主图下方、列布局排在主图右侧，交叉轴尺寸 = 瓦片边长 + 20。
-/// 背景 <c>#111</c>，朝主图一侧 1 点 <c>#333</c> 分隔线；空白处点击清空准星。
+/// 栏目背景与朝主图一侧的分隔线由主窗口的共同工具区材质宿主承担；空白处点击清空准星。
 /// </summary>
 internal sealed class MacAnalysisPanel : NSView
 {
@@ -24,7 +24,6 @@ internal sealed class MacAnalysisPanel : NSView
     private readonly PhotoLoadSession _session;
     private readonly MacAnalysisHost _host;
     private readonly AnalysisPresenter _presenter;
-    private readonly NSView _divider = new();
     private readonly Dictionary<AnalysisTile, NSView> _views = [];
     private readonly List<AnalysisTile> _order = [];
     private readonly Dictionary<AnalysisTile, DecodedImage?> _imageKeys = [];
@@ -65,10 +64,7 @@ internal sealed class MacAnalysisPanel : NSView
         _main = main;
         _session = session;
         WantsLayer = true;
-        Layer!.BackgroundColor = NSColor.FromRgb(0x11, 0x11, 0x11).CGColor;
-        _divider.WantsLayer = true;
-        _divider.Layer!.BackgroundColor = NSColor.FromRgb(0x33, 0x33, 0x33).CGColor;
-        AddSubview(_divider);
+        Layer!.BackgroundColor = NSColor.Clear.CGColor;
 
         _host = new MacAnalysisHost(main, session);
         _presenter = new AnalysisPresenter(_host);
@@ -81,27 +77,33 @@ internal sealed class MacAnalysisPanel : NSView
         Sync();
     }
 
-    /// <summary>交叉轴尺寸（瓦片边长 + 两侧 10 点内边距）。</summary>
+    /// <summary>交叉轴尺寸取共同工具区几何：朝主图一侧留工具区内边距，与控制栏相邻时接缝留在分析侧。</summary>
     /// <param name="availableMain">主轴可用长度。</param>
+    /// <param name="joinedToControls">是否与控制栏相邻。</param>
     /// <returns>需为面板分配的交叉轴长度。</returns>
-    public double CrossSize(double availableMain) => AnalysisPanelGeometry.CrossSize(availableMain, _order.Count);
+    public double CrossSize(double availableMain, bool joinedToControls)
+    {
+        double tile = AnalysisPanelGeometry.TileSize(availableMain, _order.Count);
+        return ToolRegionGeometry.AnalysisWidth(tile, joinedToControls);
+    }
 
-    /// <summary>按交叉轴可用长度摆放瓦片，并刷新朝主图一侧的分隔线。</summary>
+    /// <summary>按交叉轴可用长度摆放瓦片；背景与唯一外边界由主窗口工具区宿主承担。</summary>
     /// <param name="horizontal">行布局（瓦片横排）为 true。</param>
     /// <param name="availableMain">主轴可用长度。</param>
-    public void Arrange(bool horizontal, double availableMain)
+    /// <param name="joinedToControls">是否与控制栏相邻（相邻时接缝只在分析内容末端）。</param>
+    public void Arrange(bool horizontal, double availableMain, bool joinedToControls = false)
     {
         double tile = AnalysisPanelGeometry.TileSize(availableMain, _order.Count);
         _tileSize = tile;
+        double cross = ToolRegionGeometry.Padding;
         // 与旧壳一致：瓦片从主轴内边距处起排（ItemsControl 内 StackPanel 左/上对齐），剩余不足一枚的零头留在末端。
         for (int i = 0; i < _order.Count; i++)
         {
             double offset = AnalysisPanelGeometry.TileOffset(i, tile);
             _views[_order[i]].Frame = horizontal
-                ? new CGRect(offset, AnalysisPanelGeometry.Padding, tile, tile)
-                : new CGRect(AnalysisPanelGeometry.Padding, offset, tile, tile);
+                ? new CGRect(offset, cross, tile, tile)
+                : new CGRect(cross, offset, tile, tile);
         }
-        _divider.Frame = horizontal ? new CGRect(0, 0, Bounds.Width, 1) : new CGRect(0, 0, 1, Bounds.Height);
         foreach (var detail in _order)
             if (detail.Kind == AnalysisTileKind.Detail) UpdateDetailCrop(detail);
     }
@@ -195,7 +197,7 @@ internal sealed class MacAnalysisPanel : NSView
             _views[tile] = view;
             _order.Add(tile);
         }
-        Arrange(_main.IsRowLayout, _main.IsRowLayout ? (double)Bounds.Width : (double)Bounds.Height);
+        Arrange(_main.IsRowLayout, _main.IsRowLayout ? (double)Bounds.Width : (double)Bounds.Height, _main.IsControlViewVisible);
     }
 
     /// <summary>按瓦片位图引用取（并按需创建）原生位图；同一 <see cref="DecodedImage"/> 实例只编码一次。</summary>

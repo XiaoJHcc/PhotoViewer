@@ -36,6 +36,9 @@ internal static partial class AndroidNativeChecks
                 case "faults":
                     await RunFaultsChecksAsync();
                     break;
+                case "form":
+                    await RunFormChecksAsync();
+                    break;
                 case "layout":
                     await RunLayoutChecksAsync();
                     break;

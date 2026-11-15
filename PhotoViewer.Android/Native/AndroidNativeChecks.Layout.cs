@@ -29,6 +29,11 @@ internal static partial class AndroidNativeChecks
         await OpenFolderAndWaitAsync(folder);
         await Task.Delay(400);
 
+        var previousOrientation = activity.RequestedOrientation;
+        activity.RequestedOrientation = global::Android.Content.PM.ScreenOrientation.Portrait;
+        await WaitAsync(() => root.Height > root.Width, "竖屏布局", 8000);
+        await Task.Delay(500);
+
         var config = activity.Resources!.Configuration!;
         double density = AndroidUiTheme.Density(activity);
         Check("layout 配置", true,
@@ -37,12 +42,13 @@ internal static partial class AndroidNativeChecks
             + $"row={main.IsRowLayout} landscape={main.IsScreenLandscape} mode={main.Settings.LayoutMode} "
             + $"safe={root.SafeInsets}");
 
+        CheckRootForm(root, "竖屏");
         CheckGeometry(root, main, density, "竖屏");
-        CheckSafeInsets(root, landscape: false, "竖屏");
+        CheckSafeInsets(root, landscape: root.Width > root.Height, "竖屏");
+        await CheckZoomCenterOnPaneToggleAsync();
         CheckSyntheticInsetDerivation();
         bool navigationBaseline = NavigationBarVisible(activity);
 
-        var previousOrientation = activity.RequestedOrientation;
         try
         {
             activity.RequestedOrientation = global::Android.Content.PM.ScreenOrientation.Landscape;
@@ -50,17 +56,18 @@ internal static partial class AndroidNativeChecks
             await Task.Delay(500);
             bool expectedLandscapeRow = ExpectedRowLayout(main, landscape: true);
             Check("layout 横屏方向与布局模式",
-                main.IsScreenLandscape && main.IsRowLayout == expectedLandscapeRow,
+                main.IsScreenLandscape && (root.Form != ScreenForm.Wide || main.IsRowLayout == expectedLandscapeRow),
                 $"landscape={main.IsScreenLandscape} row={main.IsRowLayout} expectedRow={expectedLandscapeRow} "
-                + $"mode={main.Settings.LayoutMode} px={root.Width}x{root.Height}");
+                + $"form={root.Form} mode={main.Settings.LayoutMode} px={root.Width}x{root.Height}");
             Check("layout 横屏隐藏系统状态栏", !nativeActivity.IsStatusBarVisibleForChecks(),
                 $"statusVisible={nativeActivity.IsStatusBarVisibleForChecks()} safe={root.SafeInsets}");
             // 只忽略手势导航条占位，不隐藏导航栏。
             Check("layout 横屏不隐藏导航栏", NavigationBarVisible(activity) == navigationBaseline,
                 $"portrait={navigationBaseline} landscape={NavigationBarVisible(activity)} safe={root.SafeInsets}");
+            CheckRootForm(root, "横屏");
             CheckGeometry(root, main, density, "横屏");
             CheckSafeInsets(root, landscape: true, "横屏");
-            CheckLandscapeControlReachesBottom(root, density, main);
+            if (root.Form == ScreenForm.Wide) CheckLandscapeControlReachesBottom(root, density, main);
 
             activity.RequestedOrientation = global::Android.Content.PM.ScreenOrientation.Portrait;
             await WaitAsync(() => root.Height > root.Width, "竖屏布局", 8000);
@@ -71,16 +78,65 @@ internal static partial class AndroidNativeChecks
                 $"portrait={navigationBaseline} back={NavigationBarVisible(activity)} safe={root.SafeInsets}");
             bool expectedPortraitRow = ExpectedRowLayout(main, landscape: false);
             Check("layout 竖屏方向与布局模式",
-                !main.IsScreenLandscape && main.IsRowLayout == expectedPortraitRow,
+                !main.IsScreenLandscape && (root.Form != ScreenForm.Wide || main.IsRowLayout == expectedPortraitRow),
                 $"landscape={main.IsScreenLandscape} row={main.IsRowLayout} expectedRow={expectedPortraitRow} "
-                + $"mode={main.Settings.LayoutMode} px={root.Width}x{root.Height}");
+                + $"form={root.Form} mode={main.Settings.LayoutMode} px={root.Width}x{root.Height}");
+            CheckRootForm(root, "回竖屏");
             CheckGeometry(root, main, density, "回竖屏");
             CheckSafeInsets(root, landscape: false, "回竖屏");
+            await RunToggleMatrixAsync(root, main);
         }
         finally
         {
             activity.RequestedOrientation = previousOrientation;
             await Task.Delay(400);
+        }
+    }
+
+    /// <summary>放大态切换胶片/控制栏：视口中心归一化点与物理倍率保持不变（不能只比适应区内边距）。</summary>
+    private static async Task CheckZoomCenterOnPaneToggleAsync()
+    {
+        var root = _root!;
+        var main = _main!;
+        root.Photo.ZoomToPhysical(2);
+        await WaitAsync(() => !root.Photo.IsFit && Math.Abs(root.Photo.PhysicalScale - 2) < .05, "放大到物理 200%", 8000);
+        await Task.Delay(250);
+        var before = root.Photo.Viewport;
+        var center = before.CenterUV;
+        double physical = before.PhysicalScale;
+        bool film = main.IsThumbnailViewVisible;
+        bool control = main.IsControlViewVisible;
+        try
+        {
+            main.IsThumbnailViewVisible = false;
+            await WaitLayoutAsync(root);
+            await Task.Delay(250);
+            var afterFilm = root.Photo.Viewport;
+            Check("layout 放大后隐藏胶片保持中心/倍率",
+                Near(afterFilm.CenterUV.U, center.U) && Near(afterFilm.CenterUV.V, center.V)
+                && Math.Abs(afterFilm.PhysicalScale - physical) < .01,
+                $"center={center.U:0.####},{center.V:0.####}->{afterFilm.CenterUV.U:0.####},{afterFilm.CenterUV.V:0.####} "
+                + $"physical={physical:0.###}->{afterFilm.PhysicalScale:0.###}");
+
+            main.IsThumbnailViewVisible = film;
+            await WaitLayoutAsync(root);
+            main.IsControlViewVisible = false;
+            await WaitLayoutAsync(root);
+            await Task.Delay(250);
+            var afterControl = root.Photo.Viewport;
+            Check("layout 放大后隐藏控制栏保持中心/倍率",
+                Near(afterControl.CenterUV.U, center.U) && Near(afterControl.CenterUV.V, center.V)
+                && Math.Abs(afterControl.PhysicalScale - physical) < .01,
+                $"center={afterControl.CenterUV.U:0.####},{afterControl.CenterUV.V:0.####} "
+                + $"physical={afterControl.PhysicalScale:0.###}");
+        }
+        finally
+        {
+            main.IsThumbnailViewVisible = film;
+            main.IsControlViewVisible = control;
+            await WaitLayoutAsync(root);
+            root.Photo.FitToView();
+            await Task.Delay(250);
         }
     }
 
@@ -181,107 +237,63 @@ internal static partial class AndroidNativeChecks
     /// <param name="phase">阶段名（竖屏/横屏）。</param>
     private static void CheckGeometry(AndroidNativeRootView root, MainViewModel main, double density, string phase)
     {
-        double widthDp = root.Width / density, heightDp = root.Height / density;
-        var panes = root.Panes;
-        bool layoutRow = main.IsRowLayout;
+        // 形态无关的共享几何对照（宽形态分区/筛选/控制栏/卡片，手机形态槽位/胶片档位/底行）。
+        CheckMainScreenGeometry(root, main, density, phase);
 
-        var frames = new (string Name, LayoutRect Rect)[]
+        if (root.Form == ScreenForm.Wide)
         {
-            ("fileBar", panes.FileBar),
-            ("fileContent", panes.FileContent),
-            ("fileDivider", panes.FileDivider),
-            ("photo", panes.Photo),
-            ("controlDivider", panes.ControlDivider),
-            ("controlBackground", panes.ControlBackground),
-            ("controlContent", panes.ControlContent),
-        };
-        bool inside = true;
-        var detail = new StringBuilder();
-        foreach (var frame in frames)
-        {
-            detail.Append(frame.Name).Append('=').Append(frame.Rect).Append(' ');
-            if (frame.Rect.X < -.6 || frame.Rect.Y < -.6
-                || frame.Rect.MaxX > widthDp + .6 || frame.Rect.MaxY > heightDp + .6)
-                inside = false;
-        }
-        Check($"{phase} 分区在屏幕内", inside,
-            $"{detail.ToString().TrimEnd()} screen={widthDp:0.#}x{heightDp:0.#}dp safe={root.SafeInsets}");
+            var panes = root.Panes;
+            bool row = main.IsRowLayout;
+            var filter = root.FilterBar;
+            var content = panes.FileContent;
+            var filterTail = AndroidFilterBar.ShowsSimilarityToggle ? filter.SimilarityFrame : filter.ControlFrame;
+            Check($"{phase} 筛选条在文件栏内容区",
+                filter.ControlFrame.X >= -.6 && filterTail.MaxX <= content.Width + .6
+                && Near(filter.ControlFrame.Height, WideFilterLayout.Height),
+                $"control={filter.ControlFrame} tail={filterTail} content={content} row={row}");
+            if (row && !filter.SortFrame.Equals(filter.ControlFrame))
+                Check($"{phase} 行布局筛选整组居中",
+                    Near((filter.ControlFrame.X + filterTail.MaxX) / 2, content.Width / 2),
+                    $"center={(filter.ControlFrame.X + filterTail.MaxX) / 2:0.#} expected={content.Width / 2:0.#}");
 
-        bool adjoin = layoutRow
-            ? Near(panes.FileBar.MaxY, panes.FileDivider.Y) && Near(panes.FileDivider.MaxY, panes.Photo.Y)
-                && Near(panes.Photo.MaxY, panes.ControlDivider.Y) && Near(panes.ControlDivider.Y, panes.ControlBackground.Y)
-            // 列布局的控制栏背景从分隔线之后起排（行布局则把分隔线覆盖在背景里），两种口径都按实现核对。
-            : Near(panes.FileBar.MaxX, panes.FileDivider.X) && Near(panes.FileDivider.MaxX, panes.Photo.X)
-                && Near(panes.Photo.MaxX, panes.ControlDivider.X) && Near(panes.ControlDivider.MaxX, panes.ControlBackground.X);
-        Check($"{phase} 分区边界相接", adjoin, layoutRow
-            ? $"file={panes.FileBar.MaxY:0.#} div={panes.FileDivider.Y:0.#} photo={panes.Photo.Y:0.#}..{panes.Photo.MaxY:0.#} "
-                + $"controlDiv={panes.ControlDivider.Y:0.#} controlBg={panes.ControlBackground.Y:0.#}"
-            : $"file={panes.FileBar.MaxX:0.#} div={panes.FileDivider.X:0.#} photo={panes.Photo.X:0.#}..{panes.Photo.MaxX:0.#} "
-                + $"controlDiv={panes.ControlDivider.X:0.#} controlBg={panes.ControlBackground.X:0.#}");
-
-        var content = panes.FileContent;
-        var filter = root.FilterBar;
-        // EDITION-02：标准版末项是计数，AI 版末项是相似聚类开关。
-        var filterTail = AndroidFilterBar.ShowsSimilarityToggle ? filter.SimilarityFrame : filter.CountFrame;
-        bool filterInside = layoutRow
-            ? filter.SortFrame.X >= -.6 && filterTail.MaxX <= content.Width + .6
-            : filter.SortFrame.Y >= -.6 && filterTail.MaxY <= content.Height + .6;
-        // 窄屏：控件宽度不压缩，由筛选条滚动宿主承载，要求自然宽度确实超出且可滚。
-        bool filterScrolls = layoutRow && !filterInside
-            && filter.RequiredWidthDp > content.Width + .6 && root.FilterScrollableForChecks;
-        filterInside |= filterScrolls;
-        Check($"{phase} 筛选条在文件栏内容区", filterInside,
-            $"sort={filter.SortFrame} tail={filterTail} toggle={AndroidFilterBar.ShowsSimilarityToggle} content={content} "
-            + $"required={filter.RequiredWidthDp:0.#} scroll={filterScrolls} horizontal={filter.Horizontal}");
-        bool filterCentered = !layoutRow || filterScrolls
-            || Near((filter.SortFrame.X + filterTail.MaxX) / 2, content.Width / 2);
-        Check($"{phase} 行布局筛选整组居中", filterCentered,
-            $"center={(filter.SortFrame.X + filterTail.MaxX) / 2:0.#} expected={content.Width / 2:0.#} scroll={filterScrolls}");
-        Check($"{phase} 筛选首项仅保留普通顶部边距", Near(filter.SortFrame.Y, MainScreenLayout.FilterMargin),
-            $"top={filter.SortFrame.Y:0.#} expected={MainScreenLayout.FilterMargin:0.#}");
-
-        var nodes = root.ControlBar.NodesForChecks();
-        var rootLocation = new int[2];
-        var barLocation = new int[2];
-        root.GetLocationInWindow(rootLocation);
-        root.ControlBar.GetLocationInWindow(barLocation);
-        double offsetX = (barLocation[0] - rootLocation[0]) / density;
-        double offsetY = (barLocation[1] - rootLocation[1]) / density;
-        // TOOLBAR-08：整条文档超出可用主轴时控制栏沿主轴滚动，节点允许超出可视区（只在滚动轴方向）。
-        double barMain = layoutRow ? root.ControlBar.Width / density : root.ControlBar.Height / density;
-        double visibleMain = layoutRow ? panes.ControlContent.Width : panes.ControlContent.Height;
-        bool overflowMain = barMain > visibleMain + .5;
-        bool nodesOk = nodes.Count > 0;
-        double extentX = 0, extentY = 0;
-        foreach (var node in nodes)
-        {
-            if (node.Width <= 0 || node.Height <= 0)
+            var nodes = root.ControlBar.NodesForChecks();
+            var rootLocation = new int[2];
+            var barLocation = new int[2];
+            root.GetLocationInWindow(rootLocation);
+            root.ControlBar.GetLocationInWindow(barLocation);
+            double offsetX = (barLocation[0] - rootLocation[0]) / density;
+            double offsetY = (barLocation[1] - rootLocation[1]) / density;
+            double barMain = row ? root.ControlBar.Width / density : root.ControlBar.Height / density;
+            double visibleMain = row ? panes.ControlContent.Width : panes.ControlContent.Height;
+            bool overflowMain = barMain > visibleMain + .5;
+            bool nodesOk = nodes.Count > 0;
+            foreach (var node in nodes)
             {
-                nodesOk = false;
-                continue;
+                if (node.Width <= 0 || node.Height <= 0) { nodesOk = false; continue; }
+                double left = offsetX + node.X, top = offsetY + node.Y;
+                bool nodeInside = row
+                    ? top >= panes.ControlBackground.Y - 1 && top + node.Height <= panes.ControlBackground.MaxY + 1
+                        && (overflowMain || left >= panes.ControlBackground.X - 1 && left + node.Width <= panes.ControlBackground.MaxX + 1)
+                    : left >= panes.ControlBackground.X - 1 && left + node.Width <= panes.ControlBackground.MaxX + 1
+                        && (overflowMain || top >= panes.ControlBackground.Y - 1 && top + node.Height <= panes.ControlBackground.MaxY + 1);
+                if (!nodeInside) nodesOk = false;
             }
-            double left = offsetX + node.X, top = offsetY + node.Y;
-            bool nodeInside = layoutRow
-                ? top >= panes.ControlBackground.Y - 1 && top + node.Height <= panes.ControlBackground.MaxY + 1
-                    && (overflowMain || left >= panes.ControlBackground.X - 1 && left + node.Width <= panes.ControlBackground.MaxX + 1)
-                : left >= panes.ControlBackground.X - 1 && left + node.Width <= panes.ControlBackground.MaxX + 1
-                    && (overflowMain || top >= panes.ControlBackground.Y - 1 && top + node.Height <= panes.ControlBackground.MaxY + 1);
-            if (!nodeInside) nodesOk = false;
-            extentX = Math.Max(extentX, left + node.Width);
-            extentY = Math.Max(extentY, top + node.Height);
+            Check($"{phase} 控制栏分组与节点几何", root.ControlBar.GroupCount is >= 1 and <= 3 && nodesOk,
+                $"groups={root.ControlBar.GroupCount} nodes={nodes.Count} docMain={barMain:0.#} visible={visibleMain:0.#} "
+                + $"scroll={overflowMain} background={panes.ControlBackground}");
         }
-        Check($"{phase} 控制栏三分组与节点几何", root.ControlBar.GroupCount == 3 && nodesOk,
-            $"groups={root.ControlBar.GroupCount} nodes={nodes.Count} viewOffset=({offsetX:0.#},{offsetY:0.#}) "
-            + $"extent=({extentX:0.#},{extentY:0.#}) docMain={barMain:0.#} visibleMain={visibleMain:0.#} "
-            + $"scroll={overflowMain} background={panes.ControlBackground}");
+    }
 
-        var card = root.Filmstrip.CardAt(0);
-        double expectedCardWidth = layoutRow ? 96 : 116;
-        Check($"{phase} 首卡尺寸", card != null
-            && Math.Abs(card.Width / density - expectedCardWidth) < 1.5
-            && Math.Abs(card.Height / density - 144) < 1.5,
-            card == null
-                ? "首卡未创建"
-                : $"{card.Width / density:0.#}×{card.Height / density:0.#}dp 期望 {expectedCardWidth:0}×144dp");
+    /// <summary>当前形态按原生尺寸类别与用户模式重判，旋转后也必须一致。</summary>
+    private static void CheckRootForm(AndroidNativeRootView root, string phase)
+    {
+        var metrics = AndroidScreenForm.Read(_activity!);
+        var expected = ScreenFormResolver.Resolve(metrics.HorizontalCompact, metrics.VerticalCompact,
+            root.Width / AndroidUiTheme.Density(_activity!), root.Height / AndroidUiTheme.Density(_activity!),
+            metrics.PhoneDevice, _main!.Settings.LayoutMode, LayoutCapabilities.PhoneLayoutSupported);
+        Check($"{phase} 形态判定", root.Form == expected,
+            $"form={root.Form} expected={expected} classes={metrics.SizeClassText} phone={metrics.PhoneDevice} "
+            + $"window={metrics.WidthDp:0.#}x{metrics.HeightDp:0.#} cutouts={root.WindowInsetsForChecks.DescribeCutouts()} "
+            + $"corners={root.WindowInsetsForChecks.Corners}");
     }
 }

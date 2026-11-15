@@ -79,7 +79,31 @@ public sealed class MetalPhotoView : NSView, IMemoryClient
     }
     /// <summary>视口中心对应的归一化图像点（显示朝向），供导航图拖动验收核对落点。</summary>
     public (double U, double V) ViewCenter => _viewport.CenterUV;
+    /// <summary>主图适应区相对视图四边的内边距（逻辑点）。</summary>
+    internal EdgeInsets FitInsets => _viewport.FitInsets;
+    /// <summary>当前适应区在视图坐标中的矩形；视图本身铺满窗口，栏位只改变这里。</summary>
+    internal CGRect FitArea => new(
+        _viewport.FitInsets.Left,
+        _viewport.FitInsets.Top,
+        Math.Max(0, (double)Bounds.Width - _viewport.FitInsets.Left - _viewport.FitInsets.Right),
+        Math.Max(0, (double)Bounds.Height - _viewport.FitInsets.Top - _viewport.FitInsets.Bottom));
     private double BackingScale => (double)(Window?.BackingScaleFactor ?? 1);
+
+    /// <summary>
+    /// 更新栏位让出的适应区。适应态重新适应；放大态保持同一归一化中心与相对倍率，
+    /// 只把视口中心平移量换到新的适应区中心后再夹取边缘。
+    /// </summary>
+    internal void SetFitInsets(EdgeInsets insets)
+    {
+        if (_viewport.FitInsets == insets) return;
+        bool fit = _viewport.IsFit;
+        double oldCenterX = _viewport.FitCenterX, oldCenterY = _viewport.FitCenterY;
+        _viewport.SetFitInsets(insets);
+        if (fit) _viewport.FitToView();
+        else _viewport.PanBy(_viewport.FitCenterX - oldCenterX, _viewport.FitCenterY - oldCenterY);
+        DrawFrame();
+        ViewportChanged?.Invoke();
+    }
 
     /// <summary>把显示朝向的归一化图像点换算成视图坐标（点）。</summary>
     /// <param name="u">归一化横坐标。</param>

@@ -88,8 +88,8 @@ internal sealed class MacStatusToast : NSView
             ? DesignTokens.ImageBusyBottomOffset + DesignTokens.ImageBusyHeight + DesignTokens.StatusToastStackGap
             : DesignTokens.StatusToastBottomMargin;
         Frame = new CGRect(
-            (photoBounds.Width - width) / 2,
-            Math.Max(0, photoBounds.Height - bottomMargin - height),
+            photoBounds.X + (photoBounds.Width - width) / 2,
+            photoBounds.Y + Math.Max(0, photoBounds.Height - bottomMargin - height),
             width,
             height);
         _label.Frame = new CGRect(DesignTokens.StatusToastPaddingX, DesignTokens.StatusToastPaddingY, textWidth, textHeight);

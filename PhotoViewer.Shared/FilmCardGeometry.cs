@@ -15,7 +15,7 @@ public enum FilmCardTier
 /// <summary>
 /// 胶片卡片两档的平台中立几何（FILM-02 / FILM-05）：卡片尺寸、主轴与交叉轴内边距、带厚、
 /// 步长、选档与可见容量，以及单轴列表的文档尺寸与卡片矩形。大档逐位等于
-/// <see cref="FilmstripGeometry"/>（Mac / Windows / Android 继续用旧类型）；可见范围与居中偏移
+/// <see cref="FilmstripGeometry"/>（Windows 继续用旧类型）；可见范围与居中偏移
 /// 直接复用 <see cref="FilmstripGeometry.VisibleRange"/> 与 <see cref="FilmstripGeometry.CenterOffset"/>。
 /// </summary>
 public static class FilmCardGeometry

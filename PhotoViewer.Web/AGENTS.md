@@ -1,6 +1,6 @@
 # PhotoViewer.Web — Web 参考壳
 
-浏览器里的第五个壳（平台代号 `web`）：完整复刻主屏的业务行为与 macOS 视觉，照片为程序化合成数据。它同时是三样东西：免下载的在线试用、设计规则的可执行基准（规则变更可先在这里验证再分发四端）、各平台几何比对的基准来源（替代原 `Design/prototype/` 样机）。设置窗口与工具窗口不做（`SCOPE-01@web`）。计划与进度见 [Plans/web-shell-plan-1.md](../Plans/web-shell-plan-1.md)，文档缺口台账见 [Plans/web-shell-gaps.md](../Plans/web-shell-gaps.md)。
+浏览器里的第五个壳（平台代号 `web`）：按 `Design/` 实现主屏业务行为与首屏静态几何，照片为程序化合成数据。它同时是三样东西：免下载的在线试用、设计规则的可执行基准（规则变更可先在这里验证再分发四端）、各平台几何比对的基准来源。材质只使用浏览器公开能力（CSS `backdrop-filter` 与半透明底色），不复刻系统玻璃融合或光学效果。设置窗口与工具窗口不做（`SCOPE-01@web`）。计划与缺口台账见 [Plans/web-shell-plan-1.md](../Plans/web-shell-plan-1.md)、[Plans/web-shell-gaps.md](../Plans/web-shell-gaps.md)。
 
 ## 唯一依据：Design/
 
@@ -16,7 +16,7 @@ node --test "tests/**/*.test.js" # 纯逻辑单测（零依赖）
 
 VS Code Tasks：**Serve Web**、**Test Web**。ES module 在 `file://` 下会被浏览器拦截，必须经本地服务打开。令牌产物 `src/tokens.g.js` 由 `python3 Tools/generate-design-tokens.py` 生成，不得手改。
 
-页面参数：`?demo` 打开窗口外演示面板（尺寸、设置、故障注入、状态读数、几何导出）；`?check=<模块|all>` 运行页内行为检查并输出按设计 ID 的报告；`?platform=mac` 切到 mac 配置档（只为几何比对：交通灯让位等 `@mac` 差异）；`?edition=standard|ai` 选择构建变体（缺省 `ai`）；`?empty` 以空态启动；`?folder=<id>` 指定首个文件夹。
+页面参数：`?demo` 打开窗口外演示面板（尺寸、布局模式、安全区注入、设置、故障注入、状态读数、几何导出）；`?check=<模块|all>` 运行页内行为与静态几何检查并输出按设计 ID 的报告；`?platform=mac` 切到 mac 配置档（只为几何比对：列布局 42 让位、行布局 44 高三段自然宽/单胶囊、列布局 96 胶囊、桌面 EXIF 双向衬底与交通灯让位等 `@mac` 差异）；`?check=mac` 只跑 mac 配置档检查；`?edition=standard|ai` 选择构建变体（缺省 `ai`）；`?empty` 以空态启动；`?folder=<id>` 指定首个文件夹。开发期可用 `?width=<px>&height=<px>&layout=auto|row|col|phone&safe=<top,right,bottom,left>&film=0&control=0&analysis=1` 直接落到指定视口、形态与栏位；这些参数只写会话 override，不写持久设置。安全区参数是显式几何输入，不代表浏览器具备额外探测能力。
 
 `?edition` 只用于参考壳的 EDITION 差分验收，不是产品内版本切换：`standard` 不创建相似聚类入口与面板、筛选条按四项居中、分析栏只有 4/5 张瓦片（无 PCA/Cosine），设置模型保留不可见的 DINO/相似参数，只启用独立的「即时计算 CV」；`ai` 保持完整入口与六/七瓦片。两个版本都不显示升级、缺模型或版本说明文案。
 
@@ -46,18 +46,28 @@ src/
     similarity.js       # 相似面板三态、计算/取消、提取进度
     exifformat.js       # 控制栏 EXIF 值与卡片时间格式化
     app.js              # 主屏模型：整合以上模块，对外只暴露状态快照、动作与事件
-    layout/             # 分区与各区几何（只依据 spec + tokens 推导）；胶片栏步长取 filmscroll.js，来源浮窗取 ratingpopover.js
+    layout/             # 分区与各区几何（只依据 spec + tokens 推导）
+      form.js           # SHELL-07/10：宽/手机竖/手机横判定与安全区归一
+      partition.js      # 宽形态行/列与手机竖/横分区、适应区、材质与分隔线
+      filterbar.js      # FILTER-07@web 96/88 合体、手机竖圆按钮、AI 独立开关
+      film.js / card.js # 两档胶片卡片与列表文档；位置/滚动业务仍取 filmscroll.js
+      controlbar.js     # EXIF→评分→命令、44 按钮、评分 224/88、手机固定槽位
+      analysis.js       # 瓦片等边长与独立/工具区相邻交叉轴
+      similarity.js     # 相似面板让位（大档卡片）
+      ratingpopover.js  # 星级来源浮窗
   render/               # 浏览器实现：procedural（矢量程序化照片，存储朝向）、decoder（代理/Full/增强）、store（特征库）、thumbs（缩略图队列）
   shell/                # DOM 组件：订阅 app 事件按区域增量更新，不整窗重建
     dom.js / menu.js    # 组件约定与工具（el/place/令牌 CSS 变量 --pv-<点分名转连字符，保留驼峰>）；共用弹出菜单
     icons.js / tooltip.js  # 图标字形（icon.* 令牌）与自绘悬停提示（data-tooltip 全局委托）
-    filterbar / filmstrip / card / similarity / photo / analysis / controlbar / picker / ratingsources  # 各分区组件与 .css
+    filterbar / filmstrip / card / similarity / photo / analysis / controlbar / exifbar / picker / ratingsources  # 各分区组件与 .css
+    # 筛选、胶片、相似面板挂全窗图层；EXIF 宽形态与手机横屏挂控制宿主（随控制文档/固定槽位），
+    # 手机竖屏顶行挂全窗 EXIF 层；控制栏/分析栏挂在各自分区宿主
   checks/               # ?check=<模块|all> 页内行为检查，按设计 ID 出报告
-  demo/                 # 窗口外演示面板（尺寸、设置项、故障注入、减少动态效果）
+  demo/                 # 窗口外演示面板（尺寸、布局模式、安全区注入、设置项、故障注入、减少动态效果）
 tests/                  # node --test，测试名以设计 ID 开头
 dev/                    # 开发用（不进产品）：render-preview（方向码/代理/Full/增强/连拍目视）、<组件>-harness（单组件自查页）
 assets/                 # 图标字体子集：uicons-pv.woff2（描边）、uicons-pv-solid.woff2（实心星/叉）
-tools/export-geometry.mjs  # 导出几何 JSON（--profile mac 与 macOS 报告比对；--edition standard|ai 分别导出两版；--count-width 固定计数宽，Design/README §8）
+tools/export-geometry.mjs  # 导出几何 JSON（--profile mac；--edition standard|ai；--form wide|phone|all 覆盖宽/手机开关矩阵；--count-width 固定计数宽，Design/README §8）
 tools/subset-icons.py      # 从 Design/tokens.json 的 icon.* 码位生成 assets/ 下的图标字体子集
 ```
 
@@ -81,4 +91,4 @@ python3 PhotoViewer.Web/tools/subset-icons.py        # 需要 fonttools + brotli
 
 ## 平台差异（`@web`）
 
-登记在 [Design/platforms.md](../Design/platforms.md)，本目录不另存一份清单。
+登记在 [Design/platforms.md](../Design/platforms.md)，本目录不另存一份清单。形态判定按 `SHELL-07@web`：自动模式只把 CSS 视口宽 `<600` 映射为紧凑横向（手机形态），`>=600` 为常规；显式行/列恒为宽形态，手机模式用于规范检验。生产安全区只读 `env(safe-area-inset-*)`，演示与检查的安全区值属于显式几何输入。

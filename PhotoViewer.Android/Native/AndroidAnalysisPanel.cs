@@ -195,11 +195,13 @@ internal sealed class AndroidAnalysisPanel : View
     /// <param name="horizontal">是否行布局。</param>
     /// <param name="availableMain">主轴可用长度（dp）。</param>
     /// <param name="startInset">首瓦片前导让位（dp，安全区）。</param>
-    internal void Arrange(bool horizontal, double availableMain, double startInset)
+    /// <param name="crossPadding">交叉轴内侧留白（dp）；手机竖屏取一份行内间距，其余形态取面板内边距。</param>
+    internal void Arrange(bool horizontal, double availableMain, double startInset, double? crossPadding = null)
     {
         _horizontal = horizontal;
         _availableMain = Math.Max(1, availableMain);
         _startInset = Math.Max(0, startInset);
+        double padding = crossPadding ?? AnalysisPanelGeometry.Padding;
         var tiles = _presenter.Tiles;
         _tileSize = AnalysisPanelGeometry.TileSize(_availableMain, tiles.Count);
         _frames.Clear();
@@ -208,8 +210,8 @@ internal sealed class AndroidAnalysisPanel : View
         {
             double offset = _startInset + AnalysisPanelGeometry.TileOffset(index, _tileSize);
             _frames[tiles[index]] = horizontal
-                ? new LayoutRect(offset, AnalysisPanelGeometry.Padding, _tileSize, _tileSize)
-                : new LayoutRect(AnalysisPanelGeometry.Padding, offset, _tileSize, _tileSize);
+                ? new LayoutRect(offset, padding, _tileSize, _tileSize)
+                : new LayoutRect(padding, offset, _tileSize, _tileSize);
             _frameOrder[tiles[index]] = index;
         }
         _presenterTileCount = tiles.Count;

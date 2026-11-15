@@ -133,9 +133,11 @@ internal sealed partial class AndroidPhotoView : FrameLayout, ISurfaceHolderCall
         _density = Resources?.DisplayMetrics?.Density ?? 1;
         _touchSlop = ViewConfiguration.Get(context)?.ScaledTouchSlop ?? 8;
         // API 26 起提供滚动因子；更低版本回退到系统默认的 64px/格。
-        _scrollFactorPx = OperatingSystem.IsAndroidVersionAtLeast(26)
-            ? ViewConfiguration.Get(context)?.ScaledVerticalScrollFactor ?? 64
-            : 64;
+        float scrollFactor = OperatingSystem.IsAndroidVersionAtLeast(26)
+            ? ViewConfiguration.Get(context)?.ScaledVerticalScrollFactor ?? 0
+            : 0;
+        // 部分模拟器/设备返回 0；精确滚动仍需一个有效像素步长，0 会让触控板平移变成空操作。
+        _scrollFactorPx = scrollFactor > .01f ? scrollFactor : 64;
         SetBackgroundColor(Color.Black);
         _surfaceView = new SurfaceView(context);
         _surfaceView.SetZOrderOnTop(false);
@@ -196,6 +198,36 @@ internal sealed partial class AndroidPhotoView : FrameLayout, ISurfaceHolderCall
             }
         }
         RequestDraw();
+        ViewportChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// 主图适应区四边内边距（SHELL-11）：主图视图铺满窗口，照片在适应区内适应、放大后可越过栏缘；
+    /// 适应态重新贴合，放大态保持当前中心与倍率并按新边界钳制。
+    /// </summary>
+    /// <param name="insets">四边内边距（dp）。</param>
+    internal void SetFitInsets(EdgeInsets insets)
+    {
+        var fit = new EdgeInsets(Math.Max(0, insets.Left), Math.Max(0, insets.Top),
+            Math.Max(0, insets.Right), Math.Max(0, insets.Bottom));
+        if (Math.Abs(fit.Left - _viewport.FitInsets.Left) < .01
+            && Math.Abs(fit.Top - _viewport.FitInsets.Top) < .01
+            && Math.Abs(fit.Right - _viewport.FitInsets.Right) < .01
+            && Math.Abs(fit.Bottom - _viewport.FitInsets.Bottom) < .01)
+            return;
+        var center = _viewport.CenterUV;
+        _viewport.SetFitInsets(fit);
+        if (_viewport.IsFit)
+        {
+            _viewport.FitToView();
+        }
+        else
+        {
+            // 保持放大态中心：共享视口按 (.5 - (Pan - FitCenter)/width) 解释中心，平移必须包含 FitCenter。
+            _viewport.CenterOnNormalizedPoint(center.U, center.V);
+        }
+        RequestDraw();
+        Post(RequestDraw);
         ViewportChanged?.Invoke();
     }
 
@@ -418,9 +450,7 @@ internal sealed partial class AndroidPhotoView : FrameLayout, ISurfaceHolderCall
         else
         {
             // 栏位显隐/旋转会改主图分区：保持原来落在视口中心的图像点仍在中心，再按新边界钳制。
-            double width = _viewport.ImageWidth * _viewport.Scale;
-            double height = _viewport.ImageHeight * _viewport.Scale;
-            _viewport.ApplyGestureView(_viewport.Scale, (.5 - center.U) * width, (.5 - center.V) * height, interactive: false);
+            _viewport.CenterOnNormalizedPoint(center.U, center.V);
         }
         RequestDraw();
         // 布局变化后 SurfaceView 的缓冲可能在下一帧才跟上：再补一帧，避免缩略图/控制栏/分析栏开合时停在旧尺寸。

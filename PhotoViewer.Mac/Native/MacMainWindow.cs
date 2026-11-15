@@ -26,6 +26,7 @@ public sealed class MacMainWindow : IDisposable
     private readonly MainViewModel _main;
     private readonly RootView _root;
     private readonly NSView _filePane;
+    private readonly NSView _toolBackground;
     private readonly NSView _fileDivider = Pane(NSColor.FromWhite(.2f, 1));
     private readonly NSView _controlDivider = Pane(NSColor.FromWhite(.2f, 1));
     private readonly NSTextField _hintDetail = Label("", 11);
@@ -47,7 +48,14 @@ public sealed class MacMainWindow : IDisposable
     private readonly NSPopUpButton _sort;
     private readonly NSPopUpButton _order;
     private readonly NSPopUpButton _ratingFilter;
+    private readonly NSPopUpButton _capsule;
     private readonly NSTextField _count;
+    private NSView _activeFilterTarget = null!;
+    private NSMenu? _capsuleMenu;
+    private NSMenuDelegate? _capsuleDelegate;
+    private readonly NSObject _capsuleTarget;
+    private readonly List<(NSMenuItem Item, Func<bool> Checked)> _capsuleChecks = [];
+    private readonly Dictionary<int, Action> _capsuleActions = [];
 #if PHOTOVIEWER_DINO
     private readonly FilterToggleButton _similarityToggle;
     private readonly MacSimilarityPanel _similarityPane;
@@ -85,6 +93,10 @@ public sealed class MacMainWindow : IDisposable
     private bool _titlebarPersistent;
     private bool _titlebarBackdrop;
     private bool _titlebarTitleFits;
+    private LayoutRect _fitArea;
+    private WideFilterFrames _filterFrames;
+    private bool _filterCapsule;
+    private bool _filterToggleVisible;
     private readonly bool _automatedValidation;
     private MacNativeSettingsPresenter? _settingsPresenter;
     private (double U, double V, double? Width, double? Height)? _activeDetail;
@@ -110,8 +122,24 @@ public sealed class MacMainWindow : IDisposable
     internal bool IsAutomatedValidation => _automatedValidation;
     /// <summary>控制栏系统滚动容器供溢出与边缘验收读取。</summary>
     internal NSScrollView ControlScroll => _controlScroll;
-    /// <summary>筛选条真实控件，供空态命中验收使用。</summary>
-    internal NSView FilterBarClickTarget => _sort;
+    /// <summary>筛选条当前可点控件，供空态命中验收使用。</summary>
+    internal NSView FilterBarClickTarget => _activeFilterTarget;
+    /// <summary>文件栏与工具区的系统材质宿主，供材质出现条件验收读取。</summary>
+    internal NSView FileBarBackground => _filePane;
+    /// <summary>共同工具区的连续材质宿主。</summary>
+    internal NSView ToolBackground => _toolBackground;
+    /// <summary>工具区朝主图的唯一外边界分隔线。</summary>
+    internal NSView ToolDivider => _controlDivider;
+    /// <summary>当前筛选控件与外框的共享几何结果。</summary>
+    internal WideFilterFrames FilterLayout => _filterFrames;
+    internal NSTextField CountView => _count;
+    /// <summary>当前筛选是否回退为单胶囊。</summary>
+    internal bool FilterCapsuleMode => _filterCapsule;
+    /// <summary>筛选控件与相似开关在窗口坐标中的联合范围。</summary>
+    internal CGRect FilterUnionFrame => new(_filterUnion.X, 0, _filterUnion.Width, DesignTokens.ShellTitlebarHeight);
+    private LayoutRect _filterUnion;
+    /// <summary>主图适应区（窗口坐标），供验收核对避让与提示落位。</summary>
+    internal CGRect FitArea => new(_fitArea.X, _fitArea.Y, _fitArea.Width, _fitArea.Height);
 #if PHOTOVIEWER_DINO
     /// <summary>原生相似聚类面板供几何与交互回归读取。</summary>
     internal MacSimilarityPanel Similarity => _similarityPane;
@@ -162,9 +190,11 @@ public sealed class MacMainWindow : IDisposable
         Window.FrameAutosaveName = "PhotoViewer.Native.MainWindow";
         _root = new RootView(new CGRect(0, 0, 1200, 850));
         Window.ContentView = _root;
-        _filePane = Pane(); _controlPane = new MacControlBar(RequestControlsRefresh); _photoPane = Pane(NSColor.Black);
-        _controlScroll = new MacControlScrollView { DocumentView = _controlPane, HasVerticalScroller = false, DrawsBackground = true, BackgroundColor = NSColor.FromWhite(.07f, 1), BorderType = NSBorderType.NoBorder, ScrollerStyle = NSScrollerStyle.Overlay, AutomaticallyAdjustsContentInsets = false };
-        _root.AddSubview(_filePane); _root.AddSubview(_photoPane); _root.AddSubview(_controlScroll);
+        _filePane = new FileBarMaterial(); _controlPane = new MacControlBar(RequestControlsRefresh); _photoPane = Pane(NSColor.Black);
+        _toolBackground = new ToolRegionMaterial { Hidden = true };
+        _controlScroll = new MacControlScrollView { DocumentView = _controlPane, HasVerticalScroller = false, DrawsBackground = false, BackgroundColor = NSColor.Clear, BorderType = NSBorderType.NoBorder, ScrollerStyle = NSScrollerStyle.Overlay, AutomaticallyAdjustsContentInsets = false };
+        // 主图铺满窗口并垫底；栏位材质在窗口内取样其下方照片，控制文档与滚动宿主保持透明。
+        _root.AddSubview(_photoPane); _root.AddSubview(_toolBackground); _root.AddSubview(_filePane); _root.AddSubview(_controlScroll);
         _root.AddSubview(_fileDivider); _root.AddSubview(_controlDivider);
         _dragLeft = new DragZone(); _dragRight = new DragZone();
         Photo = new MetalPhotoView(new CGRect(0, 0, 1000, 750));
@@ -230,6 +260,8 @@ public sealed class MacMainWindow : IDisposable
         _order = Popup(_main.FileVM.FilterBar.SortOrders.Select(item => item.DisplayName).ToArray());
         _ratingFilter = Popup(_main.FileVM.FilterBar.RatingFilters.Select(item => item.DisplayName).ToArray());
         _count = Label("共 0 张", 12); _count.Alignment = NSTextAlignment.Center;
+        _count.Hidden = true;
+        _capsule = Popup(["筛选"]);
 #if PHOTOVIEWER_DINO
         _similarityToggle = new FilterToggleButton("相似聚类", "展开/关闭相似聚类面板")
         {
@@ -241,12 +273,19 @@ public sealed class MacMainWindow : IDisposable
         _ratingFilter.Activated += (_, _) => _main.FileVM.FilterBar.SelectedRatingFilter = _main.FileVM.FilterBar.RatingFilters[(int)_ratingFilter.IndexOfSelectedItem].Key;
 #if PHOTOVIEWER_DINO
         _similarityToggle.Toggled = open => _main.FileVM.FilterBar.IsSimilarityPanelOpen = open;
-        foreach (var control in new NSView[] { _sort, _order, _ratingFilter, _count, _similarityToggle }) _filePane.AddSubview(control);
+        foreach (var control in new NSView[] { _sort, _order, _ratingFilter, _capsule, _similarityToggle }) _filePane.AddSubview(control);
 #else
-        foreach (var control in new NSView[] { _sort, _order, _ratingFilter, _count }) _filePane.AddSubview(control);
+        foreach (var control in new NSView[] { _sort, _order, _ratingFilter, _capsule }) _filePane.AddSubview(control);
 #endif
+        _activeFilterTarget = _sort;
+        _capsuleTarget = new CapsuleMenuTarget(this);
+        _capsuleMenu = BuildCapsuleMenu();
+        _capsuleDelegate = new CapsuleMenuDelegate(this);
+        _capsuleMenu.Delegate = _capsuleDelegate;
+        _capsule.Menu = _capsuleMenu;
+        _capsule.Hidden = true;
         _filmstripLayout = new MacFilmstripLayout();
-        _collection = new NSCollectionView(new CGRect(0, 0, 116, 680)) { CollectionViewLayout = _filmstripLayout, Selectable = false, BackgroundColors = [NSColor.FromWhite(.07f, 1)] };
+        _collection = new NSCollectionView(new CGRect(0, 0, 116, 680)) { CollectionViewLayout = _filmstripLayout, Selectable = false, BackgroundColors = [NSColor.Clear] };
         _collection.RegisterClassForItem(typeof(MacThumbnailItem), "PhotoCard");
         _source = new CollectionSource(this); _collection.DataSource = _source;
         _scroll = new MacFilmstripScrollView { DocumentView = _collection, HasVerticalScroller = true, DrawsBackground = false, BorderType = NSBorderType.NoBorder, ScrollerStyle = NSScrollerStyle.Overlay, AutomaticallyAdjustsContentInsets = false };
@@ -550,7 +589,10 @@ public sealed class MacMainWindow : IDisposable
         }
     }
 
-    /// <summary>依据共享上下/左右/自动布局排列；默认主图延伸到顶部，窄宽度常驻标题栏占顶部独立行。</summary>
+    /// <summary>
+    /// 依据共享上下/左右/自动布局排列：主图表面铺满窗口、适应区由 <see cref="ShellPaneLayout"/> 给出；
+    /// 文件栏/工具区使用系统材质宿主，筛选与控制文档只落共享几何。
+    /// </summary>
     private void Layout()
     {
         if (_disposed || _layingOut) return;
@@ -562,71 +604,137 @@ public sealed class MacMainWindow : IDisposable
             double width = (double)_root.Bounds.Width, height = (double)_root.Bounds.Height;
             _main.UpdateScreenOrientation(width, height);
             bool row = _main.IsRowLayout;
-            _count.SizeToFit();
-            double countWidth = Math.Ceiling((double)_count.Frame.Width);
+            bool fileVisible = _main.IsThumbnailViewVisible;
+            bool controlVisible = _main.IsControlViewVisible;
+            bool analysisVisible = _main.IsAnalysisViewVisible;
+            double titlebarHeight = DesignTokens.ShellTitlebarHeight;
+            double leadingInset = DesignTokens.ShellFilterLeadingInset;
+            double cardWidth = FilmCardGeometry.Width(FilmCardTier.Large);
+            double toggleWidth = DesignTokens.FilterToggleWidth;
 #if PHOTOVIEWER_DINO
             const bool includeSimilarityToggle = true;
 #else
             const bool includeSimilarityToggle = false;
 #endif
-            double filterHeight = MainScreenLayout.FilterBarMainLength(row, DesignTokens.ShellFilterLeadingInset, includeSimilarityToggle);
-            double filmstripHeight = MainScreenLayout.FilmstripBand;
-            double titlebarHeight = DesignTokens.ShellTitlebarHeight;
-            var filterFrames = MainScreenLayout.FilterBarFrames(row, row ? width : MainScreenLayout.FileBarContentWidth, DesignTokens.ShellFilterLeadingInset, countWidth, includeSimilarityToggle);
+            double sortWidth = NaturalFilterWidth(_sort), orderWidth = NaturalFilterWidth(_order),
+                ratingWidth = NaturalFilterWidth(_ratingFilter), capsuleWidth = FilmCardGeometry.Width(FilmCardTier.Large);
+            var rowFilter = WideFilterLayout.Compute(true, width, cardWidth, leadingInset, sortWidth, orderWidth,
+                ratingWidth, capsuleWidth, includeSimilarityToggle, toggleWidth);
+            var columnFilter = WideFilterLayout.Compute(false, MainScreenLayout.FileBarContentWidth, cardWidth,
+                leadingInset, sortWidth, orderWidth, ratingWidth, capsuleWidth, includeSimilarityToggle, toggleWidth);
+            double filterMain = row ? rowFilter.MainLength : columnFilter.MainLength;
             var zoom = TrafficLightInRoot(NSWindowButton.ZoomButton);
             double windowControlsRight = zoom.IsEmpty ? 0 : (double)zoom.X + (double)zoom.Width;
-            // SHELL-02：交通灯与筛选挖空相交时，标题栏改为文件栏上方的常驻通栏。
-            _titlebarPersistent = TitleBarLayout.IsPersistent(row, _main.IsThumbnailViewVisible, IsFullScreen,
-                (double)filterFrames.Sort.X, (double)filterFrames.Toggle.X + (double)filterFrames.Toggle.Width,
+            // SHELL-02：交通灯与新筛选组实际联合范围相交时，标题栏改为文件栏上方的常驻通栏。
+            _titlebarPersistent = TitleBarLayout.IsPersistent(row, fileVisible, IsFullScreen,
+                rowFilter.Control.X, includeSimilarityToggle ? rowFilter.Toggle.MaxX : rowFilter.Control.MaxX,
                 0, windowControlsRight);
             double titlebarInset = _titlebarPersistent ? titlebarHeight : 0;
-            double contentHeight = Math.Max(1, height - titlebarInset);
             double similarityColumn = 0;
 #if PHOTOVIEWER_DINO
-            bool similarityOpen = _main.IsThumbnailViewVisible && _main.FileVM.FilterBar.IsSimilarityPanelOpen;
-            if (similarityOpen) _similarityPane.SetLayout(row, row ? filmstripHeight : width);
-            similarityColumn = similarityOpen ? (row ? SimilarityRowWidth(width) : (double)_similarityPane.CrossSize + SimilarityPanelGeometry.Margin) : 0;
+            bool similarityOpen = fileVisible && _main.FileVM.FilterBar.IsSimilarityPanelOpen;
+            double bandThickness = FilmCardGeometry.BandThickness(FilmCardTier.Large, true);
+            if (similarityOpen) _similarityPane.SetLayout(row, row ? bandThickness : height);
+            similarityColumn = similarityOpen
+                ? (row ? SimilarityRowWidth(width) : (double)_similarityPane.CrossSize + SimilarityPanelGeometry.Margin)
+                : 0;
             _similarityPane.Hidden = !similarityOpen;
 #endif
-            double fileSize = _main.IsThumbnailViewVisible
-                ? MainScreenLayout.FileBarMainLength(row, filterHeight, similarityColumn)
+            double fileSize = fileVisible
+                ? MainScreenLayout.FileBarMainLength(row, filterMain, similarityColumn)
                 : 0;
-            var controlMeasure = _controlPane.Measure(row, row ? width : contentHeight);
-            double controlSize = _main.IsControlViewVisible
+            bool joined = controlVisible && analysisVisible;
+            var controlMeasure = _controlPane.Measure(row, row ? width : height, joined);
+            double controlSize = controlVisible
                 ? MainScreenLayout.ControlBarMainLength(row ? (double)controlMeasure.Height : (double)controlMeasure.Width)
                 : 0;
-            // 分析栏占主图与相邻栏位之间的一条：行布局在主图下方、列布局在主图右侧，
-            // 主轴可用长度与交叉轴尺寸（瓦片边长 + 20）都和旧壳 AnalysisView 同口径。
-            bool analysisVisible = _main.IsAnalysisViewVisible;
-            double analysisMain = row ? width : contentHeight;
-            double analysisSize = analysisVisible ? _analysisPane.CrossSize(analysisMain) : 0;
+            double analysisMain = row ? width : height;
+            double analysisSize = analysisVisible ? _analysisPane.CrossSize(analysisMain, joined) : 0;
             _filePane.Hidden = _fileDivider.Hidden = fileSize == 0;
-            _controlScroll.Hidden = _controlDivider.Hidden = controlSize == 0;
+            _controlScroll.Hidden = controlSize == 0;
             _analysisPane.Hidden = !analysisVisible;
             if (!analysisVisible) HideDetailHighlight();
-            _filePane.Layer!.BackgroundColor = NSColor.FromWhite(.067f, 1).CGColor;
-            _photoPane.Layer!.BackgroundColor = NSColor.Black.CGColor;
-            _controlScroll.BackgroundColor = NSColor.FromWhite(.067f, 1);
-            // 两向分区与分隔线由共享 MainScreenLayout 计算；窄宽度常驻栏占用顶部独立行，其余分区整体下移。
-            var panes = MainScreenLayout.Partition(row, width, contentHeight, fileSize, controlSize, analysisSize);
-            _filePane.Frame = ToFrame(panes.FileBar, titlebarInset);
-            _fileDivider.Frame = ToFrame(panes.FileDivider, titlebarInset);
-            _controlScroll.Frame = ToFrame(panes.ControlBar, titlebarInset);
-            _controlDivider.Frame = ToFrame(panes.ControlDivider, titlebarInset);
-            _photoPane.Frame = ToFrame(panes.Photo, titlebarInset);
-            _analysisPane.Frame = ToFrame(panes.Analysis, titlebarInset);
-            if (analysisVisible) _analysisPane.Arrange(row, analysisMain);
+            var safe = new EdgeInsets(0, titlebarInset, 0, 0);
+            var panes = ShellPaneLayout.Partition(row, width, height, safe, fileSize, controlSize, analysisSize);
+            var photoRect = panes.Photo;
+            _fitArea = photoRect;
+            _photoPane.Frame = new CGRect(0, 0, width, height);
             Photo.Frame = _photoPane.Bounds;
+            Photo.SetFitInsets(new EdgeInsets(
+                Math.Max(0, photoRect.X), Math.Max(0, photoRect.Y),
+                Math.Max(0, width - photoRect.MaxX), Math.Max(0, height - photoRect.MaxY)));
+            _filePane.Frame = ToFrame(panes.FileBar);
+            _fileDivider.Frame = ToFrame(panes.FileDivider);
+            _controlScroll.Frame = ToFrame(panes.ControlContent);
+            _analysisPane.Frame = ToFrame(panes.Analysis);
+            if (analysisVisible) _analysisPane.Arrange(row, analysisMain, joined);
+            bool showsToolBackground = analysisVisible || controlVisible && _controlPane.ExifItemCount > 0;
+            var toolRegion = panes.ControlBackground;
+            _toolBackground.Hidden = !showsToolBackground || toolRegion.Width <= 0 || toolRegion.Height <= 0;
+            if (!_toolBackground.Hidden) _toolBackground.Frame = ToFrame(toolRegion);
+            // SHELL-12：连续材质宿主只在朝主图的外边界画一条分隔线，分析与控制共处同一工具区。
+            _controlDivider.Hidden = _toolBackground.Hidden;
+            _controlDivider.Frame = row
+                ? new CGRect(toolRegion.X, toolRegion.Y, toolRegion.Width, MainScreenLayout.Divider)
+                : new CGRect(toolRegion.X, 0, MainScreenLayout.Divider, height);
+
+            var filterFrames = row ? rowFilter : columnFilter;
+            _filterFrames = filterFrames;
+            _filterCapsule = filterFrames.Mode == FilterControlMode.Capsule;
+            _filterToggleVisible = includeSimilarityToggle && fileVisible;
+            var content = panes.FileContent;
+            var controlFrame = Absolute(content, filterFrames.Control);
+            _capsule.Hidden = !fileVisible || !_filterCapsule;
+            _sort.Hidden = _order.Hidden = _ratingFilter.Hidden = !fileVisible || _filterCapsule;
+            if (_filterCapsule)
+            {
+                _capsule.Frame = controlFrame;
+                ResetCapsuleEntry();
+                _activeFilterTarget = _capsule;
+            }
+            else
+            {
+                _sort.Frame = Absolute(content, Offset(filterFrames.Control, filterFrames.Sort));
+                _order.Frame = Absolute(content, Offset(filterFrames.Control, filterFrames.Order));
+                _ratingFilter.Frame = Absolute(content, Offset(filterFrames.Control, filterFrames.Rating));
+                _activeFilterTarget = _sort;
+            }
+            var countHost = _filterCapsule ? _capsule : _ratingFilter;
+            if (_count.Superview != countHost)
+            {
+                _count.RemoveFromSuperview();
+                countHost.AddSubview(_count);
+            }
+            _count.Hidden = !fileVisible;
+            _count.Frame = new CGRect(0, countHost.Bounds.Height - 13, countHost.Bounds.Width, 11);
+            _count.Font = NSFont.SystemFontOfSize(9) ?? throw new InvalidOperationException("系统字体不可用");
+#if PHOTOVIEWER_DINO
+            _similarityToggle.Hidden = !_filterToggleVisible;
+            if (_filterToggleVisible) _similarityToggle.Frame = Absolute(content, filterFrames.Toggle);
+            _filterUnion = new LayoutRect(content.X + filterFrames.Control.X, 0,
+                (_filterToggleVisible ? filterFrames.Toggle.MaxX : filterFrames.Control.MaxX) - filterFrames.Control.X,
+                titlebarHeight);
+#else
+            _filterUnion = new LayoutRect(content.X + filterFrames.Control.X, 0, filterFrames.Control.Width, titlebarHeight);
+#endif
+            // 列布局胶片列表纵贯全高并从筛选组下方滚过：筛选组作为浮层保持在列表之上。
+            foreach (var overlay in new[] { _sort, _order, _ratingFilter, _capsule })
+                _filePane.AddSubview(overlay, NSWindowOrderingMode.Above, null);
+#if PHOTOVIEWER_DINO
+            _filePane.AddSubview(_similarityToggle, NSWindowOrderingMode.Above, null);
+#endif
+
             _busyPill.Frame = new CGRect(
-                Math.Max(0, ((double)_photoPane.Bounds.Width - DesignTokens.ImageBusyWidth) / 2),
-                Math.Max(0, (double)_photoPane.Bounds.Height - DesignTokens.ImageBusyBottomOffset - DesignTokens.ImageBusyHeight),
+                Math.Max(0, (double)photoRect.X + ((double)photoRect.Width - DesignTokens.ImageBusyWidth) / 2),
+                Math.Max(0, (double)photoRect.MaxY - DesignTokens.ImageBusyBottomOffset - DesignTokens.ImageBusyHeight),
                 DesignTokens.ImageBusyWidth,
                 DesignTokens.ImageBusyHeight);
             _toast.StackOverBusyPill = !_busyPill.Hidden;
-            _toast.Layout(_photoPane.Bounds);
-            double hintWidth = Math.Max(1, Math.Min(500, (double)_photoPane.Bounds.Width - 20));
-            double hintLeft = ((double)_photoPane.Bounds.Width - hintWidth) / 2;
-            double hintTop = Math.Max(0, ((double)_photoPane.Bounds.Height - (_hintDetail.StringValue.Length > 0 ? 80 : 20)) / 2);
+            _toast.Layout(FitArea);
+            double hintWidth = Math.Max(1, Math.Min(500, (double)photoRect.Width - 20));
+            double hintLeft = (double)photoRect.X + ((double)photoRect.Width - hintWidth) / 2;
+            double hintTop = (double)photoRect.Y
+                + Math.Max(0, ((double)photoRect.Height - (_hintDetail.StringValue.Length > 0 ? 80 : 20)) / 2);
             _hint.Frame = new CGRect(hintLeft, hintTop, hintWidth, 20);
             if (!_hintDetailSuffix.Hidden)
             {
@@ -647,22 +755,30 @@ public sealed class MacMainWindow : IDisposable
                 _hintDetailSeparator.Frame = CGRect.Empty;
                 _hintDetailSuffix.Frame = CGRect.Empty;
             }
-            _sort.Frame = ToFrame(filterFrames.Sort);
-            _order.Frame = ToFrame(filterFrames.Order);
-            _ratingFilter.Frame = ToFrame(filterFrames.Rating);
-            _count.Frame = ToFrame(filterFrames.Count);
-#if PHOTOVIEWER_DINO
-            _similarityToggle.Frame = ToFrame(filterFrames.Toggle);
-#endif
-            _scroll.Frame = row
-                ? new CGRect(0, filterHeight, Math.Max(1, width - similarityColumn), filmstripHeight)
-                : new CGRect(0, filterHeight, MainScreenLayout.FileBarContentWidth, Math.Max(1, height - filterHeight));
+            if (fileVisible)
+            {
+                if (row)
+                {
+                    _scroll.Frame = new CGRect(content.X, content.Y + filterMain,
+                        Math.Max(1, content.Width - similarityColumn), Math.Max(1, content.Height - filterMain));
+                }
+                else
+                {
+                    _scroll.Frame = new CGRect(content.X, 0, content.Width, height);
+                }
+            }
+            double edgePadding = row ? 0 : Math.Max(0, filterMain - FilmCardGeometry.MainLead(FilmCardTier.Large, false));
+            bool edgeChanged = Math.Abs(_filmstripLayout.EdgePadding - edgePadding) > .01;
+            _filmstripLayout.Tier = FilmCardTier.Large;
+            _filmstripLayout.EdgePadding = edgePadding;
 #if PHOTOVIEWER_DINO
             if (similarityOpen)
             {
                 _similarityPane.Frame = row
-                    ? new CGRect(width - similarityColumn, filterHeight, Math.Max(1, similarityColumn - SimilarityPanelGeometry.Margin), (nfloat)_similarityPane.CrossSize)
-                    : new CGRect(MainScreenLayout.FileBarContentWidth, filterHeight, (nfloat)_similarityPane.CrossSize, Math.Max(1, height - filterHeight));
+                    ? new CGRect(content.X + content.Width - similarityColumn, content.Y + filterMain,
+                        Math.Max(1, similarityColumn - SimilarityPanelGeometry.Margin), (nfloat)_similarityPane.CrossSize)
+                    : new CGRect(content.MaxX, filterMain, (nfloat)_similarityPane.CrossSize,
+                        Math.Max(1, height - filterMain));
             }
 #endif
             bool axisChanged = _filmstripLayout.Horizontal != row;
@@ -670,14 +786,13 @@ public sealed class MacMainWindow : IDisposable
             _filmstripLayout.Horizontal = row;
             _scroll.Horizontal = row;
             _scroll.HasVerticalScroller = !row; _scroll.HasHorizontalScroller = row;
-            if (axisChanged || previousViewport != _scroll.ContentView.Bounds.Size || _collection.Frame.Size != _filmstripLayout.CollectionViewContentSize)
+            if (axisChanged || edgeChanged || previousViewport != _scroll.ContentView.Bounds.Size
+                || _collection.Frame.Size != _filmstripLayout.CollectionViewContentSize)
                 UpdateFilmstripLayout();
             if (axisChanged) ScrollToCurrent();
-            _controlScroll.HasHorizontalScroller = row && controlMeasure.Width > width;
-            // TOOLBAR-08：只有列布局且整条文档在竖轴溢出时才开竖向滚动条；行布局不需要竖向滚动，
-            // 开着它会让系统在 legacy 滚动条偏好下常驻 17 点竖槽并挤窄裁剪区。
-            _controlScroll.HasVerticalScroller = !row && controlMeasure.Height > height;
-            _controlPane.Arrange(_controlScroll.ContentView.Bounds.Size);
+            _controlPane.Arrange(_controlScroll.ContentView.Bounds.Size, row, joined);
+            _controlScroll.HasHorizontalScroller = row && _controlPane.Frame.Width > (double)_controlScroll.ContentView.Bounds.Width;
+            _controlScroll.HasVerticalScroller = !row && _controlPane.Frame.Height > (double)_controlScroll.ContentView.Bounds.Height;
             // TOOLBAR-08：重建/换向只夹取到合法范围，不把用户滚动位置重置回起点。
             var controlOffset = _controlScroll.ContentView.Bounds.Location;
             var controlDocument = _controlPane.Frame.Size;
@@ -690,13 +805,13 @@ public sealed class MacMainWindow : IDisposable
                 _controlScroll.ContentView.ScrollToPoint(clampedOffset);
                 _controlScroll.ReflectScrolledClipView(_controlScroll.ContentView);
             }
-            // SHELL-02：悬停覆盖层在行布局挖空筛选控件；窄宽度常驻栏、列布局和文件栏隐藏都是通栏带。
+            // SHELL-02：悬停覆盖层在行布局挖空新筛选组（含相似开关）的实际联合范围。
             bool fileBarRow = row && fileSize > 0;
             bool titlebarCutout = TitleBarLayout.HasCutout(row, fileBarRow, _titlebarPersistent);
-            double dragStart = titlebarCutout ? (double)_sort.Frame.X : width;
-            double dragEnd = titlebarCutout
-                ? (double)filterFrames.Toggle.X + (double)filterFrames.Toggle.Width
-                : width;
+            double unionLeft = (double)_filterUnion.X;
+            double unionRight = (double)_filterUnion.MaxX;
+            double dragStart = titlebarCutout ? unionLeft : width;
+            double dragEnd = titlebarCutout ? unionRight : width;
             _dragLeft.Frame = new CGRect(0, 0, _titlebarPersistent ? width : dragStart, titlebarHeight);
             _dragRight.Frame = new CGRect(dragEnd, 0, Math.Max(0, width - dragEnd), titlebarHeight);
             _titlebarBackdrop = TitleBarLayout.HasBackdrop(row, fileBarRow, _titlebarPersistent);
@@ -709,6 +824,111 @@ public sealed class MacMainWindow : IDisposable
             _lastRootSize = _root.Bounds.Size;
         }
         finally { _layingOut = false; }
+    }
+
+    /// <summary>把文件栏内容区坐标里的共享矩形换算成窗口坐标。</summary>
+    private static CGRect Absolute(LayoutRect content, LayoutRect rect)
+        => new(content.X + rect.X, content.Y + rect.Y, rect.Width, rect.Height);
+
+    /// <summary>筛选段矩形相对控件左上角，叠加控件原点后才是内容区坐标。</summary>
+    private static LayoutRect Offset(LayoutRect control, LayoutRect segment)
+        => new(control.X + segment.X, control.Y + segment.Y, segment.Width, segment.Height);
+
+    /// <summary>筛选段的自然宽：逐项选中后让原生控件按自身文本与箭头测宽，取最大值。</summary>
+    private static double NaturalFilterWidth(NSPopUpButton popup)
+    {
+        int selected = (int)popup.IndexOfSelectedItem;
+        double width = 0;
+        int items = popup.Menu?.Items.Length ?? 0;
+        for (int index = 0; index < items; index++)
+        {
+            popup.SelectItem(index);
+            popup.SizeToFit();
+            width = Math.Max(width, (double)popup.Frame.Width);
+        }
+        if (selected >= 0) popup.SelectItem(selected);
+        return Math.Ceiling(width);
+    }
+
+    /// <summary>单胶囊回退菜单：排序、方向与星级筛选三组无标题内联单选组，沿用同一业务属性。</summary>
+    private NSMenu BuildCapsuleMenu()
+    {
+        var menu = new NSMenu("筛选");
+        var filter = _main.FileVM.FilterBar;
+        _capsuleChecks.Clear();
+        _capsuleActions.Clear();
+        // 入口标题固定为「筛选」；该行只承载标题，禁用后键盘导航从排序组开始。
+        var entry = new NSMenuItem("筛选", (_, _) => { }) { State = NSCellStateValue.On, Enabled = false };
+        menu.AddItem(entry);
+        menu.AddItem(NSMenuItem.SeparatorItem);
+        AddGroup(menu, filter.SortModes.Select(item => (item.DisplayName, (Func<bool>)(() => (SortMode)item.Value == filter.SortMode),
+            (Action)(() => filter.SortMode = (SortMode)item.Value))));
+        menu.AddItem(NSMenuItem.SeparatorItem);
+        AddGroup(menu, filter.SortOrders.Select(item => (item.DisplayName, (Func<bool>)(() => (SortOrder)item.Value == filter.SortOrder),
+            (Action)(() => filter.SortOrder = (SortOrder)item.Value))));
+        menu.AddItem(NSMenuItem.SeparatorItem);
+        AddGroup(menu, filter.RatingFilters.Select(item => (item.DisplayName, (Func<bool>)(() => item.Key == filter.SelectedRatingFilter),
+            (Action)(() => filter.SelectedRatingFilter = item.Key))));
+        return menu;
+
+        void AddGroup(NSMenu target, IEnumerable<(string Title, Func<bool> Checked, Action Apply)> entries)
+        {
+            foreach (var entry in entries)
+            {
+                var item = new NSMenuItem(entry.Title)
+                {
+                    Target = _capsuleTarget,
+                    Action = new ObjCRuntime.Selector("applyCapsule:"),
+                    Tag = target.Items.Length,
+                };
+                item.State = entry.Checked() ? NSCellStateValue.On : NSCellStateValue.Off;
+                target.AddItem(item);
+                _capsuleChecks.Add((item, entry.Checked));
+                _capsuleActions[(int)item.Tag] = entry.Apply;
+            }
+        }
+    }
+
+    /// <summary>菜单每次展开前只同步勾选，不重建条目，避免菜单跟踪期间换掉正在派发的项。</summary>
+    private void UpdateCapsuleMenuStates()
+    {
+        foreach (var (item, checkedState) in _capsuleChecks)
+            item.State = checkedState() ? NSCellStateValue.On : NSCellStateValue.Off;
+    }
+
+    /// <summary>菜单展开前同步勾选，关闭后只把入口显示复位；业务动作由菜单项自身的 target/action 提交。</summary>
+    private sealed class CapsuleMenuDelegate(MacMainWindow owner) : NSMenuDelegate
+    {
+        public override void MenuWillOpen(NSMenu menu) => owner.UpdateCapsuleMenuStates();
+
+        public override void MenuDidClose(NSMenu menu)
+        {
+            owner.ResetCapsuleEntry();
+            owner.UpdateCapsuleMenuStates();
+        }
+    }
+
+    /// <summary>应用单胶囊菜单选中项：菜单项动作与鼠标、键盘走同一条 target/action 路径。</summary>
+    private void ApplyCapsuleSelection(int index)
+    {
+        if (_capsuleActions.TryGetValue(index, out var action)) action();
+        UpdateCapsuleMenuStates();
+    }
+
+    /// <summary>
+    /// 入口显示回到「筛选」行。<see cref="NSPopUpButton"/> 的选中项是它自己的状态，菜单展开与收起不会改动它；
+    /// 只有真的被改过才写回，避免在菜单跟踪期间反复改写选中项去打断正在派发的会话。
+    /// </summary>
+    private void ResetCapsuleEntry()
+    {
+        if (_capsule.IndexOfSelectedItem != 0) _capsule.SelectItem(0);
+    }
+
+    /// <summary>单胶囊菜单的原生 target：菜单项动作按序号回到主窗口业务回调。</summary>
+    private sealed class CapsuleMenuTarget(MacMainWindow owner) : NSObject
+    {
+        [Foundation.Export("applyCapsule:")]
+        public void Apply(NSMenuItem item) => owner.ApplyCapsuleSelection((int)item.Tag);
     }
 
     /// <summary>系统全屏态：全屏没有自绘标题栏，顶部交给系统（SHELL-02/03）。</summary>
@@ -898,7 +1118,11 @@ public sealed class MacMainWindow : IDisposable
 
     /// <summary>在主图区底部显示一条 STATE-03 提示；新提示替换旧提示并重置计时。</summary>
     /// <param name="message">提示正文。</param>
-    internal void ShowToast(string message) => _toast.Show(message);
+    internal void ShowToast(string message)
+    {
+        _toast.Show(message);
+        _toast.Layout(FitArea);
+    }
     /// <summary>执行本阶段可用命令，缩放命令直接作用于原生视口。</summary>
     public void Execute(string command)
     {
@@ -956,7 +1180,7 @@ public sealed class MacMainWindow : IDisposable
         if ((nativeEvent.ModifierFlags & (NSEventModifierMask.CommandKeyMask | NSEventModifierMask.AlternateKeyMask
             | NSEventModifierMask.ControlKeyMask | NSEventModifierMask.ShiftKeyMask)) != 0) return false;
         var point = _root.ConvertPointFromView(nativeEvent.LocationInWindow, null);
-        if (!_photoPane.Frame.Contains(point)) return false;
+        if (!FitArea.Contains(point)) return false;
         if (!Window.StyleMask.HasFlag(FullScreenStyleBit) && (_dragLeft.Frame.Contains(point) || _dragRight.Frame.Contains(point))) return false;
         var frameView = _root.Superview;
         if (frameView == null || !ReferenceEquals(frameView.HitTest(frameView.ConvertPointFromView(nativeEvent.LocationInWindow, null)), Photo)) return false;
@@ -1087,6 +1311,7 @@ public sealed class MacMainWindow : IDisposable
         _sort.SelectItem(filter.SortModes.FindIndex(item => (SortMode)item.Value == filter.SortMode));
         _order.SelectItem(filter.SortOrders.FindIndex(item => (SortOrder)item.Value == filter.SortOrder));
         _ratingFilter.SelectItem(filter.RatingFilters.FindIndex(item => item.Key == filter.SelectedRatingFilter));
+        UpdateCapsuleMenuStates();
 #if PHOTOVIEWER_DINO
         _similarityToggle.IsOn = filter.IsSimilarityPanelOpen;
         if (args.PropertyName == nameof(FilterBarViewModel.IsSimilarityPanelOpen)) Layout();
@@ -1175,7 +1400,9 @@ public sealed class MacMainWindow : IDisposable
         var size = Photo.NavigationSize;
         double width = (double)size.Width, height = (double)size.Height;
         double hostWidth = width + 16, hostHeight = height + 16 + 8 + 15 + 2;
-        _navigationHost.Frame = new CGRect(Math.Max(0, (double)_photoPane.Bounds.Width - hostWidth - 12), Math.Max(0, (double)_photoPane.Bounds.Height - hostHeight - 12), hostWidth, hostHeight);
+        _navigationHost.Frame = new CGRect(
+            Math.Max(0, (double)_fitArea.MaxX - hostWidth - 12),
+            Math.Max(0, (double)_fitArea.MaxY - hostHeight - 12), hostWidth, hostHeight);
         _navigationImage.Frame = new CGRect(8, 8, width, height);
         _zoomLabel.Frame = new CGRect(8, height + 16, width, 15);
         if (!ReferenceEquals(_navigationSource, Session.Image))
@@ -1677,6 +1904,33 @@ public sealed class MacMainWindow : IDisposable
     private sealed class PassThroughLabel : NSTextField
     {
         /// <summary>不拦截鼠标事件，使主图空状态提示可穿透点击。</summary>
+        public override NSView? HitTest(CGPoint aPoint) => null;
+    }
+
+    /// <summary>SHELL-12：文件栏系统深色模糊材质，窗口内取样照片；控件子视图直接叠在材质上。</summary>
+    private sealed class FileBarMaterial : NSVisualEffectView
+    {
+        public FileBarMaterial()
+        {
+            Material = NSVisualEffectMaterial.Sidebar;
+            BlendingMode = NSVisualEffectBlendingMode.WithinWindow;
+            State = NSVisualEffectState.Active;
+            Appearance = NSAppearance.GetAppearance(NSAppearance.NameDarkAqua);
+        }
+        public override bool IsFlipped => true;
+    }
+
+    /// <summary>SHELL-12：分析栏与控制栏共同工具区的连续材质宿主，窗口内取样且只在朝主图一侧保留外边界。</summary>
+    private sealed class ToolRegionMaterial : NSVisualEffectView
+    {
+        public ToolRegionMaterial()
+        {
+            Material = NSVisualEffectMaterial.Sidebar;
+            BlendingMode = NSVisualEffectBlendingMode.WithinWindow;
+            State = NSVisualEffectState.Active;
+            Appearance = NSAppearance.GetAppearance(NSAppearance.NameDarkAqua);
+        }
+        public override bool IsFlipped => true;
         public override NSView? HitTest(CGPoint aPoint) => null;
     }
 

@@ -17,7 +17,8 @@
 import { FileList } from "./filter.js";
 import { displayStars, hasRatingConflict } from "./rating.js";
 import { Viewport, displaySize } from "./viewport.js";
-import { FilmScroller, FilmPositioner, contentLength } from "./filmscroll.js";
+import { FilmScroller, FilmPositioner } from "./filmscroll.js";
+import { filmCenterOffset } from "./layout/film.js";
 import { PhotoSession, RatingWriter } from "./session.js";
 import { AnalysisPresenter } from "./analysis.js";
 import { DisabledSimilarityPanel, SimilarityPanel } from "./similarity.js";
@@ -30,9 +31,10 @@ import { formatExifDetail, formatExifValue } from "./exifformat.js";
 const SETTINGS_KEY = "PhotoViewer.Settings";
 const SHOW_FILM_KEY = "PhotoViewer.Native.ShowFilm";
 const SHOW_CONTROLS_KEY = "PhotoViewer.Native.ShowControls";
+const SHOW_EXIF_KEY = "PhotoViewer.Native.ShowExif";
 const CACHE_LIMIT_DEFAULT = 30;
 const HISTORY_LIMIT = 50;
-const LAYOUT_MODES = new Set(["auto", "row", "col"]);
+const LAYOUT_MODES = new Set(["auto", "row", "col", "phone"]);
 const LAYOUT_REGIONS = new Set([
     "window", "layout", "list", "panes", "toolbar", "analysis", "similarity", "current", "settings",
 ]);
@@ -121,7 +123,7 @@ export function normalizeSettings(raw, base = defaultSettings()) {
     if (!raw || typeof raw !== "object") return out;
     if (LAYOUT_MODES.has(raw.layoutMode)) out.layoutMode = raw.layoutMode;
     for (const key of [
-        "showZoomIndicator", "showRating", "safeSetRating", "sameNameAsOne",
+        "showZoomIndicator", "showRating", "showNavigationButtons", "safeSetRating", "sameNameAsOne",
         "similarityPanelExpanded", "appleKeyboard",
     ]) {
         if (typeof raw[key] === "boolean") out[key] = raw[key];
@@ -187,10 +189,12 @@ class MainApp {
 
         this._settings = this._loadSettings(settings);
         this._window = { width: 0, height: 0 };
+        this._safeArea = { top: 0, right: 0, bottom: 0, left: 0, source: "env" };
         this._panes = {
             film: this._read(SHOW_FILM_KEY) !== "false",
             control: this._read(SHOW_CONTROLS_KEY) !== "false",
             analysis: false,
+            exif: this._read(SHOW_EXIF_KEY) !== "false",
         };
         this._folder = null;
         this._singleMode = false;
@@ -327,6 +331,44 @@ class MainApp {
         }
         this._syncProxyAndWantFull();
         this._invalidate(["window", "layout", "viewport"]);
+        return true;
+    }
+
+    setLayoutModeOverride(mode) {
+        if (!LAYOUT_MODES.has(mode) || this._settings.layoutMode === mode) return false;
+        const previousMode = this._layout ? this._layout.layoutMode : null;
+        this._settings = { ...this._settings, layoutMode: mode };
+        this._recomputeLayout();
+        if (previousMode && previousMode !== this._layout.layoutMode) {
+            this._positioner?.onAxisChanged();
+            this._requestLocate("reshow");
+        } else {
+            this.filmResized();
+        }
+        this._syncProxyAndWantFull();
+        this._invalidate(["settings", "layout", "viewport", "panes", "toolbar"]);
+        return true;
+    }
+
+    setSafeArea(area, source = "env") {
+        const read = (key) => {
+            const value = Number(area?.[key]);
+            return Number.isFinite(value) && value > 0 ? value : 0;
+        };
+        const next = {
+            top: read("top"),
+            right: read("right"),
+            bottom: read("bottom"),
+            left: read("left"),
+            source,
+        };
+        const previous = this._safeArea;
+        if (previous.top === next.top && previous.right === next.right
+            && previous.bottom === next.bottom && previous.left === next.left
+            && previous.source === next.source) return false;
+        this._safeArea = next;
+        this._recomputeLayout();
+        this._invalidate(["window", "layout", "viewport", "panes"]);
         return true;
     }
 
@@ -476,10 +518,10 @@ class MainApp {
         });
     }
 
-    toggleFilmbar() {
+    toggleFilmbar({ persist = true } = {}) {
         const next = !this._panes.film;
         this._panes.film = next;
-        this._write(SHOW_FILM_KEY, next ? "true" : "false");
+        if (persist) this._write(SHOW_FILM_KEY, next ? "true" : "false");
         this._similarity.setFilebarVisible(next);
         this._recomputeLayout();
         this._syncProxyAndWantFull();
@@ -494,14 +536,31 @@ class MainApp {
         return next;
     }
 
-    toggleControlbar() {
+    toggleControlbar({ persist = true } = {}) {
         const next = !this._panes.control;
         this._panes.control = next;
-        this._write(SHOW_CONTROLS_KEY, next ? "true" : "false");
+        if (persist) this._write(SHOW_CONTROLS_KEY, next ? "true" : "false");
         this._recomputeLayout();
         this._syncProxyAndWantFull();
         this._invalidate(["panes", "layout", "viewport"]);
         return next;
+    }
+
+    toggleExif() {
+        const next = !this._panes.exif;
+        this._panes.exif = next;
+        this._write(SHOW_EXIF_KEY, next ? "true" : "false");
+        this._recomputeLayout();
+        this._invalidate(["panes", "layout", "viewport"]);
+        return next;
+    }
+
+    toggleNavigation() {
+        this._settings = normalizeSettings({ ...this._settings, showNavigationButtons: !this._settings.showNavigationButtons }, this._settings);
+        this._persistSettings();
+        this._recomputeLayout();
+        this._invalidate(["settings", "layout", "viewport", "toolbar"]);
+        return this._settings.showNavigationButtons;
     }
 
     toggleAnalysis() {
@@ -615,6 +674,8 @@ class MainApp {
                 return this.toggleAnalysis();
             case "control":
                 return this.toggleControlbar();
+            case "exif":
+                return this.toggleExif();
             case "enhance":
                 return this.toggleEnhance();
             default:
@@ -724,8 +785,9 @@ class MainApp {
 
     filmResized() {
         if (!this._positioner) return;
-        const axis = this._layout && this._layout.layoutMode === "col" ? "y" : "x";
-        this._positioner.onResize(contentLength(this._fileList.count, axis, this._t), this._filmViewportLengthValue());
+        const film = this._layout?.film;
+        if (!film) return;
+        this._positioner.onResize(film.contentLength, this._filmViewportLengthValue());
     }
 
     bindFilmScroller({ getOffset, setOffset, viewportLength } = {}) {
@@ -868,6 +930,9 @@ class MainApp {
             { id: "film", group: "panes", label: "胶片栏", type: "check", checked: this._panes.film, enabled: true, icon: "icon.menu.filmstrip", shortcut: null },
             { id: "analysis", group: "panes", label: "分析栏", type: "check", checked: this._panes.analysis, enabled: true, icon: "icon.menu.analysis", shortcut: shortcut("ToggleAnalysisView") },
             { id: "control", group: "panes", label: "控制栏", type: "check", checked: this._panes.control, enabled: true, icon: "icon.menu.control", shortcut: null },
+            ...(this._layout?.form === "phone"
+                ? [{ id: "exif", group: "panes", label: "EXIF", type: "check", checked: this._panes.exif, enabled: true, icon: null, shortcut: null }]
+                : []),
             { id: "enhance", group: "preview", label: "雾天增强", type: "check", checked: Boolean(this._sessionSnap.enhance), enabled: Boolean(photo), icon: "icon.command.toggleEnhance", shortcut: shortcut("ToggleEnhance") },
         ];
     }
@@ -1024,15 +1089,21 @@ class MainApp {
 
     _filmGeometry() {
         if (!this._panes.film) return null;
-        const axis = this._layout && this._layout.layoutMode === "col" ? "y" : "x";
+        if (this._layoutDirty || !this._layout || this._layout.film?.items.length !== this._fileList.count) {
+            this._recomputeLayout();
+        }
+        const axis = this._layout?.film?.axis ?? "x";
         const count = this._fileList.count;
         const index = this._anchorId ? this._fileList.cardIndexOf(this._anchorId) : -1;
         if (count <= 0 || index < 0) return null;
+        const viewportLength = this._filmViewportLengthValue();
+        const film = this._layout?.film;
         return {
             axis,
             count,
             index,
-            viewportLength: this._filmViewportLengthValue(),
+            viewportLength,
+            offset: film ? filmCenterOffset(film, index, viewportLength, this._t) : null,
         };
     }
 
@@ -1040,7 +1111,7 @@ class MainApp {
         // FILM-02：定位按最新布局几何计算；布局在动作内同步重算，壳层回调可能仍是上一帧的尺寸。
         const film = this._layout?.film;
         if (film && this._panes.film) {
-            const length = this._layout.layoutMode === "col" ? film.scroll.h : film.scroll.w;
+            const length = film.axis === "y" ? film.scroll.h : film.scroll.w;
             if (finite(length) && length > 0) return length;
         }
         if (typeof this._filmViewportLength === "function") {
@@ -1078,6 +1149,9 @@ class MainApp {
             width: this._window.width,
             height: this._window.height,
             layoutMode: this._settings.layoutMode,
+            safeArea: this._safeArea,
+            showExif: this._panes.exif,
+            showNavigation: this._settings.showNavigationButtons !== false,
             showFilmbar: this._panes.film,
             showControlbar: this._panes.control,
             showAnalysis: this._panes.analysis,
@@ -1100,8 +1174,13 @@ class MainApp {
             profile: this._profile,
             measureText: this._measureText,
         });
-        const pane = this._layout.panes.photoPane;
-        this._viewport.setViewSize(pane.w, pane.h);
+        const view = this._layout.panes.photoView;
+        this._viewport.setViewSize(view.w, view.h);
+        this._viewport.setFitRect(this._layout.panes.fitRect);
+        // FILTER-07：手机形态没有相似聚类入口与面板，开关状态保留但不工作。
+        if (this._similarity && this._capabilities.similarity) {
+            this._similarity.setFilebarVisible(this._panes.film && this._layout.form === "wide");
+        }
         this._layoutDirty = false;
     }
 

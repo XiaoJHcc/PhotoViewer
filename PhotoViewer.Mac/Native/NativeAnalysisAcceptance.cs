@@ -35,21 +35,21 @@ internal static class NativeAnalysisAcceptance
         bool filmVisible = main.IsThumbnailViewVisible, controlVisible = main.IsControlViewVisible;
         try
         {
+            window.Window.SetContentSize(new CGSize(1200, 850));
             settings.LayoutMode = LayoutMode.Row;
             await SettleAsync(window);
 
             // 1) 初始隐藏，且不参与布局。
             if (main.IsAnalysisViewVisible || !panel.Hidden) throw new InvalidOperationException("分析栏初始应为隐藏");
             var root = window.Window.ContentView ?? throw new InvalidOperationException("原生内容视图缺失");
-            var photoPane = root.Subviews.Single(view => view.Subviews.Contains(window.Photo));
-            double baselinePhotoHeight = (double)photoPane.Frame.Height;
+            double baselinePhotoHeight = (double)window.Photo.FitArea.Height;
             checks.Add("initial: analysis panel hidden and excluded from layout");
 
             // 2) 命令入口：ToggleAnalysisView 打开分析栏并使主图让出空间。
             window.Execute("ToggleAnalysisView");
             await SettleAsync(window);
             if (!main.IsAnalysisViewVisible || panel.Hidden) throw new InvalidOperationException("ToggleAnalysisView 未显示分析栏");
-            if ((double)photoPane.Frame.Height >= baselinePhotoHeight) throw new InvalidOperationException("分析栏显示后主图未让出空间");
+            if ((double)window.Photo.FitArea.Height >= baselinePhotoHeight) throw new InvalidOperationException("分析栏显示后主图未让出空间");
             VerifyGeometry(window, panel, row: true, checks);
             VerifyTiles(panel, checks);
 
@@ -114,9 +114,10 @@ internal static class NativeAnalysisAcceptance
             await WaitAsync(() => main.CurrentFile?.Name == Path.GetFileName(lowContrast), "低对比度素材成为当前照片");
             // Mac 展示编码恒为 F16 线性 scRGB；这里只要求已是全分辨率（代理档不参与增强回归）。
             await WaitAsync(() => window.Session.Image != null && !window.Session.IsProxy, "低对比度素材 Full 档");
+            window.Photo.FitToView();
             await SettleAsync(window);
             (double Mean, int Max) difference;
-            using (var before = CaptureSrgbFrame(window))
+            using (var before = CapturePhotoSrgbFrame(window))
             {
                 window.Execute("ToggleEnhance");
                 if (!window.Session.IsEnhanced) throw new InvalidOperationException("ToggleEnhance 未开启增强预览");
@@ -124,15 +125,17 @@ internal static class NativeAnalysisAcceptance
                 var enhancedBytes = window.Session.Image?.ByteCount ?? 0;
                 if (enhancedBytes <= 0) throw new InvalidOperationException("增强图缺少像素数据");
                 await SettleAsync(window);
-                using var after = CaptureSrgbFrame(window);
+                using var after = CapturePhotoSrgbFrame(window);
                 difference = EnhancementAcceptance.MeasureDifference(before, after);
+                using (var beforeFile = File.Create(Path.Combine(output, "enhance-before.png"))) SkiaImageCodec.SavePng(before, beforeFile);
+                using (var afterFile = File.Create(Path.Combine(output, "enhance-after.png"))) SkiaImageCodec.SavePng(after, afterFile);
                 if (difference.Mean < 6 || difference.Max < 30)
                     throw new InvalidOperationException(
                         $"增强预览未改变上屏像素：平均差 {difference.Mean:0.##}、最大差 {difference.Max}（要求 ≥6 / ≥30）");
                 window.Execute("ToggleEnhance");
                 await SettleAsync(window);
                 if (window.Session.IsEnhanced || window.Session.EnhancedDisplay) throw new InvalidOperationException("再次 ToggleEnhance 未还原原片");
-                using var restored = CaptureSrgbFrame(window);
+                using var restored = CapturePhotoSrgbFrame(window);
                 var restoreDifference = EnhancementAcceptance.MeasureDifference(before, restored);
                 if (restoreDifference.Mean > 2 || restoreDifference.Max > 12)
                     throw new InvalidOperationException(
@@ -272,8 +275,9 @@ internal static class NativeAnalysisAcceptance
         double main = row ? (double)panel.Bounds.Width : (double)panel.Bounds.Height;
         double cross = row ? (double)panel.Bounds.Height : (double)panel.Bounds.Width;
         double expectedTile = AnalysisPanelGeometry.TileSize(main, count);
-        if (Math.Abs(cross - (expectedTile + 20)) > 1.5)
-            throw new InvalidOperationException($"{(row ? "行" : "列")}布局分析栏交叉轴尺寸 {cross} 与边长 {expectedTile} + 20 不符");
+        double expectedCross = ToolRegionGeometry.AnalysisWidth(expectedTile, window.Main.IsControlViewVisible);
+        if (Math.Abs(cross - expectedCross) > 1.5)
+            throw new InvalidOperationException($"{(row ? "行" : "列")}布局分析栏交叉轴尺寸 {cross} 与共享工具区 {expectedCross} 不符");
         for (int i = 0; i < count; i++)
         {
             var frame = tiles[i].Frame;
@@ -312,13 +316,23 @@ internal static class NativeAnalysisAcceptance
         checks.Add($"tiles: edition-specific order and labels (shake label = {labels[shakeIndex]})");
     }
 
-    /// <summary>抓取主图当前 GPU 帧并归一为 BGRA8 sRGB，供增强前后逐像素比较。</summary>
-    /// <param name="window">原生主窗口。</param>
-    /// <returns>由调用方释放的 BGRA8 帧。</returns>
-    private static DecodedImage CaptureSrgbFrame(MacMainWindow window)
+    /// <summary>抓取主图 GPU 帧并裁到照片实际显示矩形，避免窗口内栏位黑底稀释增强差异。</summary>
+    private static DecodedImage CapturePhotoSrgbFrame(MacMainWindow window)
     {
         using var linear = window.Photo.CaptureLinearFrame();
-        return ColorEngine.ToSrgb8(linear);
+        using var full = ColorEngine.ToSrgb8(linear);
+        double backing = (double)window.Window.BackingScaleFactor;
+        var (left, top) = window.Photo.ViewPoint(0, 0);
+        var (right, bottom) = window.Photo.ViewPoint(1, 1);
+        int x = Math.Clamp((int)Math.Floor(Math.Min(left, right) * backing), 0, full.Width - 1);
+        int y = Math.Clamp((int)Math.Floor(Math.Min(top, bottom) * backing), 0, full.Height - 1);
+        int width = Math.Clamp((int)Math.Ceiling(Math.Abs(right - left) * backing), 1, full.Width - x);
+        int height = Math.Clamp((int)Math.Ceiling(Math.Abs(bottom - top) * backing), 1, full.Height - y);
+        int stride = width * 4;
+        var pixels = new byte[stride * height];
+        for (int row = 0; row < height; row++)
+            Buffer.BlockCopy(full.Pixels, (y + row) * full.Stride + x * 4, pixels, row * stride, stride);
+        return new DecodedImage(pixels, width, height, stride, PixelEncoding.Bgra32, full.ColorSpace);
     }
 
     /// <summary>抓取导航图尺寸的 GPU 帧并归一为 BGRA8 sRGB（照片铺满小图，四角就是照片四角）。</summary>

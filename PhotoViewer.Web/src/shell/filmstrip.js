@@ -1,6 +1,6 @@
 import { el, place, touches } from "./dom.js";
-import { visibleRange } from "../core/filmscroll.js";
 import { createCard } from "./card.js";
+import { visibleRange } from "../core/layout/film.js";
 
 const OVERSCAN = 3;
 const SCROLLBAR_THICKNESS = 6;
@@ -27,7 +27,8 @@ export function mountFilmstrip(host, ctx) {
     host.append(scroller, track);
 
     const rendered = new Map();
-    const pool = [];
+    let pool = [];
+    let tier = null;
     let state = null;
     let film = null;
     let axis = "x";
@@ -47,14 +48,14 @@ export function mountFilmstrip(host, ctx) {
     function liveAxis() {
         const current = liveFilm();
         if (!current) return axis;
-        return current.axis === "col" ? "y" : "x";
+        return current.axis === "y" ? "y" : "x";
     }
 
     function liveMaxOffset() {
         const current = liveFilm();
         if (!current) return Math.max(0, documentLength - viewport);
-        const length = current.axis === "col" ? current.document.h : current.document.w;
-        const view = current.axis === "col" ? current.scroll.h : current.scroll.w;
+        const length = current.axis === "y" ? current.document.h : current.document.w;
+        const view = current.axis === "y" ? current.scroll.h : current.scroll.w;
         return Math.max(0, length - view);
     }
 
@@ -146,7 +147,7 @@ export function mountFilmstrip(host, ctx) {
     }
 
     function pooledCard() {
-        return pool.pop() ?? createCard(ctx, { mode: "film" });
+        return pool.pop() ?? createCard(ctx, { mode: "film", tier });
     }
 
     function syncRange() {
@@ -155,7 +156,8 @@ export function mountFilmstrip(host, ctx) {
             clearRendered();
             return;
         }
-        const [first, last] = visibleRange(offset(), viewport, state.count, axis, t);
+        if (!(film.step > 0)) return;
+        const [first, last] = visibleRange(offset(), viewport, state.count, axis, t, film.tier, film.lead, film.trail);
         const low = Math.max(0, first - OVERSCAN);
         const high = Math.min(state.count - 1, last + OVERSCAN);
         const wanted = new Map();
@@ -181,7 +183,14 @@ export function mountFilmstrip(host, ctx) {
     }
 
     function applyGeometry(nextState, nextFilm) {
-        const nextAxis = nextFilm.axis === "col" ? "y" : "x";
+        const nextAxis = nextFilm.axis;
+        if (nextFilm.tier !== tier) {
+            // FILM-05：两档卡片几何不同，换档时重建卡片池。
+            clearRendered();
+            for (const card of pool) card.destroy();
+            pool = [];
+            tier = nextFilm.tier;
+        }
         if (nextAxis !== axis) {
             // FILM-03：换向废弃旧偏移语义，定位由 app 随后的显式请求负责
             axis = nextAxis;
@@ -321,7 +330,7 @@ export function mountFilmstrip(host, ctx) {
         viewportLength: () => {
             const current = liveFilm();
             if (!current) return 0;
-            return current.axis === "col" ? current.scroll.h : current.scroll.w;
+            return current.axis === "y" ? current.scroll.h : current.scroll.w;
         },
     });
 

@@ -12,6 +12,7 @@ using AndroidX.CustomView.Widget;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
+using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Main;
 
 namespace PhotoViewer.Android.Native;
@@ -48,6 +49,11 @@ internal sealed class AndroidThumbnailCard : View
     private Action<ImageFile, int>? _rate;
     private Action<ImageFile>? _showSources;
     private bool _showRating = true;
+    private FilmCardTier _tier = FilmCardTier.Large;
+    private readonly Paint _smallNamePaint;
+    private readonly Paint _smallBadgePaint;
+    private readonly Paint _smallStarPaint;
+    private readonly Paint _smallConflictPaint;
     private string? _secondLineText;
     private double? _secondLineProgress;
     private bool _selectByDisplayedImage;
@@ -60,8 +66,27 @@ internal sealed class AndroidThumbnailCard : View
     internal static double CardWidthDp => 96;
     /// <summary>卡片外框高度（dp）。</summary>
     internal static double CardHeightDp => 144;
+    /// <summary>当前卡片档位（验收读取）。</summary>
+    internal FilmCardTier Tier => _tier;
+
+    /// <summary>
+    /// 设置卡片档位（FILM-05）：大档 96×144、小档 64×76，尺寸由胶片栏的布局参数给出，
+    /// 这里只切换绘制内容与命中口径（小档不设逐星命中）。
+    /// </summary>
+    /// <param name="tier">档位。</param>
+    internal void SetTier(FilmCardTier tier)
+    {
+        if (_tier == tier) return;
+        _tier = tier;
+        Invalidate();
+    }
     /// <summary>第二行文字（相似聚类为百分比；null 表示拍摄时间）。</summary>
     internal string? SecondLineText => _secondLineText;
+    /// <summary>大档冲突三角字号（验收：小档绘制不得污染）。</summary>
+    internal float LargeConflictGlyphSizeForChecks => _conflictPaint.TextSize;
+    /// <summary>小档冲突三角字号（验收）。</summary>
+    internal float SmallConflictGlyphSizeForChecks => _smallConflictPaint.TextSize;
+
     /// <summary>0 号槽位是否为星级冲突警示三角（验收用）。</summary>
     internal bool ShowsRatingConflict => _file?.HasRatingConflict == true;
 
@@ -100,6 +125,11 @@ internal sealed class AndroidThumbnailCard : View
         _linePaint = AndroidUiTheme.Paint(AndroidUiTheme.StarClear, Math.Max(1, AndroidUiTheme.Dp(context, 1)));
         _conflictPaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardStarFontSize, AndroidUiTheme.StarConflict);
         if (AndroidUiTheme.IconTypeface(context) is { } iconTypeface) _conflictPaint.SetTypeface(iconTypeface);
+        _smallNamePaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardSmallNameFontSize, AndroidUiTheme.TextPrimary, bold: true);
+        _smallBadgePaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardSmallBadgeFontSize, Color.White, bold: true);
+        _smallStarPaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardSmallBadgeFontSize, AndroidUiTheme.StarActive, bold: true);
+        _smallConflictPaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardSmallBadgeFontSize, AndroidUiTheme.StarConflict);
+        if (AndroidUiTheme.IconTypeface(context) is { } smallIcon) _smallConflictPaint.SetTypeface(smallIcon);
         _gestures = new GestureDetector(context, new CardGestureListener(this));
         Focusable = true;
         Clickable = true;
@@ -162,6 +192,11 @@ internal sealed class AndroidThumbnailCard : View
     {
         base.OnDraw(canvas);
         if ( _file == null) return;
+        if (_tier == FilmCardTier.Small)
+        {
+            DrawSmall(canvas);
+            return;
+        }
         float density = (float)AndroidUiTheme.Density(Context!);
         float width = Width, height = Height;
         // 卡片内容按 96×144 参考缩放：列布局里卡片视图比内容宽时仍居中。
@@ -208,7 +243,7 @@ internal sealed class AndroidThumbnailCard : View
         if (_file.IsInCache)
         {
             // FILM-05：主图已缓存细边取令牌（含 70.6% 不透明度）。
-            var cachePaint = AndroidUiTheme.Paint(
+            using var cachePaint = AndroidUiTheme.Paint(
                 AndroidUiTheme.FromToken(DesignTokens.ColorFilmCardCachedBorder), Math.Max(1, d));
             canvas.DrawRoundRect(imageRect, 4 * d, 4 * d, cachePaint);
         }
@@ -276,6 +311,127 @@ internal sealed class AndroidThumbnailCard : View
         }
         canvas.Restore();
     }
+
+    /// <summary>小档内部节点（卡片根坐标，dp）：占位面、照片区、文件名框与抖动点。</summary>
+    internal (LayoutRect Surface, LayoutRect Image, LayoutRect Name, LayoutRect ShakeDot) SmallFramesForChecks()
+        => SmallFrames();
+
+    /// <summary>按 token 求小档内部节点，绘制与验收共用同一份几何。</summary>
+    private static (LayoutRect Surface, LayoutRect Image, LayoutRect Name, LayoutRect ShakeDot) SmallFrames()
+    {
+        double inset = DesignTokens.FilmCardSmallInset;
+        double thumbInset = DesignTokens.FilmCardSmallThumbInset;
+        double thumb = DesignTokens.FilmCardSmallThumbSize;
+        double dotInset = DesignTokens.FilmCardSmallShakeDotInset;
+        double dot = DesignTokens.FilmCardSmallShakeDotSize;
+        var surface = new LayoutRect(inset, inset,
+            DesignTokens.FilmCardSmallWidth - inset * 2, DesignTokens.FilmCardSmallHeight - inset * 2);
+        var image = new LayoutRect(surface.X + thumbInset, surface.Y + thumbInset, thumb, thumb);
+        var name = new LayoutRect(surface.X, surface.Y + DesignTokens.FilmCardSmallNameY,
+            surface.Width, DesignTokens.FilmCardSmallNameHeight);
+        var shake = new LayoutRect(image.X + thumb - dotInset - dot, image.Y + dotInset, dot, dot);
+        return (surface, image, name, shake);
+    }
+
+    /// <summary>
+    /// 小档卡片（FILM-05）：54 方形照片区、一行文件名、贴照片区右下角的星级数字角标（0 不显示、
+    /// 冲突时前置警示三角）与右上角圆形抖动点；节点位置全部取 <c>film.card.small.*</c> 令牌。
+    /// </summary>
+    /// <param name="canvas">画布。</param>
+    private void DrawSmall(Canvas canvas)
+    {
+        var file = _file!;
+        float d = (float)AndroidUiTheme.Density(Context!);
+        float width = Width, height = Height;
+        float scale = Math.Min(width / (float)(DesignTokens.FilmCardSmallWidth * d),
+            height / (float)(DesignTokens.FilmCardSmallHeight * d));
+        canvas.Save();
+        canvas.Translate((width - (float)(DesignTokens.FilmCardSmallWidth * d) * scale) / 2,
+            (height - (float)(DesignTokens.FilmCardSmallHeight * d) * scale) / 2);
+        canvas.Scale(scale, scale);
+        var (surfaceFrame, imageFrame, nameFrame, shakeFrame) = SmallFrames();
+        var surface = ToRectF(surfaceFrame, d);
+        bool selected = _selectByDisplayedImage ? file.IsCurrentImage : file.IsCurrent;
+        AndroidUiTheme.DrawRounded(canvas, surface, (float)(DesignTokens.FilmCardCornerRadius * d),
+            AndroidUiTheme.CardBackground, selected ? AndroidUiTheme.Accent : null,
+            (float)(DesignTokens.FilmCardBorderWidth * d));
+
+        var imageRect = ToRectF(imageFrame, d);
+        canvas.Save();
+        using var clip = new Path();
+        clip.AddRoundRect(imageRect, 4 * d, 4 * d, Path.Direction.Cw!);
+        canvas.ClipPath(clip);
+        canvas.DrawRect(imageRect, _thumbnailBackground);
+        var thumbnail = EnsureThumbnail();
+        if (thumbnail != null)
+        {
+            var src = new Rect(0, 0, thumbnail.Width, thumbnail.Height);
+            float fit = Math.Min(imageRect.Width() / thumbnail.Width, imageRect.Height() / thumbnail.Height);
+            float drawWidth = thumbnail.Width * fit, drawHeight = thumbnail.Height * fit;
+            var dst = new RectF(imageRect.CenterX() - drawWidth / 2, imageRect.CenterY() - drawHeight / 2,
+                imageRect.CenterX() + drawWidth / 2, imageRect.CenterY() + drawHeight / 2);
+            using var paint = new Paint(PaintFlags.FilterBitmap) { FilterBitmap = true };
+            canvas.DrawBitmap(thumbnail, src, dst, paint);
+        }
+        else
+        {
+            using var placeholderPaint = AndroidUiTheme.TextPaint(Context!, 11, Color.ParseColor("#777777")!, bold: true);
+            AndroidUiTheme.DrawCentered(canvas, file.IsThumbnailLoading ? "…" : "IMG", placeholderPaint,
+                imageRect.CenterX(), imageRect.CenterY() + placeholderPaint.TextSize * .36f, imageRect.Width() - 4 * d);
+        }
+        canvas.Restore();
+        if (file.IsInCache)
+        {
+            using var cachePaint = AndroidUiTheme.Paint(
+                AndroidUiTheme.FromToken(DesignTokens.ColorFilmCardCachedBorder), Math.Max(1, d));
+            canvas.DrawRoundRect(imageRect, 4 * d, 4 * d, cachePaint);
+        }
+
+        // 星级角标：金色实心星 + 白色数字，贴照片区右下角；0 星不显示，冲突时前置警示三角。
+        if (_showRating)
+        {
+            double badgeHeight = DesignTokens.FilmCardSmallBadgeHeight;
+            float baseline = imageRect.Bottom - (float)(2 * d);
+            bool conflict = file.HasRatingConflict;
+            float right = imageRect.Right - (float)(2 * d);
+            if (conflict)
+            {
+                string glyph = AndroidUiTheme.IconGlyph(DesignTokens.IconWarning);
+                AndroidUiTheme.DrawGlyphCentered(canvas, glyph, _smallConflictPaint,
+                    right - (float)(8 * d), baseline - (float)(badgeHeight * d) / 2);
+                right -= (float)(10 * d);
+            }
+            if (file.Rating > 0)
+            {
+                AndroidUiTheme.DrawGlyphCentered(canvas, "★", _smallStarPaint, right - (float)(10 * d),
+                    baseline - (float)(badgeHeight * d) / 2);
+                _smallBadgePaint.TextAlign = Paint.Align.Right;
+                _smallBadgePaint.TextSize = AndroidUiTheme.Sp(Context!, DesignTokens.FilmCardSmallBadgeFontSize);
+                canvas.DrawText(file.Rating.ToString(), right, baseline, _smallBadgePaint);
+                _smallBadgePaint.TextAlign = Paint.Align.Center;
+            }
+        }
+
+        // 抖动点：圆形，贴照片区右上角内缩。
+        if (file.IsShake == true)
+        {
+            using var dotPaint = AndroidUiTheme.Paint(AndroidUiTheme.ShakeBadge);
+            canvas.DrawOval(ToRectF(shakeFrame, d), dotPaint);
+        }
+
+        // 文件名：单行、半粗、尾部截断，位于照片区下方。
+        _smallNamePaint.TextSize = AndroidUiTheme.Sp(Context!, DesignTokens.FilmCardSmallNameFontSize);
+        AndroidUiTheme.DrawCentered(canvas, file.DisplayName, _smallNamePaint,
+            (float)((nameFrame.X + nameFrame.Width / 2) * d),
+            (float)((nameFrame.Y + nameFrame.Height * .78) * d),
+            (float)(nameFrame.Width * d));
+        canvas.Restore();
+    }
+
+    /// <summary>dp 矩形转像素矩形（小档绘制共用）。</summary>
+    private static RectF ToRectF(LayoutRect rect, float density) => new(
+        (float)(rect.X * density), (float)(rect.Y * density),
+        (float)(rect.MaxX * density), (float)(rect.MaxY * density));
 
     /// <summary>取得缩略图位图（引用变了才重转）。</summary>
     /// <returns>位图或 null。</returns>
@@ -354,7 +510,7 @@ internal sealed class AndroidThumbnailCard : View
     /// <returns>0–5 或 -1。</returns>
     internal int SlotAtPx(float x, float y)
     {
-        if (!_showRating || Width < 1) return -1;
+        if (!_showRating || Width < 1 || _tier != FilmCardTier.Large) return -1;
         float density = (float)AndroidUiTheme.Density(Context!);
         float scale = Math.Min(Width / (float)(CardWidthDp * density), 1f);
         if (scale <= 0) return -1;

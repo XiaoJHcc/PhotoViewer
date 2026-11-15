@@ -132,7 +132,15 @@ function createFilmHost({ offset = 0, viewportLength = 600 } = {}) {
 function filmViewport(app) {
     const film = app.state.layout.film;
     if (!film) return 0;
-    return app.state.layout.layoutMode === "col" ? film.scroll.h : film.scroll.w;
+    return film.axis === "y" ? film.scroll.h : film.scroll.w;
+}
+
+function expectedFilmOffset(app, index) {
+    const film = app.state.layout.film;
+    const frame = film.items[index];
+    const start = film.axis === "y" ? frame.y : frame.x;
+    const max = Math.max(0, film.contentLength - filmViewport(app));
+    return Math.min(max, Math.max(0, start + (film.cardMain - filmViewport(app)) / 2));
 }
 
 function harness({ storage = createStorage(), settings = null, edition = "ai", width = 1200, height = 850, library = makeLibrary() } = {}) {
@@ -178,8 +186,8 @@ test("FILM-01/OPEN-05：打开文件夹把目标项定位到列表中心", () =>
     assert.equal(app.state.displayedId, "f1/P025.JPG");
     assert.equal(app.state.anchorId, "f1/P025.JPG");
     assert.equal(app.state.count, 33);
-    // 列布局纵向列表：卡片起点 + (卡片长 − 视口长) / 2，首尾之外不夹取。
-    const expected = 5 + 24 * 144 + (144 - filmViewport(app)) / 2;
+    // 列布局纵向列表：筛选带下首卡起排，卡片起点 + (卡片长 − 视口长) / 2。
+    const expected = expectedFilmOffset(app, 24);
     assert.equal(film.state.offset, expected);
     assert.equal(film.state.writes.at(-1), expected);
 });
@@ -197,7 +205,7 @@ test("FILM-01：点选不定位、上一张/下一张定位、Exchange 不定位
     assert.equal(app.state.displayedId, "f1/P011.JPG");
     const nextIndex = cardIndexOf(app, "f1/P011.JPG");
     assert.equal(film.state.writes.length, baseline + 1);
-    assert.equal(film.state.writes.at(-1), 5 + nextIndex * 144 + (144 - filmViewport(app)) / 2);
+    assert.equal(film.state.writes.at(-1), expectedFilmOffset(app, nextIndex));
 
     const located = film.state.writes.length;
     assert.equal(app.exchange(), true);
@@ -224,7 +232,7 @@ test("FILM-01：排序、筛选与评分刷新不定位，尺寸变化只夹取�
     app.setRatingFilter("all");
     app.filmResized();
     assert.equal(film.state.writes.length, baseline + 1);
-    assert.equal(film.state.offset, 5 + 33 * 144 + 10 - filmViewport(app));
+    assert.equal(film.state.offset, Math.max(0, app.state.layout.film.contentLength - filmViewport(app)));
 
     const clamped = film.state.writes.length;
     app.setWindowSize(1100, 850);
@@ -243,14 +251,14 @@ test("FILM-04：隐藏后重新显示定位当前项，换向按新方向重算"
     assert.equal(app.state.panes.film, true);
     // FILM-04：显隐请求按布局就绪后的新几何定位（壳层在落位后调用 layoutReady）。
     app.layoutReady();
-    const expectedY = 5 + 19 * 144 + (144 - filmViewport(app)) / 2;
+    const expectedY = expectedFilmOffset(app, 19);
     assert.equal(film.state.writes.at(-1), expectedY);
 
     app.setWindowSize(700, 850);
     assert.equal(app.state.layout.layoutMode, "row");
     app.layoutReady();
     // 换向按新方向与新视口（行布局胶片带宽）重算，不沿用旧视口长度。
-    const expectedX = 10 + 19 * 96 + (96 - filmViewport(app)) / 2;
+    const expectedX = expectedFilmOffset(app, 19);
     assert.equal(film.state.writes.at(-1), expectedX);
 });
 
@@ -344,10 +352,10 @@ test("IMAGE-06：导航图拖动只改视口中心、保持倍率", () => {
     assert.equal(app.state.viewport.percentText, percent);
     assert.equal(app.state.viewport.scale, scale);
 
-    const view = app.state.viewport.view;
+    const fit = app.state.viewport.fitRect;
     const rect = app.state.viewport.rect;
-    assert.ok(Math.abs((view.width / 2 - rect.x) / rect.w - 0.8) < 1e-6);
-    assert.ok(Math.abs((view.height / 2 - rect.y) / rect.h - 0.7) < 1e-6);
+    assert.ok(Math.abs((fit.x + fit.w / 2 - rect.x) / rect.w - 0.8) < 1e-6);
+    assert.ok(Math.abs((fit.y + fit.h / 2 - rect.y) / rect.h - 0.7) < 1e-6);
 });
 
 test("SIM-05：相似项点选只改显示身份，锚点与胶片栏位置不动", async () => {
@@ -763,7 +771,7 @@ test("EDITION-01/02：缺省 AI 版保留相似入口与 6/7 瓦片", async () =
     await flush();
     assert.equal(app.state.edition, "ai");
     assert.deepEqual(app.state.capabilities, { dino: true, similarity: true });
-    assert.ok(app.state.layout.filter.controls.toggle, "AI 版筛选条缺少相似聚类开关");
+    assert.ok(app.state.layout.filter.toggle, "AI 版筛选条缺少相似聚类开关");
     assert.deepEqual(
         app.state.analysis.tiles.map((entry) => entry.kind),
         ["center", "histogram", "pca", "cosine", "sharpness", "shake"],
@@ -778,9 +786,8 @@ test("EDITION-02：标准版筛选条四项、无相似入口、分析栏 4/5 �
     await flush();
     assert.equal(app.state.edition, "standard");
     assert.deepEqual(app.state.capabilities, { dino: false, similarity: false });
-    assert.equal(app.state.layout.filter.controls.toggle, null, "标准版仍留相似开关几何");
-    assert.equal(app.state.layout.filter.controls.count.y + app.state.layout.filter.controls.count.h
-        + t("filter.margin"), app.state.layout.filter.bar.h, "计数后仍留开关高度");
+    assert.equal(app.state.layout.filter.toggle, null, "标准版仍留相似开关几何");
+    assert.equal(app.state.layout.filter.bar.h, t("shell.glass.button.size") + 2 * t("filter.margin"), "标准版筛选带仍留开关高度");
     assert.equal(app.state.similarity.visible, false);
     assert.equal(app.state.similarity.items.length, 0);
     assert.equal(app.state.layout.similarity.occupation, 0);
@@ -796,11 +803,12 @@ test("EDITION-02：标准版行布局按四项重新整组居中", () => {
     app.setWindowSize(1200, 850);
     const filter = app.state.layout.filter;
     assert.equal(filter.axis, "row");
-    assert.equal(filter.controls.toggle, null);
-    const groupWidth = t("filter.control.width") * 3 + filter.controls.count.w + t("filter.gap") * 3;
-    assert.equal(filter.groupWidth, groupWidth);
-    assert.equal(filter.controls.sort.x, (1200 - groupWidth) / 2);
-    assert.equal(filter.controls.count.x + filter.controls.count.w, filter.controls.sort.x + groupWidth);
+    assert.equal(filter.toggle, null);
+    const groupWidth = t("film.card.width");
+    assert.equal(filter.composite.w, groupWidth);
+    assert.equal(filter.entry.w, groupWidth / 2);
+    assert.equal(filter.more.w, groupWidth / 2);
+    assert.equal(filter.bar.h, t("shell.glass.button.size") + 2 * t("filter.margin"));
 });
 
 test("EDITION-06：标准版保留已存相似展开态与 DINO 参数，但不恢复入口或任务", async () => {

@@ -1,12 +1,8 @@
 /**
  * 胶片栏几何与程序化定位（FILM-01–04）。
  *
- * 几何纯函数（axis 取 "x" 表示行布局横向列表，"y" 表示列布局纵向列表）：
- * - filmMetrics(t)：卡片宽高、步长与列表内边距
- * - contentLength(count, axis, t)：列表内容主轴长度
- * - itemStart(index, count, axis, viewportLength, t)：卡片起点
- * - visibleRange(offset, viewportLength, count, axis, t)：可见区间 [first, last]（含边界）
- * - centerOffset(index, count, axis, viewportLength, t)：FILM-02 定位目标偏移
+ * 几何只由 layout/film.js 提供（filmGeometry / visibleRange / centerOffset）；
+ * 本模块只保留定位动画与门控。
  * - easeOutCubic(p)：三次缓出 1 − (1 − p)³
  *
  * 定位：
@@ -15,61 +11,6 @@
  * - FilmPositioner：把导航、点选、滚动、列表替换、换向、显隐、尺寸变化等入口集中映射为定位/取消/夹取，
  *   并在布局未就绪时排队到 layoutReady()。
  */
-
-export function filmMetrics(t) {
-    const cardWidth = t("film.card.width");
-    const cardHeight = t("film.card.height");
-    const spacing = t("film.card.spacing");
-    return {
-        cardWidth,
-        cardHeight,
-        stepX: cardWidth + spacing,
-        stepY: cardHeight + spacing,
-        padLeft: t("film.list.padLeft"),
-        padTop: t("film.list.padTop"),
-        padRight: t("film.list.padRight"),
-        padBottom: t("film.list.padBottom"),
-    };
-}
-
-function axisMetrics(axis, t) {
-    const m = filmMetrics(t);
-    if (axis === "x") {
-        return { card: m.cardWidth, step: m.stepX, lead: m.padLeft, trail: m.padRight };
-    }
-    if (axis === "y") {
-        return { card: m.cardHeight, step: m.stepY, lead: m.padTop, trail: m.padBottom };
-    }
-    throw new Error(`未知胶片栏方向：${axis}`);
-}
-
-export function contentLength(count, axis, t) {
-    const a = axisMetrics(axis, t);
-    return a.lead + Math.max(0, count) * a.step + a.trail;
-}
-
-export function itemStart(index, count, axis, viewportLength, t) {
-    const a = axisMetrics(axis, t);
-    // FILM-02：横向列表短于视口时整段居中，padLeft 是首项起点的下限；纵向列表仍从顶边起排
-    const slack = axis === "x" ? Math.max(0, viewportLength - contentLength(count, axis, t)) : 0;
-    return a.lead + slack / 2 + index * a.step;
-}
-
-export function visibleRange(offset, viewportLength, count, axis, t) {
-    if (count <= 0) return [0, -1];
-    const a = axisMetrics(axis, t);
-    const lead = itemStart(0, count, axis, viewportLength, t);
-    const first = Math.max(0, Math.floor((offset - lead) / a.step));
-    const last = Math.min(count - 1, Math.ceil((offset + viewportLength - lead) / a.step) - 1);
-    return [first, last];
-}
-
-export function centerOffset(index, count, axis, viewportLength, t) {
-    const a = axisMetrics(axis, t);
-    const target = itemStart(index, count, axis, viewportLength, t) + (a.card - viewportLength) / 2;
-    const max = Math.max(0, contentLength(count, axis, t) - viewportLength);
-    return Math.min(max, Math.max(0, target));
-}
 
 export function easeOutCubic(p) {
     const x = Math.min(1, Math.max(0, p));
@@ -91,8 +32,9 @@ export class FilmScroller {
         return this._frame !== null;
     }
 
-    requestCentered({ index, count, axis, viewportLength }) {
-        this.request(centerOffset(index, count, axis, viewportLength, this.t));
+    requestCentered({ offset }) {
+        if (!Number.isFinite(Number(offset))) throw new TypeError(`定位目标不是有效数值：${offset}`);
+        this.request(offset);
     }
 
     request(targetOffset) {

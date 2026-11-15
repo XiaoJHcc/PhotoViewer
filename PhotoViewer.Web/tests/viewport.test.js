@@ -505,3 +505,17 @@ test("状态：无图时查询安全，setImage(null) 清空", () => {
     const snapshot = JSON.parse(JSON.stringify(viewport.snapshot()));
     assert.equal(snapshot.hasImage, false);
 });
+
+test("SHELL-11：独立适应区重排保持倍率与适应区中心图像点", () => {
+    const viewport = open(make({ view: { width: 1000, height: 800 } }));
+    viewport.setFitRect({ x: 100, y: 0, w: 800, h: 800 });
+    viewport.toggleFit();
+    const scale = viewport.scale;
+    const center = viewport.viewToImage(500, 400);
+    viewport.setFitRect({ x: 0, y: 100, w: 1000, h: 600 });
+    near(viewport.scale, scale);
+    const after = viewport.viewToImage(500, 400);
+    near(after.u, center.u);
+    near(after.v, center.v);
+    assert.equal(viewport.isFit, false);
+});

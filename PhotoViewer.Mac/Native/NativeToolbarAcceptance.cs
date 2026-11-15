@@ -110,7 +110,7 @@ internal static class NativeToolbarAcceptance
             window.ControlBar.Commands["Previous"].PerformClick(window.ControlBar.Commands["Previous"]);
             await Task.Delay(150);
             if (window.Main.CurrentFile != before) throw new InvalidOperationException("键盘按钮动作改变了导航语义");
-            observations.Add("native NSButton keyboard focus and Space dispatch the same command; hover / press have distinct complete-square surfaces");
+            observations.Add("native NSButton keyboard focus and Space dispatch the same command; circular command surface covers its whole 44-point frame on hover / press");
 
             settings.ShowRating = false;
             await Task.Delay(150);
@@ -195,7 +195,8 @@ internal static class NativeToolbarAcceptance
     {
         var bar = window.ControlBar;
         bool horizontal = window.Main.IsRowLayout;
-        if (bar.Groups.Count != 3 || bar.Ratings.Count != 6) throw new InvalidOperationException("EXIF/评分/命令未分为三个完整区域");
+        if (bar.Groups.Count != 3 || bar.Ratings.Count != 6 || bar.ExifItemCount <= 0)
+            throw new InvalidOperationException($"EXIF/评分/命令未分为三个完整区域：groups={bar.Groups.Count}/{string.Join(",", bar.GroupKinds)}, ratings={bar.Ratings.Count}, exif={bar.ExifItemCount}");
         var bounds = bar.Bounds;
         foreach (var group in bar.Groups)
         {
@@ -208,8 +209,17 @@ internal static class NativeToolbarAcceptance
         VerifyGroupContents(bar, horizontal);
         VerifyControlScroller(window);
         foreach (var button in bar.Commands.Values)
-            if (button is not MacControlBar.ToolbarButton || button.Bordered || button.Layer?.MasksToBounds == true)
-                throw new InvalidOperationException("工具按钮没有使用单层完整方形边框的原生 NSButton");
+        {
+            if (button is not MacControlBar.ToolbarButton || button.Bordered)
+                throw new InvalidOperationException("工具按钮没有使用原生 NSButton");
+            double radius = Math.Min((double)button.Bounds.Width, (double)button.Bounds.Height) / 2;
+            if (!button.WantsLayer || button.Layer is not { } commandLayer || !commandLayer.MasksToBounds
+                || Math.Abs((double)commandLayer.CornerRadius - radius) > .01)
+                throw new InvalidOperationException($"命令按钮不是 44×44 正圆单层图层：{button.Frame}/{button.Layer?.CornerRadius}");
+        }
+        foreach (var rating in bar.Ratings)
+            if (rating.Layer is { } ratingLayer && (ratingLayer.MasksToBounds || Math.Abs((double)ratingLayer.CornerRadius) > .01))
+                throw new InvalidOperationException($"评分槽位状态面被误改为圆形裁切图层：{rating.Frame}/{ratingLayer.CornerRadius}");
         foreach (var tile in bar.Groups[0].Subviews)
         {
             var labels = tile.Subviews.OfType<NSTextField>().ToArray();
@@ -217,6 +227,12 @@ internal static class NativeToolbarAcceptance
                 throw new InvalidOperationException("EXIF 标签/值层级丢失");
         }
         observations.Add($"{window.Main.Settings.LayoutMode}/{window.Window.ContentView!.Bounds.Size}: groups={string.Join(";", bar.Groups.Select(group => group.Frame))}; clip={window.ControlScroll.ContentView.Bounds}; document={bar.Frame}; padding/child margins/stretch retained");
+        var exifMaterial = bar.Groups.OfType<NSVisualEffectView>().FirstOrDefault();
+        var ratingCapsule = bar.Groups
+            .SelectMany(group => group.Subviews.OfType<MacControlBar.RatingControlView>())
+            .FirstOrDefault();
+        var firstCommandLayer = bar.Commands.Values.Select(button => button.Layer).FirstOrDefault(layer => layer != null);
+        observations.Add($"{window.Main.Settings.LayoutMode}: EXIF 衬底={exifMaterial?.Material}/{exifMaterial?.BlendingMode}/{exifMaterial?.Layer?.CornerRadius}; 评分胶囊圆角={ratingCapsule?.Layer?.CornerRadius}; 命令按钮圆角={firstCommandLayer?.CornerRadius}");
     }
 
     private static void VerifyGroupContents(MacControlBar bar, bool horizontal)
@@ -225,63 +241,186 @@ internal static class NativeToolbarAcceptance
         {
             var group = bar.Groups[groupIndex];
             var children = group.Subviews;
-            double width = groupIndex == 0 ? 50 : groupIndex == 1 ? 30 : 40;
-            double height = groupIndex == 1 ? 30 : 40;
-            double childMain = horizontal ? width : height;
-            double childCross = horizontal ? height : width;
-            double inset = groupIndex == 0 ? 4 : groupIndex == 1 ? 8 : 0;
-            double spacing = groupIndex == 0 ? 4 : groupIndex == 1 ? 0 : 8;
-            double expectedMain = children.Length * childMain + (children.Length - 1) * spacing + inset * 2 * (groupIndex == 0 ? children.Length : 1);
-            double actualMain = horizontal ? (double)group.Frame.Width : (double)group.Frame.Height;
-            double actualCross = horizontal ? (double)group.Frame.Height : (double)group.Frame.Width;
-            if (Math.Abs(actualMain - expectedMain) > .01 || actualCross < childCross)
-                throw new InvalidOperationException($"分组主轴尺寸或交叉轴拉伸错误：{group.Frame}");
-            for (int index = 0; index < children.Length; index++)
+            switch (bar.GroupKinds[groupIndex])
             {
-                int position = groupIndex == 1 && !horizontal ? children.Length - index - 1 : index;
-                double main = inset + position * (childMain + spacing + (groupIndex == 0 ? inset * 2 : 0));
-                double cross = (actualCross - childCross) / 2;
-                RequireFrame(children[index].Frame, new CGRect(horizontal ? main : cross, horizontal ? cross : main, width, height), $"组 {groupIndex} 子项 {index}");
+                case ControlBarGroupKind.Exif:
+                    double blockMain = horizontal ? (double)group.Bounds.Width : (double)group.Bounds.Height;
+                    for (int index = 0; index < children.Length; index++)
+                    {
+                        var expected = ExifBlockGeometry.ItemRect(index, children.Length, horizontal, blockMain);
+                        RequireFrame(children[index].Frame, ToRect(expected), $"组 {groupIndex} EXIF 项 {index}");
+                        if (children[index].Subviews.OfType<NSTextField>().Count() != 2)
+                            throw new InvalidOperationException($"组 {groupIndex} EXIF 项 {index} 缺少标签/值两行");
+                    }
+                    if (group is not NSVisualEffectView exifMaterial
+                        || exifMaterial.Material != NSVisualEffectMaterial.Sidebar
+                        || exifMaterial.BlendingMode != NSVisualEffectBlendingMode.WithinWindow
+                        || exifMaterial.State != NSVisualEffectState.Active
+                        || exifMaterial.Appearance?.Name != NSAppearance.NameDarkAqua)
+                        throw new InvalidOperationException("EXIF 衬底不是深色窗口内取样的原生 NSVisualEffectView");
+                    if (group.Layer is not { } exifLayer || !exifLayer.MasksToBounds
+                        || Math.Abs((double)exifLayer.CornerRadius - ExifBlockGeometry.CornerRadius) > .01)
+                        throw new InvalidOperationException($"EXIF 衬底圆角不是 {ExifBlockGeometry.CornerRadius} 或缺少单层裁切");
+                    break;
+                case ControlBarGroupKind.Rating:
+                    if (children.Length != 1) throw new InvalidOperationException("评分组不是单个星级控件");
+                    var control = children[0];
+                    var form = RatingControlGeometry.ResolveForm(horizontal ? (double)group.Bounds.Width : (double)group.Bounds.Height);
+                    var controlFrame = RatingControlGeometry.ControlFrame(
+                        new LayoutRect(0, 0, (double)group.Bounds.Width, (double)group.Bounds.Height), horizontal);
+                    RequireFrame(control.Frame, ToRect(controlFrame), "评分控件外框");
+                    if (control is not MacControlBar.RatingControlView ratingControl
+                        || !ratingControl.WantsLayer || ratingControl.Layer is not { } capsule || !capsule.MasksToBounds
+                        || Math.Abs((double)capsule.CornerRadius - RatingControlGeometry.Thickness / 2) > .01
+                        || capsule.BackgroundColor is null)
+                        throw new InvalidOperationException("评分控件外框未使用半圆端胶囊图层");
+                    if (form != RatingControlForm.Expanded)
+                        throw new InvalidOperationException("验收窗口下评分控件应保持展开态");
+                    double main = horizontal ? (double)control.Bounds.Width : (double)control.Bounds.Height;
+                    double cross = horizontal ? (double)control.Bounds.Height : (double)control.Bounds.Width;
+                    if (Math.Abs((double)capsule.CornerRadius * 2 - cross) > .01)
+                        throw new InvalidOperationException($"评分胶囊圆角 {capsule.CornerRadius} 未等于厚度 {cross} 的一半");
+                    foreach (var button in bar.Ratings)
+                    {
+                        var slot = RatingControlGeometry.SlotRect((int)button.Tag, main, cross, horizontal, RatingControlGeometry.Slot);
+                        RequireFrame(button.Frame, ToRect(slot), $"评分槽位 {button.Tag}");
+                        if (button.Layer is { } slotLayer && (slotLayer.MasksToBounds || Math.Abs((double)slotLayer.CornerRadius) > .01))
+                            throw new InvalidOperationException($"评分槽位 {button.Tag} 状态面被圆形裁切");
+                    }
+                    var expectedMain = RatingControlGeometry.ExpandedLength;
+                    if (Math.Abs(main - expectedMain) > .01)
+                        throw new InvalidOperationException($"评分外框主轴 {main} 不是展开态 {expectedMain}");
+                    break;
+                case ControlBarGroupKind.Command:
+                    double commandCross = horizontal ? (double)group.Bounds.Height : (double)group.Bounds.Width;
+                    double offset = Math.Max(0, (commandCross - ToolbarFlowLayout.CommandSize) / 2);
+                    for (int index = 0; index < children.Length; index++)
+                    {
+                        double position = ToolbarFlowLayout.CommandOffset(index);
+                        var expected = horizontal
+                            ? new CGRect(position, offset, ToolbarFlowLayout.CommandSize, ToolbarFlowLayout.CommandSize)
+                            : new CGRect(offset, position, ToolbarFlowLayout.CommandSize, ToolbarFlowLayout.CommandSize);
+                        RequireFrame(children[index].Frame, expected, $"组 {groupIndex} 命令 {index}");
+                        if (children[index] is not MacControlBar.ToolbarButton command || command.Layer is not { } commandLayer
+                            || !commandLayer.MasksToBounds
+                            || Math.Abs((double)commandLayer.CornerRadius - ToolbarFlowLayout.CommandSize / 2) > .01)
+                            throw new InvalidOperationException($"组 {groupIndex} 命令 {index} 不是正圆单层图层");
+                    }
+                    break;
             }
         }
     }
 
+    /// <summary>共享矩形转原生 frame。</summary>
+    private static CGRect ToRect(LayoutRect rect) => new(rect.X, rect.Y, rect.Width, rect.Height);
+
     private static void VerifyReferenceLayouts(MacMainWindow window, List<string> observations)
     {
         var bar = window.ControlBar;
-        if (bar.Groups.Count != 3 || bar.Groups[0].Subviews.Length != 4 || bar.Ratings.Count != 6 || bar.Commands.Count != 6)
+        if (bar.Groups.Count != 3 || bar.ExifItemCount != 4 || bar.Ratings.Count != 6 || bar.Commands.Count != 6)
             throw new InvalidOperationException("固定几何验收需要 4 个 EXIF、6 个评分和 6 个命令");
-        (bool Horizontal, double Main, double Cross, CGRect[] Frames)[] cases =
-        [
-            (true, 760, 60, [new(10, 10, 244, 40), new(264, 10, 196, 40), new(470, 10, 280, 40)]),
-            (true, 759, 110, [new(154.5, 10, 244, 40), new(408.5, 10, 196, 40), new(239.5, 60, 280, 40)]),
-            (true, 470, 110, [new(10, 10, 244, 40), new(264, 10, 196, 40), new(95, 60, 280, 40)]),
-            (true, 469, 150, [new(112.5, 10, 244, 40), new(136.5, 60, 196, 30), new(94.5, 100, 280, 40)]),
-            (false, 720, 70, [new(10, 10, 50, 204), new(10, 224, 50, 196), new(10, 430, 50, 280)]),
-            (false, 719, 120, [new(10, 154.5, 50, 204), new(10, 368.5, 50, 196), new(70, 219.5, 40, 280)]),
-            (false, 430, 120, [new(10, 10, 50, 204), new(10, 224, 50, 196), new(70, 75, 40, 280)]),
-            (false, 429, 160, [new(10, 112.5, 50, 204), new(70, 116.5, 30, 196), new(110, 74.5, 40, 280)])
-        ];
         try
         {
+            // 独立固定几何：EXIF 4 项、评分展开 224、命令 6 个，组距/外边距各 10。
+            // 行布局内容主轴 774，三段总宽 774；列布局内容主轴 710，三段总高 710。
+            (bool Horizontal, double Main, double Cross, CGRect[] Frames)[] cases =
+            [
+                (true, 794, 64, [new(10, 10, 226, 44), new(246, 10, 224, 44), new(480, 10, 304, 44)]),
+                (true, 793, 118, [new(166.5, 10, 226, 44), new(402.5, 10, 224, 44), new(244.5, 64, 304, 44)]),
+                (true, 480, 118, [new(10, 10, 226, 44), new(246, 10, 224, 44), new(88, 64, 304, 44)]),
+                (true, 479, 172, [new(126.5, 10, 226, 44), new(127.5, 64, 224, 44), new(87.5, 118, 304, 44)]),
+                (false, 730, 84, [new(10, 10, 64, 162), new(10, 182, 64, 224), new(10, 416, 64, 304)]),
+                (false, 729, 138, [new(10, 166.5, 64, 162), new(10, 338.5, 64, 224), new(84, 212.5, 44, 304)]),
+                (false, 416, 138, [new(10, 10, 64, 162), new(10, 182, 64, 224), new(84, 56, 44, 304)]),
+                (false, 415, 192, [new(10, 126.5, 64, 162), new(84, 95.5, 44, 224), new(138, 55.5, 44, 304)]),
+            ];
             foreach (var test in cases)
             {
                 var measured = bar.Measure(test.Horizontal, test.Main);
                 double measuredCross = test.Horizontal ? (double)measured.Height : (double)measured.Width;
-                if (Math.Abs(measuredCross - test.Cross) > .01) throw new InvalidOperationException("固定换行阈值的交叉轴尺寸错误");
-                bar.Arrange(test.Horizontal ? new CGSize(test.Main, 180) : new CGSize(180, test.Main));
-                for (int index = 0; index < test.Frames.Length; index++)
+                if (Math.Abs(measuredCross - test.Cross) > .01)
+                    throw new InvalidOperationException($"{test.Horizontal}/{test.Main} 流式交叉轴尺寸错误：{measuredCross} != {test.Cross}");
+                bar.Arrange(test.Horizontal ? new CGSize(test.Main, 180) : new CGSize(180, test.Main), test.Horizontal);
+                for (int index = 0; index < bar.Groups.Count; index++)
                     RequireFrame(bar.Groups[index].Frame, test.Frames[index], $"{test.Horizontal}/{test.Main} 组 {index}");
                 VerifyGroupContents(bar, test.Horizontal);
             }
+            VerifyCompactRating(window, observations);
         }
         finally
         {
             var viewport = window.ControlScroll.ContentView.Bounds.Size;
             bar.Measure(window.Main.IsRowLayout, window.Main.IsRowLayout ? (double)viewport.Width : (double)viewport.Height);
-            bar.Arrange(viewport);
+            bar.Arrange(viewport, window.Main.IsRowLayout);
         }
-        observations.Add("fixed geometry: row wrap thresholds 760/470, column thresholds 720/430; exact fit and one point below; 10 point padding/spacing; per-tile EXIF margins; main-axis rating insets; line cross-axis stretch");
+        observations.Add("shared flow geometry: row/column wrap thresholds derived from EXIF 226 / rating 224 / commands 304; exact fit and one point below; 10 point padding/spacing; EXIF item rects, six 36×44 expanded slots and 44 command buttons all from shared geometry");
+    }
+
+    /// <summary>
+    /// RATING-07：紧凑态与展开态共用同一半圆端胶囊——主轴 88、交叉轴 44、圆角恒为厚度的一半；
+    /// 六个槽位按钮收起，星簇首末字形中心落在两端半圆的圆心。
+    /// </summary>
+    private static void VerifyCompactRating(MacMainWindow window, List<string> observations)
+    {
+        var bar = window.ControlBar;
+        int ratingIndex = -1;
+        for (int index = 0; index < bar.GroupKinds.Count; index++)
+            if (bar.GroupKinds[index] == ControlBarGroupKind.Rating) { ratingIndex = index; break; }
+        if (ratingIndex < 0) throw new InvalidOperationException("紧凑胶囊验收缺少评分组");
+        int items = RatingControlGeometry.CompactItemCount(window.Main.CurrentFile?.HasRatingConflict == true);
+        foreach (bool horizontal in new[] { true, false })
+        {
+            double availableMain = RatingControlGeometry.CompactMinLength + ToolbarFlowLayout.Padding * 2;
+            var sizes = new List<ToolbarGroupSize>
+            {
+                ToolbarFlowLayout.Exif(bar.ExifItemCount, horizontal),
+                ToolbarFlowLayout.Rating(ToolbarFlowLayout.ContentMain(availableMain)),
+                ToolbarFlowLayout.Commands(bar.Commands.Count),
+            };
+            var expected = ToolbarFlowLayout.Arrange(sizes, horizontal, availableMain);
+            bar.Arrange(horizontal ? new CGSize(availableMain, 180) : new CGSize(180, availableMain), horizontal);
+            if (bar.RatingForm != RatingControlForm.Compact)
+                throw new InvalidOperationException($"窄槽位未进入紧凑态：{bar.RatingForm}");
+            var group = bar.Groups[ratingIndex];
+            RequireFrame(group.Frame, ToRect(expected.Groups[ratingIndex]), $"{horizontal} 紧凑评分组");
+            var control = group.Subviews[0];
+            var controlFrame = RatingControlGeometry.ControlFrame(
+                new LayoutRect(0, 0, (double)group.Bounds.Width, (double)group.Bounds.Height), horizontal);
+            RequireFrame(control.Frame, ToRect(controlFrame), $"{horizontal} 紧凑评分胶囊");
+            double main = horizontal ? (double)control.Bounds.Width : (double)control.Bounds.Height;
+            double cross = horizontal ? (double)control.Bounds.Height : (double)control.Bounds.Width;
+            if (Math.Abs(main - RatingControlGeometry.CompactMinLength) > .01
+                || Math.Abs(cross - RatingControlGeometry.Thickness) > .01)
+                throw new InvalidOperationException(
+                    $"紧凑胶囊 {main}×{cross} 不是 {RatingControlGeometry.CompactMinLength}×{RatingControlGeometry.Thickness}");
+            if (control.Layer is not { } capsule || !capsule.MasksToBounds
+                || Math.Abs((double)capsule.CornerRadius - RatingControlGeometry.Thickness / 2) > .01)
+                throw new InvalidOperationException($"紧凑胶囊圆角 {control.Layer?.CornerRadius} 不是厚度 {cross} 的一半");
+            if (bar.Ratings.Any(button => !button.Hidden))
+                throw new InvalidOperationException("紧凑态仍显示六个槽位按钮");
+            var glyphs = control.Subviews.OfType<NSImageView>().Where(view => !view.Hidden).ToArray();
+            if (glyphs.Length != items)
+                throw new InvalidOperationException($"紧凑星簇条目 {glyphs.Length} 不是 {items}");
+            double nearest = double.MaxValue, farthest = double.MinValue;
+            foreach (var glyph in glyphs)
+            {
+                double center = horizontal
+                    ? (double)(glyph.Frame.X + glyph.Frame.Width / 2)
+                    : (double)(glyph.Frame.Y + glyph.Frame.Height / 2);
+                double glyphCross = horizontal
+                    ? (double)(glyph.Frame.Y + glyph.Frame.Height / 2)
+                    : (double)(glyph.Frame.X + glyph.Frame.Width / 2);
+                if (Math.Abs(glyphCross - cross / 2) > .01)
+                    throw new InvalidOperationException($"紧凑星簇字形未沿胶囊中线：{glyph.Frame}/{cross}");
+                nearest = Math.Min(nearest, center);
+                farthest = Math.Max(farthest, center);
+            }
+            double inset = RatingControlGeometry.Thickness / 2;
+            if (Math.Abs(nearest - inset) > .01 || Math.Abs(farthest - (main - inset)) > .01)
+                throw new InvalidOperationException(
+                    $"紧凑星簇首末字形中心 {nearest}/{farthest} 未落在两端半圆圆心 {inset}/{main - inset}");
+        }
+        observations.Add("RATING-07 compact capsule: 88 × 44, same half-thickness radius as the 224 expanded capsule, six slots hidden, cluster inset half a thickness at both ends");
     }
 
     /// <summary>
@@ -590,10 +729,16 @@ internal static class NativeToolbarAcceptance
             conflict = window.Main.CurrentFile!;
             await Task.Delay(150);
 
-            // 控制栏 0 号：三角 + color.star.conflict，几何与命中区仍是 30×30。
+            // 控制栏 0 号：三角 + color.star.conflict，槽位几何与命中区保持不变。
             var clear = window.ControlBar.Ratings[0];
-            if (clear.Tag != 0 || Math.Abs((double)clear.Frame.Width - 30) > .01 || Math.Abs((double)clear.Frame.Height - 30) > .01)
-                throw new InvalidOperationException($"冲突三角改变了评分组 0 号按钮几何：{clear.Frame}");
+            var ratingControl = clear.Superview ?? throw new InvalidOperationException("评分槽位缺少控件外框");
+            bool ratingRow = window.Main.IsRowLayout;
+            double slotMain = ratingRow ? (double)ratingControl.Bounds.Width : (double)ratingControl.Bounds.Height;
+            double slotCross = ratingRow ? (double)ratingControl.Bounds.Height : (double)ratingControl.Bounds.Width;
+            var expectedSlot = RatingControlGeometry.SlotRect(0, slotMain, slotCross, ratingRow, RatingControlGeometry.Slot);
+            if (clear.Tag != 0)
+                throw new InvalidOperationException($"评分组 0 号 Tag 不是 0：{clear.Tag}");
+            RequireFrame(clear.Frame, ToRect(expectedSlot), "冲突三角改变了评分组 0 号槽位几何");
             if (!ReferenceEquals(clear.Image, MacSymbols.Get(MacSymbols.RatingConflict)))
                 throw new InvalidOperationException("控制栏 0 号槽位未显示冲突警示三角");
             RequireColor(clear.ContentTintColor, MacDesignColors.Argb(DesignTokens.ColorStarConflict), "控制栏冲突三角");
@@ -738,9 +883,15 @@ internal static class NativeToolbarAcceptance
                             ? barStars[1].Frame.X - barStars[0].Frame.X
                             : barStars[1].Frame.Y - barStars[0].Frame.Y);
                         double entryStep = stars[1].Frame.X - stars[0].Frame.X;
-                        if (Math.Abs(entryStep - barStep) > .01
-                            || Math.Abs((double)(stars[0].Frame.Width - barStars[0].Frame.Width)) > .01)
-                            throw new InvalidOperationException($"来源星排与控制栏评分组间距不一致：{entryStep} / {barStep}");
+                        // 来源浮窗仍取共享 RatingSourcesLayout 的 30 点星槽；控制栏评分组已迁移到 RATING-07 的 36 点槽位。
+                        if (Math.Abs(entryStep - (RatingSourcesLayout.SlotSize + RatingSourcesLayout.SlotSpacing)) > .01
+                            || Math.Abs((double)stars[0].Frame.Width - RatingSourcesLayout.SlotSize) > .01)
+                            throw new InvalidOperationException($"来源星排未按共享 RatingSourcesLayout 落槽：{entryStep}/{stars[0].Frame.Width}");
+                        double barSlotMain = mode == LayoutMode.Row
+                            ? (double)barStars[0].Frame.Width : (double)barStars[0].Frame.Height;
+                        if (Math.Abs(barStep - RatingControlGeometry.Slot) > .01
+                            || Math.Abs(barSlotMain - RatingControlGeometry.Slot) > .01)
+                            throw new InvalidOperationException($"控制栏评分槽位未按 RATING-07 落槽：{barStep}/{barSlotMain}");
                         double starSpan = stars[^1].Frame.Right - stars[0].Frame.X;
                         double contentInset = sourceEntry.Name.Frame.X;
                         if (Math.Abs(starSpan - (sourceEntry.Frame.Width - contentInset * 2)) > .01)

@@ -21,6 +21,8 @@ internal static class NativeMainLayoutAcceptance
     {
         var settings = window.Main.Settings;
         var snapshot = settings.CreateSnapshot();
+        var layoutMode = settings.LayoutMode;
+        bool similarityOpen = window.Main.FileVM.FilterBar.IsSimilarityPanelOpen;
         bool filmVisible = window.Main.IsThumbnailViewVisible;
         bool controlVisible = window.Main.IsControlViewVisible;
         var geometry = new List<string>();
@@ -59,11 +61,14 @@ internal static class NativeMainLayoutAcceptance
                 await VerifyPaneReleaseAsync(window, mode, observations);
             }
             await VerifyAutoOrientationAsync(window, geometry, observations);
+            await VerifyStaticMatrixAsync(window, geometry, observations);
             await VerifyCommandButtonsAsync(window, observations);
             observations.Add("空控制组状态未在本验收改写：无分组时 MacControlBar.Measure 的 legacy 20 点外边距保持原样，仍由 --pv-native-toolbar 覆盖");
         }
         finally
         {
+            window.Main.FileVM.FilterBar.IsSimilarityPanelOpen = similarityOpen;
+            settings.LayoutMode = layoutMode;
             settings.ApplySnapshot(snapshot);
             window.Main.IsThumbnailViewVisible = filmVisible;
             window.Main.IsControlViewVisible = controlVisible;
@@ -74,7 +79,7 @@ internal static class NativeMainLayoutAcceptance
         }
     }
 
-    /// <summary>核对分区首尾相接、筛选条间距居中、胶片栏卡片几何与控制栏分组，并输出实际几何。</summary>
+    /// <summary>核对外壳分区、筛选/胶片/控制栏几何全部取自共享计算，并输出实际 frame。</summary>
     private static async Task VerifyLayoutAsync(MacMainWindow window, LayoutMode mode, CGSize size, List<string> geometry, List<string> observations)
     {
         bool row = mode == LayoutMode.Row;
@@ -85,55 +90,80 @@ internal static class NativeMainLayoutAcceptance
         var photoPane = root.Subviews.Single(view => view.Subviews.Contains(window.Photo));
         var controlScroll = window.ControlScroll;
         int controlIndex = Array.IndexOf(root.Subviews, controlScroll);
-        if (controlIndex < 1 || controlIndex + 2 >= root.Subviews.Length) throw new InvalidOperationException($"{scope} 根视图分区顺序改变：控制栏索引 {controlIndex}");
+        if (controlIndex < 1 || controlIndex + 2 >= root.Subviews.Length)
+            throw new InvalidOperationException($"{scope} 根视图分区顺序改变：控制栏索引 {controlIndex}");
         var fileDivider = root.Subviews[controlIndex + 1];
         var controlDivider = root.Subviews[controlIndex + 2];
-
         Record(geometry, scope, "root", root.Bounds);
-        foreach (var view in root.Subviews)
-        {
-            int index = Array.IndexOf(root.Subviews, view);
-            string role = ReferenceEquals(view, filePane) ? "filePane"
-                : ReferenceEquals(view, photoPane) ? "photoPane"
-                : ReferenceEquals(view, controlScroll) ? "controlScroll"
-                : ReferenceEquals(view, fileDivider) ? "fileDivider"
-                : ReferenceEquals(view, controlDivider) ? "controlDivider" : $"overlay{index}";
-            Record(geometry, scope, "root." + role, view.Frame);
-        }
         Record(geometry, scope, "photoViewport", window.Photo.ConvertRectToView(window.Photo.Bounds, root));
+        Record(geometry, scope, "filePane", filePane.Frame);
+        Record(geometry, scope, "photoFit", window.Photo.FitArea);
+        Record(geometry, scope, "controlScroll", controlScroll.Frame);
+        Record(geometry, scope, "analysis", window.Analysis.Frame);
 
-        double rootWidth = (double)root.Bounds.Width, rootHeight = (double)root.Bounds.Height;
-        (NSView View, string Name)[] partitions =
-        [
-            (filePane, "文件栏"), (fileDivider, "文件栏分隔线"), (photoPane, "观片区"),
-            (controlDivider, "控制栏分隔线"), (controlScroll, "控制栏"),
-        ];
-        double cursor = window.IsTitlebarPersistent ? DesignTokens.ShellTitlebarHeight : 0;
-        foreach (var partition in partitions)
-        {
-            var frame = partition.View.Frame;
-            double start = row ? (double)frame.Y : (double)frame.X;
-            double length = row ? (double)frame.Height : (double)frame.Width;
-            double crossStart = row ? (double)frame.X : (double)frame.Y;
-            double crossLength = row ? (double)frame.Width : (double)frame.Height;
-            if (Math.Abs(start - cursor) > Exact) throw new InvalidOperationException($"{scope} {partition.Name} 未首尾相接，出现空带或重叠：{frame}");
-            if (length <= 0) throw new InvalidOperationException($"{scope} {partition.Name} 被压成零尺寸");
-            if (Math.Abs(crossStart) > Exact || Math.Abs(crossLength - (row ? rootWidth : rootHeight)) > Exact)
-                throw new InvalidOperationException($"{scope} {partition.Name} 未铺满交叉轴：{frame}");
-            cursor += length;
-        }
-        if (Math.Abs(cursor - (row ? rootHeight : rootWidth)) > .5) throw new InvalidOperationException($"{scope} 分区总长不等于窗口主轴，存在额外空带");
-        RequireFrame(window.Photo.Frame, photoPane.Bounds, $"{scope} 主图表面未铺满观片区（出现空带）", .5);
+        double width = (double)root.Bounds.Width, height = (double)root.Bounds.Height;
+        var panes = ExpectedPanes(window, row, width, height);
+        RequireFrame(filePane.Frame, ToRect(panes.FileBar), $"{scope} 文件栏未落在共享分区");
+        RequireFrame(fileDivider.Frame, ToRect(panes.FileDivider), $"{scope} 文件栏分隔线未落在共享分区");
+        RequireFrame(controlScroll.Frame, ToRect(panes.ControlContent), $"{scope} 控制栏内容未落在共享工具区");
+        if (window.Main.IsAnalysisViewVisible) RequireFrame(window.Analysis.Frame, ToRect(panes.Analysis), $"{scope} 分析栏未落在共享分区");
+        RequireFrame(photoPane.Frame, new CGRect(0, 0, width, height), $"{scope} 主图视图未铺满根视图");
+        RequireFrame(window.Photo.Frame, photoPane.Bounds, $"{scope} 主图表面未铺满根视图");
+        var insets = window.Photo.FitInsets;
+        RequireFrame(new CGRect((double)insets.Left, (double)insets.Top,
+                width - (double)insets.Left - (double)insets.Right, height - (double)insets.Top - (double)insets.Bottom),
+            ToRect(panes.Photo), $"{scope} 主图适应区未等于共享主图分区");
 
-        VerifyControlBar(window, scope, geometry);
-        VerifyFilterBar(row, scope, filePane, geometry);
-        VerifyTitlebar(window, row, scope, filePane, photoPane, geometry);
-        await VerifyFilmstripAsync(window, row, scope, filePane, geometry);
-        observations.Add($"{scope}: 分区拼合无空带/重叠、主图铺满；筛选条 5 点间距与居中；胶片栏步长与卡片 96×144/(3,3,90,138)/图片 80 方形；控制栏 3 组文档覆盖视口");
+        VerifyControlBar(window, scope, geometry, panes.ControlContent, row);
+        VerifyFilterBar(window, row, scope, filePane, panes.FileContent, geometry);
+        VerifyTitlebar(window, row, scope, filePane, panes, geometry);
+        await VerifyFilmstripAsync(window, row, scope, filePane, panes, geometry);
+        VerifyMaterialCondition(window, row, scope, panes, observations);
+        window.ShowToast("布局提示");
+        var toast = window.StatusToast.Frame;
+        var photoFit = window.FitArea;
+        if (Math.Abs((double)(toast.X + toast.Width / 2 - photoFit.X - photoFit.Width / 2)) > .5
+            || toast.Y < photoFit.Y || toast.Y + toast.Height > photoFit.Y + photoFit.Height + .5)
+            throw new InvalidOperationException($"{scope} 提示条未按适应区落位：{toast} / {photoFit}");
+        window.StatusToast.Hidden = true;
+        observations.Add($"{scope}: 分区/主图适应区/筛选/胶片/控制栏均与共享几何一致；胶片大档固定；工具区材质按分析或实际 EXIF 出现");
+        observations.Add($"{scope}: EXIF 深色材质与 12 圆角、评分半圆端胶囊、44 正圆命令按钮均通过真实图层断言");
     }
 
-    /// <summary>核对控制栏文档覆盖裁剪视口、三组不重叠且保留 10 点外边距，并输出分组与子项几何。</summary>
-    private static void VerifyControlBar(MacMainWindow window, string scope, List<string> geometry)
+    /// <summary>按共享输入重算本帧分区：文件栏/控制栏/分析栏与主图适应区。</summary>
+    private static ShellPaneFrames ExpectedPanes(MacMainWindow window, bool row, double width, double height)
+    {
+        var main = window.Main;
+        bool file = main.IsThumbnailViewVisible, control = main.IsControlViewVisible, analysis = main.IsAnalysisViewVisible;
+        double filterMain = window.FilterLayout.MainLength;
+        double similarityColumn = 0;
+#if PHOTOVIEWER_DINO
+        bool similarityOpen = file && main.FileVM.FilterBar.IsSimilarityPanelOpen;
+        var panel = main.FileVM.SimilarityPanel;
+        if (similarityOpen)
+        {
+            double dock = panel.HasItems && panel.ShowActionArea ? window.Similarity.DockMeasureWidth() : 0;
+            similarityColumn = row
+                ? SimilarityPanelGeometry.RowWidth(panel.HasItems, panel.SimilarItems.Count, width, dock)
+                : (double)window.Similarity.CrossSize + SimilarityPanelGeometry.Margin;
+        }
+#endif
+        double fileMain = file ? MainScreenLayout.FileBarMainLength(row, filterMain, similarityColumn) : 0;
+        bool joined = control && analysis;
+        var measure = control ? window.ControlBar.Measure(row, row ? width : height, joined) : CGSize.Empty;
+        double controlMain = control ? MainScreenLayout.ControlBarMainLength(row ? (double)measure.Height : (double)measure.Width) : 0;
+        double analysisMain = row ? width : height;
+        double analysisCross = analysis ? window.Analysis.CrossSize(analysisMain, joined) : 0;
+        double titlebarInset = window.IsTitlebarPersistent ? DesignTokens.ShellTitlebarHeight : 0;
+        return ShellPaneLayout.Partition(row, width, height, new EdgeInsets(0, titlebarInset, 0, 0),
+            fileMain, controlMain, analysisCross);
+    }
+
+    /// <summary>共享矩形转原生 frame。</summary>
+    private static CGRect ToRect(LayoutRect rect) => new(rect.X, rect.Y, rect.Width, rect.Height);
+
+    /// <summary>核对控制栏文档按共享分组尺寸换行/居中，子控件落入共享矩形。</summary>
+    private static void VerifyControlBar(MacMainWindow window, string scope, List<string> geometry, LayoutRect content, bool row)
     {
         var bar = window.ControlBar;
         var clip = window.ControlScroll.ContentView.Bounds;
@@ -141,107 +171,203 @@ internal static class NativeMainLayoutAcceptance
         Record(geometry, scope, "controlDocument", bar.Frame);
         if ((double)bar.Frame.Width + Exact < (double)clip.Width || (double)bar.Frame.Height + Exact < (double)clip.Height)
             throw new InvalidOperationException($"{scope} 控制栏文档小于裁剪视口，右侧/底部出现空带：{bar.Frame}/{clip}");
-        if (bar.Groups.Count != 3 || bar.Ratings.Count != 6 || bar.Commands.Count != 6)
-            throw new InvalidOperationException($"{scope} 控制栏未保留 EXIF/评分/命令三个完整分组：{bar.Groups.Count}/{bar.Ratings.Count}/{bar.Commands.Count}");
-        foreach (var command in new[] { "Previous", "Next", "Exchange", "Fit", "ZoomInPreset", "ZoomOutPreset" })
-            if (!bar.Commands.ContainsKey(command)) throw new InvalidOperationException($"{scope} 控制栏缺少命令 {command}");
-        int[] children = [4, 6, 6];
+        bool includeRating = window.Main.Settings.ShowRating;
+        if (!bar.Commands.ContainsKey("Previous") || bar.Commands.Count < 2)
+            throw new InvalidOperationException($"{scope} 控制栏缺少命令按钮");
+        int expectedGroups = (bar.ExifItemCount > 0 ? 1 : 0) + (includeRating ? 1 : 0) + (bar.Commands.Count > 0 ? 1 : 0);
+        if (bar.Groups.Count != expectedGroups) throw new InvalidOperationException($"{scope} 控制栏分组数 {bar.Groups.Count}，预期 {expectedGroups}");
+        var sizes = new List<ToolbarGroupSize>();
+        foreach (var kind in bar.GroupKinds)
+            sizes.Add(kind switch
+            {
+                ControlBarGroupKind.Exif => ToolbarFlowLayout.Exif(bar.ExifItemCount, row),
+                ControlBarGroupKind.Rating => ToolbarFlowLayout.Rating(ToolbarFlowLayout.ContentMain(row ? (double)clip.Width : (double)clip.Height)),
+                _ => ToolbarFlowLayout.Commands(bar.Commands.Count),
+            });
+        bool joined = window.Main.IsControlViewVisible && window.Main.IsAnalysisViewVisible;
+        var document = ToolbarFlowLayout.Arrange(sizes, row, row ? (double)clip.Width : (double)clip.Height, joined ? 0 : null);
         for (int index = 0; index < bar.Groups.Count; index++)
         {
             var group = bar.Groups[index];
+            var expected = ToRect(document.Groups[index]);
             Record(geometry, scope, $"control.group{index}", group.Frame);
-            if (group.Subviews.Length != children[index]) throw new InvalidOperationException($"{scope} 控制组 {index} 子项数量为 {group.Subviews.Length}，预期 {children[index]}");
-            for (int child = 0; child < group.Subviews.Length; child++)
-                Record(geometry, scope, $"control.group{index}.child{child}", group.Subviews[child].Frame);
-            var frame = group.Frame;
-            if ((double)frame.X < 10 - Exact || (double)frame.Y < 10 - Exact ||
-                (double)frame.X + (double)frame.Width > (double)bar.Bounds.Width - 10 + Exact ||
-                (double)frame.Y + (double)frame.Height > (double)bar.Bounds.Height - 10 + Exact)
-                throw new InvalidOperationException($"{scope} 控制组未保留 10 点外边距：{frame}/{bar.Bounds}");
-            foreach (var other in bar.Groups.Where(other => other != group))
-                if (frame.IntersectsWith(other.Frame)) throw new InvalidOperationException($"{scope} 控制组重叠：{frame} / {other.Frame}");
+            RequireFrame(group.Frame, expected, $"{scope} 控制组 {index} 未落在共享流式矩形");
+            VerifyControlGroupContents(bar, index, row, geometry, scope);
         }
     }
 
-    /// <summary>核对筛选条实际控件、5 点间距与当前版本的整组居中。</summary>
-    private static void VerifyFilterBar(bool row, string scope, NSView filePane, List<string> geometry)
+    /// <summary>核对 EXIF 项/评分槽位/命令按钮的实际 frame。</summary>
+    private static void VerifyControlGroupContents(MacControlBar bar, int index, bool row, List<string> geometry, string scope)
     {
-        var popups = filePane.Subviews.OfType<NSPopUpButton>().ToArray();
-        var count = filePane.Subviews.OfType<NSTextField>().Single();
-        var toggles = filePane.Subviews.OfType<NSButton>().Where(button => button is not NSPopUpButton).ToArray();
-#if PHOTOVIEWER_DINO
-        if (toggles.Length != 1) throw new InvalidOperationException($"{scope} 相似聚类 toggle 数量为 {toggles.Length}，预期 1");
-        var toggle = toggles[0];
-#else
-        if (toggles.Length != 0) throw new InvalidOperationException($"{scope} 标准版残留相似聚类 toggle");
-#endif
-        if (popups.Length != 3) throw new InvalidOperationException($"{scope} 筛选下拉框数量为 {popups.Length}，预期 3");
-        foreach (var popup in popups)
-            if (Math.Abs((double)popup.Frame.Width - 90) > Exact || Math.Abs((double)popup.Frame.Height - 32) > Exact)
-                throw new InvalidOperationException($"{scope} 筛选控件未保持 90×32：{popup.Frame}");
-        Record(geometry, scope, "filter.sort", popups[0].Frame);
-        Record(geometry, scope, "filter.order", popups[1].Frame);
-        Record(geometry, scope, "filter.rating", popups[2].Frame);
-        Record(geometry, scope, "filter.count", count.Frame);
-#if PHOTOVIEWER_DINO
-        if (Math.Abs((double)toggle.Frame.Width - 90) > Exact || Math.Abs((double)toggle.Frame.Height - 27) > Exact)
-            throw new InvalidOperationException($"{scope} 相似聚类 toggle 未保持 90×27：{toggle.Frame}");
-        Record(geometry, scope, "filter.toggle", toggle.Frame);
-#endif
-        double paneWidth = (double)filePane.Frame.Width;
-        if (row)
+        var group = bar.Groups[index];
+        var kind = bar.GroupKinds[index];
+        switch (kind)
         {
-#if PHOTOVIEWER_DINO
-            if (Math.Abs((double)toggle.Frame.X - (double)count.Frame.X - (double)count.Frame.Width - 5) > Exact)
-                throw new InvalidOperationException($"{scope} 相似聚类 toggle 未紧随计数 5 点：{toggle.Frame}");
-            double right = (double)toggle.Frame.X + (double)toggle.Frame.Width;
-#else
-            double right = (double)count.Frame.X + (double)count.Frame.Width;
-#endif
-            foreach (var popup in popups)
-                if (Math.Abs((double)popup.Frame.Y - 10) > Exact) throw new InvalidOperationException($"{scope} 上下布局筛选条未贴顶 10 点：{popup.Frame}");
-            if (Math.Abs((double)popups[1].Frame.X - (double)popups[0].Frame.X - 95) > Exact ||
-                Math.Abs((double)popups[2].Frame.X - (double)popups[1].Frame.X - 95) > Exact ||
-                Math.Abs((double)count.Frame.X - (double)popups[2].Frame.X - 95) > Exact)
-                throw new InvalidOperationException($"{scope} 筛选控件间距不是 5 点（应保持 95 点节距）");
-            double center = ((double)popups[0].Frame.X + right) / 2;
-            if (Math.Abs(center - paneWidth / 2) > .5) throw new InvalidOperationException($"{scope} 筛选条未水平居中：{center}/{paneWidth}");
-            if (Math.Abs((double)count.Frame.Y + (double)count.Frame.Height / 2 - (double)popups[0].Frame.Y - (double)popups[0].Frame.Height / 2) > .5)
-                throw new InvalidOperationException($"{scope} 计数未与筛选控件垂直对齐：{count.Frame}");
-#if PHOTOVIEWER_DINO
-            if (Math.Abs((double)toggle.Frame.Y + (double)toggle.Frame.Height / 2 - (double)popups[0].Frame.Y - (double)popups[0].Frame.Height / 2) > .5)
-                throw new InvalidOperationException($"{scope} 相似聚类 toggle 未与筛选控件垂直对齐：{toggle.Frame}");
-#endif
-            return;
+            case ControlBarGroupKind.Exif:
+                double blockMain = row ? (double)group.Bounds.Width : (double)group.Bounds.Height;
+                for (int item = 0; item < group.Subviews.Length; item++)
+                {
+                    var expected = ExifBlockGeometry.ItemRect(item, group.Subviews.Length, row, blockMain);
+                    Record(geometry, scope, $"control.group{index}.item{item}", group.Subviews[item].Frame);
+                    RequireFrame(group.Subviews[item].Frame, ToRect(expected), $"{scope} EXIF 项 {item}");
+                }
+                if (group is not NSVisualEffectView exifMaterial
+                    || exifMaterial.Material != NSVisualEffectMaterial.Sidebar
+                    || exifMaterial.BlendingMode != NSVisualEffectBlendingMode.WithinWindow
+                    || exifMaterial.State != NSVisualEffectState.Active
+                    || exifMaterial.Appearance?.Name != NSAppearance.NameDarkAqua)
+                    throw new InvalidOperationException($"{scope} EXIF 衬底不是深色窗口内取样的原生 NSVisualEffectView");
+                if (group.Layer is not { } exifLayer || !exifLayer.MasksToBounds
+                    || Math.Abs((double)exifLayer.CornerRadius - ExifBlockGeometry.CornerRadius) > Exact)
+                    throw new InvalidOperationException($"{scope} EXIF 衬底圆角不是 {ExifBlockGeometry.CornerRadius} 或缺少单层裁切");
+                break;
+            case ControlBarGroupKind.Rating:
+                var control = group.Subviews[0];
+                var form = RatingControlGeometry.ResolveForm(row ? (double)group.Bounds.Width : (double)group.Bounds.Height);
+                var controlFrame = RatingControlGeometry.ControlFrame(
+                    new LayoutRect(0, 0, (double)group.Bounds.Width, (double)group.Bounds.Height), row);
+                Record(geometry, scope, $"control.group{index}.rating", control.Frame);
+                RequireFrame(control.Frame, ToRect(controlFrame), $"{scope} 评分控件外框未取共享槽位");
+                if (control is not MacControlBar.RatingControlView ratingControl
+                    || ratingControl.Layer is not { } capsule || !capsule.MasksToBounds
+                    || Math.Abs((double)capsule.CornerRadius - RatingControlGeometry.Thickness / 2) > Exact)
+                    throw new InvalidOperationException($"{scope} 评分控件外框未使用半圆端胶囊图层");
+                double capsuleCross = row ? (double)control.Bounds.Height : (double)control.Bounds.Width;
+                if (Math.Abs((double)capsule.CornerRadius * 2 - capsuleCross) > Exact)
+                    throw new InvalidOperationException($"{scope} 评分胶囊圆角未等于控件厚度的一半：{capsule.CornerRadius}/{capsuleCross}");
+                if (form == RatingControlForm.Expanded)
+                {
+                    if (bar.Ratings.Count != 6) throw new InvalidOperationException($"{scope} 展开态评分槽位不是 6 个");
+                    double main = row ? (double)control.Bounds.Width : (double)control.Bounds.Height;
+                    double slotCross = row ? (double)control.Bounds.Height : (double)control.Bounds.Width;
+                    foreach (var button in bar.Ratings)
+                    {
+                        var slot = RatingControlGeometry.SlotRect((int)button.Tag, main, slotCross, row, RatingControlGeometry.Slot);
+                        if (button.Hidden) throw new InvalidOperationException($"{scope} 展开态评分槽位被隐藏");
+                        Record(geometry, scope, $"control.group{index}.rating{button.Tag}", button.Frame);
+                        RequireFrame(button.Frame, ToRect(slot), $"{scope} 评分槽位 {button.Tag}");
+                        if (button.Layer is { } slotLayer && Math.Abs((double)slotLayer.CornerRadius) > Exact)
+                            throw new InvalidOperationException($"{scope} 评分槽位 {button.Tag} 状态面被圆角裁切");
+                    }
+                }
+                else if (bar.Ratings.Any(button => !button.Hidden))
+                    throw new InvalidOperationException($"{scope} 紧凑态仍显示六个槽位按钮");
+                break;
+            case ControlBarGroupKind.Command:
+                double cross = row ? (double)group.Bounds.Height : (double)group.Bounds.Width;
+                double offset = Math.Max(0, (cross - ToolbarFlowLayout.CommandSize) / 2);
+                for (int button = 0; button < group.Subviews.Length; button++)
+                {
+                    double main = ToolbarFlowLayout.CommandOffset(button);
+                    var expected = row
+                        ? new CGRect(main, offset, ToolbarFlowLayout.CommandSize, ToolbarFlowLayout.CommandSize)
+                        : new CGRect(offset, main, ToolbarFlowLayout.CommandSize, ToolbarFlowLayout.CommandSize);
+                    RequireFrame(group.Subviews[button].Frame, expected, $"{scope} 命令按钮 {button}");
+                    if (group.Subviews[button] is not MacControlBar.ToolbarButton command || command.Layer is not { } commandLayer
+                        || !commandLayer.MasksToBounds
+                        || Math.Abs((double)commandLayer.CornerRadius - ToolbarFlowLayout.CommandSize / 2) > Exact)
+                        throw new InvalidOperationException($"{scope} 命令按钮 {button} 不是正圆单层图层");
+                }
+                break;
         }
-        if (Math.Abs(paneWidth - 116) > .5) throw new InvalidOperationException($"{scope} 左右布局胶片栏栏宽不是 116 点：{paneWidth}");
-        foreach (var popup in popups)
-            if (Math.Abs((double)popup.Frame.X - (paneWidth - 90) / 2) > Exact)
-                throw new InvalidOperationException($"{scope} 左右布局筛选条未在 116 栏内居中：{popup.Frame}");
-        if (Math.Abs((double)popups[0].Frame.Y - DesignTokens.ShellFilterLeadingInset) > Exact)
-            throw new InvalidOperationException($"{scope} 左右布局首控件未从 {DesignTokens.ShellFilterLeadingInset} 点起：{popups[0].Frame}");
-        if (Math.Abs((double)popups[1].Frame.Y - (double)popups[0].Frame.Y - 37) > Exact ||
-            Math.Abs((double)popups[2].Frame.Y - (double)popups[1].Frame.Y - 37) > Exact ||
-            Math.Abs((double)count.Frame.Y - (double)popups[2].Frame.Y - 37) > Exact)
-            throw new InvalidOperationException($"{scope} 筛选控件纵向间距不是 5 点（应保持 37 点节距）");
+    }
+
+    /// <summary>核对筛选控件按共享 WideFilterLayout 落位、toggle 同宽与标题栏挖空联合范围。</summary>
+    private static void VerifyFilterBar(MacMainWindow window, bool row, string scope, NSView filePane, LayoutRect content, List<string> geometry)
+    {
+        var frames = window.FilterLayout;
+        var popups = filePane.Subviews.OfType<NSPopUpButton>().ToArray();
+        var visible = popups.Where(popup => !popup.Hidden).ToArray();
+        if (window.FilterCapsuleMode)
+        {
+            if (visible.Length != 1) throw new InvalidOperationException($"{scope} 单胶囊回退时有 {visible.Length} 个可见下拉");
+            RequireFrame(visible[0].Frame, new CGRect(content.X + frames.Control.X, content.Y + frames.Control.Y, frames.Control.Width, frames.Control.Height),
+                $"{scope} 单胶囊外框");
+            geometry.Add($"{scope}\tfilter.capsule\t({visible[0].Frame.X:0.##},{visible[0].Frame.Y:0.##},{visible[0].Frame.Width:0.##},{visible[0].Frame.Height:0.##})");
+        }
+        else
+        {
+            if (visible.Length != 3) throw new InvalidOperationException($"{scope} 三合体时有 {visible.Length} 个可见下拉");
+            var expected = new[] { frames.Sort, frames.Order, frames.Rating };
+            var names = new[] { "sort", "order", "rating" };
+            for (int index = 0; index < 3; index++)
+            {
+                RequireFrame(visible[index].Frame,
+                    new CGRect(content.X + frames.Control.X + expected[index].X,
+                        content.Y + frames.Control.Y + expected[index].Y, expected[index].Width, expected[index].Height),
+                    $"{scope} 筛选段 {index}");
+                Record(geometry, scope, $"filter.{names[index]}", visible[index].Frame);
+            }
+            geometry.Add($"{scope}\tfilter.segments\t({visible[0].Frame.X:0.##},{visible[0].Frame.Y:0.##},{visible[0].Frame.Width:0.##},{visible[0].Frame.Height:0.##})");
+        }
+        foreach (var popup in visible)
+            if (Math.Abs((double)popup.Frame.Height - (double)frames.Control.Height) > Exact)
+                throw new InvalidOperationException($"{scope} 筛选控件高不是 {frames.Control.Height}：{popup.Frame}");
 #if PHOTOVIEWER_DINO
-        if (Math.Abs((double)toggle.Frame.Y - (double)count.Frame.Y - (double)count.Frame.Height - 5) > Exact)
-            throw new InvalidOperationException($"{scope} 相似聚类 toggle 未紧随计数：{toggle.Frame}");
-        double toggleCenter = (double)toggle.Frame.X + (double)toggle.Frame.Width / 2;
-        if (Math.Abs(toggleCenter - 58) > Exact) throw new InvalidOperationException($"{scope} toggle 中心不是 58");
+        if (window.SimilarityToggle.Hidden)
+            throw new InvalidOperationException($"{scope} 文件栏可见时相似开关被隐藏");
+        var toggle = window.SimilarityToggle;
+        RequireFrame(toggle.Frame, new CGRect(content.X + frames.Toggle.X, content.Y + frames.Toggle.Y, frames.Toggle.Width, frames.Toggle.Height),
+            $"{scope} 相似聚类开关");
+        double expectedToggleWidth = row ? DesignTokens.FilterToggleWidth : FilmCardGeometry.Width(FilmCardTier.Large);
+        if (Math.Abs((double)toggle.Frame.Width - expectedToggleWidth) > Exact || Math.Abs((double)toggle.Frame.Height - WideFilterLayout.Height) > Exact)
+            throw new InvalidOperationException($"{scope} 相似聚类开关不是 {expectedToggleWidth}×{WideFilterLayout.Height}：{toggle.Frame}");
+        geometry.Add($"{scope}\tfilter.toggle\t({toggle.Frame.X:0.##},{toggle.Frame.Y:0.##},{toggle.Frame.Width:0.##},{toggle.Frame.Height:0.##})");
+        if (row && Math.Abs((double)toggle.Frame.Y - (double)visible[0].Frame.Y) > Exact)
+            throw new InvalidOperationException($"{scope} 行布局 toggle 未与筛选控件同轴");
+        if (!row)
+        {
+            if (Math.Abs((double)visible[0].Frame.Width - 96) > Exact || Math.Abs((double)visible[0].Frame.X - 10) > Exact)
+                throw new InvalidOperationException($"{scope} 列布局筛选外框不是 96 宽居中");
+            if (Math.Abs((double)visible[0].Frame.Y - DesignTokens.ShellFilterLeadingInset) > Exact)
+                throw new InvalidOperationException($"{scope} 列布局筛选控件 y 不是 {DesignTokens.ShellFilterLeadingInset}");
+            if (Math.Abs((double)toggle.Frame.Y - (double)(visible[0].Frame.Y + 44 + 8)) > Exact)
+                throw new InvalidOperationException($"{scope} 列布局开关未在筛选组下 8 点");
+        }
+#else
+        if (filePane.Subviews.OfType<NSButton>().Any(button => !button.Hidden && button.Title == "相似聚类"))
+            throw new InvalidOperationException($"{scope} 标准版残留相似开关");
 #endif
-        double popupCenter = (double)popups[0].Frame.X + (double)popups[0].Frame.Width / 2;
-        double countCenter = (double)count.Frame.X + (double)count.Frame.Width / 2;
-        if (Math.Abs(popupCenter - 58) > Exact || Math.Abs(countCenter - 58) > Exact)
-            throw new InvalidOperationException($"{scope} 左右布局筛选条/计数中心不是 58：{popupCenter}/{countCenter}");
+        var count = window.CountView;
+        if (count.Hidden || count.Superview is not { } countHost
+            || count.Frame.X < countHost.Bounds.X || count.Frame.Y < countHost.Bounds.Y
+            || count.Frame.X + count.Frame.Width > countHost.Bounds.X + countHost.Bounds.Width
+            || count.Frame.Y + count.Frame.Height > countHost.Bounds.Y + countHost.Bounds.Height)
+            throw new InvalidOperationException($"{scope} 计数未完整显示在冻结筛选外框内：{count.Frame} / {count.Superview?.Bounds}");
+        var union = window.FilterUnionFrame;
+        if (Math.Abs((double)union.X - (content.X + frames.Control.X)) > Exact || union.Width <= 0)
+            throw new InvalidOperationException($"{scope} 标题挖空联合范围与筛选控件不一致：{union}");
+    }
+
+    /// <summary>核对文件栏/工具区材质出现条件与唯一外边界。</summary>
+    private static void VerifyMaterialCondition(MacMainWindow window, bool row, string scope, ShellPaneFrames panes, List<string> observations)
+    {
+        if (!(window.FileBarBackground is NSVisualEffectView fileMaterial) || fileMaterial.Hidden && window.Main.IsThumbnailViewVisible)
+            throw new InvalidOperationException($"{scope} 文件栏未使用可见的系统材质宿主");
+        bool showsTool = window.Main.IsAnalysisViewVisible
+            || window.Main.IsControlViewVisible && window.ControlBar.ExifItemCount > 0;
+        if ((window.ToolBackground.Hidden == showsTool))
+            throw new InvalidOperationException($"{scope} 工具区材质出现条件错误：shows={showsTool}, hidden={window.ToolBackground.Hidden}");
+        if (showsTool)
+        {
+            RequireFrame(window.ToolBackground.Frame, ToRect(panes.ControlBackground), $"{scope} 工具区材质宿主未铺满共同区域");
+            if (window.ToolDivider.Hidden) throw new InvalidOperationException($"{scope} 工具区缺少朝主图外边界");
+            var divider = window.ToolDivider.Frame;
+            if (row ? Math.Abs((double)divider.Y - (double)panes.ControlBackground.Y) > .5 || Math.Abs((double)divider.Height - MainScreenLayout.Divider) > .5
+                : Math.Abs((double)divider.X - (double)panes.ControlBackground.X) > .5 || Math.Abs((double)divider.Width - MainScreenLayout.Divider) > .5)
+                throw new InvalidOperationException($"{scope} 工具区外边界未落在朝主图一侧：{divider}");
+        }
+        else if (!window.ToolDivider.Hidden)
+            throw new InvalidOperationException($"{scope} 纯评分/命令时仍画工具区外边界");
+        observations.Add($"{scope}: 文件栏材质={fileMaterial.Material}, 工具区材质出现={showsTool}");
     }
 
     /// <summary>
     /// SHELL-02：标题栏跨度、毛玻璃背景与标题文字。默认覆盖层高 shell.titlebar.height 且贴合窗口顶边；
-    /// 行布局宽度足够时挖空筛选控件，窄宽度改为占布局高度的常驻通栏；列布局为通栏悬停覆盖层。
-    /// 显隐由验收模拟热区进出，悬停形态应收起，窄宽度常驻栏应保持可见。
+    /// 行布局宽度足够时挖空新筛选组联合范围，窄宽度改为占布局高度的常驻通栏；列布局为通栏悬停覆盖层。
     /// </summary>
-    private static void VerifyTitlebar(MacMainWindow window, bool row, string scope, NSView filePane, NSView photoPane, List<string> geometry)
+    private static void VerifyTitlebar(MacMainWindow window, bool row, string scope, NSView filePane,
+        ShellPaneFrames panes, List<string> geometry)
     {
         var root = window.Window.ContentView ?? throw new InvalidOperationException("原生内容视图缺失");
         double width = (double)root.Bounds.Width, height = DesignTokens.ShellTitlebarHeight;
@@ -250,6 +376,7 @@ internal static class NativeMainLayoutAcceptance
         if (zones.Count != 2) throw new InvalidOperationException($"{scope} 拖动区数量为 {zones.Count}，预期 2");
         var material = window.TitlebarMaterialView;
         var label = window.TitlebarLabel;
+        var union = window.FilterUnionFrame;
         foreach (var zone in zones)
         {
             if (Math.Abs((double)zone.Frame.Y) > Exact || Math.Abs((double)zone.Frame.Height - height) > Exact)
@@ -259,8 +386,18 @@ internal static class NativeMainLayoutAcceptance
         if (Math.Abs((double)zones[0].Frame.X) > Exact) throw new InvalidOperationException($"{scope} 左侧拖动区未从窗口左缘起：{zones[0].Frame}");
         if (Math.Abs((double)zones[1].Frame.X + (double)zones[1].Frame.Width - width) > Exact)
             throw new InvalidOperationException($"{scope} 右侧拖动区未止于窗口右缘：{zones[1].Frame}");
-        if (persistent && (Math.Abs((double)zones[0].Frame.Width - width) > Exact || Math.Abs((double)zones[1].Frame.Width) > Exact))
-            throw new InvalidOperationException($"{scope} 窄宽度常驻栏未提供完整通栏拖动区：{zones[0].Frame}/{zones[1].Frame}");
+        if (persistent)
+        {
+            if (Math.Abs((double)zones[0].Frame.Width - width) > Exact || Math.Abs((double)zones[1].Frame.Width) > Exact)
+                throw new InvalidOperationException($"{scope} 窄宽度常驻栏未提供完整通栏拖动区：{zones[0].Frame}/{zones[1].Frame}");
+        }
+        else if (row && window.Main.IsThumbnailViewVisible)
+        {
+            if (Math.Abs((double)zones[0].Frame.Width - union.X) > Exact)
+                throw new InvalidOperationException($"{scope} 左侧拖动区未止于新筛选组左缘：{zones[0].Frame}/{union}");
+            if (Math.Abs((double)zones[1].Frame.X - (double)union.X - (double)union.Width) > Exact)
+                throw new InvalidOperationException($"{scope} 右侧拖动区未从新筛选组右缘起：{zones[1].Frame}/{union}");
+        }
         RequireFrame(material.Frame, new CGRect(0, 0, width, height), $"{scope} 标题栏毛玻璃层未铺满窗口宽 {width}×{height}");
         Record(geometry, scope, "titlebar.material", material.Frame);
         Record(geometry, scope, "titlebar.title", label.Frame);
@@ -269,8 +406,9 @@ internal static class NativeMainLayoutAcceptance
         int leftIndex = Array.IndexOf(root.Subviews, zones[0]);
         int rightIndex = Array.IndexOf(root.Subviews, zones[1]);
         int labelIndex = Array.IndexOf(root.Subviews, label);
-        if (Array.IndexOf(root.Subviews, photoPane) >= materialIndex || materialIndex >= leftIndex || leftIndex >= rightIndex || rightIndex >= labelIndex)
-            throw new InvalidOperationException($"{scope} 标题栏层序不是 内容 < 毛玻璃 < 拖动区 < 标题文字：{materialIndex}/{leftIndex}/{rightIndex}/{labelIndex}");
+        int photoIndex = Array.IndexOf(root.Subviews, window.Photo.Superview);
+        if (photoIndex >= materialIndex || materialIndex >= leftIndex || leftIndex >= rightIndex || rightIndex >= labelIndex)
+            throw new InvalidOperationException($"{scope} 标题栏层序不是 内容 < 毛玻璃 < 拖动区 < 标题文字：{photoIndex}/{materialIndex}/{leftIndex}/{rightIndex}/{labelIndex}");
 
         var zoom = window.Window.StandardWindowButton(NSWindowButton.ZoomButton)
             ?? throw new InvalidOperationException($"{scope} 窗口缺少缩放按钮，无法核对标题文字让位");
@@ -283,17 +421,15 @@ internal static class NativeMainLayoutAcceptance
         double zoomCentre = (double)zoomFrame.Y + (double)zoomFrame.Height / 2;
         if (Math.Abs(labelCentre - zoomCentre) > .5)
             throw new InvalidOperationException($"{scope} 标题文字中线未对齐交通灯中线：{labelCentre} / {zoomCentre}");
-        var leftMost = filePane.Subviews.OfType<NSPopUpButton>().MinBy(popup => (double)popup.Frame.X)
-            ?? throw new InvalidOperationException($"{scope} 缺少筛选下拉框，无法核对标题文字让位");
-        double groupLeft = (double)filePane.Frame.X + (double)leftMost.Frame.X;
+        double groupLeft = union.X;
         if (persistent)
         {
             if (zoomRight <= groupLeft)
-                throw new InvalidOperationException($"{scope} 常驻标题栏触发条件不成立：交通灯 {zoomRight} 未与筛选组 {groupLeft} 相交");
+                throw new InvalidOperationException($"{scope} 常驻标题栏触发条件不成立：交通灯 {zoomRight} 未与新筛选组 {groupLeft} 相交");
             if (Math.Abs((double)filePane.Frame.Y - height) > Exact)
                 throw new InvalidOperationException($"{scope} 文件栏未下移到常驻标题栏下方：{filePane.Frame}");
         }
-        else if (row && (double)label.Frame.Width >= 24
+        else if (row && window.Main.IsThumbnailViewVisible && (double)label.Frame.Width >= 24
             && (double)label.Frame.X + (double)label.Frame.Width > groupLeft - DesignTokens.ShellTitlebarTitleLeftInset + Exact)
         {
             throw new InvalidOperationException($"{scope} 行布局标题文字压住了筛选控件：{label.Frame} / 筛选组左缘 {groupLeft}");
@@ -329,26 +465,39 @@ internal static class NativeMainLayoutAcceptance
         }
     }
 
-    /// <summary>核对胶片栏步长与内边距、卡片 96×144 内部结构，并输出前两张卡片的实际几何。</summary>
-    private static async Task VerifyFilmstripAsync(MacMainWindow window, bool row, string scope, NSView filePane, List<string> geometry)
+    /// <summary>核对胶片栏大档固定、首卡内容留白、文档长度与卡片内部结构，并输出前两张卡片实际几何。</summary>
+    private static async Task VerifyFilmstripAsync(MacMainWindow window, bool row, string scope, NSView filePane,
+        ShellPaneFrames panes, List<string> geometry)
     {
-        if (FilmstripGeometry.CardWidth != 96 || FilmstripGeometry.CardHeight != 144 ||
-            FilmstripGeometry.HorizontalPadding != 10 || FilmstripGeometry.TopPadding != 5 || FilmstripGeometry.BottomPadding != 10)
-            throw new InvalidOperationException($"{scope} 胶片栏不再使用已验证的 96×144 卡片与 10/5/10 内边距");
+        if (FilmCardGeometry.Width(FilmCardTier.Large) != 96 || FilmCardGeometry.Height(FilmCardTier.Large) != 144
+            || FilmCardGeometry.MainLead(FilmCardTier.Large, true) != 10 || FilmCardGeometry.MainLead(FilmCardTier.Large, false) != 5
+            || FilmCardGeometry.MainTrail(FilmCardTier.Large, false) != 10)
+            throw new InvalidOperationException($"{scope} 胶片大档必须使用 96×144 与 10/5/10 内边距");
         var scroll = window.FilmstripScroll;
         var layout = window.Filmstrip.CollectionViewLayout as MacFilmstripLayout ?? throw new InvalidOperationException($"{scope} 胶片栏布局类型改变");
         if (layout.Horizontal != row) throw new InvalidOperationException($"{scope} 胶片栏方向未跟随布局");
-        var popups = filePane.Subviews.OfType<NSPopUpButton>().ToArray();
-        double filterBottom = Math.Max(popups.Max(popup => (double)popup.Frame.Y + (double)popup.Frame.Height),
-            filePane.Subviews.OfType<NSTextField>().Max(label => (double)label.Frame.Y + (double)label.Frame.Height));
+        if (layout.Tier != FilmCardTier.Large) throw new InvalidOperationException($"{scope} 宽形态胶片栏降为小档");
+        var content = panes.FileContent;
+        double filterMain = window.FilterLayout.MainLength;
+        double similarityColumn = 0;
 #if PHOTOVIEWER_DINO
-        filterBottom = Math.Max(filterBottom, filePane.Subviews.OfType<NSButton>().Where(button => button is not NSPopUpButton).Max(button => (double)button.Frame.Y + (double)button.Frame.Height));
+        bool similarityOpen = window.Main.IsThumbnailViewVisible && window.Main.FileVM.FilterBar.IsSimilarityPanelOpen;
+        if (similarityOpen)
+        {
+            var panel = window.Main.FileVM.SimilarityPanel;
+            double dock = panel.HasItems && panel.ShowActionArea ? window.Similarity.DockMeasureWidth() : 0;
+            similarityColumn = row
+                ? SimilarityPanelGeometry.RowWidth(panel.HasItems, panel.SimilarItems.Count, (double)filePane.Frame.Width, dock)
+                : 0;
+        }
 #endif
-        if ((double)scroll.Frame.Y < filterBottom - Exact) throw new InvalidOperationException($"{scope} 筛选条与胶片栏重叠：{scroll.Frame}");
-        if (Math.Abs((double)scroll.Frame.Y + (double)scroll.Frame.Height - (double)filePane.Frame.Height) > .5)
-            throw new InvalidOperationException($"{scope} 胶片栏未填满文件栏剩余空间，出现空带：{scroll.Frame}/{filePane.Frame}");
-        if (Math.Abs((double)scroll.Frame.X) > Exact || Math.Abs((double)scroll.Frame.Width - (double)filePane.Frame.Width) > .5)
-            throw new InvalidOperationException($"{scope} 胶片栏裁剪区未铺满文件栏：{scroll.Frame}");
+        var expectedScroll = row
+            ? new CGRect(content.X, content.Y + filterMain, Math.Max(1, content.Width - similarityColumn), Math.Max(1, content.Height - filterMain))
+            : new CGRect(content.X, 0, content.Width, filePane.Frame.Height);
+        RequireFrame(scroll.Frame, expectedScroll, $"{scope} 胶片栏裁剪区");
+        double edge = row ? 0 : Math.Max(0, filterMain - FilmCardGeometry.MainLead(FilmCardTier.Large, false));
+        if (Math.Abs(layout.EdgePadding - edge) > Exact)
+            throw new InvalidOperationException($"{scope} 列布局首卡内容留白 {layout.EdgePadding} 未等于筛选带 {edge}");
         scroll.ContentView.ScrollToPoint(CGPoint.Empty);
         scroll.ReflectScrolledClipView(scroll.ContentView);
         await Task.Delay(150);
@@ -359,34 +508,39 @@ internal static class NativeMainLayoutAcceptance
         Record(geometry, scope, "filmstripDocument", new CGRect(CGPoint.Empty, document));
         Record(geometry, scope, "filmstripScroll", scroll.Frame);
         int count = window.Main.FileVM.ThumbnailList.FilteredFiles.Count;
-        double step = row ? FilmstripGeometry.CardWidth : FilmstripGeometry.CardHeight;
-        double leading = row ? FilmstripGeometry.HorizontalPadding : FilmstripGeometry.TopPadding;
-        double trailing = row ? FilmstripGeometry.HorizontalPadding : FilmstripGeometry.BottomPadding;
-        double contentLength = count * step + leading + trailing;
+        double step = FilmCardGeometry.Step(FilmCardTier.Large, row);
+        double leading = FilmCardGeometry.MainLead(FilmCardTier.Large, row);
+        double trailing = FilmCardGeometry.MainTrail(FilmCardTier.Large, row);
+        double contentLength = count == 0 ? 0 : count * step - FilmCardGeometry.Spacing(FilmCardTier.Large) + leading + trailing;
         double documentMain = row ? (double)document.Width : (double)document.Height;
         double viewportMain = row ? (double)clip.Width : (double)clip.Height;
-        if (Math.Abs(documentMain - Math.Max((double)viewportMain, contentLength)) > .5)
+        if (Math.Abs(documentMain - Math.Max(viewportMain, contentLength + edge)) > .5)
             throw new InvalidOperationException($"{scope} 胶片栏文档主轴长度错误：{documentMain}");
         var firstPath = NSIndexPath.FromItemSection(0, 0);
         var secondPath = NSIndexPath.FromItemSection(1, 0);
         var firstCard = layout.GetLayoutAttributesForItem(firstPath)?.Frame ?? throw new InvalidOperationException($"{scope} 首卡几何缺失");
         var secondCard = layout.GetLayoutAttributesForItem(secondPath)?.Frame ?? throw new InvalidOperationException($"{scope} 第二卡几何缺失");
-        double expectedLeft = row ? Math.Max(10, ((double)document.Width - count * 96) / 2) : 10;
-        RequireFrame(firstCard, new CGRect(expectedLeft, 5, 96, 144), $"{scope} 首卡位置与卡片尺寸");
+        var item = FilmCardGeometry.ItemFrame(FilmCardTier.Large, row, 0, count, (double)document.Width);
+        var expectedFirst = row
+            ? new CGRect(item.X + edge, item.Y, item.Width, item.Height)
+            : new CGRect(item.X, item.Y + edge, item.Width, item.Height);
+        RequireFrame(firstCard, expectedFirst, $"{scope} 首卡位置与卡片尺寸");
         double cardStep = row ? (double)(secondCard.X - firstCard.X) : (double)(secondCard.Y - firstCard.Y);
         if (Math.Abs(cardStep - step) > Exact) throw new InvalidOperationException($"{scope} 胶片栏步长错误：{cardStep} != {step}");
         if (row ? Math.Abs((double)(secondCard.Y - firstCard.Y)) > Exact : Math.Abs((double)(secondCard.X - firstCard.X)) > Exact)
             throw new InvalidOperationException($"{scope} 胶片栏出现换行或换列：{firstCard} / {secondCard}");
         double crossTail = row ? (double)scroll.Frame.Height - ((double)firstCard.Y + (double)firstCard.Height)
             : (double)scroll.Frame.Width - ((double)firstCard.X + (double)firstCard.Width);
-        if (Math.Abs(crossTail - 10) > Exact) throw new InvalidOperationException($"{scope} 胶片栏交叉轴内边距不是 10 点：{crossTail}");
-        if (contentLength > (double)viewportMain + .5)
+        if (Math.Abs(crossTail - FilmCardGeometry.CrossTrail(FilmCardTier.Large, row)) > Exact)
+            throw new InvalidOperationException($"{scope} 胶片栏交叉轴内边距不是 {FilmCardGeometry.CrossTrail(FilmCardTier.Large, row)} 点：{crossTail}");
+        if (count > 0 && contentLength + edge > (double)viewportMain + .5)
         {
             var lastPath = NSIndexPath.FromItemSection(count - 1, 0);
             var lastCard = layout.GetLayoutAttributesForItem(lastPath)?.Frame ?? throw new InvalidOperationException($"{scope} 末卡几何缺失");
             double tail = documentMain - (row ? (double)lastCard.X + (double)lastCard.Width : (double)lastCard.Y + (double)lastCard.Height);
             if (Math.Abs(tail - trailing) > .5) throw new InvalidOperationException($"{scope} 胶片栏末端内边距错误：{tail} != {trailing}");
         }
+        if (count < 2) return;
         foreach (int index in new[] { 0, 1 })
         {
             var path = NSIndexPath.FromItemSection(index, 0);
@@ -395,6 +549,8 @@ internal static class NativeMainLayoutAcceptance
             if (!ReferenceEquals(card.BoundFile, window.Main.FileVM.ThumbnailList.FilteredFiles[index]))
                 throw new InvalidOperationException($"{scope} 第 {index} 卡绑定身份与业务顺序不同");
             RequireFrame(card.View.Frame, expected, $"{scope} 第 {index} 卡视图未落在布局位置", .5);
+            if (card.View.IsHiddenOrHasHiddenAncestor)
+                throw new InvalidOperationException($"{scope} 第 {index} 卡视图被隐藏或其祖先被隐藏");
             VerifyCard(card, index, scope, geometry);
         }
     }
@@ -480,22 +636,28 @@ internal static class NativeMainLayoutAcceptance
         observations.Add($"navigation: 长边 {Math.Max((double)navigation.Width, (double)navigation.Height):0.##}、比例 {(double)navigation.Width:0.#}x{(double)navigation.Height:0.#}；100% 视口 {viewport} 包含于 NavigationSize；nav 帧 {capture.Width}x{capture.Height}@{backing}x；Fit 按钮已恢复");
     }
 
-    /// <summary>隐藏胶片栏/控制栏分别核对释放主图对应轴空间，恢复后分区回到原值。</summary>
+    /// <summary>隐藏胶片栏/控制栏分别核对适应区对应轴释放空间，恢复后分区回到原值。</summary>
     private static async Task VerifyPaneReleaseAsync(MacMainWindow window, LayoutMode mode, List<string> observations)
     {
         bool row = mode == LayoutMode.Row;
         var root = window.Window.ContentView ?? throw new InvalidOperationException("原生内容视图缺失");
-        var photoPane = root.Subviews.Single(view => view.Subviews.Contains(window.Photo));
         var filmPane = root.Subviews.Single(view => view.Subviews.Contains(window.FilmstripScroll));
         await Task.Delay(200);
-        var beforeFilm = photoPane.Frame;
+        var beforeFilm = window.Photo.FitArea;
         double filmBand = row ? (double)beforeFilm.Y : (double)beforeFilm.X;
-        if (filmBand <= 0) throw new InvalidOperationException($"{mode} 主图旁没有可释放的胶片栏分区：{beforeFilm}");
+        if (filmBand <= 0) throw new InvalidOperationException($"{mode} 主图适应区旁没有可释放的胶片栏分区：{beforeFilm}");
+        // 放大并离开画面中心，证明栏位开关只改变适应区，切图倍率与视图中心不跟着重排跑掉。
+        window.Photo.ZoomBy(2);
+        window.Photo.CenterOnNormalizedPoint(.6, .5);
+        await Task.Delay(150);
+        double heldScale = window.Photo.PhysicalScale;
+        var heldCenter = window.Photo.ViewCenter;
         window.Main.IsThumbnailViewVisible = false;
         await Task.Delay(300);
         if (!filmPane.Hidden || ((double)filmPane.Frame.Width > .5 && (double)filmPane.Frame.Height > .5))
             throw new InvalidOperationException($"{mode} 隐藏胶片栏未收起文件栏：{filmPane.Frame}");
-        RequireSize(photoPane.Frame, beforeFilm, filmBand, row, $"{mode} 隐藏胶片栏未释放主图{(row ? "上方" : "左侧")}空间");
+        RequireSize(window.Photo.FitArea, beforeFilm, filmBand, row, $"{mode} 隐藏胶片栏未释放主图{(row ? "上方" : "左侧")}空间");
+        RequireZoomHeld(window, heldScale, heldCenter, $"{mode} 隐藏胶片栏");
         // SHELL-02：文件栏隐藏后无论哪种布局都是整幅宽通栏带，并且带毛玻璃背景。
         var zones = window.DragZones;
         window.ShowTitlebarForTesting(true);
@@ -508,44 +670,173 @@ internal static class NativeMainLayoutAcceptance
                 throw new InvalidOperationException($"{mode} 文件栏隐藏后标题栏未显示毛玻璃背景");
         }
         finally { window.ShowTitlebarForTesting(false); }
-        observations.Add($"{mode}: 隐藏胶片栏释放{(row ? "上" : "左")}侧 {filmBand:0.##} 点，主图分区 {photoPane.Frame}；标题栏转为通栏带 + 毛玻璃");
+        observations.Add($"{mode}: 隐藏胶片栏释放{(row ? "上" : "左")}侧 {filmBand:0.##} 点，适应区 {window.Photo.FitArea}；倍率 {heldScale:0.###} 与中心保持；标题栏转为通栏带 + 毛玻璃");
         window.Main.IsThumbnailViewVisible = true;
         await Task.Delay(300);
-        RequireFrame(photoPane.Frame, beforeFilm, $"{mode} 恢复胶片栏后主图分区未还原", .5);
+        RequireFrame(window.Photo.FitArea, beforeFilm, $"{mode} 恢复胶片栏后适应区未还原", .5);
+        RequireZoomHeld(window, heldScale, heldCenter, $"{mode} 恢复胶片栏");
 
-        var beforeControl = photoPane.Frame;
-        double controlBand = row ? (double)root.Bounds.Height - ((double)beforeControl.Y + (double)beforeControl.Height)
-            : (double)root.Bounds.Width - ((double)beforeControl.X + (double)beforeControl.Width);
+        var beforeControl = window.Photo.FitArea;
+        var viewport = root.Bounds;
+        double controlBand = row ? (double)viewport.Height - (double)beforeControl.Y - (double)beforeControl.Height
+            : (double)viewport.Width - (double)beforeControl.X - (double)beforeControl.Width;
         if (controlBand <= 0) throw new InvalidOperationException($"{mode} 主图旁没有可释放的控制栏分区：{beforeControl}");
         window.Main.IsControlViewVisible = false;
         await Task.Delay(300);
         if (!window.ControlScroll.Hidden) throw new InvalidOperationException($"{mode} 隐藏控制栏未收起控制分区");
-        RequireSize(photoPane.Frame, beforeControl, controlBand, row, $"{mode} 隐藏控制栏未释放主图{(row ? "下方" : "右侧")}空间", false);
-        observations.Add($"{mode}: 隐藏控制栏释放{(row ? "下" : "右")}侧 {controlBand:0.##} 点，主图分区 {photoPane.Frame}");
+        RequireSize(window.Photo.FitArea, beforeControl, controlBand, row, $"{mode} 隐藏控制栏未释放主图{(row ? "下方" : "右侧")}空间", false);
+        RequireZoomHeld(window, heldScale, heldCenter, $"{mode} 隐藏控制栏");
+        observations.Add($"{mode}: 隐藏控制栏释放{(row ? "下" : "右")}侧 {controlBand:0.##} 点，适应区 {window.Photo.FitArea}");
         window.Main.IsControlViewVisible = true;
         await Task.Delay(300);
-        RequireFrame(photoPane.Frame, beforeControl, $"{mode} 恢复控制栏后主图分区未还原", .5);
+        RequireFrame(window.Photo.FitArea, beforeControl, $"{mode} 恢复控制栏后适应区未还原", .5);
+        RequireZoomHeld(window, heldScale, heldCenter, $"{mode} 恢复控制栏");
+        window.Photo.FitToView();
+        await Task.Delay(120);
     }
 
     /// <summary>核对自动布局随窗口宽高方向切换上下/左右分栏，再回到横向。</summary>
     private static async Task VerifyAutoOrientationAsync(MacMainWindow window, List<string> geometry, List<string> observations)
     {
-        var root = window.Window.ContentView ?? throw new InvalidOperationException("原生内容视图缺失");
-        var photoPane = root.Subviews.Single(view => view.Subviews.Contains(window.Photo));
         window.Main.Settings.LayoutMode = LayoutMode.Auto;
         await SettleAsync(window, new CGSize(1200, 850));
-        if (window.Main.IsRowLayout || (double)photoPane.Frame.X <= 0 || (double)photoPane.Frame.Y > Exact)
-            throw new InvalidOperationException($"自动布局在横向窗口未选择左右分栏：{photoPane.Frame}");
-        Record(geometry, "Auto-1200x850", "photoPane", photoPane.Frame);
+        if (window.Main.IsRowLayout || (double)window.Photo.FitArea.X <= 0 || (double)window.Photo.FitArea.Y > Exact)
+            throw new InvalidOperationException($"自动布局在横向窗口未选择左右分栏：{window.Photo.FitArea}");
+        Record(geometry, "Auto-1200x850", "photoFit", window.Photo.FitArea);
         await SettleAsync(window, new CGSize(700, 850));
-        if (!window.Main.IsRowLayout || (double)photoPane.Frame.Y <= 0 || (double)photoPane.Frame.X > Exact)
-            throw new InvalidOperationException($"自动布局在纵向窗口未选择上下分栏：{photoPane.Frame}");
-        Record(geometry, "Auto-700x850", "photoPane", photoPane.Frame);
+        if (!window.Main.IsRowLayout || (double)window.Photo.FitArea.Y <= 0 || (double)window.Photo.FitArea.X > Exact)
+            throw new InvalidOperationException($"自动布局在纵向窗口未选择上下分栏：{window.Photo.FitArea}");
+        Record(geometry, "Auto-700x850", "photoFit", window.Photo.FitArea);
         await SettleAsync(window, new CGSize(850, 700));
-        if (window.Main.IsRowLayout || (double)photoPane.Frame.X <= 0)
-            throw new InvalidOperationException($"自动布局回到横向窗口未切回左右分栏：{photoPane.Frame}");
-        Record(geometry, "Auto-850x700", "photoPane", photoPane.Frame);
+        if (window.Main.IsRowLayout || (double)window.Photo.FitArea.X <= 0)
+            throw new InvalidOperationException($"自动布局回到横向窗口未切回左右分栏：{window.Photo.FitArea}");
+        Record(geometry, "Auto-850x700", "photoFit", window.Photo.FitArea);
         observations.Add("自动布局：横向窗口=左右分栏，纵向窗口=上下分栏，回到横向=左右分栏");
+    }
+
+    /// <summary>宽形态静态矩阵：全开/全关/独立栏位/分析/评分与 EXIF 开关、AI 相似面板开合都有实际 frame 断言。</summary>
+    private static async Task VerifyStaticMatrixAsync(MacMainWindow window, List<string> geometry, List<string> observations)
+    {
+        var settings = window.Main.Settings;
+        var filter = window.Main.FileVM.FilterBar;
+        var exif = settings.ExifDisplayItems;
+        foreach (var mode in new[] { LayoutMode.Row, LayoutMode.Col })
+        {
+            settings.LayoutMode = mode;
+            foreach (var size in new[] { new CGSize(1200, 850), new CGSize(560, 480) })
+            {
+                await SettleAsync(window, size);
+                foreach (var config in StaticConfigs())
+                {
+                    window.Main.IsThumbnailViewVisible = config.Film;
+                    window.Main.IsControlViewVisible = config.Control;
+                    window.Main.IsAnalysisViewVisible = config.Analysis;
+                    settings.ShowRating = config.Rating;
+                    foreach (var entry in exif) entry.IsEnabled = config.Exif;
+#if PHOTOVIEWER_DINO
+                    filter.IsSimilarityPanelOpen = config.Similarity;
+#else
+                    if (config.Similarity) continue;
+#endif
+                    await Task.Delay(260);
+                    string scope = $"matrix-{mode}-{size.Width:0}x{size.Height:0}-{config.Name}";
+                    VerifyStaticFrame(window, scope, geometry, observations);
+                }
+            }
+        }
+        await Task.Delay(200);
+    }
+
+    /// <summary>静态矩阵配置：栏位、分析、评分、EXIF 与相似面板开合。</summary>
+    private static IEnumerable<(string Name, bool Film, bool Control, bool Analysis, bool Rating, bool Exif, bool Similarity)> StaticConfigs()
+    {
+        yield return ("all-on", true, true, true, true, true, false);
+        yield return ("all-off", false, false, false, false, false, false);
+        yield return ("film-only", true, false, false, true, true, false);
+        yield return ("control-only", false, true, false, true, true, false);
+        yield return ("analysis-only", false, false, true, true, true, false);
+        yield return ("rating-off", true, true, true, false, true, false);
+        yield return ("exif-off", true, true, true, true, false, false);
+        yield return ("similarity-on", true, true, false, true, true, true);
+    }
+
+    /// <summary>单帧矩阵断言：分区、适应区、筛选外框、胶片首卡、控制分组与工具区材质。</summary>
+    private static void VerifyStaticFrame(MacMainWindow window, string scope, List<string> geometry, List<string> observations)
+    {
+        var root = window.Window.ContentView ?? throw new InvalidOperationException("原生内容视图缺失");
+        var filePane = root.Subviews.Single(view => view.Subviews.Contains(window.FilmstripScroll));
+        double width = (double)root.Bounds.Width, height = (double)root.Bounds.Height;
+        var panes = ExpectedPanes(window, window.Main.IsRowLayout, width, height);
+        if (!window.Main.IsThumbnailViewVisible)
+        {
+            if (!filePane.Hidden) throw new InvalidOperationException($"{scope} 隐藏文件栏后仍可见");
+        }
+        else
+        {
+            RequireFrame(filePane.Frame, ToRect(panes.FileBar), $"{scope} 文件栏");
+            RequireFrame(window.FilmstripScroll.Frame, new CGRect(panes.FileContent.X,
+                    window.Main.IsRowLayout ? panes.FileContent.Y + window.FilterLayout.MainLength : 0,
+                    window.Main.IsRowLayout ? Math.Max(1, panes.FileContent.Width - SimilarityColumn(window)) : panes.FileContent.Width,
+                    window.Main.IsRowLayout ? Math.Max(1, panes.FileContent.Height - window.FilterLayout.MainLength) : height),
+                $"{scope} 胶片栏裁剪区");
+            var layout = (MacFilmstripLayout)window.Filmstrip.CollectionViewLayout!;
+            var first = layout.GetLayoutAttributesForItem(NSIndexPath.FromItemSection(0, 0))?.Frame
+                ?? throw new InvalidOperationException($"{scope} 首卡几何缺失");
+            double edge = window.Main.IsRowLayout ? 0 : Math.Max(0, window.FilterLayout.MainLength - FilmCardGeometry.MainLead(FilmCardTier.Large, false));
+            double docWidth = (double)layout.CollectionViewContentSize.Width;
+            var item = FilmCardGeometry.ItemFrame(FilmCardTier.Large, window.Main.IsRowLayout, 0,
+                window.Main.FileVM.ThumbnailList.FilteredFiles.Count, docWidth);
+            var expected = window.Main.IsRowLayout
+                ? new CGRect(item.X + edge, item.Y, item.Width, item.Height)
+                : new CGRect(item.X, item.Y + edge, item.Width, item.Height);
+            RequireFrame(first, expected, $"{scope} 胶片首卡位置");
+            var frames = window.FilterLayout;
+            var visible = filePane.Subviews.OfType<NSPopUpButton>().Where(popup => !popup.Hidden).ToArray();
+            if (visible.Length == 0) throw new InvalidOperationException($"{scope} 文件栏可见时筛选控件被隐藏");
+            if (window.FilterCapsuleMode)
+                RequireFrame(visible.Single().Frame, new CGRect(panes.FileContent.X + frames.Control.X,
+                    panes.FileContent.Y + frames.Control.Y, frames.Control.Width, frames.Control.Height), $"{scope} 单胶囊");
+            else
+            {
+                var expectedFrames = new[] { frames.Sort, frames.Order, frames.Rating };
+                for (int index = 0; index < 3; index++)
+                    RequireFrame(visible[index].Frame, new CGRect(panes.FileContent.X + frames.Control.X + expectedFrames[index].X,
+                        panes.FileContent.Y + frames.Control.Y + expectedFrames[index].Y, expectedFrames[index].Width, expectedFrames[index].Height),
+                        $"{scope} 筛选段 {index}");
+            }
+        }
+        if (window.Main.IsControlViewVisible)
+        {
+            RequireFrame(window.ControlScroll.Frame, ToRect(panes.ControlContent), $"{scope} 控制栏内容");
+            VerifyControlBar(window, scope, geometry, panes.ControlContent, window.Main.IsRowLayout);
+        }
+        else if (!window.ControlScroll.Hidden) throw new InvalidOperationException($"{scope} 隐藏控制栏后仍可见");
+        if (window.Main.IsAnalysisViewVisible)
+            RequireFrame(window.Analysis.Frame, ToRect(panes.Analysis), $"{scope} 分析栏");
+        else if (!window.Analysis.Hidden) throw new InvalidOperationException($"{scope} 隐藏分析栏后仍可见");
+        var insets = window.Photo.FitInsets;
+        RequireFrame(new CGRect((double)insets.Left, (double)insets.Top,
+                width - (double)insets.Left - (double)insets.Right, height - (double)insets.Top - (double)insets.Bottom),
+            ToRect(panes.Photo), $"{scope} 主图适应区");
+        VerifyMaterialCondition(window, window.Main.IsRowLayout, scope, panes, observations);
+        observations.Add($"{scope}: 文件栏={panes.FileBar.Width:0}×{panes.FileBar.Height:0}, 控制内容={panes.ControlContent.Width:0}×{panes.ControlContent.Height:0}, 分析={panes.Analysis.Width:0}×{panes.Analysis.Height:0}, 适应区={panes.Photo.Width:0}×{panes.Photo.Height:0}");
+    }
+
+    /// <summary>当前相似面板占用的横向/纵向附加长度。</summary>
+    private static double SimilarityColumn(MacMainWindow window)
+    {
+#if PHOTOVIEWER_DINO
+        var filter = window.Main.FileVM.FilterBar;
+        if (!window.Main.IsThumbnailViewVisible || !filter.IsSimilarityPanelOpen) return 0;
+        var panel = window.Main.FileVM.SimilarityPanel;
+        var row = window.Main.IsRowLayout;
+        double dock = panel.HasItems && panel.ShowActionArea ? window.Similarity.DockMeasureWidth() : 0;
+        return row
+            ? SimilarityPanelGeometry.RowWidth(panel.HasItems, panel.SimilarItems.Count, (double)window.Window.ContentView!.Bounds.Width, dock)
+            : 0;
+#else
+        return 0;
+#endif
     }
 
     /// <summary>用已有工具栏的真实按钮核对上一张/下一张与预设缩放语义，不新建重复按钮。</summary>
@@ -608,6 +899,17 @@ internal static class NativeMainLayoutAcceptance
         await Task.Delay(220);
         root.LayoutSubtreeIfNeeded();
         window.Filmstrip.LayoutSubtreeIfNeeded();
+    }
+
+    /// <summary>栏位重排只改变适应区：当前物理倍率与视图中心必须留在原处。</summary>
+    private static void RequireZoomHeld(MacMainWindow window, double scale, (double U, double V) center, string context)
+    {
+        var photo = window.Photo;
+        if (Math.Abs(photo.PhysicalScale - scale) > .001)
+            throw new InvalidOperationException($"{context} 改变了照片倍率：{scale:0.####} → {photo.PhysicalScale:0.####}");
+        var now = photo.ViewCenter;
+        if (Math.Abs(now.U - center.U) > .01 || Math.Abs(now.V - center.V) > .01)
+            throw new InvalidOperationException($"{context} 移动了照片视图中心：({center.U:0.###},{center.V:0.###}) → ({now.U:0.###},{now.V:0.###})");
     }
 
     /// <summary>隐藏栏位后核对主轴变长；隐藏起始栏时归零原点，隐藏末端栏时保持原点。</summary>

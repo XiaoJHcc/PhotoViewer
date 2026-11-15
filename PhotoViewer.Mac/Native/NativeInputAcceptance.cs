@@ -49,7 +49,8 @@ internal static class NativeInputAcceptance
         if (prefix.TextColor?.IsEqual(NSColor.SecondaryLabel) != true || suffix.TextColor?.IsEqual(NSColor.SecondaryLabel) != true)
             throw new InvalidOperationException("空首屏副标题普通文字未使用系统次级文字色");
         if (photo.Frame != pane.Bounds) throw new InvalidOperationException($"主图未铺满展示区域：photo={photo.Frame} pane={pane.Bounds}");
-        var center = new CGPoint(photo.Bounds.Width / 2, photo.Bounds.Height / 2);
+        var fit = photo.FitArea;
+        var center = new CGPoint(fit.X + fit.Width / 2, fit.Y + fit.Height / 2);
         var hintFrame = new CGRect(prefix.Frame.Left, prefix.Frame.Y, suffix.Frame.Right - prefix.Frame.Left, prefix.Frame.Height);
         if (!hintFrame.Contains(center)) throw new InvalidOperationException("空首屏提示未覆盖主图中心，回归点选取无效");
         if (prefix.HitTest(center) != null || separator.HitTest(center) != null || suffix.HitTest(center) != null)

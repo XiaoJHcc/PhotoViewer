@@ -192,6 +192,8 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     private string _page = "root";
     private bool _closed;
     private AndroidSettingsReorderList? _hotkeyList;
+    private bool _hotkeyPhoneOnly;
+    private int _hotkeyRowOffset;
     private AndroidSettingsReorderList? _formatList;
     private AndroidSettingsReorderList? _exifList;
     private SettingsViewModel.HotkeyItem? _recordingItem;
@@ -546,17 +548,27 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         }
     }
 
-    /// <summary>控制页：布局模式与控制栏功能（显隐/排序，键鼠外设连接时含主/次绑定录制）。</summary>
+    /// <summary>
+    /// 控制页：布局模式与控制栏功能。手机形态只列 SETTINGS-17 的「上一张/下一张」单项，
+    /// 宽形态把它与可排序命令放在同一分组（命令配置与已持久化绑定保留）。
+    /// </summary>
     private void BuildControlPage()
     {
         _layoutSection = Section("边栏布局位置",
             NavigationRow("布局模式", CurrentLayoutModeDescription(), CurrentLayoutModeName(), ShowLayoutModePicker));
         Add(_content, _layoutSection);
+        bool phoneForm = AndroidScreenForm.IsPhoneForm(_activity, Settings.LayoutMode);
+        _hotkeyPhoneOnly = phoneForm;
+        _hotkeyRowOffset = phoneForm ? 0 : 1;
+        var navigationItem = new AndroidSettingsReorderList.SettingsReorderItem(
+            "上一张/下一张", null, () => Settings.ShowNavigationButtons,
+            value => Settings.ShowNavigationButtons = value, showHandle: false);
         var hotkeys = new AndroidSettingsReorderList(_activity,
-            () => Settings.Hotkeys.Count,
+            () => phoneForm ? 1 : Settings.Hotkeys.Count + 1,
             index =>
             {
-                var item = Settings.Hotkeys[index];
+                if (phoneForm || index == 0) return navigationItem;
+                var item = Settings.Hotkeys[index - 1];
                 var captured = item;
                 // SETTINGS-01 / INPUT-13：有键盘/鼠标/触控板时提供完整主/次绑定、录制与清空；
                 // 仅直接触控时由行退回只读摘要，命令显隐与排序不变。
@@ -569,7 +581,12 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
                     clearBinding: primary => ClearBinding(captured, primary),
                     isRecording: primary => ReferenceEquals(_recordingItem, captured) && _recordingPrimary == primary);
             },
-            (from, to) => Settings.MoveHotkey(from, to));
+            (from, to) =>
+            {
+                // 固定开关项不参与命令排序；宽形态命令表从它后面一行开始。
+                if (from < _hotkeyRowOffset || to < _hotkeyRowOffset) return;
+                Settings.MoveHotkey(from - _hotkeyRowOffset, to - _hotkeyRowOffset);
+            });
         _hotkeyList = hotkeys;
         Add(_content, SectionView("控制栏功能", hotkeys));
     }
@@ -746,8 +763,11 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     {
         var modes = new List<string>();
         var values = new List<LayoutMode>();
+        bool phoneDevice = AndroidScreenForm.IsPhoneDevice(_activity);
         foreach (var item in Settings.LayoutModes)
         {
+            // SETTINGS-08：设备本身是手机时只有「手机」一项；保存值不改写，能力变化后直接生效。
+            if (phoneDevice && item.Value != PhotoViewer.Core.Settings.LayoutMode.Phone) continue;
             modes.Add(item.DisplayName);
             values.Add(item.Value);
         }
@@ -768,19 +788,29 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
 
     private string CurrentLayoutModeName()
     {
+        if (AndroidScreenForm.IsPhoneDevice(_activity))
+        {
+            foreach (var item in Settings.LayoutModes)
+                if (item.Value == PhotoViewer.Core.Settings.LayoutMode.Phone) return item.DisplayName;
+        }
         foreach (var item in Settings.LayoutModes)
             if (item.Value == Settings.LayoutMode) return item.DisplayName;
         foreach (var item in Settings.LayoutModes)
-            if (item.Value == LayoutMode.Auto) return item.DisplayName;
+            if (item.Value == PhotoViewer.Core.Settings.LayoutMode.Auto) return item.DisplayName;
         return Settings.LayoutMode.ToString();
     }
 
     private string CurrentLayoutModeDescription()
     {
+        if (AndroidScreenForm.IsPhoneDevice(_activity))
+        {
+            foreach (var item in Settings.LayoutModes)
+                if (item.Value == PhotoViewer.Core.Settings.LayoutMode.Phone) return item.Description;
+        }
         foreach (var item in Settings.LayoutModes)
             if (item.Value == Settings.LayoutMode) return item.Description;
         foreach (var item in Settings.LayoutModes)
-            if (item.Value == LayoutMode.Auto) return item.Description;
+            if (item.Value == PhotoViewer.Core.Settings.LayoutMode.Auto) return item.Description;
         return string.Empty;
     }
 
@@ -937,6 +967,12 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     /// <summary>验收：当前布局模式说明。</summary>
     internal string LayoutModeDescriptionForChecks() => CurrentLayoutModeDescription();
 
+    /// <summary>验收：当前布局模式显示名（手机设备恒为「手机」）。</summary>
+    internal string LayoutModeNameForChecks() => CurrentLayoutModeName();
+
+    /// <summary>验收：控制页控制栏功能列表的可见行数。</summary>
+    internal int ControlRowCountForChecks => _hotkeyList?.RowCount ?? 0;
+
     /// <summary>验收：控制页布局分组的可见标题（分组不带标题时为空串）。</summary>
     internal string LayoutSectionTitleForChecks() => SectionTitleText(_layoutSection);
 
@@ -969,13 +1005,24 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
             ? text.Text ?? string.Empty
             : string.Empty;
 
-    /// <summary>验收：读取指定快捷键行真实视图的可见性与读屏文本。</summary>
+    /// <summary>验收：读取指定快捷键行真实视图的可见性与读屏文本（手机形态只有开关项，返回 null）。</summary>
     internal AndroidSettingsReorderList.RowSnapshot? HotkeyRowSnapshotForChecks(int index)
-        => _hotkeyList?.SnapshotForChecks(index);
+        => _hotkeyPhoneOnly ? null : _hotkeyList?.SnapshotForChecks(index + _hotkeyRowOffset);
 
-    /// <summary>验收：快捷键行的布局快照（行高、勾选对齐、图标语义）。</summary>
+    /// <summary>验收：快捷键行的布局快照（行高、勾选对齐、图标语义；手机形态只有开关项，返回 null）。</summary>
     internal AndroidSettingsReorderList.RowLayoutSnapshot? HotkeyRowLayoutForChecks(int index)
-        => _hotkeyList?.LayoutForChecks(index);
+        => _hotkeyPhoneOnly ? null : _hotkeyList?.LayoutForChecks(index + _hotkeyRowOffset);
+
+    /// <summary>验收：控制页控制栏功能列表当前是否只列「上一张/下一张」。</summary>
+    internal bool PhoneControlListForChecks => _hotkeyPhoneOnly;
+
+    /// <summary>验收：上一张/下一张开关行的布局快照（手机形态为第 0 行，宽形态为第 0 行）。</summary>
+    internal AndroidSettingsReorderList.RowLayoutSnapshot? NavigationRowLayoutForChecks()
+        => _hotkeyList?.LayoutForChecks(0);
+
+    /// <summary>验收：上一张/下一张开关行的快照。</summary>
+    internal AndroidSettingsReorderList.RowSnapshot? NavigationRowSnapshotForChecks()
+        => _hotkeyList?.SnapshotForChecks(0);
 
     /// <summary>验收：支持的文件格式行的布局快照。</summary>
     internal AndroidSettingsReorderList.RowLayoutSnapshot? FormatRowLayoutForChecks(int index)

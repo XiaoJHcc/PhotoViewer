@@ -9,12 +9,12 @@ using System.ComponentModel;
 
 namespace PhotoViewer.Mac.Native;
 
-/// <summary>原生控制栏保留 EXIF、评分、命令三个整体分组，按可用空间换行或换列。</summary>
+/// <summary>原生控制栏保留 EXIF、评分、命令三个整体分组，分组尺寸与换行取共享 <see cref="ToolbarFlowLayout"/>。</summary>
 internal sealed class MacControlBar : NSView
 {
     private readonly Action _changed;
     private readonly List<NSView> _groups = [];
-    private readonly List<ControlBarLayout.GroupSpec> _specs = [];
+    private readonly List<ControlBarGroupKind> _kinds = [];
     private readonly List<SettingsViewModel.HotkeyItem> _hotkeys = [];
     private readonly Dictionary<string, NSButton> _commands = [];
     private readonly List<NSButton> _ratings = [];
@@ -23,17 +23,25 @@ internal sealed class MacControlBar : NSView
     public override bool IsFlipped => true;
     /// <summary>实际分组供布局与系统截图验收读取。</summary>
     internal IReadOnlyList<NSView> Groups => _groups;
+    /// <summary>分组类型与 <see cref="Groups"/> 一一对应。</summary>
+    internal IReadOnlyList<ControlBarGroupKind> GroupKinds => _kinds;
     /// <summary>命令身份与原生按钮保持一一对应。</summary>
     internal IReadOnlyDictionary<string, NSButton> Commands => _commands;
-    /// <summary>评分按钮按评分值索引，视觉顺序由布局方向决定。</summary>
+    /// <summary>评分按钮按评分值索引（仅展开态），视觉顺序由布局方向决定。</summary>
     internal IReadOnlyList<NSButton> Ratings => _ratings;
+    /// <summary>评分控件的实际外框视图（展开/紧凑共用一个胶囊）。</summary>
+    internal NSView? RatingControl => _groups.FirstOrDefault(group => group.Subviews.FirstOrDefault() is RatingControlView)?.Subviews[0];
+    /// <summary>当前评分形态（展开态才有六个独立槽位按钮）。</summary>
+    internal RatingControlForm RatingForm { get; private set; } = RatingControlForm.Expanded;
+    /// <summary>实际显示的 EXIF 项数（工具区背景出现条件之一）。</summary>
+    internal int ExifItemCount { get; private set; }
 
-    /// <summary>建立深色控制文档，项目变更通过调用方合并刷新。</summary>
+    /// <summary>建立透明控制文档：栏位材质由主窗口的工具区宿主承担，本层不画第二份底色。</summary>
     internal MacControlBar(Action changed)
     {
         _changed = changed;
         WantsLayer = true;
-        Layer!.BackgroundColor = NSColor.FromWhite(.07f, 1).CGColor;
+        Layer!.BackgroundColor = NSColor.Clear.CGColor;
     }
 
     /// <summary>根据共享设置重建三组控件，保留设置排序、主次手势与缺少照片时的状态。</summary>
@@ -47,17 +55,19 @@ internal sealed class MacControlBar : NSView
     {
         ClearGroups();
         var entries = main.ControlVM.EnabledExifItems;
+        ExifItemCount = entries.Count;
         if (entries.Count > 0)
         {
-            var exif = new GroupView { WantsLayer = true, Clicked = openTools };
+            // TOOLBAR-10：有平台深色模糊材质时 EXIF 块取该材质，块内两行文字直接叠在材质上。
+            var exif = new ExifBlockView { Clicked = openTools };
             foreach (var entry in entries) exif.AddSubview(new ExifTile(entry));
             AddGroup(exif, ControlBarGroupKind.Exif);
         }
         if (main.Settings.ShowRating)
         {
-            var ratingGroup = new GroupView { WantsLayer = true };
-            ratingGroup.Layer!.BackgroundColor = NSColor.FromWhite(2f / 15, 1).CGColor;
-            ratingGroup.Layer.CornerRadius = 6;
+            var ratingGroup = new GroupView { WantsLayer = false };
+            var control = new RatingControlView();
+            ratingGroup.AddSubview(control);
             for (int rating = 0; rating < 6; rating++)
             {
                 int value = rating;
@@ -70,16 +80,17 @@ internal sealed class MacControlBar : NSView
                 {
                     if (value == 0 && conflict && showSources != null) showSources(button!);
                     else rate(value);
-                }, 30, false);
+                }, 44, false, RatingControlGeometry.Slot, RatingControlGeometry.Thickness);
                 button.Tag = rating;
                 // TOOLBAR-03：点亮星 color.star.on、空心星 color.star.off、清零叉中性 color.star.clear；
                 // RATING-04 冲突时的警示三角取 color.star.conflict，几何与命中区不变。
                 button.ContentTintColor = MacDesignColors.Argb(rating == 0 ? (conflict ? DesignTokens.ColorStarConflict : DesignTokens.ColorStarClear)
                     : active ? DesignTokens.ColorStarOn : DesignTokens.ColorStarOff);
                 button.Enabled = main.CurrentFile != null;
-                ratingGroup.AddSubview(button);
+                control.AddSubview(button);
                 _ratings.Add(button);
             }
+            control.Configure(main.CurrentFile?.Rating ?? 0, main.CurrentFile?.HasRatingConflict == true);
             AddGroup(ratingGroup, ControlBarGroupKind.Rating);
         }
         var commandGroup = new GroupView();
@@ -88,7 +99,7 @@ internal sealed class MacControlBar : NSView
             string? symbol = AppleSymbolNames.ForCommand(hotkey.Command);
             if (symbol == null) continue;
             string tooltip = CommandTooltip(hotkey, main.Settings);
-            var button = ToolbarButton.Create(symbol, tooltip, () => execute(hotkey.Command));
+            var button = ToolbarButton.Create(symbol, tooltip, () => execute(hotkey.Command), ToolbarFlowLayout.CommandSize);
             // TOOLBAR-04：读屏名称与悬停提示一致，包含当前主/次绑定。
             ((NSView)button).AccessibilityLabel = tooltip;
             button.Bordered = false;
@@ -96,7 +107,7 @@ internal sealed class MacControlBar : NSView
             button.Enabled = hotkey.Command == "Open" || main.CurrentFile != null;
             if (hotkey.Command.StartsWith("SetRating", StringComparison.Ordinal))
             {
-                // TOOLBAR-04：评分快捷命令 = 星形内叠数字（0 为清零叉），不再用星形图标与数字并排。
+                // TOOLBAR-04：评分快捷命令 = 星形内叠数字（0 为清零叉）。
                 bool clear = hotkey.Command == "SetRating0";
                 button.Title = "";
                 button.Image = MacSymbols.Get(clear ? "xmark" : "star.fill");
@@ -137,70 +148,108 @@ internal sealed class MacControlBar : NSView
     private void AddGroup(NSView group, ControlBarGroupKind kind)
     {
         _groups.Add(group);
-        _specs.Add(new ControlBarLayout.GroupSpec(kind, group.Subviews.Length));
+        _kinds.Add(kind);
         AddSubview(group);
     }
 
-    /// <summary>按方向安排组内控件，EXIF 小块和评分块保留各自的内边距与顺序。</summary>
-    private void LayoutGroups(bool horizontal)
+    /// <summary>按当前内容求出共享流式分组尺寸（EXIF 无衬底只在移动端，Mac 两向都保留衬底块）。</summary>
+    private List<ToolbarGroupSize> GroupSizes(bool horizontal, double availableMain)
     {
-        _horizontal = horizontal;
-        for (int index = 0; index < _groups.Count; index++) LayoutGroup(index, horizontal);
-    }
-
-    /// <summary>把共享布局算得的子控件偏移落到原生 frame；交叉轴按所在行拉伸并居中。</summary>
-    /// <param name="index">分组顺序索引。</param>
-    /// <param name="horizontal">是否横向排列。</param>
-    /// <param name="crossSize">所在行的交叉轴长度，0 表示仅按分组自身长度。</param>
-    private void LayoutGroup(int index, bool horizontal, double crossSize = 0)
-    {
-        var group = _groups[index];
-        var spec = _specs[index];
-        var metrics = ControlBarLayout.GetMetrics(spec.Kind);
-        double main = ControlBarLayout.MainLength(spec, horizontal);
-        double childCross = horizontal ? metrics.Height : metrics.Width;
-        double cross = Math.Max(childCross, crossSize);
-        group.Frame = new CGRect(0, 0, horizontal ? main : cross, horizontal ? cross : main);
-        var offsets = ControlBarLayout.ChildOffsets(spec, horizontal, crossSize);
-        var children = group.Subviews;
-        for (int child = 0; child < children.Length; child++)
-            children[child].Frame = new CGRect(horizontal ? offsets[child].Main : offsets[child].Cross,
-                horizontal ? offsets[child].Cross : offsets[child].Main, metrics.Width, metrics.Height);
+        var sizes = new List<ToolbarGroupSize>(_groups.Count);
+        double contentMain = ToolbarFlowLayout.ContentMain(availableMain);
+        foreach (var kind in _kinds)
+        {
+            sizes.Add(kind switch
+            {
+                ControlBarGroupKind.Exif => ToolbarFlowLayout.Exif(ExifItemCount, horizontal),
+                ControlBarGroupKind.Rating => ToolbarFlowLayout.Rating(contentMain),
+                _ => ToolbarFlowLayout.Commands(_commands.Count),
+            });
+        }
+        return sizes;
     }
 
     /// <summary>整组沿主轴排布，空间不足时换行/换列，返回包含外边距的文档尺寸。</summary>
     /// <param name="horizontal">是否横向排列。</param>
     /// <param name="availableMain">主轴可用长度。</param>
+    /// <param name="joined">是否与相邻分析栏共处同一工具区（交叉轴前导内边距为 0）。</param>
     /// <returns>文档尺寸。</returns>
-    internal CGSize Measure(bool horizontal, double availableMain)
+    internal CGSize Measure(bool horizontal, double availableMain, bool joined = false)
     {
-        LayoutGroups(horizontal);
-        var lines = ControlBarLayout.PackLines(_specs, horizontal, Math.Max(1, availableMain - ControlBarLayout.Padding * 2));
-        var document = ControlBarLayout.DocumentSize(_specs, horizontal, lines);
+        var sizes = GroupSizes(horizontal, availableMain);
+        var document = ToolbarFlowLayout.Arrange(sizes, horizontal, availableMain, joined ? 0 : null);
         return new CGSize(document.Width, document.Height);
     }
 
-    /// <summary>在实际视口内居中每一行/列，超长分组保留完整尺寸并交系统滚动容器处理。</summary>
+    /// <summary>把共享排布结果落到实际视口：文档覆盖裁剪区，每行/列居中，分组矩形与子控件直接取共享几何。</summary>
     /// <param name="viewport">系统滚动容器的客户端尺寸。</param>
-    internal void Arrange(CGSize viewport)
+    /// <param name="horizontal">是否横向排列。</param>
+    /// <param name="joined">是否与相邻分析栏共处同一工具区。</param>
+    internal void Arrange(CGSize viewport) => Arrange(viewport, _horizontal);
+
+    /// <summary>把共享排布结果落到实际视口：文档覆盖裁剪区，每行/列居中，分组矩形与子控件直接取共享几何。</summary>
+    /// <param name="viewport">系统滚动容器的客户端尺寸。</param>
+    /// <param name="horizontal">是否横向排列。</param>
+    /// <param name="joined">是否与相邻分析栏共处同一工具区。</param>
+    internal void Arrange(CGSize viewport, bool horizontal, bool joined = false)
     {
-        double availableMain = _horizontal ? (double)viewport.Width : (double)viewport.Height;
-        var measured = Measure(_horizontal, availableMain);
-        var document = new CGSize(Math.Max((double)viewport.Width, (double)measured.Width), Math.Max((double)viewport.Height, (double)measured.Height));
-        Frame = new CGRect(CGPoint.Empty, document);
-        var lines = ControlBarLayout.PackLines(_specs, _horizontal, Math.Max(1, availableMain - ControlBarLayout.Padding * 2));
-        double cross = ControlBarLayout.Padding;
-        foreach (var line in lines)
+        _horizontal = horizontal;
+        double availableMain = horizontal ? (double)viewport.Width : (double)viewport.Height;
+        var sizes = GroupSizes(horizontal, availableMain);
+        var document = ToolbarFlowLayout.Arrange(sizes, horizontal, availableMain, joined ? 0 : null);
+        Frame = new CGRect(CGPoint.Empty, new CGSize(
+            Math.Max((double)viewport.Width, document.Width),
+            Math.Max((double)viewport.Height, document.Height)));
+        for (int index = 0; index < _groups.Count; index++)
         {
-            double lineCross = ControlBarLayout.LineCross(_specs, _horizontal, line);
-            double main = Math.Max(ControlBarLayout.Padding, (availableMain - ControlBarLayout.LineLength(_specs, _horizontal, line)) / 2);
-            foreach (int index in line)
-            {
-                LayoutGroup(index, _horizontal, lineCross);
-                _groups[index].SetFrameOrigin(_horizontal ? new CGPoint(main, cross) : new CGPoint(cross, main));
-                main += ControlBarLayout.MainLength(_specs[index], _horizontal) + ControlBarLayout.GroupSpacing;
-            }
-            cross += lineCross + ControlBarLayout.GroupSpacing;
+            var frame = document.Groups[index];
+            _groups[index].Frame = new CGRect(frame.X, frame.Y, frame.Width, frame.Height);
+            LayoutGroupContents(index, horizontal);
+        }
+    }
+
+    /// <summary>按分组类型把子控件落进共享矩形。</summary>
+    private void LayoutGroupContents(int index, bool horizontal)
+    {
+        var group = _groups[index];
+        var kind = _kinds[index];
+        var bounds = group.Bounds;
+        switch (kind)
+        {
+            case ControlBarGroupKind.Exif:
+                double blockMain = horizontal ? (double)bounds.Width : (double)bounds.Height;
+                var exifSize = ExifBlockGeometry.Size(group.Subviews.Length, horizontal);
+                double crossOffset = Math.Max(0, ((horizontal ? (double)bounds.Height : (double)bounds.Width)
+                    - (horizontal ? exifSize.Height : exifSize.Width)) / 2);
+                for (int item = 0; item < group.Subviews.Length; item++)
+                {
+                    var rect = ExifBlockGeometry.ItemRect(item, group.Subviews.Length, horizontal, blockMain);
+                    group.Subviews[item].Frame = new CGRect(rect.X + (horizontal ? 0 : crossOffset),
+                        rect.Y + (horizontal ? crossOffset : 0), rect.Width, rect.Height);
+                    if (group.Subviews[item] is ExifTile tile) tile.Arrange();
+                }
+                break;
+            case ControlBarGroupKind.Rating:
+                double slotMain = horizontal ? (double)bounds.Width : (double)bounds.Height;
+                var form = RatingControlGeometry.ResolveForm(slotMain);
+                RatingForm = form;
+                var controlFrame = RatingControlGeometry.ControlFrame(
+                    new LayoutRect(0, 0, (double)bounds.Width, (double)bounds.Height), horizontal);
+                var control = (RatingControlView)group.Subviews[0];
+                control.Frame = new CGRect(controlFrame.X, controlFrame.Y, controlFrame.Width, controlFrame.Height);
+                control.Arrange(horizontal, form, _ratings);
+                break;
+            case ControlBarGroupKind.Command:
+                double cross = horizontal ? (double)bounds.Height : (double)bounds.Width;
+                double offset = Math.Max(0, (cross - ToolbarFlowLayout.CommandSize) / 2);
+                for (int button = 0; button < group.Subviews.Length; button++)
+                {
+                    double main = ToolbarFlowLayout.CommandOffset(button);
+                    group.Subviews[button].Frame = horizontal
+                        ? new CGRect(main, offset, ToolbarFlowLayout.CommandSize, ToolbarFlowLayout.CommandSize)
+                        : new CGRect(offset, main, ToolbarFlowLayout.CommandSize, ToolbarFlowLayout.CommandSize);
+                }
+                break;
         }
     }
 
@@ -210,7 +259,7 @@ internal sealed class MacControlBar : NSView
         foreach (var hotkey in _hotkeys) hotkey.PropertyChanged -= OnHotkeyChanged;
         _hotkeys.Clear();
         foreach (var group in _groups) DisposeView(group);
-        _groups.Clear(); _specs.Clear(); _commands.Clear(); _ratings.Clear();
+        _groups.Clear(); _kinds.Clear(); _commands.Clear(); _ratings.Clear(); ExifItemCount = 0;
     }
 
     /// <summary>递归释放分组的托管控件，避免原生层持有旧按钮事件。</summary>
@@ -234,19 +283,39 @@ internal sealed class MacControlBar : NSView
         private bool _command;
         private NSTrackingArea? _tracking;
 
-        internal static ToolbarButton Create(string symbol, string tooltip, Action action, double size = 40, bool command = true)
+        internal static ToolbarButton Create(string symbol, string tooltip, Action action, double size = 40,
+            bool command = true, double? width = null, double? height = null)
         {
+            double frameWidth = width ?? size, frameHeight = height ?? size;
             var button = new ToolbarButton
             {
-                Frame = new CGRect(0, 0, size, size),
+                Frame = new CGRect(0, 0, frameWidth, frameHeight),
                 Image = MacSymbols.Get(symbol), ImagePosition = NSCellImagePosition.ImageOnly,
                 Title = "", Bordered = false, ToolTip = tooltip, _command = command,
-                SymbolConfiguration = NSImageSymbolConfiguration.Create((nfloat)(size <= 30 ? symbol == "xmark" ? 12 : 16 : 18), (double)NSFontWeight.Regular),
+                SymbolConfiguration = NSImageSymbolConfiguration.Create(
+                    (nfloat)(command ? DesignTokens.ToolbarCommandGlyphFontSize
+                        : symbol == "xmark" ? DesignTokens.ToolbarRatingClearGlyphFontSize : DesignTokens.ToolbarRatingGlyphFontSize),
+                    (double)NSFontWeight.Regular),
             };
+            if (command)
+            {
+                // 命令按钮是 44×44 正圆：图层只做一次圆形裁切，状态面仍由自身的单层绘制完成。
+                button.WantsLayer = true;
+                button.Layer!.MasksToBounds = true;
+                button.Layer.CornerRadius = (nfloat)(Math.Min(frameWidth, frameHeight) / 2);
+            }
             button.SetButtonType(NSButtonType.MomentaryChange);
             ((NSView)button).AccessibilityLabel = tooltip;
             button.Activated += (_, _) => action();
             return button;
+        }
+
+        /// <summary>圆形命令按钮的图层半径随实际边长重算；评分槽位保持方形状态面，不参与圆裁切。</summary>
+        public override void Layout()
+        {
+            base.Layout();
+            if (_command)
+                Layer!.CornerRadius = (nfloat)(Math.Min((double)Bounds.Width, (double)Bounds.Height) / 2);
         }
 
         public override bool AcceptsFirstResponder() => Enabled;
@@ -263,16 +332,29 @@ internal sealed class MacControlBar : NSView
         {
             bool pressed = Enabled && (Cell?.Highlighted ?? false);
             bool hover = Enabled && _hover;
-            var fill = _command
-                ? pressed ? DesignTokens.ColorToolbarCommandPressedBackground : hover ? DesignTokens.ColorToolbarCommandHoverBackground : DesignTokens.ColorToolbarCommandBackground
-                : pressed ? DesignTokens.ColorToolbarRatingPressedBackground : hover ? DesignTokens.ColorToolbarRatingHoverBackground : 0u;
-            using var path = NSBezierPath.FromRoundedRect(new CGRect(.5, .5, Bounds.Width - 1, Bounds.Height - 1), 6, 6);
-            MacDesignColors.Argb(fill).SetFill(); path.Fill();
             if (_command)
             {
+                var fill = pressed ? DesignTokens.ColorToolbarCommandPressedBackground
+                    : hover ? DesignTokens.ColorToolbarCommandHoverBackground : DesignTokens.ColorToolbarCommandBackground;
+                using var circle = NSBezierPath.FromRoundedRect(new CGRect(.5, .5, Bounds.Width - 1, Bounds.Height - 1),
+                    (nfloat)(Bounds.Width / 2), (nfloat)(Bounds.Height / 2));
+                MacDesignColors.Argb(fill).SetFill(); circle.Fill();
                 MacDesignColors.Argb(hover ? DesignTokens.ColorToolbarCommandHoverBorder : DesignTokens.ColorToolbarCommandBorder).SetStroke();
-                path.LineWidth = 1; path.Stroke();
+                circle.LineWidth = 1; circle.Stroke();
+                base.DrawRect(dirtyRect);
+                if (Window?.FirstResponder == this)
+                {
+                    using var focus = NSBezierPath.FromRoundedRect(new CGRect(1.5, 1.5, Bounds.Width - 3, Bounds.Height - 3),
+                        (nfloat)(Bounds.Width / 2), (nfloat)(Bounds.Height / 2));
+                    NSColor.KeyboardFocusIndicator.SetStroke(); focus.LineWidth = 2; focus.Stroke();
+                }
+                return;
             }
+            var ratingFill = pressed ? DesignTokens.ColorToolbarRatingPressedBackground
+                : hover ? DesignTokens.ColorToolbarRatingHoverBackground : 0u;
+            using var path = NSBezierPath.FromRoundedRect(new CGRect(.5, .5, Bounds.Width - 1, Bounds.Height - 1),
+                (nfloat)DesignTokens.ToolbarCornerRadius, (nfloat)DesignTokens.ToolbarCornerRadius);
+            MacDesignColors.Argb(ratingFill).SetFill(); path.Fill();
             base.DrawRect(dirtyRect);
             if (Window?.FirstResponder == this)
             {
@@ -282,7 +364,94 @@ internal sealed class MacControlBar : NSView
     }
 
     /// <summary>
-    /// 评分快捷命令星形内叠的数字：9 点半粗、颜色取命令按钮底色，居中叠在 40 见方按钮上（TOOLBAR-04）。
+    /// 星级控件外框（RATING-07）：展开态承载六个方形槽位按钮，紧凑态只画静态星簇。
+    /// 两个形态共用同一胶囊底色与圆角，不新增弹窗或拖动评分。
+    /// </summary>
+    internal sealed class RatingControlView : NSView
+    {
+        private readonly List<NSImageView> _cluster = [];
+        private int _rating;
+        private bool _conflict;
+        private bool _horizontal = true;
+        private RatingControlForm _form = RatingControlForm.Expanded;
+
+        public override bool IsFlipped => true;
+
+        /// <summary>评分胶囊使用与控件厚度相同的半圆端，两个形态共用一层底色裁切。</summary>
+        internal RatingControlView()
+        {
+            WantsLayer = true;
+            Layer!.CornerRadius = (nfloat)(RatingControlGeometry.Thickness / 2);
+            Layer.MasksToBounds = true;
+            Layer.BackgroundColor = MacDesignColors.Argb(DesignTokens.ColorToolbarBlockBackground).CGColor;
+        }
+
+        /// <summary>记录当前评分与冲突态，供紧凑星簇取色与图标。</summary>
+        internal void Configure(int rating, bool conflict)
+        {
+            _rating = rating;
+            _conflict = conflict;
+            NeedsDisplay = true;
+        }
+
+        /// <summary>落位槽位按钮或紧凑星簇；槽位矩形与偏移全部取共享 <see cref="RatingControlGeometry"/>。</summary>
+        internal void Arrange(bool horizontal, RatingControlForm form, IReadOnlyList<NSButton> buttons)
+        {
+            _horizontal = horizontal;
+            _form = form;
+            double main = horizontal ? (double)Bounds.Width : (double)Bounds.Height;
+            double cross = horizontal ? (double)Bounds.Height : (double)Bounds.Width;
+            bool expanded = form == RatingControlForm.Expanded;
+            foreach (var button in buttons)
+            {
+                button.Hidden = !expanded;
+                if (!expanded) continue;
+                var slot = RatingControlGeometry.SlotRect((int)button.Tag, main, cross, horizontal, RatingControlGeometry.Slot);
+                button.Frame = new CGRect(slot.X, slot.Y, slot.Width, slot.Height);
+            }
+            if (expanded)
+            {
+                foreach (var glyph in _cluster) glyph.Hidden = true;
+            }
+            else
+            {
+                LayoutCluster(main, cross);
+            }
+            NeedsDisplay = true;
+        }
+
+        /// <summary>紧凑态静态星簇：冲突时最前一格是警示三角，1–5 星按共享中心距与偏移叠压。</summary>
+        private void LayoutCluster(double main, double cross)
+        {
+            int count = RatingControlGeometry.CompactItemCount(_conflict);
+            while (_cluster.Count < count)
+            {
+                var view = new NSImageView { ImageScaling = NSImageScale.ProportionallyDown };
+                AddSubview(view);
+                _cluster.Add(view);
+            }
+            double glyph = RatingControlGeometry.CompactGlyph;
+            for (int index = 0; index < _cluster.Count; index++)
+            {
+                var view = _cluster[index];
+                view.Hidden = index >= count;
+                if (view.Hidden) continue;
+                int item = _conflict ? index : index + 1;
+                string symbol = item == 0 ? MacSymbols.RatingConflict : item <= _rating ? "star.fill" : "star";
+                view.Image = MacSymbols.Get(symbol);
+                view.ContentTintColor = MacDesignColors.Argb(item == 0 ? DesignTokens.ColorStarConflict
+                    : item <= _rating ? DesignTokens.ColorStarOn : DesignTokens.ColorStarOff);
+                double offset = RatingControlGeometry.CompactOffset(item, _conflict, _horizontal, main);
+                double centerMain = main / 2 + offset, centerCross = cross / 2;
+                view.Frame = _horizontal
+                    ? new CGRect(centerMain - glyph / 2, centerCross - glyph / 2, glyph, glyph)
+                    : new CGRect(centerCross - glyph / 2, centerMain - glyph / 2, glyph, glyph);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 评分快捷命令星形内叠的数字：9 点半粗、颜色取命令按钮底色，居中叠在 44 见方按钮上（TOOLBAR-04）。
     /// 不参与命中测试，点击数字仍落到按钮本身。
     /// </summary>
     private sealed class RatingDigitLabel : NSTextField
@@ -305,7 +474,7 @@ internal sealed class MacControlBar : NSView
                 TextColor = MacDesignColors.Argb(DesignTokens.ColorToolbarCommandBackground),
             };
             label.SizeToFit();
-            double button = DesignTokens.ToolbarCommandButtonSize;
+            double button = ToolbarFlowLayout.CommandSize;
             label.Frame = new CGRect((button - (double)label.Frame.Width) / 2, (button - (double)label.Frame.Height) / 2,
                 label.Frame.Width, label.Frame.Height);
             return label;
@@ -315,7 +484,36 @@ internal sealed class MacControlBar : NSView
         public override NSView? HitTest(CGPoint point) => null;
     }
 
-    /// <summary>三个业务分组均以左上角作为布局原点；EXIF 分组可点击打开工具窗口（与旧壳 EXIF 信息块同义）。</summary>
+    /// <summary>
+    /// EXIF 整块的深色衬底（TOOLBAR-05 / TOOLBAR-10）：系统窗口内取样的原生材质，
+    /// 十二点圆角只由图层裁切一次；横排与竖排都保留衬底，点击整块进入工具窗口。
+    /// </summary>
+    internal sealed class ExifBlockView : NSVisualEffectView
+    {
+        /// <summary>整组点击回调；null 时不接收点击。</summary>
+        public Action? Clicked { get; set; }
+        public override bool IsFlipped => true;
+
+        internal ExifBlockView()
+        {
+            Material = NSVisualEffectMaterial.Sidebar;
+            BlendingMode = NSVisualEffectBlendingMode.WithinWindow;
+            State = NSVisualEffectState.Active;
+            Appearance = NSAppearance.GetAppearance(NSAppearance.NameDarkAqua);
+            WantsLayer = true;
+            Layer!.CornerRadius = (nfloat)ExifBlockGeometry.CornerRadius;
+            Layer.MasksToBounds = true;
+        }
+
+        /// <summary>点击整组时触发回调；未接线时交给系统默认处理。</summary>
+        public override void MouseDown(NSEvent theEvent)
+        {
+            if (Clicked == null) { base.MouseDown(theEvent); return; }
+            Clicked();
+        }
+    }
+
+    /// <summary>三个业务分组均以左上角作为布局原点；EXIF 分组可点击打开工具窗口。</summary>
     private sealed class GroupView : NSView
     {
         /// <summary>整组点击回调；null 时不接收点击。</summary>
@@ -329,24 +527,50 @@ internal sealed class MacControlBar : NSView
         }
     }
 
-    /// <summary>EXIF 小块保留次要标签、强调值与完整内容悬停提示。</summary>
+    /// <summary>EXIF 小块：标签在上、值在下的层级；块底色与圆角由整组承载。</summary>
     private sealed class ExifTile : NSView
     {
+        private readonly NSTextField _label;
+        private readonly NSTextField _value;
         public override bool IsFlipped => true;
-        /// <summary>以原始 50×40 参考规模创建原生信息块，长值截断但不丢失内容。</summary>
-        internal ExifTile(ExifDisplayEntry entry) : base(new CGRect(0, 0, 50, 40))
+
+        internal ExifTile(ExifDisplayEntry entry) : base(CGRect.Empty)
         {
-            WantsLayer = true; Layer!.BackgroundColor = NSColor.FromWhite(2f / 15, 1).CGColor; Layer.CornerRadius = 6;
             ToolTip = entry.DisplayName + " · " + entry.DisplayValue;
-            AddSubview(Text(entry.DisplayName, new CGRect(0, 4, 50, 13), 10, false));
-            AddSubview(Text(entry.DisplayValue, new CGRect(0, 19, 50, 17), 12, true));
+            _label = Text(entry.DisplayName, 10, false);
+            _value = Text(entry.DisplayValue, 12, true);
+            AddSubview(_label);
+            AddSubview(_value);
         }
+
+        /// <summary>块内文字只作内容，不拦截整块入口：命中落到本项，点击再交给 EXIF 衬底。</summary>
+        public override NSView? HitTest(CGPoint point) => Frame.Contains(point) ? this : null;
+
+        /// <summary>项内任意位置按下都等同点击 EXIF 整块，不因两行文字的子控件吞掉事件。</summary>
+        public override void MouseDown(NSEvent theEvent)
+        {
+            if (Superview is ExifBlockView block) block.MouseDown(theEvent);
+            else base.MouseDown(theEvent);
+        }
+
+        /// <summary>按当前项目尺寸居中排布两行文本。</summary>
+        internal void Arrange()
+        {
+            double labelHeight = 13, valueHeight = 16, gap = 2;
+            double top = Math.Max(0, ((double)Bounds.Height - labelHeight - gap - valueHeight) / 2);
+            _label.Frame = new CGRect(0, top, Bounds.Width, labelHeight);
+            _value.Frame = new CGRect(0, top + labelHeight + gap, Bounds.Width, valueHeight);
+        }
+
         /// <summary>生成居中原生标签，值使用较高字重，超宽内容采用尾部截断。</summary>
-        private static NSTextField Text(string value, CGRect frame, double size, bool emphasized)
-            => new(frame) { StringValue = value, Editable = false, Selectable = false, Bordered = false, DrawsBackground = false,
+        private static NSTextField Text(string value, double size, bool emphasized)
+            => new()
+            {
+                StringValue = value, Editable = false, Selectable = false, Bordered = false, DrawsBackground = false,
                 Alignment = NSTextAlignment.Center, LineBreakMode = NSLineBreakMode.TruncatingTail,
                 Font = (emphasized ? NSFont.BoldSystemFontOfSize((nfloat)size) : NSFont.SystemFontOfSize((nfloat)size)) ?? throw new InvalidOperationException("系统字体不可用"),
-                TextColor = emphasized ? NSColor.Label : NSColor.SecondaryLabel };
+                TextColor = emphasized ? NSColor.Label : NSColor.SecondaryLabel,
+            };
     }
 }
 

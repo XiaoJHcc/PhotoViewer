@@ -11,6 +11,8 @@ const WINDOW_PRESETS = [
     { label: "830×650", width: 830, height: 650 },
     { label: "700×480", width: 700, height: 480 },
     { label: "560×480", width: 560, height: 480 },
+    { label: "手机竖 390×844", width: 390, height: 844 },
+    { label: "手机横 844×390", width: 844, height: 390 },
 ];
 
 function clampInteger(value, min, max, fallback) {
@@ -79,7 +81,8 @@ export function mountDemoPanel(root, shell) {
     const layoutSelect = el("select", { class: "pv-demo-select", onchange: (event) => app.updateSettings({ layoutMode: event.target.value }) },
         el("option", { value: "auto" }, "自动"),
         el("option", { value: "row" }, "行"),
-        el("option", { value: "col" }, "列"));
+        el("option", { value: "col" }, "列"),
+        el("option", { value: "phone" }, "手机"));
     layoutSelect.value = settings().layoutMode;
 
     const folderList = el("div", { class: "pv-demo-row" });
@@ -108,6 +111,8 @@ export function mountDemoPanel(root, shell) {
     }
 
     const showRating = checkbox("显示评分", settings().showRating !== false, (value) => app.updateSettings({ showRating: value }));
+    const showNavigation = checkbox("显示上下张按钮", settings().showNavigationButtons !== false, (value) => app.updateSettings({ showNavigationButtons: value }));
+    const showExif = checkbox("手机形态 EXIF", app.state.panes.exif !== false, (value) => app.toggleExif());
     const sameName = checkbox("同名合并", settings().sameNameAsOne !== false, (value) => app.updateSettings({ sameNameAsOne: value }));
     const navigator = checkbox("导航图", settings().showZoomIndicator !== false, (value) => app.updateSettings({ showZoomIndicator: value }));
     const immediateDino = app.capabilities.dino
@@ -203,6 +208,23 @@ export function mountDemoPanel(root, shell) {
         store.failNext = clampInteger(failNextInput.value, 0, 5, 0);
         setText(failNextNote, `failNext = ${store.failNext}`);
     });
+    const safePresets = [
+        { label: "无安全区", top: 0, right: 0, bottom: 0, left: 0 },
+        { label: "竖屏刘海 59/34", top: 59, right: 0, bottom: 34, left: 0 },
+        { label: "横屏刘海左 59", top: 0, right: 0, bottom: 0, left: 59 },
+        { label: "横屏刘海右 59", top: 0, right: 59, bottom: 0, left: 0 },
+    ];
+    const safeSelect = el("select", {
+        class: "pv-demo-select",
+        onchange: (event) => {
+            const preset = safePresets[Number(event.target.value)];
+            shell.setSafeArea(preset ? { ...preset } : null);
+        },
+    }, safePresets.map((preset, index) => el("option", { value: String(index) }, preset.label)),
+    el("option", { value: "-1" }, "浏览器 env()"));
+    safeSelect.value = "-1";
+    const safeReadout = readoutRow("安全区来源");
+
     const motionSelect = el("select", {
         class: "pv-demo-select",
         onchange: (event) => shell.setReducedMotion(event.target.value === "system" ? null : event.target.value === "on"),
@@ -226,11 +248,14 @@ export function mountDemoPanel(root, shell) {
         setText(viewportRow.value, state.viewport.percentText || "—");
         setText(filmRow.value, app.filmAnimating ? "播放中" : "静止");
         setText(regionsRow.value, lastRegions.length ? lastRegions.join(", ") : "—");
+        setText(safeReadout.value, shell.safeAreaSource?.() ?? "env");
     }
 
     function syncSettings() {
         const current = settings();
         showRating.input.checked = current.showRating !== false;
+        showNavigation.input.checked = current.showNavigationButtons !== false;
+        showExif.input.checked = app.state.panes.exif !== false;
         sameName.input.checked = current.sameNameAsOne !== false;
         navigator.input.checked = current.showZoomIndicator !== false;
         if (immediateDino) immediateDino.input.checked = Boolean(current.analysisImmediateDinoCompute);
@@ -260,13 +285,22 @@ export function mountDemoPanel(root, shell) {
     function exportGeometry() {
         const state = app.state;
         const mode = state.layout.layoutMode;
-        const prefix = mode === "col" ? "Col" : mode === "row" ? "Row" : "Auto";
+        const prefix = state.layout.form === "phone"
+            ? `Phone-${state.layout.orientation}`
+            : mode === "col" ? "Col" : mode === "row" ? "Row" : "Auto";
         const name = `${prefix}-${Math.round(state.window.width)}x${Math.round(state.window.height)}`;
         const nodes = {};
         for (const [key, frame] of Object.entries(state.layout.nodes)) {
             nodes[key] = frame.map((value) => Math.round(value * 100) / 100);
         }
-        const payload = { source: "web", profile: shell.t.profile, layouts: { [name]: nodes } };
+        const payload = {
+            source: "web",
+            profile: shell.t.profile,
+            edition: app.state.edition,
+            form: state.layout.form,
+            orientation: state.layout.orientation,
+            layouts: { [name]: nodes },
+        };
         const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const link = el("a", { href: url, download: `web-geometry-${name}.json` });
@@ -281,6 +315,8 @@ export function mountDemoPanel(root, shell) {
             sizeRow,
             customRow,
             field("布局模式", layoutSelect),
+            field("安全区注入", safeSelect),
+            safeReadout.node,
         ]),
         group("文件夹", [
             folderList,
@@ -288,6 +324,8 @@ export function mountDemoPanel(root, shell) {
         ]),
         group("设置", [
             showRating.node,
+            showNavigation.node,
+            showExif.node,
             sameName.node,
             navigator.node,
             ...(immediateDino ? [immediateDino.node] : []),

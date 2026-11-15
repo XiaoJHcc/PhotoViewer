@@ -8,7 +8,7 @@
 
 import { displayStars, hasRatingConflict, ratingSources, ratingWriteBlockReason, representativeRating } from "../core/rating.js";
 
-const MODULES = ["film", "filter", "rating", "menu", "input", "image", "toolbar", "state", "analysis", "similarity", "edition", "open", "shell"];
+const MODULES = ["film", "filter", "rating", "menu", "input", "image", "toolbar", "state", "analysis", "similarity", "edition", "open", "shell", "mac"];
 
 const KEY_OF = {
     ArrowLeft: "ArrowLeft",
@@ -210,6 +210,49 @@ const CHECKS = [
         },
     },
     {
+        id: "FILM-04b",
+        title: "纵向胶片栏滑块可拖动：列布局与手机横屏都按 y 轴更新偏移",
+        async run(shell, h) {
+            const { app } = shell;
+            async function dragThumb(label) {
+                const scroller = h.filmScroller();
+                const rect = scroller.getBoundingClientRect();
+                h.pointer(scroller, "pointerdown", rect.left + 6, rect.top + 6);
+                await h.tick(30);
+                const track = h.dom(".pv-film-scrollbar");
+                h.assert(!track.hidden, `${label} 滚动条未出现`);
+                const thumb = track.querySelector(".pv-film-scrollbar-thumb");
+                const box = thumb.getBoundingClientRect();
+                h.assert(box.height > 0, `${label} 滑块高度为 0`);
+                const before = h.filmOffset();
+                const x = box.left + box.width / 2;
+                const y = box.top + box.height / 2;
+                h.pointer(thumb, "pointerdown", x, y);
+                h.pointer(thumb, "pointermove", x, y + 36);
+                h.pointer(thumb, "pointerup", x, y + 36);
+                await h.tick(60);
+                h.assert(h.filmOffset() > before + 4, `${label} 拖动后偏移 ${h.filmOffset()} 未超过 ${before}`);
+            }
+
+            app.setLayoutModeOverride("col");
+            shell.setWindowSize(1200, 850);
+            app.openFolder("harbor", { target: app.state.cards[12]?.photo.id });
+            await h.tick(160);
+            h.assert(app.state.layout.film.axis === "y", "列布局胶片不是纵向");
+            await dragThumb("列布局");
+
+            app.setLayoutModeOverride("phone");
+            shell.setSafeArea({ top: 0, right: 0, bottom: 0, left: 59 });
+            shell.setWindowSize(844, 390);
+            app.openFolder("harbor", { target: app.state.cards[12]?.photo.id });
+            await h.tick(160);
+            h.assert(app.state.layout.orientation === "landscape", "未进入手机横屏");
+            h.assert(app.state.layout.film.axis === "y", "手机横屏胶片不是纵向");
+            await dragThumb("手机横屏");
+            shell.setSafeArea(null);
+        },
+    },
+    {
         id: "FILM-05",
         title: "当前项高亮跟随锚点；已缓存细边；抖动徽标只在 shake=true",
         async run(shell, h) {
@@ -255,6 +298,56 @@ const CHECKS = [
             const placeholder = styleCard.querySelector(".pv-card-placeholder");
             h.assert(placeholder !== null, "缩略图占位字形未渲染");
             h.assert(placeholder.hidden === true, "缩略图就绪后仍显示占位字形");
+        },
+    },
+    {
+        id: "FILM-05c",
+        title: "小档卡片角标为金星+白色独立数字，冲突前置 icon.warning，右缘贴照片区",
+        async run(shell, h) {
+            const { app } = shell;
+            app.updateSettings({ layoutMode: "phone" });
+            shell.setSafeArea({ top: 0, right: 59, bottom: 0, left: 0 });
+            shell.setWindowSize(844, 390);
+            await h.tick(120);
+            const t = (name) => shell.t(name);
+            const rated = app.state.cards.find((card) => displayStars(card.photo) > 0 && !hasRatingConflict(card));
+            h.assert(rated, "harbor 中找不到可显示评分的小档卡片");
+            app.openFolder("harbor", { target: rated.photo.id });
+            await h.tick(160);
+            const node = h.filmCardByKey(rated.key);
+            h.assert(node && node.classList.contains("pv-card-small"), "目标未渲染为小档卡片");
+            const badge = node.querySelector(".pv-card-small-badge");
+            const star = badge.querySelector(".pv-card-small-star");
+            const number = badge.querySelector(".pv-card-small-number");
+            const warning = badge.querySelector(".pv-card-small-warning");
+            h.assert(!badge.hidden, "有评分时小档角标未显示");
+            h.assert(star.textContent.codePointAt(0) === parseInt(t("icon.starFilled").slice(2), 16),
+                "小档角标金星不是 icon.starFilled");
+            h.assert(colorMatches(getComputedStyle(star).color, t("color.star.on")), "小档金星颜色不符");
+            h.assert(number.textContent === String(displayStars(rated.photo)), "小档角标数字不独立或不符");
+            h.assert(colorMatches(getComputedStyle(number).color, "#FFFFFF"), `小档数字颜色 ${getComputedStyle(number).color}`);
+            h.assert(warning.hidden, "无冲突时仍显示警示三角");
+            const badgeRect = badge.getBoundingClientRect();
+            const imageRect = node.querySelector(".pv-card-image").getBoundingClientRect();
+            h.assert(Math.abs(badgeRect.right - imageRect.right) <= 1, `角标未贴照片区右缘：${badgeRect.right} ≠ ${imageRect.right}`);
+            h.assert(Math.abs(badgeRect.bottom - imageRect.bottom) <= 1, `角标未贴照片区下缘：${badgeRect.bottom} ≠ ${imageRect.bottom}`);
+            // 静态导出只按一位数字估宽，不作为实际冲突/字体宽度的精确比对；
+            // DOM 只核对由核心 badge frame 给出的外框与内容，不在这里反推新宽度。
+            h.assert(badgeRect.width >= t("film.card.small.badge.fontSize"),
+                `角标宽度 ${badgeRect.width} 小于字形令牌`);
+
+            const conflict = app.state.cards.find((card) => hasRatingConflict(card));
+            if (conflict) {
+                app.openFolder("harbor", { target: conflict.photo.id });
+                await h.tick(160);
+                const conflictNode = h.filmCardByKey(conflict.key);
+                const conflictBadge = conflictNode?.querySelector(".pv-card-small-badge");
+                h.assert(conflictBadge && !conflictBadge.hidden, "冲突小档卡片未显示角标");
+                const conflictWarning = conflictBadge.querySelector(".pv-card-small-warning");
+                h.assert(conflictWarning && !conflictWarning.hidden, "冲突角标未显示警示三角");
+                h.assert(conflictWarning.textContent.codePointAt(0) === parseInt(t("icon.warning").slice(2), 16),
+                    "冲突角标警示三角不是 icon.warning");
+            }
         },
     },
     {
@@ -304,35 +397,33 @@ const CHECKS = [
     },
     {
         id: "FILTER-01",
-        title: "三项顺序、计数文本与控件结构（标准版四项、AI 版五项）",
+        title: "iPad 筛选/更多 96 合体、计数在入口内、AI 开关独立且标准版无空槽",
         async run(shell, h) {
             const { app } = shell;
-            const popups = h.domAll(".pv-popup");
-            h.assert(popups.length === 3, `下拉数量 ${popups.length} ≠ 3`);
-            const labels = popups.map((node) => node.querySelector(".pv-popup-label").textContent);
-            h.deepEqual(labels, ["名称", "升序 ↑", "全部"], "默认下拉文案或顺序不符");
-            h.assert(h.filmScroller().parentElement.contains(popups[0]), "筛选条不在文件栏");
-            const count = h.dom(".pv-filter-count");
-            h.assert(count.textContent === `共 ${app.state.count} 张`, `计数文本 ${count.textContent}`);
-            // FILTER-04：计数字号取 filter.count.fontSize。
-            h.assert(getComputedStyle(count).fontSize === `${shell.t("filter.count.fontSize")}px`,
-                `计数字号 ${getComputedStyle(count).fontSize}`);
-            const children = [...h.dom(".pv-pane-file").children];
-            h.assert(children.indexOf(count) > children.indexOf(popups[2]), "计数不在星级筛选之后");
+            const t = (name) => shell.t(name);
+            const filter = app.state.layout.filter;
+            h.assert(filter.composite !== null, "宽形态缺少筛选/更多合体");
+            h.assert(filter.composite.w === t("film.card.width"), `合体宽 ${filter.composite.w}`);
+            h.assert(filter.entry.w === t("film.card.width") / 2 && filter.more.w === t("film.card.width") / 2,
+                "合体两段不是各 48");
+            h.assert(filter.entry.h === t("shell.glass.button.size") && filter.more.h === t("shell.glass.button.size"),
+                "合体高度不是 44");
+            h.assert(filter.count.x >= filter.composite.x && filter.count.x + filter.count.w <= filter.composite.x + filter.composite.w,
+                "计数没有收在筛选合体内部");
+            h.assert(filter.count.x >= filter.entry.x, "计数不在筛选段一侧");
+            h.assert(document.querySelector(".pv-popup") === null, "仍存在三段旧下拉");
+            h.assert(h.dom(".pv-filter-count").textContent === `共 ${app.state.count} 张`, "计数文本不一致");
+            h.assert(getComputedStyle(h.dom(".pv-filter-count")).overflow === "hidden", "计数未按入口外框裁切");
             const toggle = document.querySelector(".pv-filter-toggle");
             if (app.capabilities.similarity) {
                 h.assert(toggle !== null, "AI 版缺少相似聚类开关");
                 h.assert(toggle.getAttribute("role") === "switch", "相似聚类开关缺少 switch 语义");
-                h.assert(toggle.getAttribute("aria-label") === "相似聚类", "相似聚类开关名称不符");
-                h.assert(children.indexOf(toggle) > children.indexOf(count), "相似聚类开关不在末位");
-                return;
+                h.assert(filter.toggle && filter.toggle.w === t("film.card.width") && filter.toggle.h === 44,
+                    "相似聚类开关不是独立 96×44");
+            } else {
+                h.assert(toggle === null, "标准版仍创建相似聚类开关");
+                h.assert(filter.toggle === null, "标准版仍留相似开关几何");
             }
-            // EDITION-02：标准版不创建开关，也不留空槽或空分组。
-            h.assert(toggle === null, "标准版仍创建相似聚类开关");
-            h.assert(document.querySelector(".pv-sim") === null, "标准版仍创建相似面板");
-            h.assert(app.state.layout.filter.controls.toggle === null, "标准版筛选条仍留开关几何");
-            h.assert(!count.nextElementSibling?.classList.contains("pv-filter-toggle"), "标准版计数后仍有空槽");
-            h.assert(h.domAll(".pv-filter-count").length === 1, "标准版计数元素重复");
         },
     },
     {
@@ -340,12 +431,15 @@ const CHECKS = [
         title: "星级筛选取值与菜单顺序固定，菜单打开期间 → 不切图",
         async run(shell, h) {
             const { app } = shell;
-            await h.openFilter("rating");
-            const labels = h.domAll(".pv-menu .pv-menu-item").map((node) => node.querySelector(".pv-menu-label").textContent);
-            h.deepEqual(labels, ["全部", "无星级", "一星", "二星", "三星", "四星", "五星", "一星以上", "二星以上", "三星以上", "四星以上", "已拒绝", "星级冲突"],
+            await h.openFilter();
+            const ratingItems = h.domAll('.pv-menu .pv-menu-item[data-group="rating"]');
+            h.deepEqual(ratingItems.map((node) => node.querySelector(".pv-menu-label").textContent),
+                ["全部", "无星级", "一星", "二星", "三星", "四星", "五星", "一星以上", "二星以上", "三星以上", "四星以上", "已拒绝", "星级冲突"],
                 "星级筛选项或顺序不符");
             const checked = h.domAll(".pv-menu .pv-menu-item").filter((node) => node.getAttribute("aria-checked") === "true");
-            h.assert(checked.length === 1 && checked[0].dataset.id === "all", "当前项未勾选");
+            h.assert(checked.length === 3, `三个分组各应有一项勾选，实际 ${checked.length}`);
+            const groups = new Set(h.domAll(".pv-menu .pv-menu-item").map((node) => node.dataset.group));
+            h.deepEqual([...groups], ["sort", "order", "rating"], "筛选菜单不是三分组");
 
             const displayed = app.state.displayedId;
             h.key("ArrowRight");
@@ -358,7 +452,7 @@ const CHECKS = [
             h.assert(h.menu() === null, "Esc 未关闭筛选菜单");
             h.assert(app.state.ratingFilter === "all", "Esc 改变了星级筛选");
 
-            await h.openFilter("rating");
+            await h.openFilter();
             h.click(h.menuItem("5"));
             await h.tick(80);
             h.assert(app.state.ratingFilter === "5", "选中即应用失败");
@@ -368,11 +462,11 @@ const CHECKS = [
     },
     {
         id: "FILTER-06",
-        title: "相似聚类开关为药丸四态，常态/勾选取新令牌颜色",
+        title: "相似聚类开关为独立玻璃药丸，常态/勾选取新令牌颜色",
         async run(shell, h) {
             const { app } = shell;
+            const t = (name) => shell.t(name);
             if (!app.capabilities.similarity) {
-                // EDITION-02/06：标准版不创建开关，展开态保留但不恢复。
                 h.assert(document.querySelector(".pv-filter-toggle") === null, "标准版仍创建相似聚类开关");
                 h.assert(app.setSimilarityExpanded(true) === false, "标准版响应了相似展开请求");
                 h.assert(app.state.similarity.visible === false, "标准版恢复了相似面板");
@@ -383,15 +477,17 @@ const CHECKS = [
             const uncheckedBackground = style().backgroundColor;
             const uncheckedColor = style().color;
             h.assert(uncheckedBackground === "rgba(0, 0, 0, 0)", `未勾选底色 ${uncheckedBackground}`);
+            h.assert(style().borderTopWidth === "1px", `未勾选描边宽 ${style().borderTopWidth}`);
+            h.assert(colorMatches(style().borderTopColor, t("color.filter.toggle.border")), `未勾选描边 ${style().borderTopColor}`);
             h.assert(toggle.getAttribute("aria-checked") === String(Boolean(app.settings.similarityPanelExpanded)), "勾选态与设置不一致");
-
             h.click(toggle);
             await h.tick(80);
             h.assert(app.settings.similarityPanelExpanded === true, "点击未勾选相似聚类");
             h.assert(style().backgroundColor !== uncheckedBackground, "勾选态底色未变化");
+            h.assert(colorMatches(style().backgroundColor, t("color.filter.toggle.checked.background")),
+                `勾选态底色 ${style().backgroundColor}`);
             h.assert(style().color !== uncheckedColor, "勾选态文字色未变化");
             h.assert(toggle.getAttribute("aria-checked") === "true", "勾选态未更新为 true");
-
             h.click(toggle);
             await h.tick(80);
             h.assert(app.settings.similarityPanelExpanded === false, "再次点击未取消相似聚类");
@@ -399,72 +495,62 @@ const CHECKS = [
     },
     {
         id: "FILTER-08",
-        title: "自绘下拉外观与弹层位置：贴按钮下方居中、不覆盖按钮、当前项整行强调色",
+        title: "筛选入口玻璃外观与三分组弹层：贴入口下方居中、当前项整行强调",
         async run(shell, h) {
             const { app } = shell;
             const t = (name) => shell.t(name);
-            const button = h.domAll(".pv-popup")[0];
-            const buttonStyle = getComputedStyle(button);
-            h.assert(colorMatches(buttonStyle.backgroundColor, t("color.dropdown.background")),
-                `下拉按钮底色 ${buttonStyle.backgroundColor}`);
-            h.assert(colorMatches(buttonStyle.borderTopColor, t("color.dropdown.border")),
-                `下拉按钮描边 ${buttonStyle.borderTopColor}`);
-            h.assert(buttonStyle.borderTopWidth === "1px", `下拉按钮描边宽 ${buttonStyle.borderTopWidth}`);
-            h.assert(buttonStyle.borderTopLeftRadius === `${t("dropdown.cornerRadius")}px`, `下拉圆角 ${buttonStyle.borderTopLeftRadius}`);
-            h.assert(buttonStyle.fontSize === `${t("dropdown.fontSize")}px`, `下拉字号 ${buttonStyle.fontSize}`);
-            h.assert(buttonStyle.paddingLeft === `${t("dropdown.paddingLeft")}px`, `下拉左内边距 ${buttonStyle.paddingLeft}`);
-            h.assert(buttonStyle.backgroundImage === "none", "下拉按钮仍用渐变");
-            const chevron = button.querySelector(".pv-popup-chevron");
-            h.assert(chevron !== null, "下拉缺少 icon.chevronDown 字形");
-            h.assert(getComputedStyle(chevron).fontSize === `${t("dropdown.chevron.size")}px`, `箭头字号 ${getComputedStyle(chevron).fontSize}`);
-            h.assert(button.querySelector(".pv-popup-arrows") === null, "下拉仍画上下双箭头");
+            const entry = h.dom(".pv-filter-entry");
+            const entryStyle = getComputedStyle(entry);
+            h.assert(entryStyle.backgroundColor === "rgba(0, 0, 0, 0)", "合体分段自身重复铺底");
+            h.assert(getComputedStyle(h.dom(".pv-filter-composite")).backdropFilter !== "none", "筛选合体缺少 backdrop-filter");
 
-            await h.openFilter("sort");
-            const rect = button.getBoundingClientRect();
+            await h.openFilter();
+            const rect = entry.getBoundingClientRect();
             const menu = h.menu();
             const menuRect = menu.getBoundingClientRect();
             const menuStyle = getComputedStyle(menu);
-            h.assert(Math.abs((menuRect.left + menuRect.width / 2) - (rect.left + rect.width / 2)) <= 1,
-                `弹层未以按钮水平居中：${menuRect.left + menuRect.width / 2} ≠ ${rect.left + rect.width / 2}`);
-            h.assert(menuRect.top >= rect.bottom - 1, `弹层覆盖按钮：top ${menuRect.top} < 按钮底 ${rect.bottom}`);
-            h.assert(menuRect.top - rect.bottom <= 1, `弹层未贴在按钮正下方：间隙 ${menuRect.top - rect.bottom}`);
+            const hostRect = h.dom(".pv-window").getBoundingClientRect();
+            const expectedLeft = Math.min(Math.max(4, rect.left + rect.width / 2 - menuRect.width / 2), hostRect.width - menuRect.width - 4);
+            h.assert(Math.abs(menuRect.left - expectedLeft) <= 1,
+                `弹层未以筛选段水平居中并夹在窗口内：${menuRect.left} ≠ ${expectedLeft}`);
+            h.assert(menuRect.top >= rect.bottom - 1, `弹层覆盖入口：top ${menuRect.top} < 入口底 ${rect.bottom}`);
+            h.assert(menuRect.top - rect.bottom <= 1, `弹层未贴在入口正下方：间隙 ${menuRect.top - rect.bottom}`);
             h.assert(menuRect.width >= rect.width - 0.5, `弹层最小宽不足：${menuRect.width} < ${rect.width}`);
             h.assert(colorMatches(menuStyle.backgroundColor, t("color.popup.background")), `弹层底色 ${menuStyle.backgroundColor}`);
             h.assert(colorMatches(menuStyle.borderTopColor, t("color.popup.border")), `弹层描边 ${menuStyle.borderTopColor}`);
             h.assert(menuStyle.boxShadow === "none", `弹层仍有阴影：${menuStyle.boxShadow}`);
             h.assert(menuStyle.borderTopLeftRadius === `${t("popup.cornerRadius")}px`, `弹层圆角 ${menuStyle.borderTopLeftRadius}`);
-            h.assert(menuStyle.paddingTop === `${t("popup.padding")}px`, `弹层上内边距 ${menuStyle.paddingTop}`);
 
-            const items = h.domAll(".pv-menu .pv-menu-item");
-            const first = items[0];
-            h.assert(first.offsetHeight === 31, `下拉项高 ${first.offsetHeight} ≠ 31`);
-            h.assert(getComputedStyle(first).paddingLeft === `${t("dropdown.item.paddingX")}px`, "下拉项左内边距不符");
-            const selected = items.find((node) => node.classList.contains("is-selected"));
+            const selected = h.domAll(".pv-menu .pv-menu-item").find((node) => node.classList.contains("is-selected"));
             h.assert(selected !== null, "当前项未整行强调");
-            // 键盘焦点即悬停态：当前项带焦点时取 selected.hover。
+            h.assert(menu.querySelector(".pv-menu-mark") === null, "下拉仍画勾号");
+            h.assert(menuStyle.fontSize === `${t("dropdown.fontSize")}px`, `下拉字号 ${menuStyle.fontSize}`);
+            const itemStyle = getComputedStyle(selected);
+            h.assert(itemStyle.paddingLeft === `${t("dropdown.item.paddingX")}px`, "下拉项左内边距不符");
             const selectedToken = selected.classList.contains("is-focused")
                 ? "color.dropdown.item.selected.hover"
                 : "color.dropdown.item.selected";
-            h.assert(colorMatches(getComputedStyle(selected).backgroundColor, t(selectedToken)),
-                `当前项底色 ${getComputedStyle(selected).backgroundColor}`);
-            h.assert(menu.querySelector(".pv-menu-mark") === null, "下拉仍画勾号");
+            h.assert(colorMatches(itemStyle.backgroundColor, t(selectedToken)),
+                `当前项底色 ${itemStyle.backgroundColor}`);
+            h.assert(entryStyle.borderTopLeftRadius === `${t("shell.glass.button.size") / 2}px`,
+                `筛选段圆角 ${entryStyle.borderTopLeftRadius}`);
 
             h.key("Escape");
             await h.tick(40);
-            h.assert(h.menu() === null, "Esc 未关闭下拉");
-            h.assert(app.state.sortKey === "name", "Esc 改变了下拉取值");
+            h.assert(h.menu() === null, "Esc 未关闭筛选菜单");
+            h.assert(app.state.sortKey === "name", "Esc 改变了排序");
         },
     },
     {
         id: "FILTER-08b",
-        title: "键盘 ↓ 打开菜单，上下键移动、回车确认",
+        title: "键盘 ↓ 从筛选入口打开菜单，上下键移动、回车确认",
         async run(shell, h) {
             const { app } = shell;
-            const button = h.domAll(".pv-popup")[0];
-            button.focus();
-            button.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", code: "ArrowDown", bubbles: true, cancelable: true }));
+            const entry = h.dom(".pv-filter-entry");
+            entry.focus();
+            entry.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", code: "ArrowDown", bubbles: true, cancelable: true }));
             await h.tick();
-            h.assert(h.menu() !== null, "↓ 未打开下拉菜单");
+            h.assert(h.menu() !== null, "↓ 未从筛选入口打开菜单");
             h.key("ArrowDown");
             await h.tick(20);
             h.key("Enter");
@@ -480,19 +566,19 @@ const CHECKS = [
             const { app } = shell;
             app.updateSettings({ sameNameAsOne: false });
             await h.tick(60);
-            // 夜景没有 -1 来源，选「已拒绝」必然无命中：空结果共用 FILTER-10 的空状态。
-            await h.openFilter("rating");
+            await h.openFilter();
             h.click(h.menuItem("rejected"));
             await h.tick(100);
             app.openFolder("night");
             await h.tick(120);
             h.assert(app.state.count === 0, `空结果计数 ${app.state.count} ≠ 0`);
             h.assert(app.state.countText === "共 0 张", `空结果计数文本 ${app.state.countText}`);
-            // FILM-05 / STATE-02：空结果胶片栏留空，不写占位文字。
             h.assert(h.filmScroller().textContent.trim() === "", `胶片栏空态有文字：${h.filmScroller().textContent}`);
             h.assert(document.querySelector(".pv-film-empty") === null, "胶片栏仍有空状态元素");
-            h.assert(h.domAll(".pv-popup").every((node) => !node.disabled), "空结果时筛选控件被禁用");
-            h.assert(h.domAll(".pv-popup")[2].querySelector(".pv-popup-label").textContent === "已拒绝", "空结果时筛选条件未保留");
+            h.assert(!h.dom(".pv-filter-entry").disabled, "空结果时筛选入口被禁用");
+            await h.openFilter();
+            const checked = h.domAll('.pv-menu .pv-menu-item[data-group="rating"]').find((node) => node.getAttribute("aria-checked") === "true");
+            h.assert(checked && checked.dataset.id === "rejected", "空结果时星级筛选条件未保留");
         },
     },
     {
@@ -529,13 +615,13 @@ const CHECKS = [
         title: "菜单动作与按钮同语义、隐藏文件栏扩大主图、Esc 不穿透",
         async run(shell, h) {
             const { app } = shell;
-            const photoWidth = h.paneRect("photo").width;
+            const photoWidth = app.state.layout.panes.fitRect.w;
             await h.openMainMenu();
             h.click(h.menuItem("film"));
             await h.tick(120);
             h.assert(app.state.panes.film === false, "菜单未隐藏文件栏");
             h.assert(h.dom(".pv-pane-file").hidden, "文件栏节点仍可见");
-            h.assert(h.paneRect("photo").width > photoWidth, "隐藏文件栏后主图未扩大");
+            h.assert(app.state.layout.panes.fitRect.w > photoWidth, "隐藏文件栏后适应区未扩大");
 
             await h.openMainMenu();
             h.assert(h.menuItem("film").getAttribute("aria-checked") === "false", "重新弹出未读取最新勾选");
@@ -998,6 +1084,45 @@ const CHECKS = [
             h.pointer(canvas, "pointerdown", canvasX, canvasY);
             h.pointer(canvas, "pointerup", canvasX, canvasY);
             await h.tick(20);
+        },
+    },
+    {
+        id: "IMAGE-10b",
+        title: "画布铺满窗口、适应区数据与窄主图提示/导航用真实 DOM 核对",
+        async run(shell, h) {
+            const { app } = shell;
+            app.setLayoutModeOverride("col");
+            if (!app.state.panes.analysis) app.toggleAnalysis();
+            shell.setWindowSize(560, 480);
+            app.openFolder("empty");
+            await h.tick(140);
+            const windowRect = h.dom(".pv-window").getBoundingClientRect();
+            const canvas = h.photoCanvas();
+            const canvasRect = canvas.getBoundingClientRect();
+            h.assert(Math.abs(canvasRect.width - windowRect.width) <= 1 && Math.abs(canvasRect.height - windowRect.height) <= 1,
+                `主图画布 ${canvasRect.width}×${canvasRect.height} 未铺满窗口 ${windowRect.width}×${windowRect.height}`);
+            const fit = app.state.layout.panes.fitRect;
+            const host = h.dom(".pv-photo");
+            h.assert(host.dataset.fitRect === `${fit.x},${fit.y},${fit.w},${fit.h}`,
+                `主图实际 render fitRect ${host.dataset.fitRect} ≠ ${fit.x},${fit.y},${fit.w},${fit.h}`);
+            const hint = h.dom(".pv-photo-hint-title").getBoundingClientRect();
+            h.assert(hint.left >= windowRect.left + fit.x - 0.5
+                && hint.right <= windowRect.left + fit.x + fit.w + 0.5,
+                `窄主图提示超出适应区：${hint.left}..${hint.right}`);
+
+            app.openFolder("harbor");
+            await h.tick(160);
+            const fitAfter = app.state.layout.panes.fitRect;
+            h.dblclick(canvas);
+            await h.tick(100);
+            const nav = h.dom(".pv-photo-nav");
+            h.assert(!nav.hidden, "放大态未显示导航图");
+            const navRect = nav.getBoundingClientRect();
+            h.assert(Math.abs((windowRect.left + fitAfter.x + fitAfter.w) - navRect.right - 12) <= 1,
+                `导航图未贴适应区右缘 ${fitAfter.w}：${windowRect.left + fitAfter.x + fitAfter.w - navRect.right}`);
+            h.assert(Math.abs((windowRect.top + fitAfter.y + fitAfter.h) - navRect.bottom - 12) <= 1,
+                `导航图未贴适应区下缘：${windowRect.top + fitAfter.y + fitAfter.h - navRect.bottom}`);
+            app.fit();
         },
     },
     {
@@ -1553,16 +1678,21 @@ const CHECKS = [
                 h.assert(await app.extractAll() === false, "标准版仍可批量提取");
                 return;
             }
-            const before = h.paneRect("file").width;
+            const before = app.state.layout.panes.filePane.w;
             const countText = h.dom(".pv-filter-count").textContent;
             const sortKey = app.state.sortKey;
             h.click(h.dom(".pv-filter-toggle"));
             await h.until(() => app.state.similarity.visible === true, 4000);
             await h.tick(80);
-            h.assert(h.dom(".pv-sim").hidden === false, "相似面板未显示");
-            // SIM-07：列布局文件栏加宽 = 面板宽 + sim.panel.margin。
-            h.assert(Math.abs(h.paneRect("file").width - (before + shell.t("sim.panel.width") + shell.t("sim.panel.margin"))) <= 1,
-                `文件栏宽度 ${h.paneRect("file").width} ≠ ${before + shell.t("sim.panel.width") + shell.t("sim.panel.margin")}`);
+            const sim = h.dom(".pv-sim");
+            h.assert(sim.hidden === false, "相似面板未显示");
+            // SIM-07：列布局文件栏加宽 = 面板宽 + sim.panel.margin；模型与实际 DOM 同时核对。
+            const simRect = sim.getBoundingClientRect();
+            const expectedWidth = before + shell.t("sim.panel.width") + shell.t("sim.panel.margin");
+            h.assert(Math.abs(app.state.layout.panes.filePane.w - expectedWidth) <= 1,
+                `文件栏宽度 ${app.state.layout.panes.filePane.w} ≠ ${expectedWidth}`);
+            h.assert(Math.abs(simRect.width - app.state.layout.similarity.width) <= 1,
+                `DOM 面板宽 ${simRect.width} ≠ 布局 ${app.state.layout.similarity.width}`);
             h.assert(h.dom(".pv-filter-count").textContent === countText, "打开面板改变了计数");
             h.assert(app.state.displayedId === app.state.anchorId, "打开面板改变了当前照片");
             h.assert(app.state.sortKey === sortKey, "打开面板改变了排序");
@@ -1586,7 +1716,7 @@ const CHECKS = [
             const { app } = shell;
             if (!app.capabilities.similarity) {
                 h.assert(document.querySelector(".pv-sim") === null, "标准版仍创建相似面板");
-                h.assert(h.paneRect("file").width === shell.t("shell.filebar.content.width"), "标准版文件栏为相似面板让位");
+                h.assert(app.state.layout.panes.filePane.w === shell.t("shell.filebar.content.width"), "标准版文件栏为相似面板让位");
                 return;
             }
             h.click(h.dom(".pv-filter-toggle"));
@@ -1594,24 +1724,48 @@ const CHECKS = [
             await h.until(() => app.state.similarity.items.length > 0 && app.state.similarity.calculating === false, 4000);
             await h.tick(80);
 
-            const file = h.paneRect("file");
-            const panel = h.dom(".pv-sim").getBoundingClientRect();
+            const file = app.state.layout.panes.filePane;
+            const panel = app.state.layout.similarity.panel;
             const filter = app.state.layout.filter;
-            h.assert(Math.abs(panel.left - file.left - shell.t("shell.filebar.content.width")) <= 1,
-                `列布局面板未接在 116 宽文件栏右侧：${panel.left - file.left}`);
-            h.assert(Math.abs(panel.top - file.top - filter.bar.h) <= 1, `列布局面板未与胶片栏同顶：${panel.top - file.top} ≠ ${filter.bar.h}`);
-            h.assert(Math.abs(panel.bottom - file.bottom) <= 1, `列布局面板未到文件栏底：${panel.bottom} ≠ ${file.bottom}`);
-            h.assert(Math.abs(file.width - (shell.t("shell.filebar.content.width") + panel.width + shell.t("sim.panel.margin"))) <= 1,
-                `文件栏加宽不含外边距：${file.width}`);
+            const windowRect = h.dom(".pv-window").getBoundingClientRect();
+            const simRect = h.dom(".pv-sim").getBoundingClientRect();
+            const domPanel = {
+                x: simRect.left - windowRect.left,
+                y: simRect.top - windowRect.top,
+                w: simRect.width,
+                h: simRect.height,
+            };
+            h.assert(panel.x === shell.t("shell.filebar.content.width"), `列布局面板未接在 116 宽文件栏右侧：${panel.x}`);
+            h.assert(panel.y === filter.bar.h, `列布局面板未与胶片栏同顶：${panel.y} ≠ ${filter.bar.h}`);
+            h.assert(panel.y + panel.h === file.y + file.h, `列布局面板未到文件栏底：${panel.y + panel.h} ≠ ${file.y + file.h}`);
+            h.assert(file.w === shell.t("shell.filebar.content.width") + panel.w + shell.t("sim.panel.margin"),
+                `文件栏加宽不含外边距：${file.w}`);
+            h.assert(Math.abs(domPanel.x - panel.x) <= 1 && Math.abs(domPanel.y - panel.y) <= 1,
+                `列布局 DOM 面板位置 ${domPanel.x},${domPanel.y} ≠ 布局 ${panel.x},${panel.y}`);
+            h.assert(Math.abs(domPanel.w - panel.w) <= 1 && Math.abs(domPanel.h - panel.h) <= 1,
+                `列布局 DOM 面板尺寸 ${domPanel.w}×${domPanel.h} ≠ 布局 ${panel.w}×${panel.h}`);
 
             shell.setWindowSize(700, 850);
             await h.tick(160);
             h.assert(app.state.layout.layoutMode === "row", "700×850 未进入行布局");
-            const rowFile = h.paneRect("file");
-            const rowPanel = h.dom(".pv-sim").getBoundingClientRect();
-            h.assert(Math.abs(rowPanel.height - shell.t("sim.list.cross")) <= 1, `行布局面板高 ${rowPanel.height} ≠ ${shell.t("sim.list.cross")}`);
-            h.assert(Math.abs(rowFile.right - rowPanel.right - shell.t("sim.panel.margin")) <= 1, "行布局面板右侧未留外边距");
-            h.assert(Math.abs(app.state.layout.similarity.width - rowPanel.width) <= 1, "行布局面板宽与布局不一致");
+            const rowFile = app.state.layout.panes.filePane;
+            const rowPanel = app.state.layout.similarity.panel;
+            const rowRect = h.dom(".pv-sim").getBoundingClientRect();
+            const rowDom = {
+                x: rowRect.left - windowRect.left,
+                y: rowRect.top - windowRect.top,
+                w: rowRect.width,
+                h: rowRect.height,
+            };
+            h.assert(Math.abs(rowPanel.h - shell.t("sim.list.cross")) <= 1, `行布局面板高 ${rowPanel.h} ≠ ${shell.t("sim.list.cross")}`);
+            h.assert(rowPanel.w <= 700 * shell.t("sim.panel.maxWidthRatio") + 1,
+                `行布局面板宽 ${rowPanel.w} 超过可用宽一半`);
+            h.assert(Math.abs((rowFile.x + rowFile.w) - (rowPanel.x + rowPanel.w) - shell.t("sim.panel.margin")) <= 1,
+                "行布局面板右侧未留外边距");
+            h.assert(Math.abs(rowDom.x - rowPanel.x) <= 1 && Math.abs(rowDom.y - rowPanel.y) <= 1
+                && Math.abs(rowDom.w - rowPanel.w) <= 1 && Math.abs(rowDom.h - rowPanel.h) <= 1,
+                `行布局 DOM 面板 ${rowDom.x},${rowDom.y},${rowDom.w}×${rowDom.h} ≠ 布局 ${rowPanel.x},${rowPanel.y},${rowPanel.w}×${rowPanel.h}`);
+            h.assert(Math.abs(app.state.layout.similarity.width - rowPanel.w) <= 1, "行布局面板宽与布局不一致");
             h.assert(app.state.layout.similarity.dockWidth >= shell.t("sim.action.width") + 2 * shell.t("sim.dock.margin"),
                 `停靠区宽 ${app.state.layout.similarity.dockWidth} 未含动作区`);
             shell.setWindowSize(1200, 850);
@@ -1701,7 +1855,7 @@ const CHECKS = [
             } else {
                 h.assert(toggle === null, "标准版仍创建相似聚类开关");
                 h.assert(document.querySelector(".pv-sim") === null, "标准版仍创建相似面板");
-                h.assert(app.state.layout.filter.controls.toggle === null, "标准版筛选条仍留开关槽位");
+                h.assert(app.state.layout.filter.toggle === null, "标准版筛选条仍留开关槽位");
                 h.assert(app.state.analysis.dino === false, "标准版分析栏仍声明 DINO 能力");
             }
         },
@@ -1796,22 +1950,272 @@ const CHECKS = [
     },
     {
         id: "SHELL-01",
-        title: "auto 布局随宽高比切换，窗口尺寸与分区一致",
+        title: "主图铺满窗口、独立适应区；行/列分区与栏位隐藏释放正确",
         async run(shell, h) {
             const { app } = shell;
+            const t = (name) => shell.t(name);
             shell.setWindowSize(1200, 850);
             await h.tick(100);
-            h.assert(app.state.layout.layoutMode === "col", "1200×850 未取列布局");
-            h.assert(h.dom(".pv-window").dataset.layout === "col", "窗口 dataset.layout 未更新");
-            const file = h.paneRect("file");
-            h.assert(file.height === 850 && file.width >= 116, "列布局文件栏几何不符");
+            const col = app.state.layout;
+            h.assert(col.layoutMode === "col", "1200×850 未取列布局");
+            h.deepEqual(col.panes.photoView, { x: 0, y: 0, w: 1200, h: 850 });
+            h.deepEqual(col.panes.fitRect, {
+                x: t("shell.filebar.content.width") + t("shell.divider.thickness"),
+                y: 0,
+                w: 1200 - t("shell.filebar.content.width") - t("shell.divider.thickness")
+                    - col.panes.controlPane.w - t("shell.divider.thickness"),
+                h: 850,
+            });
+            h.assert(col.film.scroll.w === t("shell.filebar.content.width") && col.film.scroll.h === 850,
+                "列布局胶片列表没有纵贯文件栏");
+            h.assert(col.filter.composite.w === t("film.card.width"), "列布局筛选合体宽不符");
 
             shell.setWindowSize(700, 850);
             await h.tick(100);
-            h.assert(app.state.layout.layoutMode === "row", "700×850 未取行布局");
-            const rowFile = h.paneRect("file");
-            h.assert(Math.abs(rowFile.height - (shell.t("filter.bar.row.height") + shell.t("film.band.height"))) <= 1,
-                `行布局文件栏高 ${rowFile.height} 不符`);
+            const row = app.state.layout;
+            h.assert(row.layoutMode === "row", "700×850 未取行布局");
+            const filterBand = t("shell.glass.button.size") + 2 * t("filter.margin");
+            h.assert(row.panes.filePane.h === filterBand + t("film.band.height"), `行布局文件栏高 ${row.panes.filePane.h}`);
+            h.assert(row.film.scroll.y === filterBand, `行布局胶片带 y ${row.film.scroll.y}`);
+            h.assert(row.panes.fitRect.y === filterBand + t("film.band.height") + 1, "行布局适应区未从胶片带下缘开始");
+
+            app.toggleFilmbar();
+            await h.tick(80);
+            h.assert(app.state.layout.panes.filePane.h === 0 && app.state.layout.filter === null, "关闭文件栏未释放筛选与列表");
+            h.assert(app.state.layout.panes.fitRect.y === 0, "关闭文件栏未把空间还给适应区");
+            app.toggleFilmbar();
+            app.toggleControlbar();
+            await h.tick(80);
+            h.assert(app.state.layout.panes.fitRect.y + app.state.layout.panes.fitRect.h === 850,
+                "关闭控制栏未把空间还给适应区");
+            app.toggleControlbar();
+            await h.tick(80);
+        },
+    },
+    {
+        id: "SHELL-07",
+        title: "自动按 CSS 视口宽 <600 映射紧凑横向，显式行/列恒为宽形态，手机模式可检验",
+        async run(shell, h) {
+            const { app } = shell;
+            shell.setWindowSize(590, 800);
+            await h.tick(80);
+            h.assert(app.state.layout.form === "phone" && app.state.layout.orientation === "portrait",
+                `590×800 auto 未进入手机竖屏：${app.state.layout.form}/${app.state.layout.orientation}`);
+
+            shell.setWindowSize(600, 800);
+            await h.tick(80);
+            h.assert(app.state.layout.form === "wide" && app.state.layout.layoutMode === "row",
+                "600×800 auto 未回到宽形态");
+
+            app.updateSettings({ layoutMode: "row" });
+            shell.setWindowSize(390, 844);
+            await h.tick(80);
+            h.assert(app.state.layout.form === "wide" && app.state.layout.layoutMode === "row", "显式行随窄屏变成手机形态");
+
+            app.updateSettings({ layoutMode: "phone" });
+            shell.setWindowSize(844, 390);
+            await h.tick(80);
+            h.assert(app.state.layout.form === "phone" && app.state.layout.orientation === "landscape", "手机模式横屏未生效");
+            h.assert(app.state.layout.panes.sideColumn !== null, "手机横屏缺少刘海侧列");
+        },
+    },
+    {
+        id: "SHELL-08",
+        title: "手机竖屏：顶行/分析/主图/胶片/底行、开关各管各栏、44 命中",
+        async run(shell, h) {
+            const { app } = shell;
+            const t = (name) => shell.t(name);
+            app.updateSettings({ layoutMode: "phone" });
+            shell.setSafeArea({ top: 59, right: 0, bottom: 34, left: 0 });
+            shell.setWindowSize(390, 844);
+            await h.tick(120);
+            const layout = app.state.layout;
+            h.assert(layout.orientation === "portrait", "竖屏排布未生效");
+            h.assert(layout.filter.entry.x === t("shell.phone.edgeMargin"), `筛选入口左缘 ${layout.filter.entry.x}`);
+            h.assert(layout.filter.entry.y === 59, `筛选入口顶边 ${layout.filter.entry.y}`);
+            h.assert(layout.filter.more.x + layout.filter.more.w === 390 - t("shell.phone.edgeMargin"), "更多入口未贴右侧");
+            h.assert(layout.nav.visible === false, "竖屏不应有刘海侧上下张");
+            const slots = layout.control.slots;
+            h.assert(slots.previous && slots.next && slots.rating && slots.fit && slots.enhance, "竖屏底部行槽位不全");
+            h.assert(slots.rating.h === 44 && slots.rating.w >= t("rating.compact.minLength"), "竖屏评分槽不符合 44 厚/紧凑下限");
+            h.assert(layout.filter.toggle === null, "手机形态出现 AI 相似开关");
+            const navCapsule = h.dom(".pv-control-capsule.is-nav");
+            const utilityCapsule = h.dom(".pv-control-capsule.is-utility");
+            const capsuleStyle = getComputedStyle(navCapsule);
+            const navRect = navCapsule.getBoundingClientRect();
+            const utilityRect = utilityCapsule.getBoundingClientRect();
+            h.assert(Math.round(navRect.width) === 88 && Math.round(navRect.height) === 44,
+                `竖屏上下张合体 ${navRect.width}×${navRect.height}`);
+            h.assert(Math.round(utilityRect.width) === 88 && Math.round(utilityRect.height) === 44,
+                `竖屏缩放增强合体 ${utilityRect.width}×${utilityRect.height}`);
+            for (const capsule of [navCapsule, utilityCapsule]) {
+                const segments = [...capsule.querySelectorAll(".pv-control-command-button")];
+                h.assert(segments.length === 2, `合体段数 ${segments.length} ≠ 2`);
+                for (const segment of segments) {
+                    const rect = segment.getBoundingClientRect();
+                    h.assert(Math.round(rect.width) === 44 && Math.round(rect.height) === 44,
+                        `合体段 ${rect.width}×${rect.height}`);
+                    h.assert(getComputedStyle(segment).backgroundColor === "rgba(0, 0, 0, 0)", "合体段自绘底色");
+                    h.assert(getComputedStyle(segment).borderTopWidth === "0px", "合体段自绘描边");
+                }
+            }
+            h.assert(capsuleStyle.backgroundColor !== "rgba(0, 0, 0, 0)", "胶囊宿主无背景");
+            h.assert(capsuleStyle.overflow === "hidden", "胶囊宿主未裁切段");
+
+            app.toggleFilmbar();
+            await h.tick(80);
+            h.assert(app.state.layout.filter.entry !== null, "关闭胶片栏把筛选入口一起隐藏了");
+            const entryRect = h.dom(".pv-filter-entry").getBoundingClientRect();
+            h.assert(Math.round(entryRect.width) === 44 && Math.round(entryRect.height) === 44,
+                `关闭胶片栏后筛选入口 DOM ${entryRect.width}×${entryRect.height}`);
+            h.assert(app.state.layout.control.slots.previous, "关闭胶片栏后上下张被误隐藏");
+            h.assert(!h.dom(".pv-control-capsule.is-nav").hidden, "关闭胶片栏后上下张合体被误隐藏");
+            app.toggleFilmbar();
+            await h.tick(80);
+
+            app.toggleControlbar();
+            await h.tick(80);
+            h.assert(app.state.layout.control.slots === undefined || app.state.layout.control.slots.rating === undefined,
+                "关闭控制栏后底部行仍占槽");
+            h.assert(h.dom(".pv-control-capsule.is-nav").hidden
+                && h.dom(".pv-control-capsule.is-utility").hidden,
+                "关闭控制栏后竖屏合体仍残留");
+            app.toggleControlbar();
+            app.toggleExif();
+            await h.tick(80);
+            h.assert(app.state.layout.exif.visible === false, "EXIF 开关没有收起 EXIF 块");
+            h.assert(app.state.layout.filter.entry !== null, "EXIF 开关误隐藏筛选入口");
+            app.toggleExif();
+            await h.tick(80);
+            shell.setSafeArea(null);
+        },
+    },
+    {
+        id: "SHELL-09",
+        title: "手机横屏：刘海侧列/主图/分析/控制列，镜像与固定槽位",
+        async run(shell, h) {
+            const { app } = shell;
+            const t = (name) => shell.t(name);
+            app.updateSettings({ layoutMode: "phone" });
+            if (!app.state.panes.analysis) app.toggleAnalysis();
+            shell.setSafeArea({ top: 0, right: 0, bottom: 0, left: 59 });
+            shell.setWindowSize(844, 390);
+            await h.tick(120);
+            const layout = app.state.layout;
+            h.assert(layout.orientation === "landscape", "横屏排布未生效");
+            h.assert(layout.panes.sideColumn.w >= 59 + 8 + layout.film.cardCross, "刘海侧列宽未容纳安全区与卡片");
+            h.assert(layout.filter.composite.w === 88 && layout.filter.entry.w === 44, "横屏筛选不是 88 合体");
+            h.assert(layout.filter.toggle === null, "手机横屏出现 AI 相似开关");
+            h.assert(layout.nav.visible === true, "横屏上下张缺失");
+            h.assert(layout.panes.analysisPane.w > 0 && layout.panes.controlPane.w > 0, "分析/控制列缺失");
+            h.assert(layout.control.slots.exif && layout.control.slots.rating, "横屏控制列缺少 EXIF 或评分槽");
+            h.assert(layout.control.slots.exif.w === t("shell.glass.button.size"), "无衬底 EXIF 容器宽不是 44");
+            const landNav = h.dom(".pv-control-capsule.is-nav");
+            const landUtility = h.dom(".pv-control-capsule.is-utility");
+            const landNavRect = landNav.getBoundingClientRect();
+            const landUtilityRect = landUtility.getBoundingClientRect();
+            h.assert(Math.round(landNavRect.width) === 88 && Math.round(landNavRect.height) === 44,
+                `横屏上下张合体 ${landNavRect.width}×${landNavRect.height}`);
+            h.assert(Math.round(landUtilityRect.width) === 44 && Math.round(landUtilityRect.height) === 88,
+                `横屏缩放增强合体 ${landUtilityRect.width}×${landUtilityRect.height}`);
+            for (const capsule of [landNav, landUtility]) {
+                const segments = [...capsule.querySelectorAll(".pv-control-command-button")];
+                h.assert(segments.length === 2, `横屏合体段数 ${segments.length} ≠ 2`);
+                for (const segment of segments) {
+                    const rect = segment.getBoundingClientRect();
+                    h.assert(Math.round(rect.width) === 44 && Math.round(rect.height) === 44,
+                        `横屏合体段 ${rect.width}×${rect.height}`);
+                }
+            }
+            app.selectCard(app.state.cards[5].photo.id);
+            await h.tick(80);
+
+            app.toggleControlbar();
+            await h.tick(100);
+            h.assert(app.state.panes.control === false, "未关闭控制栏");
+            h.assert(app.state.layout.nav.visible === true, "关闭控制栏把横屏上下张一起隐藏了");
+            const prev = h.dom('.pv-control-command-button[data-command="Previous"]');
+            h.assert(prev && !prev.hidden, "横屏上下张 DOM 仍被隐藏");
+            const prevRect = prev.getBoundingClientRect();
+            h.assert(Math.round(prevRect.width) === t("shell.glass.button.size"),
+                `横屏上下张 DOM 宽 ${prevRect.width}`);
+            const fitOff = h.dom('.pv-control-command-button[data-command="Fit"]');
+            const enhanceOff = h.dom('.pv-control-command-button[data-command="ToggleEnhance"]');
+            h.assert(fitOff.hidden && enhanceOff.hidden, "关闭控制栏后缩放/增强按钮仍可见");
+            h.assert(h.dom(".pv-control-capsule.is-utility").hidden, "关闭控制栏后缩放增强合体未隐藏");
+            h.assert(!h.dom(".pv-control-capsule.is-nav").hidden, "关闭控制栏后上下张合体被误隐藏");
+            const displayed = app.state.displayedId;
+            h.click(prev);
+            await h.tick(100);
+            h.assert(app.state.displayedId !== displayed,
+                `关闭控制栏后横屏上下张不可点：${displayed} -> ${app.state.displayedId}（disabled ${prev.disabled}, cmd ${prev.dataset.command}, rect ${prevRect.left},${prevRect.top}）`);
+            app.toggleControlbar();
+            await h.tick(80);
+            const fitOn = h.dom('.pv-control-command-button[data-command="Fit"]');
+            const enhanceOn = h.dom('.pv-control-command-button[data-command="ToggleEnhance"]');
+            h.assert(!fitOn.hidden && !enhanceOn.hidden, "重新显示控制栏后缩放/增强按钮未恢复");
+            h.assert(!h.dom(".pv-control-capsule.is-utility").hidden, "重新显示控制栏后缩放增强合体未恢复");
+
+            app.toggleFilmbar();
+            await h.tick(100);
+            h.assert(h.dom(".pv-control-capsule.is-nav").hidden, "横屏关闭胶片栏后上下张合体仍残留");
+            h.assert(!h.dom(".pv-control-capsule.is-utility").hidden, "横屏关闭胶片栏后缩放增强合体被误隐藏");
+            app.toggleFilmbar();
+            await h.tick(100);
+
+            shell.setSafeArea({ top: 0, right: 59, bottom: 0, left: 0 });
+            await h.tick(100);
+            const mirrored = app.state.layout;
+            h.assert(mirrored.panes.sideColumn.x === 844 - mirrored.panes.sideColumn.w, "刘海在右时侧列未镜像");
+            h.assert(mirrored.panes.controlPane.x === 0, "刘海在右时控制列未镜像到左侧");
+            const windowRect = h.dom(".pv-window").getBoundingClientRect();
+            const filterRect = h.dom(".pv-filter-entry").getBoundingClientRect();
+            const ratingRect = h.dom(".pv-control-rating").getBoundingClientRect();
+            h.assert(Math.abs(filterRect.left - windowRect.left - mirrored.filter.entry.x) <= 1,
+                `镜像筛选 DOM x ${filterRect.left - windowRect.left} ≠ ${mirrored.filter.entry.x}`);
+            h.assert(Math.abs(ratingRect.left - windowRect.left - 10) <= 1,
+                `镜像控制内容未保留窗口侧 10：${ratingRect.left - windowRect.left}`);
+            shell.setSafeArea(null);
+        },
+    },
+    {
+        id: "SHELL-10/12",
+        title: "栏位背景出现条件、唯一外边界、工具区接缝与透明边栏避让",
+        async run(shell, h) {
+            const { app } = shell;
+            const t = (name) => shell.t(name);
+            app.updateSettings({ layoutMode: "auto" });
+            shell.setSafeArea(null);
+            shell.setWindowSize(1200, 850);
+            await h.tick(100);
+            const wide = app.state.layout;
+            h.assert(wide.materials.some((entry) => entry.kind === "file"), "宽形态文件栏缺少材质宿主");
+            h.assert(wide.dividers.filter((entry) => entry.kind === "tool").length === 1, "工具区不是唯一外边界");
+            h.assert(wide.panes.fitRect.x === t("shell.filebar.content.width") + 1, "适应区未让到文件栏缘");
+            const substrate = h.dom(".pv-substrate");
+            const substrateStyle = getComputedStyle(substrate);
+            h.assert(substrate && substrateStyle.backdropFilter !== "none", "栏底缺少 backdrop-filter");
+            h.assert(!substrateStyle.backdropFilter.includes("saturate"), "栏底使用了自创饱和度增强");
+            h.assert(substrateStyle.boxShadow === "none", "栏底使用了自创高光/内阴影");
+
+            app.updateSettings({ layoutMode: "phone" });
+            shell.setSafeArea({ top: 59, right: 0, bottom: 34, left: 0 });
+            shell.setWindowSize(390, 844);
+            await h.tick(120);
+            h.assert(app.state.layout.materials.some((entry) => entry.kind === "bottom"), "竖屏胶片栏缺少底部材质");
+            h.assert(!app.state.layout.materials.some((entry) => entry.kind === "top"), "无分析栏时顶部行仍有背景");
+            app.toggleAnalysis();
+            await h.tick(100);
+            h.assert(app.state.layout.materials.some((entry) => entry.kind === "top"), "显示分析栏后顶部带仍无背景");
+            h.assert(app.state.layout.panes.fitRect.y >= app.state.layout.panes.analysisPane.y
+                + app.state.layout.panes.analysisPane.h, "适应区未避开分析栏");
+            app.toggleAnalysis();
+            app.toggleFilmbar();
+            await h.tick(100);
+            h.assert(!app.state.layout.materials.some((entry) => entry.kind === "bottom"), "关闭胶片栏后底部栏仍有背景");
+            app.toggleFilmbar();
+            await h.tick(80);
+            shell.setSafeArea(null);
         },
     },
     {
@@ -1930,6 +2334,144 @@ const CHECKS = [
         },
     },
     {
+        id: "TOOLBAR-05b",
+        title: "宽形态 EXIF 随控制文档滚动；手机竖屏顶行 EXIF 留在全窗层",
+        async run(shell, h) {
+            const { app } = shell;
+            app.setLayoutModeOverride("col");
+            shell.setWindowSize(700, 300);
+            await h.tick(120);
+            const block = h.dom(".pv-control-exif-block");
+            h.assert(block && block.closest(".pv-control-document"), "宽形态 EXIF 不在控制文档内");
+            h.assert(block.closest(".pv-exif-layer") === null, "宽形态 EXIF 仍在全窗层");
+            const before = block.getBoundingClientRect().top;
+            const scroll = h.dom(".pv-control-scroll");
+            h.assert(scroll.scrollHeight > scroll.clientHeight, "控制文档未溢出，无法验证滚动");
+            scroll.scrollTop = 20;
+            await h.tick(40);
+            const moved = before - block.getBoundingClientRect().top;
+            h.assert(Math.abs(moved - 20) <= 1, `EXIF 未随控制文档滚动：位移 ${moved}`);
+
+            app.setLayoutModeOverride("phone");
+            shell.setSafeArea({ top: 59, right: 0, bottom: 34, left: 0 });
+            shell.setWindowSize(390, 844);
+            await h.tick(120);
+            const topBlock = h.dom(".pv-control-exif-block");
+            h.assert(topBlock.closest(".pv-exif-layer"), "手机竖屏顶行 EXIF 未回到全窗层");
+            h.assert(topBlock.closest(".pv-control-document") === null, "手机竖屏 EXIF 误入控制文档");
+            shell.setSafeArea(null);
+        },
+    },
+    {
+        id: "INPUT-12",
+        title: "DOM 焦点顺序沿文件栏→主图→分析→控制，图层用 z-index 叠放",
+        async run(shell, h) {
+            const windowEl = h.dom(".pv-window");
+            const order = [...windowEl.children].map((node) => node.className);
+            const indexOf = (name) => order.findIndex((value) => value.split(" ").includes(name));
+            const filter = indexOf("pv-filter-layer");
+            const file = indexOf("pv-pane-file");
+            const photo = indexOf("pv-pane-photo");
+            const analysis = indexOf("pv-pane-analysis");
+            const control = indexOf("pv-pane-control");
+            const exif = indexOf("pv-exif-layer");
+            h.assert(filter >= 0 && file >= 0 && photo >= 0 && analysis >= 0 && control >= 0 && exif >= 0,
+                `窗口图层缺失：${order.join(" | ")}`);
+            h.assert(filter < file && file < photo && photo < analysis && analysis < control && control < exif,
+                `DOM 语义顺序不符：${order.join(" | ")}`);
+            h.assert(getComputedStyle(h.dom(".pv-pane-photo")).zIndex === "0", "主图未在最底图层");
+            h.assert(getComputedStyle(h.dom(".pv-material-layer")).zIndex === "1", "材质层 z-index 不是 1");
+            h.assert(getComputedStyle(h.dom(".pv-pane-file")).zIndex === "2", "文件栏 z-index 不是 2");
+            h.assert(getComputedStyle(h.dom(".pv-filter-layer")).zIndex === "3", "筛选层 z-index 不是 3");
+            h.assert(getComputedStyle(h.dom(".pv-overlay")).zIndex === "4", "覆盖层 z-index 不是 4");
+        },
+    },
+    {
+        id: "SHELL-04b",
+        title: "开发参数使用会话布局 override，不写持久设置",
+        async run(shell, h) {
+            const { app } = shell;
+            const stored = () => {
+                const raw = localStorage.getItem("PhotoViewer.Settings");
+                return raw ? JSON.parse(raw) : null;
+            };
+            const before = stored()?.layoutMode ?? "auto";
+            app.setLayoutModeOverride("phone");
+            await h.tick(60);
+            h.assert(app.settings.layoutMode === "phone", "会话 override 未生效");
+            h.assert((stored()?.layoutMode ?? "auto") === before, "开发参数写入了持久布局设置");
+            app.setLayoutModeOverride(before);
+            await h.tick(60);
+
+            const filmStored = localStorage.getItem("PhotoViewer.Native.ShowFilm");
+            app.toggleFilmbar({ persist: false });
+            await h.tick(60);
+            h.assert(localStorage.getItem("PhotoViewer.Native.ShowFilm") === filmStored, "开发参数写入了胶片栏偏好");
+            app.toggleFilmbar({ persist: false });
+            await h.tick(60);
+            const controlStored = localStorage.getItem("PhotoViewer.Native.ShowControls");
+            app.toggleControlbar({ persist: false });
+            await h.tick(60);
+            h.assert(localStorage.getItem("PhotoViewer.Native.ShowControls") === controlStored, "开发参数写入了控制栏偏好");
+            app.toggleControlbar({ persist: false });
+            await h.tick(60);
+        },
+    },
+    {
+        id: "FILTER-07@mac",
+        title: "mac 配置档：列 96 胶囊/行三段 44 高、42 让位与桌面 EXIF 衬底",
+        async run(shell, h) {
+            const { app } = shell;
+            if (shell.t.profile !== "mac") return;
+            const t = (name) => shell.t(name);
+            app.setLayoutModeOverride("col");
+            shell.setWindowSize(1200, 850);
+            await h.tick(100);
+            const col = app.state.layout;
+            h.assert(col.filter.kind === "capsule", `mac 列布局未回退 96 胶囊：${col.filter.kind}`);
+            h.assert(col.filter.leadingInset === t("shell.filter.leadingInset"), "mac 列布局未使用 42 让位");
+            h.assert(col.filter.composite.w === 96 && col.filter.composite.h === 44,
+                `mac 列胶囊 ${col.filter.composite.w}×${col.filter.composite.h}`);
+            h.assert(col.filter.toggle.w === 96 && col.filter.toggle.h === 44,
+                `mac 列 AI 开关 ${col.filter.toggle.w}×${col.filter.toggle.h}`);
+            h.assert(col.filter.bar.h === 148, `mac 列筛选带高 ${col.filter.bar.h}`);
+            h.assert(col.exif.variant === "block", "mac 列布局 EXIF 不是衬底块");
+            h.assert(col.exif.frame.w === t("toolbar.exif.item.width") + 2 * t("toolbar.exif.padding"),
+                `mac 纵向 EXIF 块宽 ${col.exif.frame.w}`);
+            h.assert(col.control.paneCross === t("toolbar.exif.item.width") + 2 * t("toolbar.exif.padding") + 2 * t("toolbar.padding"),
+                `mac 控制列宽 ${col.control.paneCross}`);
+            const windowRect = h.dom(".pv-window").getBoundingClientRect();
+            const capsule = h.dom(".pv-filter-entry");
+            const capsuleRect = capsule.getBoundingClientRect();
+            h.assert(!capsule.hidden && Math.round(capsuleRect.width) === 96 && Math.round(capsuleRect.height) === 44,
+                `mac 列胶囊 DOM ${capsuleRect.width}×${capsuleRect.height}`);
+            const exifBlock = h.dom(".pv-control-exif-block");
+            h.assert(exifBlock.classList.contains("is-block"), "mac EXIF 未使用衬底块");
+
+            app.setLayoutModeOverride("row");
+            await h.tick(120);
+            const rowLayout = app.state.layout;
+            h.assert(rowLayout.filter.kind === "segments", "mac 行布局三段缺失");
+            h.assert(rowLayout.filter.bar.h === 64, `mac 行筛选带高 ${rowLayout.filter.bar.h}`);
+            h.assert(rowLayout.film.scroll.y === 64, `mac 行胶片带 y ${rowLayout.film.scroll.y}`);
+            h.assert(rowLayout.filter.toggle.h === 44, "mac 行 AI 开关不是 44 高");
+            const sort = h.domAll(".pv-popup")[0];
+            const sortRect = sort.getBoundingClientRect();
+            h.assert(Math.round(sortRect.width) === 90 && Math.round(sortRect.height) === 44,
+                `mac 排序控件 DOM ${sortRect.width}×${sortRect.height}`);
+            h.assert(Math.abs((sortRect.left - windowRect.left) - rowLayout.filter.controls.sort.x) <= 1,
+                `mac 排序控件 DOM x ${sortRect.left - windowRect.left} ≠ 布局 ${rowLayout.filter.controls.sort.x}`);
+
+            shell.setWindowSize(360, 800);
+            await h.tick(100);
+            h.assert(app.state.layout.filter.kind === "capsule", "mac 窄宽度未回退单胶囊");
+            const fallback = h.dom(".pv-filter-entry");
+            h.assert(!fallback.hidden && Math.round(fallback.getBoundingClientRect().width) === 96,
+                `mac 行单胶囊 DOM ${fallback.getBoundingClientRect().width}`);
+            h.assert(h.domAll(".pv-popup").every((node) => node.hidden), "mac 单胶囊下三段仍可见");
+        },
+    },
+    {
         id: "RATING-04",
         title: "冲突三角打开来源浮窗：几何、方向、整组写入与关闭条件",
         async run(shell, h) {
@@ -2004,7 +2546,7 @@ const CHECKS = [
 
             const contentWidth = t("popup.padding") * 2
                 + t("popup.ratingSources.entryPadding") * 2
-                + t("toolbar.rating.button.size") * 6;
+                + t("rating.control.slot") * 6;
             const entryWidth = contentWidth - t("popup.padding") * 2;
             h.assert(Math.round(popup().clientWidth) === contentWidth,
                 `浮窗内容宽 ${popup().clientWidth} ≠ ${contentWidth}`);
@@ -2016,7 +2558,7 @@ const CHECKS = [
             for (const entry of entryNodes) {
                 const box = entry.getBoundingClientRect();
                 h.assert(Math.round(box.width) === entryWidth, `条目宽 ${box.width} ≠ ${entryWidth}`);
-                h.assert(Math.round(box.height) === 68, `短名条目高 ${box.height} ≠ 68`);
+                h.assert(Math.round(box.height) === 74, `短名条目高 ${box.height} ≠ 74`);
                 h.assert(getComputedStyle(entry).paddingLeft === `${t("popup.ratingSources.entryPadding")}px`,
                     `条目左内边距 ${getComputedStyle(entry).paddingLeft}`);
                 h.assert(getComputedStyle(entry).paddingRight === `${t("popup.ratingSources.entryPadding")}px`,
@@ -2029,8 +2571,8 @@ const CHECKS = [
                 h.assert(stars.length === 6, `星排槽位 ${stars.length} ≠ 6`);
                 for (const star of stars) {
                     const starBox = star.getBoundingClientRect();
-                    h.assert(Math.round(starBox.width) === t("toolbar.rating.button.size")
-                        && Math.round(starBox.height) === t("toolbar.rating.button.size"),
+                    h.assert(Math.round(starBox.width) === t("rating.control.slot")
+                        && Math.round(starBox.height) === t("rating.control.slot"),
                         `星槽位 ${starBox.width}×${starBox.height}`);
                 }
                 h.assert(getComputedStyle(entry.querySelector(".pv-rating-source-name")).fontSize
@@ -2044,8 +2586,8 @@ const CHECKS = [
                 h.assert(getComputedStyle(entry.querySelector(".pv-rating-source-stars")).marginTop
                     === `${t("popup.ratingSources.labelGap")}px`, "信息行与星排间距不符");
             }
-            // 两个短名条目：4 + 68 + 8 + 68 + 4 = 152。
-            h.assert(Math.round(popup().clientHeight) === 152, `浮窗内容高 ${popup().clientHeight} ≠ 152`);
+            // 两个短名条目：4 + 74 + 8 + 74 + 4 = 164。
+            h.assert(Math.round(popup().clientHeight) === 164, `浮窗内容高 ${popup().clientHeight} ≠ 164`);
             const separator = popup().querySelector(".pv-rating-source-sep");
             h.assert(separator, "条目之间缺少分隔线");
             h.assert(Math.round(separator.getBoundingClientRect().height) === t("popup.ratingSources.dividerHeight"),
@@ -2072,10 +2614,10 @@ const CHECKS = [
                 h.assert(entryNodes[index].querySelector(".pv-rating-source-status").textContent === source.stateLabel,
                     "来源状态文案不符");
                 const glyph = entryNodes[index].querySelector('.pv-rating-source-star[data-rating="1"] .pv-rating-source-glyph');
-                h.assert(getComputedStyle(glyph).fontSize === `${t("toolbar.rating.glyph.fontSize")}px`,
+                h.assert(getComputedStyle(glyph).fontSize === `${t("rating.control.glyph.fontSize")}px`,
                     `星形字号 ${getComputedStyle(glyph).fontSize}`);
                 const clear = entryNodes[index].querySelector(".pv-rating-source-clear");
-                h.assert(getComputedStyle(clear).fontSize === `${t("toolbar.rating.clearGlyph.fontSize")}px`,
+                h.assert(getComputedStyle(clear).fontSize === `${t("rating.control.clearGlyph.fontSize")}px`,
                     `清零叉字号 ${getComputedStyle(clear).fontSize}`);
                 h.assert(colorMatches(getComputedStyle(clear).color, t("color.star.clear")), "清零叉颜色不符");
                 const one = entryNodes[index].querySelector('.pv-rating-source-star[data-rating="1"]');
@@ -2143,11 +2685,11 @@ const CHECKS = [
             let saved = fileState(h.cardByPhotoId(target.photo.id));
             let controlZero = h.ratingButton(0);
             h.assert(controlZero.classList.contains("is-conflict"), "控制栏 0 号未换成警示三角");
-            h.assert(Math.round(controlZero.getBoundingClientRect().width) === t("toolbar.rating.button.size"),
+            h.assert(Math.round(controlZero.getBoundingClientRect().width) === t("rating.control.slot"),
                 `控制栏 0 号宽度 ${controlZero.getBoundingClientRect().width}`);
             const controlWarning = controlZero.querySelector(".pv-rating-conflict");
             h.assert(controlWarning.textContent.codePointAt(0) === warningCode, "控制栏警示三角字形不是 icon.warning");
-            h.assert(getComputedStyle(controlWarning).fontSize === `${t("toolbar.rating.glyph.fontSize")}px`,
+            h.assert(getComputedStyle(controlWarning).fontSize === `${t("rating.control.glyph.fontSize")}px`,
                 `控制栏警示三角字号 ${getComputedStyle(controlWarning).fontSize}`);
             h.assert(colorMatches(getComputedStyle(controlWarning).color, t("color.star.conflict")),
                 `控制栏警示三角颜色 ${getComputedStyle(controlWarning).color}`);
@@ -2299,8 +2841,8 @@ const CHECKS = [
             await h.tick(80);
             const longEntry = entries()[0];
             h.assert(longEntry.classList.contains("is-long"), "长文件名未切换双行");
-            h.assert(Math.round(longEntry.getBoundingClientRect().height) === 88,
-                `长名条目高 ${longEntry.getBoundingClientRect().height} ≠ 88`);
+            h.assert(Math.round(longEntry.getBoundingClientRect().height) === 94,
+                `长名条目高 ${longEntry.getBoundingClientRect().height} ≠ 94`);
             const longNameNode = longEntry.querySelector(".pv-rating-source-name");
             const longMeta = longEntry.querySelector(".pv-rating-source-meta");
             h.assert(longNameNode.getAttribute("aria-label") === longName, "长名完整名称未保留在 aria-label");
@@ -2312,7 +2854,7 @@ const CHECKS = [
             h.assert(longNameNode.scrollWidth <= longNameNode.clientWidth + 1, "长名超出浮窗内容宽");
             h.assert(Math.round(longMeta.getBoundingClientRect().top - longNameNode.getBoundingClientRect().top)
                 === 16 + t("popup.ratingSources.metaLineGap"), "长名第二行行距不符");
-            h.assert(Math.round(popup().clientHeight) === 172, `长名浮窗内容高 ${popup().clientHeight} ≠ 172`);
+            h.assert(Math.round(popup().clientHeight) === 184, `长名浮窗内容高 ${popup().clientHeight} ≠ 184`);
             h.key("Escape");
             await h.tick(60);
             longSource.photo.name = originalName;
@@ -2395,6 +2937,60 @@ const CHECKS = [
                 "冲突解除后警示三角仍显示");
             h.assert(document.querySelector(".pv-rating-sources") === null, "出现了来源浮窗");
             delete target.photo.sidecar;
+        },
+    },
+    {
+        id: "RATING-04c",
+        title: "冲突浮窗方向按当前形态/刘海侧：横屏左左、左右、竖屏上",
+        async run(shell, h) {
+            const { app } = shell;
+            const target = app.state.cards.find((card) => hasRatingConflict(card));
+            h.assert(target, "harbor 中找不到冲突组");
+            const popupDirection = async (expected) => {
+                app.openFolder("harbor", { target: target.photo.id });
+                await h.tick(160);
+                h.click(h.ratingButton(0));
+                try {
+                    await h.until(() => document.querySelectorAll(".pv-rating-sources").length === 1
+                        && document.querySelector(".pv-rating-sources").dataset.direction === expected, 4000);
+                } catch (error) {
+                    const roots = document.querySelectorAll(".pv-rating-sources");
+                    const actual = [...roots].map((root) => root.dataset.direction).join("/");
+                    throw new Error(`${error.message}；实际 direction=${actual || "无"}，浮窗数=${roots.length}，形态=${app.state.layout?.form}，刘海=${app.state.layout?.safe?.notchSide}`);
+                }
+                h.key("Escape");
+                await h.until(() => document.querySelectorAll(".pv-rating-sources").length === 0, 4000);
+                return expected;
+            };
+            app.setLayoutModeOverride("phone");
+            shell.setSafeArea({ top: 0, right: 0, bottom: 0, left: 59 });
+            shell.setWindowSize(844, 390);
+            await h.tick(120);
+            h.assert(await popupDirection("left") === "left", "刘海在左时浮窗未向左展开");
+            shell.setSafeArea({ top: 0, right: 59, bottom: 0, left: 0 });
+            await h.tick(100);
+            h.assert(app.state.layout.safe.notchSide === "right", `右刘海布局 notchSide=${app.state.layout.safe.notchSide}`);
+            const rightDirection = await popupDirection("right");
+            h.assert(rightDirection === "right", `刘海在右时浮窗方向 ${rightDirection}`);
+
+            // 同一入口重复打开：保留唯一浮窗，方向仍按当前右刘海。
+            app.openFolder("harbor", { target: target.photo.id });
+            await h.tick(160);
+            h.click(h.ratingButton(0));
+            await h.tick(60);
+            h.click(h.ratingButton(0));
+            await h.tick(60);
+            const repeated = document.querySelectorAll(".pv-rating-sources");
+            h.assert(repeated.length === 1 && repeated[0].dataset.direction === "right",
+                `重复打开浮窗数量 ${repeated.length} / 方向 ${repeated[0]?.dataset.direction}`);
+            h.key("Escape");
+            await h.tick(40);
+
+            shell.setSafeArea({ top: 59, right: 0, bottom: 34, left: 0 });
+            shell.setWindowSize(390, 844);
+            await h.tick(120);
+            h.assert(await popupDirection("up") === "up", "手机竖屏浮窗未向上展开");
+            shell.setSafeArea(null);
         },
     },
     {
@@ -2604,6 +3200,7 @@ const CHECKS = [
 function selectChecks(name) {
     if (!name || name === "all") return CHECKS;
     const wanted = name.toLowerCase();
+    if (wanted === "mac") return CHECKS.filter((check) => check.id.endsWith("@mac"));
     const prefix = wanted === "similarity" ? "SIM" : wanted === "sim" ? "SIM" : wanted.toUpperCase();
     return CHECKS.filter((check) => check.id.split("-")[0] === prefix);
 }
@@ -2773,11 +3370,10 @@ function createHelpers(shell) {
         assert(menu() !== null, "右键未弹出主图菜单");
     }
 
-    async function openFilter(kind) {
-        const index = { sort: 0, order: 1, rating: 2 }[kind];
-        click(domAll(".pv-popup")[index]);
+    async function openFilter() {
+        click(dom(".pv-filter-entry"));
         await tick(20);
-        assert(menu() !== null, "点击下拉未弹出菜单");
+        assert(menu() !== null, "点击筛选入口未弹出菜单");
     }
 
     function filmScroller() {
@@ -2785,7 +3381,7 @@ function createHelpers(shell) {
     }
 
     function filmAxis() {
-        return state().layout.layoutMode === "col" ? "y" : "x";
+        return state().layout.film?.axis ?? "x";
     }
 
     function filmOffset(axis = filmAxis()) {
@@ -2803,10 +3399,9 @@ function createHelpers(shell) {
     function expectedCenter(index, axis = filmAxis()) {
         const film = state().layout.film;
         const frame = film.items[index];
-        const card = axis === "x" ? t("film.card.width") : t("film.card.height");
         const view = axis === "x" ? film.scroll.w : film.scroll.h;
         const start = axis === "x" ? frame.x : frame.y;
-        return Math.min(Math.max(start + (card - view) / 2, 0), filmMaxOffset(axis));
+        return Math.min(Math.max(start + (film.cardMain - view) / 2, 0), filmMaxOffset(axis));
     }
 
     function filmCards() {
@@ -2880,9 +3475,11 @@ function createHelpers(shell) {
         // 检查统一按 Ctrl 解码，因此关闭 Apple 键盘映射，避免 ⌘/⌃ 互换。
         shell.setReducedMotion(true);
         await closeOverlays();
+        shell.setSafeArea(null);
         const patch = {
             layoutMode: "auto",
             showRating: true,
+            showNavigationButtons: true,
             showZoomIndicator: true,
             sameNameAsOne: true,
             analysisImmediateCvCompute: false,
@@ -2899,6 +3496,7 @@ function createHelpers(shell) {
         app.setSort("name", "asc");
         app.setRatingFilter("all");
         if (app.state.panes.analysis) app.toggleAnalysis();
+        if (app.state.panes.exif === false) app.toggleExif();
         if (!app.state.panes.film) app.toggleFilmbar();
         if (!app.state.panes.control) app.toggleControlbar();
         if (app.capabilities.similarity && app.settings.similarityPanelExpanded) app.setSimilarityExpanded(false);

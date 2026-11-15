@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Android.App;
 using Android.Graphics;
 using Android.Graphics.Drawables;
+using Android.OS;
 using Android.Text;
 using Android.Text.Style;
 using Android.Views;
@@ -17,6 +18,7 @@ using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Input;
 using PhotoViewer.Core.Platform;
+using PhotoViewer.Core.Settings;
 using PhotoViewer.Core;
 using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Main;
@@ -26,11 +28,11 @@ using PhotoViewer.ViewModels.Settings;
 namespace PhotoViewer.Android.Native;
 
 /// <summary>
-/// Android 原生主屏根视图（A3）：按共享 <see cref="MainScreenLayout"/> 与
-/// <see cref="AndroidMainScreenLayout"/> 拼合文件栏（筛选条 + 胶片栏）、主图区与控制栏；
-/// 栏位背景铺到屏幕边缘、内容收在系统栏/刘海安全区内，行/列/自动布局只看窗口方向；
-/// 横屏不为手势导航条保留底部空间，三键导航与刘海照常让位。
-/// 主图由 <see cref="AndroidPhotoView"/> 渲染，物理视口上报共享 <see cref="PhotoLoadSession"/>。
+/// Android 原生主屏根视图：按共享 <see cref="ScreenFormResolver"/> 分宽形态与手机形态。
+/// 宽形态的分区交给共享 <see cref="ShellPaneLayout"/>（本端只提供真实安全区与各栏主轴长度）；
+/// 手机形态的槽位全部由共享 <see cref="PhoneScreenLayout"/> 给出（竖屏顶行/分析/胶片/底行，
+/// 横屏刘海侧列/分析/控制列）。主图视图在所有形态下铺满窗口，照片落在
+/// <see cref="PhotoViewport.SetFitInsets"/> 给出的适应区内，放大后可越过栏缘。
 /// </summary>
 internal sealed class AndroidNativeRootView : FrameLayout
 {
@@ -62,11 +64,30 @@ internal sealed class AndroidNativeRootView : FrameLayout
     private readonly TextView _enhanceBusy;
     private readonly TextView _statusLabel;
     private readonly AndroidNavigationOverlay _navigation;
+    // 手机形态槽位：栏背景、筛选/更多、上下张、星级、缩放增强合体与 EXIF 块。
+    private readonly View _phoneTopBar;
+    private readonly View _phoneBottomBar;
+    private readonly View _phoneLeadingBar;
+    private readonly View _phoneTrailingBar;
+    private readonly AndroidGlassButton _phoneMoreButton;
+    private readonly AndroidGlassCombo _phoneNavigation;
+    private readonly AndroidGlassCombo _phoneFitEnhance;
+    private readonly AndroidRatingControl _phoneRating;
+    private readonly AndroidExifBlock _phoneExif;
     private PopupWindow? _photoMenu;
     private readonly List<(string Text, bool Checked, bool Enabled, string Icon)> _photoMenuItems = [];
     private AndroidWindowInsets _windowInsets;
     private AndroidInsets _insets;
     private AndroidPaneFrames _panes;
+    private ScreenForm _form = ScreenForm.Wide;
+    private PhoneLayout _phoneSlots;
+    private PhoneLayoutInput _phoneSlotsInput;
+    private AndroidScreenForm.Metrics _formMetrics;
+    private int _formMetricsWidth = -1;
+    private int _formMetricsHeight = -1;
+    private double _formMetricsDensity = -1;
+    private bool _notchOnLeft = true;
+    private EdgeInsets _fitInsets;
     private ImageFile? _observedFile;
     private DecodedImage? _navigationSource;
     private Bitmap? _navigationBitmap;
@@ -83,7 +104,9 @@ internal sealed class AndroidNativeRootView : FrameLayout
     internal AndroidFilmstripView Filmstrip => _filmstrip;
     /// <summary>控制栏（验收读取分组与命令）。</summary>
     internal AndroidControlBar ControlBar => _controlBar;
-    /// <summary>筛选条（验收读取控件几何）。</summary>
+    /// <summary>控制栏滚动宿主（验收读取文档尺寸与滚动范围）。</summary>
+    internal AndroidControlBarScrollHost ControlScrollHostForChecks => _controlScrollHost;
+    /// <summary>筛选控件（验收读取几何）。</summary>
     internal AndroidFilterBar FilterBar => _filterBar;
     /// <summary>筛选条是否因窄屏进入横向滚动（验收读取）。</summary>
     internal bool FilterScrollableForChecks => _filterScrollHost.IsScrollable;
@@ -91,7 +114,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
     internal int FilterScrollOffsetForChecks => _filterScrollHost.ScrollOffset;
     /// <summary>筛选条滚动宿主（验收用真实手势滚动；产品路径不读取）。</summary>
     internal AndroidControlBarScrollHost FilterScrollHostForChecks => _filterScrollHost;
-    /// <summary>最近一次布局算出的分区矩形（dp）。</summary>
+    /// <summary>最近一次布局算出的分区矩形（dp；手机形态为空栏位 + 适应区分区）。</summary>
     internal AndroidPaneFrames Panes => _panes;
     /// <summary>导航图宿主。</summary>
     internal AndroidNavigationOverlay Navigation => _navigation;
@@ -101,6 +124,28 @@ internal sealed class AndroidNativeRootView : FrameLayout
     internal AndroidInsets SafeInsets => _insets;
     /// <summary>最近一次收到的原始窗口 Insets（dp，验收用：核对旋转后由原始值重新派生）。</summary>
     internal AndroidWindowInsets WindowInsetsForChecks => _windowInsets;
+    /// <summary>当前主屏形态（验收读取）。</summary>
+    internal ScreenForm Form => _form;
+    /// <summary>最近一次形态判定输入（窗口 dp、尺寸类别、手机设备标记）。</summary>
+    internal AndroidScreenForm.Metrics FormMetrics => _formMetrics;
+    /// <summary>手机形态槽位结果（非手机形态时为零值）。</summary>
+    internal PhoneLayout PhoneSlots => _phoneSlots;
+    /// <summary>手机形态槽位输入（验收逐项核对开关与尺寸来源）。</summary>
+    internal PhoneLayoutInput PhoneSlotsInput => _phoneSlotsInput;
+    /// <summary>手机横屏刘海是否在左。</summary>
+    internal bool NotchOnLeft => _notchOnLeft;
+    /// <summary>主图适应区四边内边距（dp）。</summary>
+    internal EdgeInsets FitInsets => _fitInsets;
+    /// <summary>手机竖屏「更多」按钮（验收读取矩形）。</summary>
+    internal AndroidGlassButton PhoneMoreButton => _phoneMoreButton;
+    /// <summary>手机上下张合体。</summary>
+    internal AndroidGlassCombo PhoneNavigation => _phoneNavigation;
+    /// <summary>手机缩放适应/雾天增强合体。</summary>
+    internal AndroidGlassCombo PhoneFitEnhance => _phoneFitEnhance;
+    /// <summary>手机星级控件。</summary>
+    internal AndroidRatingControl PhoneRating => _phoneRating;
+    /// <summary>手机 EXIF 块。</summary>
+    internal AndroidExifBlock PhoneExif => _phoneExif;
     /// <summary>分析栏（验收读取瓦片/可见性）。</summary>
     internal AndroidAnalysisPanel AnalysisPane => _analysisPane;
 #if PHOTOVIEWER_DINO
@@ -140,9 +185,10 @@ internal sealed class AndroidNativeRootView : FrameLayout
     {
         _main = main;
         _session = session;
-        // SHELL-04：栏位显隐从平台偏好恢复（分析栏仍为会话态）。
+        // SHELL-04：栏位显隐从平台偏好恢复（分析栏仍为会话态；手机形态 EXIF 开关同一存储、默认开）。
         _main.IsThumbnailViewVisible = AndroidShellPreferences.LoadShowFilm();
         _main.IsControlViewVisible = AndroidShellPreferences.LoadShowControls();
+        _main.IsExifViewVisible = AndroidShellPreferences.LoadShowExif();
         SetBackgroundColor(AndroidUiTheme.Background);
         SetClipChildren(true);
 
@@ -154,14 +200,12 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _photoPane.AddView(_photo, new FrameLayout.LayoutParams(LayoutParams.MatchParent, LayoutParams.MatchParent));
         AddView(_photoPane, new LayoutParams(LayoutParams.MatchParent, LayoutParams.MatchParent));
 
-        _fileBar = new View(activity);
-        _fileBar.SetBackgroundColor(AndroidUiTheme.BarBackground);
+        _fileBar = new AndroidBarScrim(activity);
         AddView(_fileBar);
         _fileDivider = new View(activity);
         _fileDivider.SetBackgroundColor(AndroidUiTheme.Divider);
         AddView(_fileDivider);
-        _controlBackground = new View(activity);
-        _controlBackground.SetBackgroundColor(AndroidUiTheme.BarBackground);
+        _controlBackground = new AndroidBarScrim(activity);
         AddView(_controlBackground);
         _controlDivider = new View(activity);
         _controlDivider.SetBackgroundColor(AndroidUiTheme.Divider);
@@ -198,6 +242,54 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _similarityPane.Visibility = ViewStates.Gone;
         AddView(_similarityPane);
 #endif
+
+        _phoneTopBar = new AndroidBarScrim(activity);
+        _phoneBottomBar = new AndroidBarScrim(activity);
+        _phoneLeadingBar = new AndroidBarScrim(activity);
+        _phoneTrailingBar = new AndroidBarScrim(activity);
+        // 栏背景压在照片之上、所有内容之下：手机形态的筛选、胶片条、分析栏与按钮都在它们上层。
+        foreach (var bar in new[] { _phoneTopBar, _phoneBottomBar, _phoneLeadingBar, _phoneTrailingBar })
+        {
+            bar.Visibility = ViewStates.Gone;
+            AddView(bar, 1);
+        }
+        _phoneMoreButton = new AndroidGlassButton(activity, "更多", "更多", iconFont: false);
+        _phoneMoreButton.Click += (_, _) => ShowPhotoMenuAt(_phoneMoreButton);
+        _phoneMoreButton.Visibility = ViewStates.Gone;
+        AddView(_phoneMoreButton);
+        _phoneNavigation = new AndroidGlassCombo(activity, AndroidUiTheme.IconGlyph(DesignTokens.IconCommandPrevious), "上一张",
+            AndroidUiTheme.IconGlyph(DesignTokens.IconCommandNext), "下一张");
+        _phoneNavigation.First.Click += (_, _) => Execute("Previous");
+        _phoneNavigation.Second.Click += (_, _) => Execute("Next");
+        _phoneNavigation.Visibility = ViewStates.Gone;
+        AddView(_phoneNavigation);
+        _phoneFitEnhance = new AndroidGlassCombo(activity, AndroidUiTheme.IconGlyph(DesignTokens.IconCommandFit), "缩放适应",
+            AndroidUiTheme.IconGlyph(DesignTokens.IconCommandToggleEnhance), "雾天增强");
+        _phoneFitEnhance.First.Click += (_, _) => Execute("Fit");
+        _phoneFitEnhance.Second.Click += (_, _) => Execute("ToggleEnhance");
+        _phoneFitEnhance.Visibility = ViewStates.Gone;
+        AddView(_phoneFitEnhance);
+        _phoneRating = new AndroidRatingControl(activity);
+        _phoneRating.RateRequested += rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); };
+        _phoneRating.ConflictRequested += OpenRatingSourcesFromPhone;
+        _phoneRating.Visibility = ViewStates.Gone;
+        AddView(_phoneRating);
+        _phoneExif = new AndroidExifBlock(activity);
+        _phoneExif.ExifActivated += ShowExifTools;
+        _phoneExif.Visibility = ViewStates.Gone;
+        AddView(_phoneExif);
+        _filterBar.MoreRequested += rect =>
+        {
+            var location = new int[2];
+            _filterBar.GetLocationOnScreen(location);
+            var photoLocation = new int[2];
+            _photo.GetLocationOnScreen(photoLocation);
+            double density = AndroidUiTheme.Density(Context!);
+            ShowPhotoMenu(
+                (float)(location[0] - photoLocation[0] + (rect.X + rect.Width / 2) * density),
+                (float)(location[1] - photoLocation[1] + (rect.Y + rect.Height) * density));
+        };
+
         _detailHighlight = new DetailFrameView(activity);
         _detailHighlight.Visibility = ViewStates.Gone;
         _detailHighlight.Clickable = false;
@@ -285,7 +377,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
         UpdateHint();
     }
 
-    /// <summary>系统栏/刘海安全区（dp）；Android 15 强制 edge-to-edge 时必须走这条路径。</summary>
+    /// <summary>系统栏/刘海/圆角 Insets（dp）；Android 15 强制 edge-to-edge 时必须走这条路径。</summary>
     /// <param name="insets">系统 Insets。</param>
     /// <returns>父类处理结果。</returns>
     public override WindowInsets? OnApplyWindowInsets(WindowInsets? insets)
@@ -301,9 +393,42 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _windowInsets = new AndroidWindowInsets(
             new AndroidInsets(bars.Left / density, bars.Top / density, bars.Right / density, bars.Bottom / density),
             new AndroidInsets(cutout.Left / density, cutout.Top / density, cutout.Right / density, cutout.Bottom / density),
-            navigation.Bottom / density, tappable.Bottom / density);
-        if (DeriveSafeInsets(LandscapeForInsets())) RequestLayout();
+            navigation.Bottom / density, tappable.Bottom / density,
+            ReadCutoutRects(insets, density), ReadCornerRadii(insets, density));
+        DeriveSafeInsets(LandscapeForInsets());
+        // Insets 读数变化后一律重排：旋转期间系统栏可见性切换会让方向与读数先后到达，
+        // 只按“安全区是否变化”决定会留下上一方向的缓存值。
+        RequestLayout();
         return base.OnApplyWindowInsets(insets);
+    }
+
+    /// <summary>公开 <c>DisplayCutout</c> 的挖孔矩形（API 29+）；低版本返回空列表。</summary>
+    private static IReadOnlyList<AndroidCutoutRect> ReadCutoutRects(WindowInsets insets, double density)
+    {
+        if (!OperatingSystem.IsAndroidVersionAtLeast(29)) return Array.Empty<AndroidCutoutRect>();
+        var displayCutout = insets.DisplayCutout;
+        if (displayCutout?.BoundingRects is not { Count: > 0 } rects) return Array.Empty<AndroidCutoutRect>();
+        var list = new List<AndroidCutoutRect>(rects.Count);
+        foreach (var rect in rects)
+            list.Add(new AndroidCutoutRect(rect.Left / density, rect.Top / density,
+                rect.Right / density, rect.Bottom / density));
+        return list;
+    }
+
+    /// <summary>公开 <c>WindowInsets.RoundedCorner</c>（API 31+）的四角半径；低版本或窗口无圆角时为 0。</summary>
+    private static AndroidCornerRadii ReadCornerRadii(WindowInsets insets, double density)
+    {
+        if (!OperatingSystem.IsAndroidVersionAtLeast(31)) return default;
+        double Radius(int position)
+        {
+            var corner = insets.GetRoundedCorner(position);
+            return corner == null ? 0 : corner.Radius / density;
+        }
+        return new AndroidCornerRadii(
+            Radius((int)global::Android.Views.RoundedCornerPosition.TopLeft),
+            Radius((int)global::Android.Views.RoundedCornerPosition.TopRight),
+            Radius((int)global::Android.Views.RoundedCornerPosition.BottomRight),
+            Radius((int)global::Android.Views.RoundedCornerPosition.BottomLeft));
     }
 
     /// <summary>
@@ -314,11 +439,11 @@ internal sealed class AndroidNativeRootView : FrameLayout
     private bool DeriveSafeInsets(bool landscape)
     {
         var next = _windowInsets.DeriveSafe(landscape);
-        if (Math.Abs(next.Left - _insets.Left) <= .01 && Math.Abs(next.Top - _insets.Top) <= .01
-            && Math.Abs(next.Right - _insets.Right) <= .01 && Math.Abs(next.Bottom - _insets.Bottom) <= .01)
-            return false;
+        bool changed = Math.Abs(next.Left - _insets.Left) > .01 || Math.Abs(next.Top - _insets.Top) > .01
+            || Math.Abs(next.Right - _insets.Right) > .01 || Math.Abs(next.Bottom - _insets.Bottom) > .01;
+        // 每个布局阶段都以最新原始读数 + 当前方向重写缓存，旋转后不残留上一方向的值。
         _insets = next;
-        return true;
+        return changed;
     }
 
     /// <summary>
@@ -346,7 +471,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
         SetMeasuredDimension(MeasureSpec.GetSize(widthMeasureSpec), MeasureSpec.GetSize(heightMeasureSpec));
     }
 
-    /// <summary>按共享几何摆放所有分区；栏位显隐与方向变化即时释放/让出空间。</summary>
+    /// <summary>按形态分发布局：宽形态走共享分区，手机形态走共享槽位；旋转/尺寸变化只重排不重建会话。</summary>
     /// <param name="changed">布局是否变化。</param>
     /// <param name="l">左。</param>
     /// <param name="t">上。</param>
@@ -359,124 +484,46 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _layingOut = true;
         try
         {
+            var activity = Context as Activity;
             double density = AndroidUiTheme.Density(Context!);
             double widthDp = Width / density, heightDp = Height / density;
             _main.UpdateScreenOrientation(widthDp, heightDp);
             // 旋转/分屏后按真实窗口方向重新派生安全区，不沿用上一方向的底部读数。
             DeriveSafeInsets(widthDp > heightDp);
-            bool row = _main.IsRowLayout;
-            // FileContent 已从安全区顶部起排；筛选条内部只再加普通外边距，避免列布局把 safe.Top 计两次。
-            double leadingInset = MainScreenLayout.FilterMargin;
-            double filterMain = MainScreenLayout.FilterBarMainLength(row, leadingInset, AndroidFilterBar.ShowsSimilarityToggle);
-            bool filmVisible = _main.IsThumbnailViewVisible;
-            bool controlVisible = _main.IsControlViewVisible;
-            double availableMain = row
-                ? Math.Max(1, widthDp - _insets.Left - _insets.Right)
-                : Math.Max(1, heightDp - _insets.Top - _insets.Bottom);
-#if PHOTOVIEWER_DINO
-            bool similarityOpen = filmVisible && _main.FileVM.FilterBar.IsSimilarityPanelOpen;
-            if (similarityOpen) _similarityPane.SetLayout(row);
-            var similarityPanel = _main.FileVM.SimilarityPanel;
-            // SIM-07：停靠区只在列表态且动作区（未提取计数/按钮/进度/错误）实际显示时占宽。
-            double similarityDock = similarityPanel.HasItems && similarityPanel.ShowActionArea
-                ? _similarityPane.DockMeasureWidth()
-                : 0;
-            double similarityColumn = similarityOpen
-                ? (row
-                    ? SimilarityPanelGeometry.RowWidth(similarityPanel.HasItems,
-                        similarityPanel.SimilarItems.Count, availableMain, similarityDock)
-                    : _similarityPane.CrossSize + SimilarityPanelGeometry.Margin)
-                : 0;
-#else
-            const double similarityColumn = 0;
-#endif
-            double fileMain = filmVisible
-                ? MainScreenLayout.FileBarMainLength(row, filterMain, row ? 0 : _insets.Left + similarityColumn)
-                : 0;
-            var controlMeasure = controlVisible
-                ? _controlBar.MeasureDocument(row, availableMain)
-                : (Main: 0.0, Cross: 0.0);
-            double controlMain = controlVisible
-                ? MainScreenLayout.ControlBarMainLength(controlMeasure.Main)
-                : 0;
-            bool analysisVisible = _main.IsAnalysisViewVisible;
-            _analysisHost.SetVisible(analysisVisible);
-            double analysisSize = analysisVisible
-                ? AnalysisPanelGeometry.CrossSize(availableMain, Math.Max(1, _analysisPane.TileCount))
-                : 0;
-            _panes = AndroidMainScreenLayout.Compute(row, widthDp, heightDp, _insets, fileMain, controlMain, analysisSize);
-
-            LayoutChild(_photoPane, _panes.Photo, density);
-            LayoutChild(_fileBar, _panes.FileBar, density);
-            _fileBar.Visibility = filmVisible ? ViewStates.Visible : ViewStates.Gone;
-            LayoutChild(_fileDivider, _panes.FileDivider, density);
-            _fileDivider.Visibility = filmVisible ? ViewStates.Visible : ViewStates.Gone;
-            _analysisPane.Visibility = analysisVisible ? ViewStates.Visible : ViewStates.Gone;
-            if (analysisVisible)
+            var previous = _form;
+            if (activity != null)
             {
-                LayoutChild(_analysisPane, _panes.Analysis, density);
-                _analysisPane.Arrange(row, availableMain, row ? _insets.Left : _insets.Top);
-            }
-            LayoutChild(_controlBackground, _panes.ControlBackground, density);
-            _controlBackground.Visibility = controlVisible ? ViewStates.Visible : ViewStates.Gone;
-            LayoutChild(_controlDivider, _panes.ControlDivider, density);
-            _controlDivider.Visibility = controlVisible ? ViewStates.Visible : ViewStates.Gone;
-
-            _filterScrollHost.Visibility = filmVisible ? ViewStates.Visible : ViewStates.Gone;
-            _filmstrip.Visibility = filmVisible ? ViewStates.Visible : ViewStates.Gone;
-#if PHOTOVIEWER_DINO
-            _similarityPane.Visibility = similarityOpen ? ViewStates.Visible : ViewStates.Gone;
-#endif
-            if (filmVisible)
-            {
-                var content = _panes.FileContent;
-                double contentWidth = row ? Math.Max(1, content.Width) : MainScreenLayout.FileBarContentWidth;
-                _filterBar.Arrange(row, contentWidth, leadingInset);
-                double filterDocumentWidth = row ? Math.Max(contentWidth, _filterBar.RequiredWidthDp) : contentWidth;
-                if (filterDocumentWidth > contentWidth + .5)
-                    _filterBar.Arrange(row, filterDocumentWidth, leadingInset);
-                var filterRect = new LayoutRect(content.X, content.Y, contentWidth, filterMain);
-                LayoutChild(_filterScrollHost, filterRect, density);
-                double filterMainViewport = row ? contentWidth : filterMain;
-                double filterMainDocument = row ? filterDocumentWidth : filterMain;
-                _filterScrollHost.Configure(row,
-                    (int)Math.Round(filterMainViewport * density),
-                    (int)Math.Round(filterMainDocument * density));
-                double filmWidth = row ? Math.Max(1, contentWidth - similarityColumn) : contentWidth;
-                LayoutChild(_filmstrip, new LayoutRect(content.X, content.Y + filterMain, filmWidth,
-                    Math.Max(1, content.Height - filterMain)), density);
-                bool axisChanged = _filmstrip.IsHorizontal != row;
-                _filmstrip.SetAxis(row);
-                if (axisChanged) _filmstrip.ScrollToCurrent();
-#if PHOTOVIEWER_DINO
-                if (similarityOpen)
+                // 窗口尺寸没变时复用尺寸类别；只有真实 resize/旋转才重新查询 WindowMetrics。
+                double densityNow = AndroidUiTheme.Density(activity);
+                if (Width != _formMetricsWidth || Height != _formMetricsHeight
+                    || Math.Abs(densityNow - _formMetricsDensity) > .001 || _formMetricsWidth < 0)
                 {
-                    var similarityRect = row
-                        ? new LayoutRect(content.X + contentWidth - similarityColumn, content.Y + filterMain,
-                            Math.Max(1, similarityColumn - SimilarityPanelGeometry.Margin), _similarityPane.CrossSize)
-                        : new LayoutRect(content.X + MainScreenLayout.FileBarContentWidth, content.Y + filterMain,
-                            _similarityPane.CrossSize, Math.Max(1, content.Height - filterMain));
-                    LayoutChild(_similarityPane, similarityRect, density);
+                    _formMetrics = AndroidScreenForm.Read(activity);
+                    _formMetricsWidth = Width;
+                    _formMetricsHeight = Height;
+                    _formMetricsDensity = densityNow;
                 }
-#endif
+                _form = ScreenFormResolver.Resolve(_formMetrics.HorizontalCompact, _formMetrics.VerticalCompact,
+                    widthDp, heightDp, _formMetrics.PhoneDevice,
+                    _main.Settings.LayoutMode, LayoutCapabilities.PhoneLayoutSupported);
             }
-
-            _controlScrollHost.Visibility = controlVisible ? ViewStates.Visible : ViewStates.Gone;
-            if (controlVisible)
+            else
             {
-                var content = _panes.ControlContent;
-                double viewportCross = row ? content.Width : content.Height;
-                // TOOLBAR-08：单组本身超出可用主轴时，控制栏沿主轴滚动而不是被分区裁切。
-                bool scrollable = controlMeasure.Cross > viewportCross + .5;
-                _controlBar.Arrange(row, scrollable ? controlMeasure.Cross : Math.Max(1, viewportCross));
-                _controlScrollHost.Configure(row, (int)Math.Round(viewportCross * density),
-                    (int)Math.Round(controlMeasure.Cross * density));
-                LayoutChild(_controlScrollHost, content, density);
+                _form = ScreenForm.Wide;
             }
+            if (_form != previous)
+            {
+                // 形态切换只重排：收起临时浮层，主图/列表/缩放保持。
+                _filterBar.DismissDropdown();
+                CloseRatingSources();
+                _phoneMoreButton.Visibility = ViewStates.Gone;
+            }
+            if (_form == ScreenForm.Wide) LayoutWide(widthDp, heightDp, density);
+            else LayoutPhone(widthDp, heightDp, density);
 
             // 最终几何落定后再核对下拉锚点：窄屏一次 OnLayout 的两次 Arrange 都不会收起菜单。
             _filterBar.CommitLayout();
-            LayoutOverlays(density, row);
+            LayoutOverlays(density);
             UpdateDetailHighlight();
             UpdateNavigationIndicator();
         }
@@ -487,66 +534,398 @@ internal sealed class AndroidNativeRootView : FrameLayout
         }
     }
 
-    /// <summary>摆好空态提示、增强提示、状态提示与导航图；提示都落在主图分区内，不重复扣底部安全区。</summary>
-    private void LayoutOverlays(double density, bool row)
+    /// <summary>宽形态：共享分区 + 大档胶片 + 流式控制栏；手机形态专属槽位全部隐藏。</summary>
+    private void LayoutWide(double widthDp, double heightDp, double density)
     {
-        var pane = _panes.Photo;
-        double bottomInset = row ? 0 : Math.Max(0, _insets.Bottom);
-        int hintWidthPx = Math.Max(1, (int)Math.Round(
-            Math.Max(1, Math.Min(DesignTokens.ImageHintMaxWidth, pane.Width - 2 * MainScreenLayout.FilterMargin)) * density));
-        int hintMaxHeightPx = Math.Max(1, (int)Math.Round(pane.Height * density));
-        _hintLabel.Measure(MeasureSpec.MakeMeasureSpec(hintWidthPx, MeasureSpecMode.AtMost),
-            MeasureSpec.MakeMeasureSpec(hintMaxHeightPx, MeasureSpecMode.AtMost));
-        _hintDetail.Measure(MeasureSpec.MakeMeasureSpec(hintWidthPx, MeasureSpecMode.AtMost),
-            MeasureSpec.MakeMeasureSpec(hintMaxHeightPx, MeasureSpecMode.AtMost));
-        double hintWidth = hintWidthPx / density;
-        double labelHeight = _hintLabel.MeasuredHeight / density;
-        bool hasDetail = !string.IsNullOrEmpty(_hintDetail.Text);
-        double detailHeight = hasDetail ? _hintDetail.MeasuredHeight / density : 0;
-        double gap = DesignTokens.ImageHintDetailGapAndroid;
-        double blockHeight = hasDetail ? Math.Max(labelHeight, gap + detailHeight) : labelHeight;
-        double hintLeft = pane.X + (pane.Width - hintWidth) / 2;
-        double hintTop = pane.Y + Math.Max(0, (pane.Height - blockHeight) / 2);
-        LayoutChild(_hintLabel, new LayoutRect(hintLeft, hintTop, hintWidth, labelHeight), density);
-        LayoutChild(_hintDetail, new LayoutRect(hintLeft, hintTop + gap, hintWidth, detailHeight), density);
+        // SHELL-11：主图视图在所有形态下铺满窗口，照片落在适应区内。
+        LayoutChild(_photoPane, new LayoutRect(0, 0, widthDp, heightDp), density);
+        HidePhoneLayers();
+        bool row = _main.IsRowLayout;
+        bool filmVisible = _main.IsThumbnailViewVisible;
+        bool controlVisible = _main.IsControlViewVisible;
+        bool analysisVisible = _main.IsAnalysisViewVisible;
+        _analysisPane.Visibility = analysisVisible ? ViewStates.Visible : ViewStates.Gone;
+        var tier = FilmCardTier.Large;
+        double bandCross = FilmCardGeometry.BandThickness(tier, false);
+        var filmSide = FilmSideGeometry.Measure(_insets.Left, bandCross, FilmCardGeometry.CrossLead(tier, false),
+            FilmCardGeometry.CrossTrail(tier, false), FilmCardGeometry.Width(tier));
+        double leadingInset = MainScreenLayout.FilterMargin;
+        double filterContentWidth = row
+            ? Math.Max(1, widthDp - _insets.Left - _insets.Right)
+            : FilmCardGeometry.BandThickness(tier, false);
+        double filterMain = _filterBar.MainLengthForLayout(row, filterContentWidth, leadingInset);
+        double availableMain = row
+            ? Math.Max(1, widthDp - _insets.Left - _insets.Right)
+            : Math.Max(1, heightDp - _insets.Top - _insets.Bottom);
+#if PHOTOVIEWER_DINO
+        bool similarityOpen = filmVisible && _main.FileVM.FilterBar.IsSimilarityPanelOpen;
+        if (similarityOpen) _similarityPane.SetLayout(row);
+        var similarityPanel = _main.FileVM.SimilarityPanel;
+        double similarityDock = similarityPanel.HasItems && similarityPanel.ShowActionArea
+            ? _similarityPane.DockMeasureWidth()
+            : 0;
+        double similarityColumn = similarityOpen
+            ? (row
+                ? SimilarityPanelGeometry.RowWidth(similarityPanel.HasItems,
+                    similarityPanel.SimilarItems.Count, availableMain, similarityDock)
+                : _similarityPane.CrossSize + SimilarityPanelGeometry.Margin)
+            : 0;
+#else
+        const double similarityColumn = 0;
+#endif
+        double fileMain = filmVisible
+            ? (row
+                ? filterMain + FilmCardGeometry.BandThickness(tier, true) + MainScreenLayout.Divider
+                : filmSide.Width + MainScreenLayout.Divider + similarityColumn)
+            : 0;
+        _controlBar.SetJoinedToAnalysis(analysisVisible);
+        var controlMeasure = controlVisible
+            ? _controlBar.MeasureDocument(row, availableMain)
+            : (Main: 0.0, Cross: 0.0);
+        // ToolbarFlowLayout 的 Main 是文档沿主轴长度、Cross 是交叉轴厚度；分区只要厚度。
+        double controlMain = controlVisible
+            ? MainScreenLayout.ControlBarMainLength(controlMeasure.Cross)
+            : 0;
+        _analysisHost.SetVisible(analysisVisible);
+        double tileSize = AnalysisPanelGeometry.TileSize(availableMain, Math.Max(1, _analysisPane.TileCount));
+        double analysisSize = analysisVisible
+            ? ToolRegionGeometry.AnalysisWidth(tileSize, controlVisible)
+            : 0;
+        _panes = AndroidMainScreenLayout.Compute(row, widthDp, heightDp, _insets, fileMain, controlMain, analysisSize,
+            row ? null : filmSide.FilmstripX, row ? null : filmSide.Width - filmSide.FilmstripX);
 
-        LayoutChild(_enhanceBusy, new LayoutRect(
-            pane.X + (pane.Width - DesignTokens.ImageBusyWidth) / 2,
-            pane.Y + pane.Height - DesignTokens.ImageBusyHeight - DesignTokens.ImageBusyBottomOffset - bottomInset,
-            DesignTokens.ImageBusyWidth, DesignTokens.ImageBusyHeight), density);
+        ApplyFitInsets(new EdgeInsets(
+            Math.Max(0, _panes.Photo.X), Math.Max(0, _panes.Photo.Y),
+            Math.Max(0, widthDp - _panes.Photo.MaxX), Math.Max(0, heightDp - _panes.Photo.MaxY)));
 
-        // STATE-03：单行或自动换行，最大宽 min(500, 宽−40)，高按实际文本量出。
-        double statusMaxWidth = Math.Max(1, Math.Min(DesignTokens.StatusToastMaxWidth, pane.Width - 40));
-        _statusLabel.Measure(
-            MeasureSpec.MakeMeasureSpec((int)Math.Round(statusMaxWidth * density), MeasureSpecMode.AtMost),
-            MeasureSpec.MakeMeasureSpec((int)Math.Round(pane.Height * density), MeasureSpecMode.AtMost));
-        double statusWidth = _statusLabel.MeasuredWidth / density;
-        double statusHeight = _statusLabel.MeasuredHeight / density;
-        // STATE-03：药丸可见时提示条整体上移到药丸上方，药丸收起后回到距底 24。
-        double statusBottom = _enhanceBusy.Visibility == ViewStates.Visible
-            ? DesignTokens.ImageBusyBottomOffset + DesignTokens.ImageBusyHeight + DesignTokens.StatusToastStackGap
-            : DesignTokens.StatusToastBottomMargin;
-        LayoutChild(_statusLabel, new LayoutRect(
-            pane.X + (pane.Width - statusWidth) / 2,
-            pane.Y + pane.Height - statusHeight - statusBottom - bottomInset,
-            statusWidth, statusHeight), density);
-
-        bool show = _main.Settings.ShowZoomIndicator && !_photo.IsFit && _session.Image != null;
-        _navigation.Visibility = show ? ViewStates.Visible : ViewStates.Gone;
-        if (show)
+        LayoutChild(_fileBar, _panes.FileBar, density);
+        _fileBar.Visibility = filmVisible ? ViewStates.Visible : ViewStates.Gone;
+        LayoutChild(_fileDivider, _panes.FileDivider, density);
+        _fileDivider.Visibility = filmVisible ? ViewStates.Visible : ViewStates.Gone;
+        if (analysisVisible)
         {
-            var (navWidth, navHeight) = _photo.NavigationSize;
-            var (hostWidth, hostHeight) = AndroidNavigationOverlay.HostSizeFor(navWidth, navHeight);
-            double rightInset = Math.Max(0, _insets.Right);
-            var rect = new LayoutRect(
-                pane.MaxX - hostWidth - DesignTokens.NavMargin - rightInset,
-                pane.MaxY - hostHeight - DesignTokens.NavMargin - bottomInset,
-                hostWidth, hostHeight);
-            LayoutChild(_navigation, rect, density);
-            _navigation.SetState(null, navWidth, navHeight, _photo.NavigationViewport,
-                $"{_photo.PhysicalScale * 100:0.#}%");
+            LayoutChild(_analysisPane, _panes.Analysis, density);
+            _analysisPane.Arrange(row, availableMain, row ? _insets.Left : _insets.Top);
+        }
+        bool showsToolBackground = analysisVisible || (controlVisible && _controlBar.HasExifGroup);
+        LayoutChild(_controlBackground, showsToolBackground ? _panes.ControlBackground : default, density);
+        _controlBackground.Visibility = showsToolBackground ? ViewStates.Visible : ViewStates.Gone;
+        // SHELL-12：工具区只有一条朝主图的外边界；分析栏存在时它就是分析栏贴主图的一侧。
+        var toolDivider = _panes.ControlDivider;
+        if (analysisVisible)
+            toolDivider = row
+                ? new LayoutRect(0, _panes.Analysis.Y, widthDp, MainScreenLayout.Divider)
+                : new LayoutRect(_panes.Analysis.X, 0, MainScreenLayout.Divider, heightDp);
+        bool dividerVisible = analysisVisible || (controlVisible && showsToolBackground && Has(toolDivider));
+        LayoutChild(_controlDivider, toolDivider, density);
+        _controlDivider.Visibility = dividerVisible ? ViewStates.Visible : ViewStates.Gone;
+
+        _filterScrollHost.Visibility = filmVisible ? ViewStates.Visible : ViewStates.Gone;
+        _filmstrip.Visibility = filmVisible ? ViewStates.Visible : ViewStates.Gone;
+#if PHOTOVIEWER_DINO
+        _similarityPane.Visibility = similarityOpen ? ViewStates.Visible : ViewStates.Gone;
+#endif
+        if (filmVisible)
+        {
+            var content = _panes.FileContent;
+            double contentWidth = row
+                ? Math.Max(1, content.Width)
+                : Math.Max(1, Math.Min(MainScreenLayout.FileBarContentWidth, content.Width));
+            _filterBar.Arrange(row, contentWidth, leadingInset);
+            var filterRect = new LayoutRect(content.X, content.Y, Math.Max(1, content.Width), filterMain);
+            _filterScrollHost.Configure(row,
+                (int)Math.Round((row ? content.Width : filterMain) * density),
+                (int)Math.Round((row ? filterRect.Width : filterMain) * density));
+            // FILM-07：列布局胶片条纵贯内容全高，筛选组浮在列表上方，不能被列表覆盖。
+            _filterScrollHost.BringToFront();
+            LayoutChild(_filterScrollHost, filterRect, density);
+            double filmWidth = row ? Math.Max(1, content.Width - similarityColumn) : Math.Max(1, content.Width);
+            // FILM-07：宽形态列布局的胶片条纵贯文件栏内容全高，筛选组浮在列表上方；
+            // 首卡用内容留白停在 filterMain（额外前导 = filterMain − 大档主轴内边距）。
+            var filmFrame = row
+                ? new LayoutRect(content.X, content.Y + filterMain, filmWidth, Math.Max(1, content.Height - filterMain))
+                : new LayoutRect(content.X, content.Y, filmWidth, Math.Max(1, content.Height));
+            LayoutChild(_filmstrip, filmFrame, density);
+            bool axisChanged = _filmstrip.IsHorizontal != row;
+            _filmstrip.SetAxis(row);
+            _filmstrip.SetTier(tier);
+            _filmstrip.SetEdgePadding(row ? 0 : Math.Max(0, filterMain - FilmCardGeometry.MainLead(tier, false)), 0);
+            if (axisChanged) _filmstrip.ScrollToCurrent();
+#if PHOTOVIEWER_DINO
+            if (similarityOpen)
+            {
+                var similarityRect = row
+                    ? new LayoutRect(content.X + content.Width - similarityColumn, content.Y + filterMain,
+                        Math.Max(1, similarityColumn - SimilarityPanelGeometry.Margin), _similarityPane.CrossSize)
+                    : new LayoutRect(content.X + filmSide.Width, content.Y + filterMain,
+                        _similarityPane.CrossSize, Math.Max(1, content.Height - filterMain));
+                LayoutChild(_similarityPane, similarityRect, density);
+            }
+#endif
+        }
+
+        _controlScrollHost.Visibility = controlVisible ? ViewStates.Visible : ViewStates.Gone;
+        if (controlVisible)
+        {
+            var content = _panes.ControlContent;
+            double viewportLength = row ? content.Width : content.Height;
+            // 量测与排布共用同一可用主轴；滚动范围取排布后的最终文档尺寸，避免紧凑/展开二次切换。
+            var arranged = _controlBar.Arrange(row, Math.Max(1, viewportLength));
+            _controlScrollHost.Configure(row, (int)Math.Round(viewportLength * density),
+                (int)Math.Round(arranged.Main * density));
+            LayoutChild(_controlScrollHost, content, density);
         }
     }
+
+    /// <summary>
+    /// 手机形态：槽位全部取 <see cref="PhoneScreenLayout"/>；贴角带按公开 Insets（系统安全区、显示挖孔、
+    /// RoundedCorner 半径）在本带实际位置派生，主图适应区取槽位给出的 <see cref="PhoneLayout.PhotoAvoidance"/>。
+    /// </summary>
+    private void LayoutPhone(double widthDp, double heightDp, double density)
+    {
+        LayoutChild(_photoPane, new LayoutRect(0, 0, widthDp, heightDp), density);
+        bool portrait = _form == ScreenForm.PhonePortrait;
+        double button = DesignTokens.ShellGlassButtonSize;
+        double rowInset = DesignTokens.ShellPhoneRowInset;
+        var plain = new EdgeInsets(_insets.Left, _insets.Top, _insets.Right, _insets.Bottom);
+        _notchOnLeft = ResolveNotchOnLeft(widthDp);
+        var tier = FilmCardGeometry.ResolveTier(portrait ? widthDp : heightDp, portrait);
+        double filmBand = FilmCardGeometry.BandThickness(tier, portrait);
+        var enabledExif = _main.ControlVM.EnabledExifItems;
+        var (exifWidth, exifHeight) = portrait
+            ? ExifBlockGeometry.Size(enabledExif.Count, horizontal: true)
+            : ExifBlockGeometry.Size(enabledExif.Count, horizontal: false, bare: true);
+        var corners = _windowInsets.Corners;
+        PhoneLayoutInput Input(EdgeInsets lead, EdgeInsets control) => new(
+            Landscape: !portrait,
+            NotchOnLeft: _notchOnLeft,
+            Width: widthDp,
+            Height: heightDp,
+            Safe: plain,
+            LeadBand: lead,
+            ControlBand: control,
+            FilmVisible: _main.IsThumbnailViewVisible,
+            ControlVisible: _main.IsControlViewVisible,
+            ExifVisible: _main.IsExifViewVisible,
+            AnalysisVisible: _main.IsAnalysisViewVisible,
+            ShowNavigation: _main.Settings.ShowNavigationButtons,
+            FilterWidth: button,
+            FilmBand: filmBand,
+            FilmOuterPad: FilmCardGeometry.CrossLead(tier, portrait),
+            AnalysisCross: 0,
+            ExifCount: enabledExif.Count,
+            ExifWidth: exifWidth,
+            ExifHeight: exifHeight,
+            ExifItemSpacing: ExifBlockGeometry.ItemSpacing,
+            RatingMinLength: RatingControlGeometry.CompactMinLength,
+            ButtonSize: button,
+            EdgeMargin: DesignTokens.ShellPhoneEdgeMargin,
+            RowInset: rowInset,
+            GroupGap: DesignTokens.ShellGlassGroupGap,
+            ShowRating: _main.Settings.ShowRating);
+
+        var provisional = Input(plain, plain);
+        EdgeInsets lead, control;
+        if (portrait)
+        {
+            // 顶行：只让出该行位置上的左右圆角；上边仍取系统安全区。
+            double rowTop = PhoneScreenLayout.TopRowY(in provisional);
+            lead = new EdgeInsets(
+                Math.Max(plain.Left, AndroidWindowInsets.CornerInset(corners.TopLeft, rowTop)),
+                plain.Top,
+                Math.Max(plain.Right, AndroidWindowInsets.CornerInset(corners.TopRight, rowTop)), 0);
+            // 底行：按产品规则压入 Home 安全区后的行位置取左右圆角。
+            double bottomTop = heightDp - Math.Max(plain.Bottom - rowInset, rowInset) - button;
+            control = new EdgeInsets(
+                Math.Max(plain.Left, AndroidWindowInsets.CornerInset(corners.BottomLeft,
+                    Math.Max(0, heightDp - bottomTop - button))),
+                0,
+                Math.Max(plain.Right, AndroidWindowInsets.CornerInset(corners.BottomRight,
+                    Math.Max(0, heightDp - bottomTop - button))),
+                plain.Bottom);
+        }
+        else
+        {
+            // 刘海侧列：整列贯穿窗口，下上缘各让出该列内容内缘位置上的圆角。
+            lead = new EdgeInsets(plain.Left,
+                Math.Max(plain.Top, AndroidWindowInsets.CornerInset(_notchOnLeft ? corners.TopLeft : corners.TopRight, 0)),
+                plain.Right,
+                Math.Max(plain.Bottom, AndroidWindowInsets.CornerInset(
+                    _notchOnLeft ? corners.BottomLeft : corners.BottomRight, 0)));
+            // 控制列：下巴侧系统对称内缩不参与落位，只见该列内缘位置的圆角。
+            // 控制列贴角探测距离恒取工具区内边距（相邻/独立都是 10），不随列宽变化。
+            control = new EdgeInsets(0,
+                Math.Max(plain.Top, AndroidWindowInsets.CornerInset(
+                    _notchOnLeft ? corners.TopRight : corners.TopLeft, ToolRegionGeometry.Padding)),
+                0,
+                Math.Max(plain.Bottom, AndroidWindowInsets.CornerInset(
+                    _notchOnLeft ? corners.BottomRight : corners.BottomLeft, ToolRegionGeometry.Padding)));
+        }
+
+        double analysisMain = portrait
+            ? Math.Max(1, widthDp - plain.Left - plain.Right)
+            : Math.Max(1, heightDp - plain.Top - plain.Bottom);
+        double tile = AnalysisPanelGeometry.TileSize(analysisMain, Math.Max(1, _analysisPane.TileCount));
+        double analysisCross = portrait
+            ? tile + 2 * rowInset
+            : ToolRegionGeometry.AnalysisWidth(tile, _main.IsControlViewVisible);
+        var input = Input(lead, control) with { AnalysisCross = analysisCross };
+        _phoneSlotsInput = input;
+        var slots = PhoneScreenLayout.Compute(in input);
+        slots = AndroidScreenForm.ApplyStatusBarTopRowShift(slots, input);
+        _phoneSlots = slots;
+        ApplyFitInsets(slots.PhotoAvoidance);
+
+        // 宽形态专属层全部隐藏。
+        _fileBar.Visibility = ViewStates.Gone;
+        _fileDivider.Visibility = ViewStates.Gone;
+        _controlBackground.Visibility = ViewStates.Gone;
+        _controlDivider.Visibility = ViewStates.Gone;
+        _controlScrollHost.Visibility = ViewStates.Gone;
+#if PHOTOVIEWER_DINO
+        _similarityPane.Visibility = ViewStates.Gone;
+#endif
+
+        ApplyBar(_phoneTopBar, slots.TopBar, density);
+        ApplyBar(_phoneBottomBar, slots.BottomBar, density);
+        ApplyBar(_phoneLeadingBar, slots.LeadingBar, density);
+        ApplyBar(_phoneTrailingBar, slots.TrailingBar, density);
+
+        bool filmVisible = _main.IsThumbnailViewVisible;
+        _filmstrip.Visibility = filmVisible ? ViewStates.Visible : ViewStates.Gone;
+        if (filmVisible)
+        {
+            LayoutChild(_filmstrip, slots.Filmstrip, density);
+            bool axisChanged = _filmstrip.IsHorizontal != portrait;
+            _filmstrip.SetAxis(portrait);
+            _filmstrip.SetTier(tier);
+            var padding = slots.FilmstripPadding;
+            _filmstrip.SetEdgePadding(
+                Math.Max(0, (portrait ? padding.Left : padding.Top) - FilmCardGeometry.MainLead(tier, portrait)),
+                Math.Max(0, (portrait ? padding.Right : padding.Bottom) - FilmCardGeometry.MainTrail(tier, portrait)));
+            if (axisChanged) _filmstrip.ScrollToCurrent();
+        }
+
+        bool analysisVisible = _main.IsAnalysisViewVisible;
+        _analysisHost.SetVisible(analysisVisible);
+        _analysisPane.Visibility = analysisVisible ? ViewStates.Visible : ViewStates.Gone;
+        if (analysisVisible)
+        {
+            LayoutChild(_analysisPane, slots.Analysis, density);
+            _analysisPane.Arrange(portrait, analysisMain, portrait ? plain.Left : plain.Top,
+                portrait ? rowInset : null);
+        }
+
+        // 筛选：竖屏圆按钮由筛选控件自绘，更多为独立按钮；横屏 88 合体两段都由筛选控件绘制。
+        _filterScrollHost.Visibility = Has(slots.Filter) ? ViewStates.Visible : ViewStates.Gone;
+        if (Has(slots.Filter))
+        {
+            if (portrait)
+            {
+                _filterBar.ArrangePhone(true, new LayoutRect(0, 0, slots.Filter.Width, slots.Filter.Height), default);
+                _filterScrollHost.Configure(true, (int)Math.Round(slots.Filter.Width * density),
+                    (int)Math.Round(slots.Filter.Width * density));
+                LayoutChild(_filterScrollHost, slots.Filter, density);
+            }
+            else
+            {
+                var group = slots.FilterMoreGroup;
+                _filterBar.ArrangePhone(false,
+                    new LayoutRect(slots.Filter.X - group.X, slots.Filter.Y - group.Y, slots.Filter.Width, slots.Filter.Height),
+                    new LayoutRect(slots.More.X - group.X, slots.More.Y - group.Y, slots.More.Width, slots.More.Height));
+                _filterScrollHost.Configure(true, (int)Math.Round(group.Width * density),
+                    (int)Math.Round(group.Width * density));
+                LayoutChild(_filterScrollHost, group, density);
+            }
+            // 横屏入口合体压在纵向胶片条上（SHELL-09）：列表从合体下方滚过，合体不能落在列表之下。
+            _filterScrollHost.BringToFront();
+        }
+
+        ApplyButton(_phoneMoreButton, portrait ? slots.More : default, density);
+
+        _phoneNavigation.Visibility = Has(slots.Navigation) ? ViewStates.Visible : ViewStates.Gone;
+        if (Has(slots.Navigation)) LayoutChild(_phoneNavigation, slots.Navigation, density);
+
+        _phoneFitEnhance.SetVertical(!portrait);
+        _phoneFitEnhance.Visibility = Has(slots.FitEnhance) ? ViewStates.Visible : ViewStates.Gone;
+        if (Has(slots.FitEnhance)) LayoutChild(_phoneFitEnhance, slots.FitEnhance, density);
+
+        bool ratingShown = Has(slots.Rating) && _main.Settings.ShowRating;
+        _phoneRating.Visibility = ratingShown ? ViewStates.Visible : ViewStates.Gone;
+        if (ratingShown)
+        {
+            _phoneRating.SetOrientation(portrait);
+            _phoneRating.SetState(_main.CurrentFile?.Rating ?? 0, _main.CurrentFile?.HasRatingConflict == true,
+                _main.CurrentFile != null);
+            LayoutChild(_phoneRating, slots.Rating, density);
+        }
+
+        bool exifShown = Has(slots.Exif) && slots.ExifItems > 0;
+        _phoneExif.Visibility = exifShown ? ViewStates.Visible : ViewStates.Gone;
+        if (exifShown)
+        {
+            _phoneExif.SetContent(enabledExif, portrait, !portrait, slots.ExifItems);
+            LayoutChild(_phoneExif, slots.Exif, density);
+        }
+
+        // 手机形态没有宽形态分区：把适应区与可见槽位放进同一结构，供浮层与验收读取。
+        _panes = new AndroidPaneFrames(default, default, default,
+            new LayoutRect(_fitInsets.Left, _fitInsets.Top,
+                Math.Max(1, widthDp - _fitInsets.Left - _fitInsets.Right),
+                Math.Max(1, heightDp - _fitInsets.Top - _fitInsets.Bottom)),
+            slots.Analysis, default, default, default);
+    }
+
+    /// <summary>隐藏全部手机形态层（宽形态路径）。</summary>
+    private void HidePhoneLayers()
+    {
+        _phoneTopBar.Visibility = ViewStates.Gone;
+        _phoneBottomBar.Visibility = ViewStates.Gone;
+        _phoneLeadingBar.Visibility = ViewStates.Gone;
+        _phoneTrailingBar.Visibility = ViewStates.Gone;
+        _phoneMoreButton.Visibility = ViewStates.Gone;
+        _phoneNavigation.Visibility = ViewStates.Gone;
+        _phoneFitEnhance.Visibility = ViewStates.Gone;
+        _phoneRating.Visibility = ViewStates.Gone;
+        _phoneExif.Visibility = ViewStates.Gone;
+    }
+
+    /// <summary>刘海侧判定：优先用公开显示挖孔矩形；没有挖孔时按左右安全区比较，相等按在左。</summary>
+    private bool ResolveNotchOnLeft(double widthDp)
+    {
+        if (_windowInsets.CutoutCenterX is { } center) return center < widthDp / 2;
+        return _insets.Left >= _insets.Right;
+    }
+
+    /// <summary>把形态算出的适应区四边内边距交给主图视图。</summary>
+    private void ApplyFitInsets(EdgeInsets insets)
+    {
+        var fit = new EdgeInsets(Math.Max(0, insets.Left), Math.Max(0, insets.Top),
+            Math.Max(0, insets.Right), Math.Max(0, insets.Bottom));
+        if (Math.Abs(fit.Left - _fitInsets.Left) < .01 && Math.Abs(fit.Top - _fitInsets.Top) < .01
+            && Math.Abs(fit.Right - _fitInsets.Right) < .01 && Math.Abs(fit.Bottom - _fitInsets.Bottom) < .01)
+            return;
+        _fitInsets = fit;
+        _photo.SetFitInsets(fit);
+    }
+
+    /// <summary>栏背景按槽位矩形落位；空矩形表示该栏不出现。</summary>
+    private static void ApplyBar(View view, LayoutRect rect, double density)
+    {
+        bool visible = Has(rect);
+        view.Visibility = visible ? ViewStates.Visible : ViewStates.Gone;
+        if (visible) LayoutChild(view, rect, density);
+    }
+
+    /// <summary>手机入口按钮按槽位矩形落位；空矩形隐藏。</summary>
+    private void ApplyButton(View view, LayoutRect rect, double density)
+    {
+        bool visible = Has(rect);
+        view.Visibility = visible ? ViewStates.Visible : ViewStates.Gone;
+        if (visible) LayoutChild(view, rect, density);
+    }
+
+    private static bool Has(LayoutRect rect) => rect.Width > 0 && rect.Height > 0;
 
     /// <summary>按 dp 矩形给子视图精确测量并落位。</summary>
     private static void LayoutChild(View view, LayoutRect rect, double density)
@@ -661,6 +1040,18 @@ internal sealed class AndroidNativeRootView : FrameLayout
         return true;
     }
 
+    /// <summary>手机形态的「更多」按钮：在按钮下方打开与长按相同的主图菜单（MENU-08）。</summary>
+    /// <param name="anchor">锚点视图。</param>
+    internal void ShowPhotoMenuAt(View anchor)
+    {
+        var location = new int[2];
+        anchor.GetLocationOnScreen(location);
+        var photoLocation = new int[2];
+        _photo.GetLocationOnScreen(photoLocation);
+        ShowPhotoMenu(location[0] - photoLocation[0] + anchor.Width / 2f,
+            location[1] - photoLocation[1] + anchor.Height);
+    }
+
     /// <summary>主图长按菜单：在手指处弹出自绘面板；面板整体夹在屏幕内，超出高度时可滚动。</summary>
     /// <param name="localX">触点在本视图内的像素横坐标。</param>
     /// <param name="localY">触点在本视图内的像素纵坐标。</param>
@@ -684,9 +1075,9 @@ internal sealed class AndroidNativeRootView : FrameLayout
         int dividerHeight = Math.Max(1, (int)Math.Round(density));
         var state = new PhotoMenuState(
             _main.CurrentFile != null, _main.IsThumbnailViewVisible, _main.IsAnalysisViewVisible,
-            _main.IsControlViewVisible, _session.IsEnhanced);
-        // MENU-01：触屏没有「打开文件…」，其余项与顺序四端相同。
-        var menuItems = PhotoMenuCatalog.Build(state, includeOpenFile: false);
+            _main.IsControlViewVisible, _session.IsEnhanced, _main.IsExifViewVisible);
+        // MENU-01：触屏没有「打开文件…」；EXIF 开关只在手机形态出现。
+        var menuItems = PhotoMenuCatalog.Build(state, includeOpenFile: false, includeExif: _form != ScreenForm.Wide);
         int groupCount = 1;
         for (int index = 1; index < menuItems.Count; index++)
             if (menuItems[index].Group != menuItems[index - 1].Group) groupCount++;
@@ -775,6 +1166,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
                 if (group >= 0) AddDivider();
                 group = item.Group;
             }
+            // EXIF 项在 uicons 令牌集中没有对应码位，图标列留空（文字与勾选照常）。
             string icon = item.Id switch
             {
                 PhotoMenuItemId.OpenFile => DesignTokens.IconMenuOpenFile,
@@ -782,6 +1174,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
                 PhotoMenuItemId.Filmstrip => DesignTokens.IconMenuFilmstrip,
                 PhotoMenuItemId.Analysis => DesignTokens.IconMenuAnalysis,
                 PhotoMenuItemId.ControlBar => DesignTokens.IconMenuControl,
+                PhotoMenuItemId.Exif => DesignTokens.IconMenuControl,
                 PhotoMenuItemId.Enhance => DesignTokens.IconCommandToggleEnhance,
                 PhotoMenuItemId.Tools => DesignTokens.IconMenuTools,
                 _ => DesignTokens.IconMenuSettings,
@@ -792,6 +1185,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
                 PhotoMenuItemId.Filmstrip => () => _main.ToggleThumbnailView(),
                 PhotoMenuItemId.Analysis => () => _main.ToggleAnalysisView(),
                 PhotoMenuItemId.ControlBar => () => _main.ToggleControlView(),
+                PhotoMenuItemId.Exif => () => _main.ToggleExifView(),
                 PhotoMenuItemId.Enhance => () => _session.ToggleEnhanced(),
                 PhotoMenuItemId.Tools => ShowTools,
                 _ => () => _main.OpenSettingWindow(),
@@ -823,7 +1217,6 @@ internal sealed class AndroidNativeRootView : FrameLayout
             if (ReferenceEquals(_photoMenu, popup)) _photoMenu = null;
         };
         _photoMenu = popup;
-        Console.WriteLine($"[Native] 主图菜单 touch=({touchX},{touchY}) show=({x},{y}) size={menuWidth}x{menuHeight} screen={screenWidth}x{screenHeight}");
         popup.ShowAtLocation(_photo, GravityFlags.Top | GravityFlags.Start, x, y);
     }
 
@@ -867,6 +1260,21 @@ internal sealed class AndroidNativeRootView : FrameLayout
         if (_main.CurrentFile is not { } file || !file.HasRatingConflict) return;
         _ratingSourcesPopup.Show(file, RatingSourcesAnchorKind.Control, _controlBar.IsHorizontal,
             () => _controlBar.TryGetRatingSlotScreenRect(0, out var rect) ? rect : null);
+    }
+
+    /// <summary>手机星级控件的冲突三角：以控件 0 号槽位的屏幕矩形为锚点。</summary>
+    private void OpenRatingSourcesFromPhone()
+    {
+        if (_main.CurrentFile is not { } file || !file.HasRatingConflict) return;
+        _ratingSourcesPopup.Show(file, RatingSourcesAnchorKind.Control, _phoneRating.Horizontal,
+            () =>
+            {
+                var slot = _phoneRating.SlotRectPx(0);
+                var location = new int[2];
+                _phoneRating.GetLocationOnScreen(location);
+                return new Rect(location[0] + slot.Left, location[1] + slot.Top,
+                    location[0] + slot.Right, location[1] + slot.Bottom);
+            });
     }
 
     /// <summary>卡片 0 号槽位的屏幕矩形；卡片未挂载、不可见或星级被关闭时返回 null（入口已移除）。</summary>
@@ -954,6 +1362,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
     {
         await _main.SetRatingAsync(file, rating);
         _controlBar.MarkDirty();
+        _phoneRating.SetState(_main.CurrentFile?.Rating ?? 0, _main.CurrentFile?.HasRatingConflict == true,
+            _main.CurrentFile != null);
         RequestLayout();
     }
 
@@ -1001,6 +1411,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
                 _analysisPane.ClearDetail();
                 _filmstrip.CancelScrollUpToNow();
                 _controlBar.MarkDirty();
+                _phoneRating.SetState(_main.CurrentFile?.Rating ?? 0, _main.CurrentFile?.HasRatingConflict == true,
+                    _main.CurrentFile != null);
                 StartSession();
                 RequestLayout();
                 break;
@@ -1019,6 +1431,11 @@ internal sealed class AndroidNativeRootView : FrameLayout
             case nameof(MainViewModel.IsControlViewVisible):
                 AndroidShellPreferences.SaveShowControls(_main.IsControlViewVisible);
                 if (!_main.IsControlViewVisible) CloseRatingSources();
+                RequestLayout();
+                break;
+            case nameof(MainViewModel.IsExifViewVisible):
+                // SHELL-04：手机形态 EXIF 开关与栏位显隐同一平台偏好存储，不进设置 JSON。
+                AndroidShellPreferences.SaveShowExif(_main.IsExifViewVisible);
                 RequestLayout();
                 break;
             case nameof(MainViewModel.IsAnalysisViewVisible):
@@ -1068,6 +1485,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
         {
             // RATING-04：入口几何/显隐变化由卡片自身重绘，不据此收起来源浮窗。
             _filmstrip.RefreshCardStates();
+            _phoneRating.SetState(_main.CurrentFile?.Rating ?? 0, _main.CurrentFile?.HasRatingConflict == true,
+                _main.CurrentFile != null);
 #if PHOTOVIEWER_DINO
             _similarityPane.RefreshCardStates();
 #endif
@@ -1186,6 +1605,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
         {
             _controlBar.MarkDirty();
             _controlBar.Invalidate();
+            _phoneRating.SetState(_main.CurrentFile?.Rating ?? 0, _main.CurrentFile?.HasRatingConflict == true,
+                _main.CurrentFile != null);
         }
         if (args.PropertyName is nameof(ImageFile.ExifData))
         {
@@ -1205,7 +1626,6 @@ internal sealed class AndroidNativeRootView : FrameLayout
             _photo.SetFocus(null, null);
     }
 
-    /// <summary>更新空态/错误提示；有图时全部隐藏。</summary>
     /// <summary>细节预览有活动目标时在主图上画绿色方框：中心取瓦片中心，大小取对焦框或 1:1 裁剪方块在当前视口下的投影。</summary>
     private void UpdateDetailHighlight()
     {
@@ -1259,17 +1679,17 @@ internal sealed class AndroidNativeRootView : FrameLayout
         Invalidate();
     }
 
-    /// <summary>绿框画在根视图最上层：SurfaceView 与子视图的裁剪/层级不该吃掉右边或下边。</summary>
+    /// <summary>绿框画在根视图最上层：主图铺满窗口，坐标与主图视图一致。</summary>
     protected override void DispatchDraw(Canvas canvas)
     {
         base.DispatchDraw(canvas);
         if (!_detailVisible) return;
         float density = (float)AndroidUiTheme.Density(Context!);
         var rect = new RectF(
-            (float)((_panes.Photo.X + _detailRect.X) * density),
-            (float)((_panes.Photo.Y + _detailRect.Y) * density),
-            (float)((_panes.Photo.X + _detailRect.MaxX) * density),
-            (float)((_panes.Photo.Y + _detailRect.MaxY) * density));
+            (float)(_detailRect.X * density),
+            (float)(_detailRect.Y * density),
+            (float)(_detailRect.MaxX * density),
+            (float)(_detailRect.MaxY * density));
         using var paint = AndroidUiTheme.Paint(Color.Rgb(0, 255, 0)!, Math.Max(2, 3 * density));
         paint.SetStyle(global::Android.Graphics.Paint.Style.Stroke);
         canvas.DrawRect(rect, paint);
@@ -1348,6 +1768,80 @@ internal sealed class AndroidNativeRootView : FrameLayout
         var (navWidth, navHeight) = _photo.NavigationSize;
         _navigation.SetState(null, navWidth, navHeight, _photo.NavigationViewport,
             $"{_photo.PhysicalScale * 100:0.#}%");
+    }
+
+    /// <summary>摆好空态提示、增强提示、状态提示与导航图；提示都落在主图适应区内。</summary>
+    private void LayoutOverlays(double density)
+    {
+        var pane = FitArea;
+        double bottomInset = 0;
+        int hintWidthPx = Math.Max(1, (int)Math.Round(
+            Math.Max(1, Math.Min(DesignTokens.ImageHintMaxWidth, pane.Width - 2 * MainScreenLayout.FilterMargin)) * density));
+        int hintMaxHeightPx = Math.Max(1, (int)Math.Round(pane.Height * density));
+        _hintLabel.Measure(MeasureSpec.MakeMeasureSpec(hintWidthPx, MeasureSpecMode.AtMost),
+            MeasureSpec.MakeMeasureSpec(hintMaxHeightPx, MeasureSpecMode.AtMost));
+        _hintDetail.Measure(MeasureSpec.MakeMeasureSpec(hintWidthPx, MeasureSpecMode.AtMost),
+            MeasureSpec.MakeMeasureSpec(hintMaxHeightPx, MeasureSpecMode.AtMost));
+        double hintWidth = hintWidthPx / density;
+        double labelHeight = _hintLabel.MeasuredHeight / density;
+        bool hasDetail = !string.IsNullOrEmpty(_hintDetail.Text);
+        double detailHeight = hasDetail ? _hintDetail.MeasuredHeight / density : 0;
+        double gap = DesignTokens.ImageHintDetailGapAndroid;
+        double blockHeight = hasDetail ? Math.Max(labelHeight, gap + detailHeight) : labelHeight;
+        double hintLeft = pane.X + (pane.Width - hintWidth) / 2;
+        double hintTop = pane.Y + Math.Max(0, (pane.Height - blockHeight) / 2);
+        LayoutChild(_hintLabel, new LayoutRect(hintLeft, hintTop, hintWidth, labelHeight), density);
+        LayoutChild(_hintDetail, new LayoutRect(hintLeft, hintTop + gap, hintWidth, detailHeight), density);
+
+        LayoutChild(_enhanceBusy, new LayoutRect(
+            pane.X + (pane.Width - DesignTokens.ImageBusyWidth) / 2,
+            pane.Y + pane.Height - DesignTokens.ImageBusyHeight - DesignTokens.ImageBusyBottomOffset - bottomInset,
+            DesignTokens.ImageBusyWidth, DesignTokens.ImageBusyHeight), density);
+
+        // STATE-03：单行或自动换行，最大宽 min(500, 宽−40)，高按实际文本量出。
+        double statusMaxWidth = Math.Max(1, Math.Min(DesignTokens.StatusToastMaxWidth, pane.Width - 40));
+        _statusLabel.Measure(
+            MeasureSpec.MakeMeasureSpec((int)Math.Round(statusMaxWidth * density), MeasureSpecMode.AtMost),
+            MeasureSpec.MakeMeasureSpec((int)Math.Round(pane.Height * density), MeasureSpecMode.AtMost));
+        double statusWidth = _statusLabel.MeasuredWidth / density;
+        double statusHeight = _statusLabel.MeasuredHeight / density;
+        // STATE-03：药丸可见时提示条整体上移到药丸上方，药丸收起后回到距底 24。
+        double statusBottom = _enhanceBusy.Visibility == ViewStates.Visible
+            ? DesignTokens.ImageBusyBottomOffset + DesignTokens.ImageBusyHeight + DesignTokens.StatusToastStackGap
+            : DesignTokens.StatusToastBottomMargin;
+        LayoutChild(_statusLabel, new LayoutRect(
+            pane.X + (pane.Width - statusWidth) / 2,
+            pane.Y + pane.Height - statusHeight - statusBottom - bottomInset,
+            statusWidth, statusHeight), density);
+
+        bool show = _main.Settings.ShowZoomIndicator && !_photo.IsFit && _session.Image != null;
+        _navigation.Visibility = show ? ViewStates.Visible : ViewStates.Gone;
+        if (show)
+        {
+            var (navWidth, navHeight) = _photo.NavigationSize;
+            var (hostWidth, hostHeight) = AndroidNavigationOverlay.HostSizeFor(navWidth, navHeight);
+            var rect = new LayoutRect(
+                pane.MaxX - hostWidth - DesignTokens.NavMargin,
+                pane.MaxY - hostHeight - DesignTokens.NavMargin,
+                hostWidth, hostHeight);
+            LayoutChild(_navigation, rect, density);
+            _navigation.SetState(null, navWidth, navHeight, _photo.NavigationViewport,
+                $"{_photo.PhysicalScale * 100:0.#}%");
+        }
+    }
+
+    /// <summary>主图适应区（dp）：由主图当前尺寸与视口适应区内边距直接算出，早于视口就绪也可用。</summary>
+    internal LayoutRect FitArea
+    {
+        get
+        {
+            double density = AndroidUiTheme.Density(Context!);
+            double width = _photo.Width / density, height = _photo.Height / density;
+            var insets = _photo.Viewport.FitInsets;
+            return new LayoutRect(insets.Left, insets.Top,
+                Math.Max(1, width - insets.Left - insets.Right),
+                Math.Max(1, height - insets.Top - insets.Bottom));
+        }
     }
 
     /// <summary>设计令牌 0xAARRGGBB → Android 颜色。</summary>
