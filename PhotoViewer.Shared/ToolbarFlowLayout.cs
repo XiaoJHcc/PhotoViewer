@@ -69,9 +69,7 @@ public static class ToolbarFlowLayout
     public static ToolbarGroupSize Exif(int count, bool horizontal, bool bare = false)
     {
         var (width, height) = ExifBlockGeometry.Size(count, horizontal, bare);
-        double cross = horizontal || count <= 0
-            ? height
-            : bare ? CommandSize : width;
+        double cross = horizontal || count <= 0 ? height : width;
         return new ToolbarGroupSize(ControlBarGroupKind.Exif, horizontal ? width : height, cross);
     }
 

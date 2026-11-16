@@ -298,6 +298,9 @@ internal static class NativeFilmstripAcceptance
         var clickPath = NSIndexPath.FromItemSection(1, 0);
         card = window.Filmstrip.GetItem(clickPath) as MacThumbnailItem ?? throw new InvalidOperationException("点选回归缺少可见卡片");
         var location = card.View.ConvertPointToView(new CGPoint(15, 15), null);
+        var cardWindowHit = window.Window.ContentView!.HitTest(location);
+        if (cardWindowHit is NSPopUpButton or NSSegmentedControl or NSGlassEffectView)
+            throw new InvalidOperationException($"卡片主体被筛选玻璃层抢占：{cardWindowHit.GetType().Name}");
         using var click = NSEvent.MouseEvent(NSEventType.LeftMouseDown, location, 0, NSProcessInfo.ProcessInfo.SystemUptime,
             window.Window.WindowNumber, null!, 1, 1, 1) ?? throw new InvalidOperationException("卡片鼠标事件创建失败");
         card.View.MouseDown(click);
@@ -490,6 +493,9 @@ internal static class NativeFilmstripAcceptance
     private static async Task ClickCardAsync(MacMainWindow window, MacThumbnailItem card)
     {
         var location = card.View.ConvertPointToView(new CGPoint(15, 15), null);
+        var cardWindowHit = window.Window.ContentView!.HitTest(location);
+        if (cardWindowHit is NSPopUpButton or NSSegmentedControl or NSGlassEffectView)
+            throw new InvalidOperationException($"卡片主体被筛选玻璃层抢占：{cardWindowHit.GetType().Name}");
         using var click = NSEvent.MouseEvent(NSEventType.LeftMouseDown, location, 0, NSProcessInfo.ProcessInfo.SystemUptime,
             window.Window.WindowNumber, null!, 1, 1, 1) ?? throw new InvalidOperationException("卡片鼠标事件创建失败");
         card.View.MouseDown(click);
@@ -618,21 +624,36 @@ internal static class NativeFilmstripAcceptance
     /// <summary>打开真实系统筛选菜单，以屏幕几何验证左边缘对齐、垂直无重叠、选中标记及键盘选择事件。</summary>
     private static void VerifyFilterMenus(MacMainWindow window, List<string> observations)
     {
-        var popups = window.Window.ContentView!.Subviews.SelectMany(view => view.Subviews)
-            .OfType<NSPopUpButton>().Where(popup => !popup.Hidden).ToArray();
-        if (popups.Length is not (1 or 3))
-            throw new InvalidOperationException($"筛选入口数量错误：{popups.Length}（列布局单胶囊 / 行布局三合体）");
-        bool capsule = popups.Length == 1;
-        foreach (var popup in popups)
+        bool capsule = window.FilterCapsuleMode;
+        var popups = capsule
+            ? window.Window.ContentView!.Subviews.SelectMany(view => view.Subviews)
+                .OfType<NSGlassEffectView>().Select(glass => glass.ContentView)
+                .OfType<NSPopUpButton>().Where(popup => !popup.Hidden).ToArray()
+            : window.FilterMenuSources.ToArray();
+        if (popups.Length != (capsule ? 1 : 3))
+            throw new InvalidOperationException($"筛选菜单数量错误：{popups.Length}");
+        for (int index = 0; index < popups.Length; index++)
         {
+            var popup = popups[index];
+            NSView view = capsule ? popup : window.FilterSegments;
+            var segment = capsule ? default : index switch
+            {
+                0 => window.FilterLayout.Sort,
+                1 => window.FilterLayout.Order,
+                _ => window.FilterLayout.Rating,
+            };
+            var rect = capsule ? view.Bounds : new CGRect(segment.X, segment.Y, segment.Width, segment.Height);
             Exception? failure = null;
             bool inspected = false;
-            var clickPoint = popup.ConvertPointToView(new CGPoint(popup.Bounds.Width / 2, popup.Bounds.Height / 2), null);
+            var clickPoint = view.ConvertPointToView(new CGPoint(rect.GetMidX(), rect.GetMidY()), null);
+            var filterHit = window.Window.ContentView!.HitTest(clickPoint);
+            if (!ReferenceEquals(filterHit, view))
+                throw new InvalidOperationException($"筛选区域未命中自身原生控件：{filterHit?.GetType().Name ?? "null"}");
             using var inspect = NSTimer.CreateTimer(.2, _ =>
             {
                 try
                 {
-                    var buttonFrame = window.Window.ConvertRectToScreen(popup.ConvertRectToView(popup.Bounds, null));
+                    var buttonFrame = window.Window.ConvertRectToScreen(view.ConvertRectToView(rect, null));
                     var menuFrame = popup.Menu!.AccessibilityFrame;
                     inspected = true;
                     if (menuFrame.Height <= 0 || Math.Abs((double)(menuFrame.X - buttonFrame.X)) > 1 || menuFrame.Width < buttonFrame.Width)
@@ -655,17 +676,19 @@ internal static class NativeFilmstripAcceptance
                 }
             });
             NSRunLoop.Main.AddTimer(inspect, NSRunLoopMode.Common);
-            using var click = NSEvent.MouseEvent(NSEventType.LeftMouseDown, clickPoint, 0, NSProcessInfo.ProcessInfo.SystemUptime,
-                window.Window.WindowNumber, null!, 1, 1, 1) ?? throw new InvalidOperationException("筛选鼠标事件创建失败");
-            popup.MouseDown(click);
+            if (capsule)
+            {
+                using var click = NSEvent.MouseEvent(NSEventType.LeftMouseDown, clickPoint, 0, NSProcessInfo.ProcessInfo.SystemUptime,
+                    window.Window.WindowNumber, null!, 1, 1, 1) ?? throw new InvalidOperationException("筛选鼠标事件创建失败");
+                popup.MouseDown(click);
+            }
+            else window.OpenFilterSegmentMenu(index);
             if (failure != null) throw failure;
-            if (!inspected) throw new InvalidOperationException("鼠标点击未打开筛选菜单");
+            if (!inspected) throw new InvalidOperationException("筛选段动作未打开系统菜单");
         }
         var sort = popups[0];
         var filter = window.Main.FileVM.FilterBar;
         SortMode originalMode = filter.SortMode;
-        // 后台进程没有可靠的菜单键盘焦点；用真实菜单项的 target/action 验证业务接线。
-        // 鼠标与键盘都会走同一原生 action，合成 keyEquivalent 在本验收环境下不作为判定依据。
         var menu = sort.Menu!;
         menu.CancelTracking();
         if (capsule)
@@ -685,8 +708,8 @@ internal static class NativeFilmstripAcceptance
         var expectedMode = (SortMode)filter.SortModes[1].Value;
         bool selectionApplied = filter.SortMode == expectedMode && (!capsule || sort.IndexOfSelectedItem == 0);
         if (!selectionApplied)
-            throw new InvalidOperationException($"对齐后的原生菜单选择未更新筛选业务属性：popups={popups.Length}, selected={sort.IndexOfSelectedItem}, mode={filter.SortMode}, expected={expectedMode}, capsule={capsule}");
+            throw new InvalidOperationException($"原生菜单选择未更新筛选业务属性：selected={sort.IndexOfSelectedItem}, mode={filter.SortMode}, expected={expectedMode}, capsule={capsule}");
         filter.SortMode = originalMode;
-        observations.Add("native menu target/action updates shared sort mode (background keyboard focus not asserted)");
+        observations.Add("native segmented/capsule menu target/action updates shared sort mode");
     }
 }

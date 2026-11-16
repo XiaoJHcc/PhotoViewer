@@ -555,6 +555,16 @@ test("TOOLBAR-03：宽评分组可用主轴不足 224 时用 88 紧凑外框，�
     assert.deepEqual(vertical.groups[0].children[0], { kind: "rating", index: 0, x: 0, y: 184, w: 44, h: 36 });
 });
 
+test("TOOLBAR-03：mac 配置档在窄窗口仍保持 224 展开评分", () => {
+    const result = computeControlBar({ axis: "horizontal", mainSize: 200, exifCount: 0, showRating: true, commandCount: 0, profile: "mac" }, t);
+    const rating = result.groups[0];
+    assert.equal(rating.w, 224);
+    assert.equal(rating.h, 44);
+    assert.equal(rating.compact, false);
+    assert.equal(rating.children.length, 6);
+    assert.equal(result.overflow, true);
+});
+
 test("SHELL-08/10：竖屏适应区与底行使用左右安全区，底距压入 home indicator", () => {
     const phone = layout({
         layoutMode: "phone",

@@ -25,7 +25,7 @@ namespace PhotoViewer.iOS.Native;
 /// 筛选与更多常驻（竖屏顶行耳区 vs 带 EXIF 的行位置；横屏恒为刘海侧列顶端合体组，胶片栏开关只收起列表、
 /// 上下张与栏背景，header/nav/卡片外框同落 `FilmSideGeometry` 的内容末端，入口带为 header 实际 x + 整高），
 /// 胶片条全高下穿与首末卡各停靠一次（横屏首卡 header 下缘 + 10、末卡 nav 上缘 − 10 或无 nav 时的圆角 + 10），
-/// EXIF 块（竖屏带衬底整块、横屏无衬底 44 宽容器且只显示放得下的前几项、文字不出容器）、
+/// EXIF 块（竖屏带衬底整块、横屏无衬底固有项宽容器且只显示放得下的前几项、文字不出容器）、
 /// 横屏控制栏（外缘工具区内边距 10、次序 EXIF→星级→缩放增强、整组在可用纵向区间居中、星级封顶展开态固有长度、
 /// EXIF 开关不改变列宽、几何与胶片栏/上下张/分析栏开关无关、显示评分关闭不留空槽并把长度释放给 EXIF）、
 /// 横屏镜像、手机竖屏分析栏贴顶行（瓦片再下移一份行内间距、无分隔线）与
@@ -1043,10 +1043,10 @@ internal static class iOSNativeFormCheck
         else
         {
             var bare = ExifBlockGeometry.Size(enabledExif.Count, horizontal: false, bare: true);
-            // 无衬底纵排的透明容器与玻璃按钮等宽同轴：EXIF 开关不改变控制列宽，文字在 44 内尾部截断。
-            if (Math.Abs(slots.Exif.Width - input.ButtonSize) > Tolerance)
+            // 无衬底纵排使用固有项宽并与按钮同轴：EXIF 开关不改变控制列宽，文字在 52 内尾部截断。
+            if (Math.Abs(slots.Exif.Width - input.ExifWidth) > Tolerance)
                 throw new InvalidOperationException(
-                    $"{scope} 横屏无衬底 EXIF 列宽 {slots.Exif.Width:0.#} ≠ 玻璃按钮边长 {input.ButtonSize:0.#}");
+                    $"{scope} 横屏无衬底 EXIF 列宽 {slots.Exif.Width:0.#} ≠ 固有项宽 {input.ExifWidth:0.#}");
             if (!block.Background.Hidden || (double)block.Layer.CornerRadius > Tolerance)
                 throw new InvalidOperationException($"{scope} 横屏 EXIF 列仍带衬底或圆角");
             for (int index = 0; index < block.ShownItemCount; index++)
@@ -1647,11 +1647,20 @@ internal static class iOSNativeFormCheck
         };
         foreach (var (name, group) in groups)
         {
+            if (!group.UsesSharedGlass)
+                throw new InvalidOperationException($"{scope} {name} 横排合体组未使用单一系统玻璃背景");
             for (int index = 0; index < group.Buttons.Count; index++) buttons.Add(($"{name}[{index}]", group.Buttons[index]));
         }
         foreach (var (name, button) in buttons)
         {
             if (!IsVisible(root, button)) continue;
+            if (!button.PointerInteractionEnabled || button.PointerStyleProvider == null)
+                throw new InvalidOperationException($"{scope} {name} 未配置系统高亮指针交互");
+            var preview = new UITargetedPreview(button);
+            var pointerRect = iOSGlassButtons.PointerRect(button, preview);
+            var expectedPointerRect = button.ConvertRectToView(button.Bounds, preview.Target.Container).Inset(4, 4);
+            if (pointerRect != expectedPointerRect)
+                throw new InvalidOperationException($"{scope} {name} 指针形状未使用预览容器坐标：{pointerRect} vs {expectedPointerRect}");
             var frame = FrameInStage(root, button);
             if ((double)frame.Width < HitSize - Tolerance || (double)frame.Height < HitSize - Tolerance)
                 throw new InvalidOperationException($"{scope} {name} 命中区 {CGRect(frame)} 小于 {HitSize:0.#}×{HitSize:0.#}");
@@ -1737,8 +1746,8 @@ internal static class iOSNativeFormCheck
 
     /// <summary>
     /// 横屏下巴侧控制栏（桌面式）：内容外缘距下巴窗口缘一份工具区内边距 <c>toolbar.padding</c>（10，不避让系统对称安全内缩），
-    /// 自上而下为 EXIF 列 → 星级控件 → 缩放适应/雾天增强竖排合体，EXIF 与按钮同一中轴（无衬底容器 44 宽、
-    /// 与按钮同宽同轴）；上下张不在控制栏内。整组在原生圆角适应后的可用纵向区间居中，星级槽位封顶展开态固有长度，
+    /// 自上而下为 EXIF 列 → 星级控件 → 缩放适应/雾天增强竖排合体，EXIF 与按钮同一中轴（无衬底容器使用固有项宽、
+    /// 且不超过按钮与两侧边距之和）；上下张不在控制栏内。整组在原生圆角适应后的可用纵向区间居中，星级槽位封顶展开态固有长度，
     /// 末端按钮不固定在底边。
     /// 几何与胶片栏、上下张、分析栏开关无关（作废"旋转保持一致"），EXIF 开关只收起那一列并让整组重新居中、不改变列宽。
     /// </summary>
@@ -1772,9 +1781,9 @@ internal static class iOSNativeFormCheck
         if (Has(slots.Exif) && Math.Abs(slots.Exif.X + slots.Exif.Width / 2 - axis) > Tolerance)
             throw new InvalidOperationException(
                 $"{scope} EXIF 列中轴 {slots.Exif.X + slots.Exif.Width / 2:0.#} ≠ 按钮中轴 {axis:0.#}");
-        if (Has(slots.Exif) && Math.Abs(slots.Exif.Width - input.ButtonSize) > Tolerance)
+        if (Has(slots.Exif) && Math.Abs(slots.Exif.Width - input.ExifWidth) > Tolerance)
             throw new InvalidOperationException(
-                $"{scope} 横屏无衬底 EXIF 列宽 {slots.Exif.Width:0.#} ≠ 玻璃按钮边长 {input.ButtonSize:0.#}（无额外内外边距）");
+                $"{scope} 横屏无衬底 EXIF 列宽 {slots.Exif.Width:0.#} ≠ 固有项宽 {input.ExifWidth:0.#}（无额外内外边距）");
         // 次序：EXIF（放得下时）→ 星级（显示评分时）→ 缩放增强，项间为组间距；评分关闭时 EXIF 直接接增强，长度释放。
         double ratingTop = Has(slots.Exif) ? slots.Exif.MaxY + ToolRegionGeometry.GroupSpacing : double.NaN;
         if (combo.Rating)
@@ -1971,6 +1980,9 @@ internal static class iOSNativeFormCheck
             if (root.FilterBar.CombinedGroup.Buttons.Count != 2)
                 throw new InvalidOperationException(
                     $"{scope} 宽形态筛选合体组不是两个段：{root.FilterBar.CombinedGroup.Buttons.Count}");
+            if (!root.FilterBar.CombinedGroup.UsesSharedGlass
+                || root.FilterBar.CombinedGroup.Buttons.Any(button => !button.PointerInteractionEnabled || button.PointerStyleProvider == null))
+                throw new InvalidOperationException($"{scope} 宽形态筛选合体未使用单一系统玻璃背景与逐段指针交互");
             if (!ReferenceEquals(root.FilterBar.CombinedGroup.Buttons[0], root.FilterBar.FilterButton)
                 || !ReferenceEquals(root.FilterBar.CombinedGroup.Buttons[1], root.FilterBar.MoreButton))
                 throw new InvalidOperationException($"{scope} 宽形态合体组两段不是筛选 / 更多");

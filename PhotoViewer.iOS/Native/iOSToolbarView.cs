@@ -306,7 +306,7 @@ internal sealed class iOSToolbarView : UIView
     /// <summary>
     /// EXIF 分组尺寸：上下布局沿用共享 <see cref="ToolbarFlowLayout.Exif"/> 的衬底块；
     /// 左右布局（列布局）取无衬底变体——没有块内边距，只剩项目与项距，与手机横屏控制栏同口径（SHELL-12、TOOLBAR-05）。
-    /// 无衬底纵排的交叉轴宽度固定取玻璃按钮边长（44），与同列的星级控件、命令圆按钮等宽同轴，不被项目固有宽撑大。
+    /// 无衬底纵排使用固有项宽（52，且不超过按钮与两侧边距之和 64），与同列的星级控件、命令圆按钮同轴，不被文字继续撑大。
     /// </summary>
     /// <param name="count">EXIF 项数。</param>
     /// <param name="horizontal">EXIF 块是否横排。</param>
@@ -317,7 +317,7 @@ internal sealed class iOSToolbarView : UIView
         return new ToolbarGroupSize(
             ControlBarGroupKind.Exif,
             horizontal ? width : height,
-            horizontal ? height : DesignTokens.ShellGlassButtonSize);
+            horizontal ? height : width);
     }
 
     /// <summary>

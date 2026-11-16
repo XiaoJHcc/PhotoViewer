@@ -48,7 +48,10 @@ public sealed class MacMainWindow : IDisposable
     private readonly NSPopUpButton _sort;
     private readonly NSPopUpButton _order;
     private readonly NSPopUpButton _ratingFilter;
+    private readonly NSSegmentedControl _filterSegments;
+    private readonly NSGlassEffectView _filterGlass;
     private readonly NSPopUpButton _capsule;
+    private readonly NSGlassEffectView _capsuleGlass;
     private readonly NSTextField _count;
     private NSView _activeFilterTarget = null!;
     private NSMenu? _capsuleMenu;
@@ -58,6 +61,7 @@ public sealed class MacMainWindow : IDisposable
     private readonly Dictionary<int, Action> _capsuleActions = [];
 #if PHOTOVIEWER_DINO
     private readonly FilterToggleButton _similarityToggle;
+    private readonly NSGlassEffectView _similarityGlass;
     private readonly MacSimilarityPanel _similarityPane;
 #endif
     private readonly NSTextField _hint;
@@ -132,6 +136,11 @@ public sealed class MacMainWindow : IDisposable
     internal NSView ToolDivider => _controlDivider;
     /// <summary>当前筛选控件与外框的共享几何结果。</summary>
     internal WideFilterFrames FilterLayout => _filterFrames;
+    /// <summary>三段筛选的原生连续控件与菜单业务源，供系统菜单验收读取。</summary>
+    internal NSSegmentedControl FilterSegments => _filterSegments;
+    internal NSGlassEffectView FilterSegmentedGlass => _filterGlass;
+    internal NSGlassEffectView FilterCapsuleGlass => _capsuleGlass;
+    internal IReadOnlyList<NSPopUpButton> FilterMenuSources => [_sort, _order, _ratingFilter];
     internal NSTextField CountView => _count;
     /// <summary>当前筛选是否回退为单胶囊。</summary>
     internal bool FilterCapsuleMode => _filterCapsule;
@@ -145,6 +154,8 @@ public sealed class MacMainWindow : IDisposable
     internal MacSimilarityPanel Similarity => _similarityPane;
     /// <summary>筛选条相似聚类 toggle 供原生布局验收读取。</summary>
     internal NSButton SimilarityToggle => _similarityToggle;
+    /// <summary>相似聚类 toggle 的原生玻璃外框，供几何验收读取。</summary>
+    internal NSGlassEffectView SimilarityToggleGlass => _similarityGlass;
     /// <summary>相似聚类 toggle 的勾选态（按钮自持，验收读取）。</summary>
     internal bool SimilarityToggleIsOn => _similarityToggle.IsOn;
 #endif
@@ -262,6 +273,30 @@ public sealed class MacMainWindow : IDisposable
         _count = Label("共 0 张", 12); _count.Alignment = NSTextAlignment.Center;
         _count.Hidden = true;
         _capsule = Popup(["筛选"]);
+        _filterSegments = new NSSegmentedControl
+        {
+            SegmentCount = 3,
+            TrackingMode = NSSegmentSwitchTracking.Momentary,
+            SegmentStyle = NSSegmentStyle.Automatic,
+            SegmentDistribution = NSSegmentDistribution.Fill,
+            BorderShape = NSControlBorderShape.Capsule,
+        };
+        SyncFilterSegments();
+        _filterSegments.Activated += (_, _) => OpenFilterSegmentMenu(_filterSegments.SelectedSegment);
+        _filterGlass = new MacGlassEffectView
+        {
+            ContentView = _filterSegments,
+            CornerRadius = 22,
+            Style = NSGlassEffectViewStyle.Regular,
+        };
+        _capsule.Bordered = true;
+        _capsule.ShowsBorderOnlyWhileMouseInside = true;
+        _capsuleGlass = new MacGlassEffectView
+        {
+            ContentView = _capsule,
+            CornerRadius = 22,
+            Style = NSGlassEffectViewStyle.Regular,
+        };
 #if PHOTOVIEWER_DINO
         _similarityToggle = new FilterToggleButton("相似聚类", "展开/关闭相似聚类面板")
         {
@@ -273,11 +308,19 @@ public sealed class MacMainWindow : IDisposable
         _ratingFilter.Activated += (_, _) => _main.FileVM.FilterBar.SelectedRatingFilter = _main.FileVM.FilterBar.RatingFilters[(int)_ratingFilter.IndexOfSelectedItem].Key;
 #if PHOTOVIEWER_DINO
         _similarityToggle.Toggled = open => _main.FileVM.FilterBar.IsSimilarityPanelOpen = open;
-        foreach (var control in new NSView[] { _sort, _order, _ratingFilter, _capsule, _similarityToggle }) _filePane.AddSubview(control);
+        _similarityToggle.Bordered = true;
+        _similarityToggle.ShowsBorderOnlyWhileMouseInside = true;
+        _similarityGlass = new MacGlassEffectView
+        {
+            ContentView = _similarityToggle,
+            CornerRadius = 22,
+            Style = NSGlassEffectViewStyle.Regular,
+        };
+        foreach (var control in new NSView[] { _filterGlass, _capsuleGlass, _similarityGlass }) _filePane.AddSubview(control);
 #else
-        foreach (var control in new NSView[] { _sort, _order, _ratingFilter, _capsule }) _filePane.AddSubview(control);
+        foreach (var control in new NSView[] { _filterGlass, _capsuleGlass }) _filePane.AddSubview(control);
 #endif
-        _activeFilterTarget = _sort;
+        _activeFilterTarget = _filterSegments;
         _capsuleTarget = new CapsuleMenuTarget(this);
         _capsuleMenu = BuildCapsuleMenu();
         _capsuleDelegate = new CapsuleMenuDelegate(this);
@@ -432,6 +475,7 @@ public sealed class MacMainWindow : IDisposable
         {
             Cell = new FilterPopUpCell(),
             ControlSize = NSControlSize.Regular,
+            BorderShape = NSControlBorderShape.Capsule,
             Font = NSFont.SystemFontOfSize(13) ?? throw new InvalidOperationException("系统字体不可用"),
         };
         popup.AddItems(titles);
@@ -445,118 +489,31 @@ public sealed class MacMainWindow : IDisposable
         public override void MouseDown(NSEvent nativeEvent) => Cell.PerformClick(Bounds, this);
     }
 
-    /// <summary>筛选条相似聚类原生 toggle：无边框自绘药丸，12 点居中标题、圆角 6、1 点描边；
-    /// 勾选态取 <c>color.filter.toggle.checked.*</c>（#1F3A5F 底 / #3A6FA8 边 / #AECBEE 字），
-    /// 未勾选为透明底 / #555 边 / #AAA 字；悬停色同样取令牌（FILTER-01/FILTER-06）。
-    /// 勾选状态由本类自己持有（不用 <c>NSButtonType.Toggle</c>）：旧写法的 getter 读私有字段而点击翻转的是 cell 状态，
-    /// 导致点一次读回旧值、按钮表现为"点不动"；同时 Toggle 态会取 alternateTitle，只设 AttributedTitle 会露出系统占位串 "Button"。</summary>
+    /// <summary>相似聚类开关使用系统标准按钮的按下保持状态，业务侧只读写开关值。</summary>
     private sealed class FilterToggleButton : NSButton
     {
-        private static readonly double CornerRadius = DesignTokens.FilterToggleCornerRadius;
-        private static readonly NSColor BorderOff = MacDesignColors.Argb(DesignTokens.ColorFilterToggleBorder);
-        private static readonly NSColor TextOff = MacDesignColors.Argb(DesignTokens.ColorFilterToggleForeground);
-        private static readonly NSColor FillOn = MacDesignColors.Argb(DesignTokens.ColorFilterToggleCheckedBackground);
-        private static readonly NSColor BorderOn = MacDesignColors.Argb(DesignTokens.ColorFilterToggleCheckedBorder);
-        private static readonly NSColor TextOn = MacDesignColors.Argb(DesignTokens.ColorFilterToggleCheckedForeground);
-        private static readonly NSColor FillOffHover = MacDesignColors.Argb(DesignTokens.ColorFilterToggleHover);
-        private static readonly NSColor BorderOffHover = MacDesignColors.Argb(DesignTokens.ColorFilterToggleHoverBorder);
-        private static readonly NSColor TextOffHover = MacDesignColors.Argb(DesignTokens.ColorFilterToggleHoverForeground);
-        private static readonly NSColor FillOnHover = MacDesignColors.Argb(DesignTokens.ColorFilterToggleCheckedHoverBackground);
-        private static readonly NSColor BorderOnHover = MacDesignColors.Argb(DesignTokens.ColorFilterToggleCheckedHoverBorder);
-        private static readonly NSColor TextOnHover = MacDesignColors.Argb(DesignTokens.ColorFilterToggleCheckedHoverForeground);
-        private readonly string _title;
-        private bool _isOn;
-        private bool _hover;
-        private (bool On, bool Hover)? _styled;
-        private NSTrackingArea? _tracking;
-
         /// <summary>点击切换回调，参数为切换后的勾选态；调用方据此回写共享状态。</summary>
         public Action<bool>? Toggled { get; set; }
 
-        /// <summary>构造并立即应用未勾选样式（不依赖外部赋值，避免漏掉首次上色）。</summary>
-        /// <param name="title">按钮文案。</param>
-        /// <param name="tooltip">鼠标悬停提示。</param>
         public FilterToggleButton(string title, string tooltip)
         {
-            _title = title;
+            Title = title;
+            AlternateTitle = title;
             ToolTip = tooltip;
-            SetButtonType(NSButtonType.MomentaryPushIn);
-            Bordered = false;
-            WantsLayer = true;
+            Font = NSFont.SystemFontOfSize(12) ?? throw new InvalidOperationException("系统字体不可用");
+            SetButtonType(NSButtonType.PushOnPushOff);
+            Bordered = true;
+            BezelStyle = NSBezelStyle.Rounded;
+            BorderShape = NSControlBorderShape.Capsule;
             Alignment = NSTextAlignment.Center;
-            Layer!.CornerRadius = (nfloat)CornerRadius;
-            Layer.BorderWidth = 1;
-            Layer.MasksToBounds = true;
-            Activated += (_, _) =>
-            {
-                _isOn = !_isOn;
-                ApplyStyle(_isOn);
-                Toggled?.Invoke(_isOn);
-            };
-            ApplyStyle(false);
+            Activated += (_, _) => Toggled?.Invoke(IsOn);
         }
 
-        /// <summary>勾选态；样式只在与已应用组合不同时重绘，避免筛选条每次属性变化都重画。</summary>
+        /// <summary>系统按下保持状态。</summary>
         public bool IsOn
         {
-            get => _isOn;
-            set
-            {
-                _isOn = value;
-                ApplyStyle(value);
-            }
-        }
-
-        /// <summary>新增/更新鼠标跟踪区，用于悬停反馈（旧壳 ToggleButton 有 pointerover 态）。</summary>
-        public override void UpdateTrackingAreas()
-        {
-            base.UpdateTrackingAreas();
-            if (_tracking != null) RemoveTrackingArea(_tracking);
-            _tracking = new NSTrackingArea(Bounds, NSTrackingAreaOptions.MouseEnteredAndExited | NSTrackingAreaOptions.ActiveInKeyWindow, this, null);
-            AddTrackingArea(_tracking);
-        }
-
-        /// <summary>鼠标进入：应用悬停配色。</summary>
-        public override void MouseEntered(NSEvent theEvent)
-        {
-            _hover = true;
-            ApplyStyle(_isOn);
-        }
-
-        /// <summary>鼠标离开：恢复常态配色。</summary>
-        public override void MouseExited(NSEvent theEvent)
-        {
-            _hover = false;
-            ApplyStyle(_isOn);
-        }
-
-        /// <summary>
-        /// 应用勾选/悬停组合的配色；普通与替代标题都按业务文案设置，杜漏系统占位串。
-        /// </summary>
-        /// <param name="on">是否勾选。</param>
-        private void ApplyStyle(bool on)
-        {
-            if (_styled == (on, _hover)) return;
-            _styled = (on, _hover);
-            var (fill, border, text) = (on, _hover) switch
-            {
-                (true, true) => (FillOnHover, BorderOnHover, TextOnHover),
-                (true, false) => (FillOn, BorderOn, TextOn),
-                (false, true) => (FillOffHover, BorderOffHover, TextOffHover),
-                (false, false) => (NSColor.Clear, BorderOff, TextOff),
-            };
-            Layer!.BackgroundColor = fill.CGColor;
-            Layer.BorderColor = border.CGColor;
-            using var paragraph = new NSMutableParagraphStyle { Alignment = NSTextAlignment.Center };
-            using var attributes = new NSDictionary(
-                NSStringAttributeKey.Font, NSFont.SystemFontOfSize(12) ?? throw new InvalidOperationException("系统字体不可用"),
-                NSStringAttributeKey.ForegroundColor, text,
-                NSStringAttributeKey.ParagraphStyle, paragraph);
-            var attributed = new NSAttributedString(_title, attributes);
-            Title = _title;
-            AlternateTitle = _title;
-            AttributedTitle = attributed;
-            AttributedAlternateTitle = attributed;
+            get => State == NSCellStateValue.On;
+            set => State = value ? NSCellStateValue.On : NSCellStateValue.Off;
         }
     }
 
@@ -684,33 +641,45 @@ public sealed class MacMainWindow : IDisposable
             _filterToggleVisible = includeSimilarityToggle && fileVisible;
             var content = panes.FileContent;
             var controlFrame = Absolute(content, filterFrames.Control);
-            _capsule.Hidden = !fileVisible || !_filterCapsule;
-            _sort.Hidden = _order.Hidden = _ratingFilter.Hidden = !fileVisible || _filterCapsule;
+            _capsuleGlass.Hidden = !fileVisible || !_filterCapsule;
+            _filterGlass.Hidden = !fileVisible || _filterCapsule;
+            _capsule.Hidden = _capsuleGlass.Hidden;
+            _filterSegments.Hidden = _filterGlass.Hidden;
             if (_filterCapsule)
             {
-                _capsule.Frame = controlFrame;
+                _capsuleGlass.Frame = controlFrame;
+                _capsule.Frame = _capsuleGlass.Bounds;
                 ResetCapsuleEntry();
                 _activeFilterTarget = _capsule;
             }
             else
             {
-                _sort.Frame = Absolute(content, Offset(filterFrames.Control, filterFrames.Sort));
-                _order.Frame = Absolute(content, Offset(filterFrames.Control, filterFrames.Order));
-                _ratingFilter.Frame = Absolute(content, Offset(filterFrames.Control, filterFrames.Rating));
-                _activeFilterTarget = _sort;
+                _filterGlass.Frame = controlFrame;
+                _filterSegments.Frame = _filterGlass.Bounds;
+                _filterSegments.SetWidth((nfloat)filterFrames.Sort.Width, 0);
+                _filterSegments.SetWidth((nfloat)filterFrames.Order.Width, 1);
+                _filterSegments.SetWidth((nfloat)filterFrames.Rating.Width, 2);
+                _activeFilterTarget = _filterSegments;
             }
-            var countHost = _filterCapsule ? _capsule : _ratingFilter;
+            NSView countHost = _filterCapsule ? _capsule : _filterSegments;
             if (_count.Superview != countHost)
             {
                 _count.RemoveFromSuperview();
                 countHost.AddSubview(_count);
             }
             _count.Hidden = !fileVisible;
-            _count.Frame = new CGRect(0, countHost.Bounds.Height - 13, countHost.Bounds.Width, 11);
+            _count.Frame = _filterCapsule
+                ? new CGRect(0, countHost.Bounds.Height - 13, countHost.Bounds.Width, 11)
+                : new CGRect((nfloat)(filterFrames.Sort.Width + filterFrames.Order.Width), countHost.Bounds.Height - 13,
+                    (nfloat)filterFrames.Rating.Width, 11);
             _count.Font = NSFont.SystemFontOfSize(9) ?? throw new InvalidOperationException("系统字体不可用");
 #if PHOTOVIEWER_DINO
-            _similarityToggle.Hidden = !_filterToggleVisible;
-            if (_filterToggleVisible) _similarityToggle.Frame = Absolute(content, filterFrames.Toggle);
+            _similarityToggle.Hidden = _similarityGlass.Hidden = !_filterToggleVisible;
+            if (_filterToggleVisible)
+            {
+                _similarityGlass.Frame = Absolute(content, filterFrames.Toggle);
+                _similarityToggle.Frame = _similarityGlass.Bounds;
+            }
             _filterUnion = new LayoutRect(content.X + filterFrames.Control.X, 0,
                 (_filterToggleVisible ? filterFrames.Toggle.MaxX : filterFrames.Control.MaxX) - filterFrames.Control.X,
                 titlebarHeight);
@@ -718,10 +687,10 @@ public sealed class MacMainWindow : IDisposable
             _filterUnion = new LayoutRect(content.X + filterFrames.Control.X, 0, filterFrames.Control.Width, titlebarHeight);
 #endif
             // 列布局胶片列表纵贯全高并从筛选组下方滚过：筛选组作为浮层保持在列表之上。
-            foreach (var overlay in new[] { _sort, _order, _ratingFilter, _capsule })
+            foreach (var overlay in new NSView[] { _filterGlass, _capsuleGlass })
                 _filePane.AddSubview(overlay, NSWindowOrderingMode.Above, null);
 #if PHOTOVIEWER_DINO
-            _filePane.AddSubview(_similarityToggle, NSWindowOrderingMode.Above, null);
+            _filePane.AddSubview(_similarityGlass, NSWindowOrderingMode.Above, null);
 #endif
 
             _busyPill.Frame = new CGRect(
@@ -848,6 +817,35 @@ public sealed class MacMainWindow : IDisposable
         }
         if (selected >= 0) popup.SelectItem(selected);
         return Math.Ceiling(width);
+    }
+
+    /// <summary>把三个业务菜单的当前选项同步到原生连续控件。</summary>
+    private void SyncFilterSegments()
+    {
+        var sources = new[] { _sort, _order, _ratingFilter };
+        for (int index = 0; index < sources.Length; index++)
+            _filterSegments.SetLabel(sources[index].TitleOfSelectedItem ?? string.Empty, index);
+    }
+
+    /// <summary>由连续控件的段动作打开对应系统菜单，菜单位置与该段对齐。</summary>
+    internal void OpenFilterSegmentMenu(nint segment)
+    {
+        if (_filterCapsule || segment < 0 || segment > 2) return;
+        var source = new[] { _sort, _order, _ratingFilter }[(int)segment];
+        var rect = segment switch
+        {
+            0 => _filterFrames.Sort,
+            1 => _filterFrames.Order,
+            _ => _filterFrames.Rating,
+        };
+        try
+        {
+            source.Cell.PerformClick(new CGRect(rect.X, rect.Y, rect.Width, rect.Height), _filterSegments);
+        }
+        finally
+        {
+            _filterSegments.SelectedSegment = -1;
+        }
     }
 
     /// <summary>单胶囊回退菜单：排序、方向与星级筛选三组无标题内联单选组，沿用同一业务属性。</summary>
@@ -1311,6 +1309,7 @@ public sealed class MacMainWindow : IDisposable
         _sort.SelectItem(filter.SortModes.FindIndex(item => (SortMode)item.Value == filter.SortMode));
         _order.SelectItem(filter.SortOrders.FindIndex(item => (SortOrder)item.Value == filter.SortOrder));
         _ratingFilter.SelectItem(filter.RatingFilters.FindIndex(item => item.Key == filter.SelectedRatingFilter));
+        SyncFilterSegments();
         UpdateCapsuleMenuStates();
 #if PHOTOVIEWER_DINO
         _similarityToggle.IsOn = filter.IsSimilarityPanelOpen;

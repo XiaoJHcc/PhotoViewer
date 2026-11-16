@@ -1,5 +1,4 @@
 using CoreGraphics;
-using Foundation;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Shared;
 using UIKit;
@@ -18,7 +17,6 @@ internal sealed class iOSRatingControl : UIView
     private readonly iOSRatingRow _row;
     private readonly iOSRatingCluster _cluster = new();
     private readonly UILongPressGestureRecognizer _press;
-    private readonly UIPointerInteraction _capsulePointer;
     private RatingControlForm _form = RatingControlForm.Compact;
     private bool _horizontal = true;
     private int _value;
@@ -38,6 +36,7 @@ internal sealed class iOSRatingControl : UIView
         {
             CornerConfiguration = UICornerConfiguration.CreateCapsule(),
             BackgroundColor = UIColor.Clear,
+            HoverStyle = UIHoverStyle.Create(UIShape.CreateCapsuleShape()),
         };
         AddSubview(_capsule);
 
@@ -59,7 +58,6 @@ internal sealed class iOSRatingControl : UIView
             CancelsTouchesInView = false,
         };
         AddGestureRecognizer(_press);
-        _capsulePointer = new UIPointerInteraction(new CapsulePointerDelegate(this));
         Render();
         ApplyForm();
     }
@@ -256,9 +254,7 @@ internal sealed class iOSRatingControl : UIView
         _cluster.Hidden = !compact;
         _row.HandlesOwnTouches = !compact;
         _press.Enabled = compact && _enabled;
-        bool attached = _capsule.Interactions.Contains(_capsulePointer);
-        if (compact && !attached) _capsule.AddInteraction(_capsulePointer);
-        else if (!compact && attached) _capsule.RemoveInteraction(_capsulePointer);
+        _capsule.HoverStyle!.Enabled = compact;
         AccessibilityTraits = compact
             ? UIAccessibilityTrait.Adjustable | UIAccessibilityTrait.Button
             : UIAccessibilityTrait.Adjustable;
@@ -280,23 +276,4 @@ internal sealed class iOSRatingControl : UIView
         }
     }
 
-    /// <summary>紧凑胶囊整块指针高亮（展开态由星排逐格高亮）。</summary>
-    private sealed class CapsulePointerDelegate(iOSRatingControl owner) : UIPointerInteractionDelegate
-    {
-        /// <summary>整胶囊一个指针区域。</summary>
-        /// <param name="interaction">指针交互。</param>
-        /// <param name="request">指针请求。</param>
-        /// <param name="suggestedRegion">系统建议区域。</param>
-        /// <returns>胶囊区域。</returns>
-        public override UIPointerRegion GetRegionForRequest(
-            UIPointerInteraction interaction, UIPointerRegionRequest request, UIPointerRegion suggestedRegion)
-            => UIPointerRegion.Create(owner._capsule.Bounds, NSNumber.FromInt32(0));
-
-        /// <summary>高亮整个胶囊。</summary>
-        /// <param name="interaction">指针交互。</param>
-        /// <param name="region">指针区域。</param>
-        /// <returns>系统指针样式。</returns>
-        public override UIPointerStyle GetStyleForRegion(UIPointerInteraction interaction, UIPointerRegion region)
-            => UIPointerStyle.Create(UIPointerEffect.Create(new UITargetedPreview(owner._capsule)), null!);
-    }
 }

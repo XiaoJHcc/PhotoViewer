@@ -127,7 +127,7 @@ internal static class NativeMainLayoutAcceptance
             throw new InvalidOperationException($"{scope} 提示条未按适应区落位：{toast} / {photoFit}");
         window.StatusToast.Hidden = true;
         observations.Add($"{scope}: 分区/主图适应区/筛选/胶片/控制栏均与共享几何一致；胶片大档固定；工具区材质按分析或实际 EXIF 出现");
-        observations.Add($"{scope}: EXIF 深色材质与 12 圆角、评分半圆端胶囊、44 正圆命令按钮均通过真实图层断言");
+        observations.Add($"{scope}: EXIF 原生 NSBox 分组、横竖统一原生玻璃评分胶囊与 44 点原生玻璃圆钮均通过断言");
     }
 
     /// <summary>按共享输入重算本帧分区：文件栏/控制栏/分析栏与主图适应区。</summary>
@@ -180,8 +180,8 @@ internal static class NativeMainLayoutAcceptance
         foreach (var kind in bar.GroupKinds)
             sizes.Add(kind switch
             {
-                ControlBarGroupKind.Exif => ToolbarFlowLayout.Exif(bar.ExifItemCount, row),
-                ControlBarGroupKind.Rating => ToolbarFlowLayout.Rating(ToolbarFlowLayout.ContentMain(row ? (double)clip.Width : (double)clip.Height)),
+                ControlBarGroupKind.Exif => ToolbarFlowLayout.Exif(bar.ExifItemCount, row, bare: !row),
+                ControlBarGroupKind.Rating => ToolbarFlowLayout.Rating(RatingControlGeometry.ExpandedLength),
                 _ => ToolbarFlowLayout.Commands(bar.Commands.Count),
             });
         bool joined = window.Main.IsControlViewVisible && window.Main.IsAnalysisViewVisible;
@@ -205,21 +205,18 @@ internal static class NativeMainLayoutAcceptance
         {
             case ControlBarGroupKind.Exif:
                 double blockMain = row ? (double)group.Bounds.Width : (double)group.Bounds.Height;
-                for (int item = 0; item < group.Subviews.Length; item++)
+                var exif = group as MacControlBar.ExifBlockView
+                    ?? throw new InvalidOperationException($"{scope} EXIF 未使用原生 NSBox 分组");
+                for (int item = 0; item < exif.Tiles.Count; item++)
                 {
-                    var expected = ExifBlockGeometry.ItemRect(item, group.Subviews.Length, row, blockMain);
-                    Record(geometry, scope, $"control.group{index}.item{item}", group.Subviews[item].Frame);
-                    RequireFrame(group.Subviews[item].Frame, ToRect(expected), $"{scope} EXIF 项 {item}");
+                    var expected = ExifBlockGeometry.ItemRect(item, exif.Tiles.Count, row, blockMain, bare: !row);
+                    Record(geometry, scope, $"control.group{index}.item{item}", exif.Tiles[item].Frame);
+                    RequireFrame(exif.Tiles[item].Frame, ToRect(expected), $"{scope} EXIF 项 {item}");
                 }
-                if (group is not NSVisualEffectView exifMaterial
-                    || exifMaterial.Material != NSVisualEffectMaterial.Sidebar
-                    || exifMaterial.BlendingMode != NSVisualEffectBlendingMode.WithinWindow
-                    || exifMaterial.State != NSVisualEffectState.Active
-                    || exifMaterial.Appearance?.Name != NSAppearance.NameDarkAqua)
-                    throw new InvalidOperationException($"{scope} EXIF 衬底不是深色窗口内取样的原生 NSVisualEffectView");
-                if (group.Layer is not { } exifLayer || !exifLayer.MasksToBounds
-                    || Math.Abs((double)exifLayer.CornerRadius - ExifBlockGeometry.CornerRadius) > Exact)
-                    throw new InvalidOperationException($"{scope} EXIF 衬底圆角不是 {ExifBlockGeometry.CornerRadius} 或缺少单层裁切");
+                if (exif.BoxType != NSBoxType.NSBoxPrimary || exif.TitlePosition != NSTitlePosition.NoTitle
+                    || exif.ContentViewMargins != CGSize.Empty || exif.Appearance?.Name != NSAppearance.NameDarkAqua
+                    || exif.Bare == row)
+                    throw new InvalidOperationException($"{scope} EXIF 原生分组外观或竖排无衬底规则错误，或叠加了第二份边距");
                 break;
             case ControlBarGroupKind.Rating:
                 var control = group.Subviews[0];
@@ -228,13 +225,15 @@ internal static class NativeMainLayoutAcceptance
                     new LayoutRect(0, 0, (double)group.Bounds.Width, (double)group.Bounds.Height), row);
                 Record(geometry, scope, $"control.group{index}.rating", control.Frame);
                 RequireFrame(control.Frame, ToRect(controlFrame), $"{scope} 评分控件外框未取共享槽位");
-                if (control is not MacControlBar.RatingControlView ratingControl
-                    || ratingControl.Layer is not { } capsule || !capsule.MasksToBounds
-                    || Math.Abs((double)capsule.CornerRadius - RatingControlGeometry.Thickness / 2) > Exact)
-                    throw new InvalidOperationException($"{scope} 评分控件外框未使用半圆端胶囊图层");
+                if (control is not MacControlBar.RatingControlView ratingControl)
+                    throw new InvalidOperationException($"{scope} 评分组缺少星级控件");
+                if (ratingControl.Style != NSGlassEffectViewStyle.Regular
+                    || Math.Abs((double)ratingControl.CornerRadius - RatingControlGeometry.Thickness / 2) > Exact
+                    || ratingControl.ContentView is not { } content)
+                    throw new InvalidOperationException($"{scope} 评分控件外框未使用系统玻璃胶囊");
                 double capsuleCross = row ? (double)control.Bounds.Height : (double)control.Bounds.Width;
-                if (Math.Abs((double)capsule.CornerRadius * 2 - capsuleCross) > Exact)
-                    throw new InvalidOperationException($"{scope} 评分胶囊圆角未等于控件厚度的一半：{capsule.CornerRadius}/{capsuleCross}");
+                if (Math.Abs((double)ratingControl.CornerRadius * 2 - capsuleCross) > Exact)
+                    throw new InvalidOperationException($"{scope} 评分胶囊圆角未等于控件厚度的一半：{ratingControl.CornerRadius}/{capsuleCross}");
                 if (form == RatingControlForm.Expanded)
                 {
                     if (bar.Ratings.Count != 6) throw new InvalidOperationException($"{scope} 展开态评分槽位不是 6 个");
@@ -246,12 +245,14 @@ internal static class NativeMainLayoutAcceptance
                         if (button.Hidden) throw new InvalidOperationException($"{scope} 展开态评分槽位被隐藏");
                         Record(geometry, scope, $"control.group{index}.rating{button.Tag}", button.Frame);
                         RequireFrame(button.Frame, ToRect(slot), $"{scope} 评分槽位 {button.Tag}");
-                        if (button.Layer is { } slotLayer && Math.Abs((double)slotLayer.CornerRadius) > Exact)
-                            throw new InvalidOperationException($"{scope} 评分槽位 {button.Tag} 状态面被圆角裁切");
+                        if (!ReferenceEquals(button.Superview, content) || button is not MacControlBar.ToolbarButton native
+                            || !native.Bordered || !native.ShowsBorderOnlyWhileMouseInside
+                            || native.BezelStyle != NSBezelStyle.Rounded || native.BorderShape != NSControlBorderShape.Circle)
+                            throw new InvalidOperationException($"{scope} 评分槽位 {button.Tag} 未使用玻璃内容区里的原生圆形悬停按钮");
                     }
                 }
-                else if (bar.Ratings.Any(button => !button.Hidden))
-                    throw new InvalidOperationException($"{scope} 紧凑态仍显示六个槽位按钮");
+                else
+                    throw new InvalidOperationException($"{scope} 桌面评分未保持展开态");
                 break;
             case ControlBarGroupKind.Command:
                 double cross = row ? (double)group.Bounds.Height : (double)group.Bounds.Width;
@@ -263,10 +264,12 @@ internal static class NativeMainLayoutAcceptance
                         ? new CGRect(main, offset, ToolbarFlowLayout.CommandSize, ToolbarFlowLayout.CommandSize)
                         : new CGRect(offset, main, ToolbarFlowLayout.CommandSize, ToolbarFlowLayout.CommandSize);
                     RequireFrame(group.Subviews[button].Frame, expected, $"{scope} 命令按钮 {button}");
-                    if (group.Subviews[button] is not MacControlBar.ToolbarButton command || command.Layer is not { } commandLayer
-                        || !commandLayer.MasksToBounds
-                        || Math.Abs((double)commandLayer.CornerRadius - ToolbarFlowLayout.CommandSize / 2) > Exact)
-                        throw new InvalidOperationException($"{scope} 命令按钮 {button} 不是正圆单层图层");
+                    if (group.Subviews[button] is not NSGlassEffectView glass
+                        || glass.ContentView is not MacControlBar.ToolbarButton command
+                        || command.BezelStyle != NSBezelStyle.Rounded || command.BorderShape != NSControlBorderShape.Circle
+                        || !command.ShowsBorderOnlyWhileMouseInside
+                        || glass.Style != NSGlassEffectViewStyle.Regular)
+                        throw new InvalidOperationException($"{scope} 命令按钮 {button} 未使用原生玻璃视图与圆钮");
                 }
                 break;
         }
@@ -276,52 +279,58 @@ internal static class NativeMainLayoutAcceptance
     private static void VerifyFilterBar(MacMainWindow window, bool row, string scope, NSView filePane, LayoutRect content, List<string> geometry)
     {
         var frames = window.FilterLayout;
-        var popups = filePane.Subviews.OfType<NSPopUpButton>().ToArray();
-        var visible = popups.Where(popup => !popup.Hidden).ToArray();
+        NSView filterView;
         if (window.FilterCapsuleMode)
         {
-            if (visible.Length != 1) throw new InvalidOperationException($"{scope} 单胶囊回退时有 {visible.Length} 个可见下拉");
-            RequireFrame(visible[0].Frame, new CGRect(content.X + frames.Control.X, content.Y + frames.Control.Y, frames.Control.Width, frames.Control.Height),
+            var popups = filePane.Subviews.OfType<NSGlassEffectView>().Select(glass => glass.ContentView).OfType<NSPopUpButton>().Where(popup => !popup.Hidden).ToArray();
+            if (popups.Length != 1) throw new InvalidOperationException($"{scope} 单胶囊回退时有 {popups.Length} 个可见下拉");
+            filterView = window.FilterCapsuleGlass;
+            RequireFrame(filterView.Frame, new CGRect(content.X + frames.Control.X, content.Y + frames.Control.Y, frames.Control.Width, frames.Control.Height),
                 $"{scope} 单胶囊外框");
-            geometry.Add($"{scope}\tfilter.capsule\t({visible[0].Frame.X:0.##},{visible[0].Frame.Y:0.##},{visible[0].Frame.Width:0.##},{visible[0].Frame.Height:0.##})");
+            geometry.Add($"{scope}\tfilter.capsule\t({filterView.Frame.X:0.##},{filterView.Frame.Y:0.##},{filterView.Frame.Width:0.##},{filterView.Frame.Height:0.##})");
         }
         else
         {
-            if (visible.Length != 3) throw new InvalidOperationException($"{scope} 三合体时有 {visible.Length} 个可见下拉");
+            var segmented = filePane.Subviews.OfType<NSGlassEffectView>().Select(glass => glass.ContentView).OfType<NSSegmentedControl>().SingleOrDefault()
+                ?? throw new InvalidOperationException($"{scope} 三合体未使用原生 NSSegmentedControl");
+            filterView = window.FilterSegmentedGlass;
+            if (segmented.SegmentCount != 3 || segmented.BorderShape != NSControlBorderShape.Capsule)
+                throw new InvalidOperationException($"{scope} 筛选连续控件段数或胶囊外形错误");
+            RequireFrame(filterView.Frame, new CGRect(content.X + frames.Control.X, content.Y + frames.Control.Y,
+                frames.Control.Width, frames.Control.Height), $"{scope} 筛选连续控件外框");
             var expected = new[] { frames.Sort, frames.Order, frames.Rating };
             var names = new[] { "sort", "order", "rating" };
             for (int index = 0; index < 3; index++)
             {
-                RequireFrame(visible[index].Frame,
-                    new CGRect(content.X + frames.Control.X + expected[index].X,
-                        content.Y + frames.Control.Y + expected[index].Y, expected[index].Width, expected[index].Height),
-                    $"{scope} 筛选段 {index}");
-                Record(geometry, scope, $"filter.{names[index]}", visible[index].Frame);
+                if (Math.Abs((double)segmented.GetWidth(index) - expected[index].Width) > Exact)
+                    throw new InvalidOperationException($"{scope} 筛选段 {index} 宽度错误");
+                var frame = new CGRect(segmented.Frame.X + (nfloat)expected[index].X,
+                    segmented.Frame.Y + (nfloat)expected[index].Y, (nfloat)expected[index].Width, (nfloat)expected[index].Height);
+                Record(geometry, scope, $"filter.{names[index]}", frame);
             }
-            geometry.Add($"{scope}\tfilter.segments\t({visible[0].Frame.X:0.##},{visible[0].Frame.Y:0.##},{visible[0].Frame.Width:0.##},{visible[0].Frame.Height:0.##})");
+            geometry.Add($"{scope}\tfilter.segments\t({filterView.Frame.X:0.##},{filterView.Frame.Y:0.##},{filterView.Frame.Width:0.##},{filterView.Frame.Height:0.##})");
         }
-        foreach (var popup in visible)
-            if (Math.Abs((double)popup.Frame.Height - (double)frames.Control.Height) > Exact)
-                throw new InvalidOperationException($"{scope} 筛选控件高不是 {frames.Control.Height}：{popup.Frame}");
+        if (Math.Abs((double)filterView.Frame.Height - (double)frames.Control.Height) > Exact)
+            throw new InvalidOperationException($"{scope} 筛选控件高不是 {frames.Control.Height}：{filterView.Frame}");
 #if PHOTOVIEWER_DINO
         if (window.SimilarityToggle.Hidden)
             throw new InvalidOperationException($"{scope} 文件栏可见时相似开关被隐藏");
-        var toggle = window.SimilarityToggle;
+        var toggle = window.SimilarityToggleGlass;
         RequireFrame(toggle.Frame, new CGRect(content.X + frames.Toggle.X, content.Y + frames.Toggle.Y, frames.Toggle.Width, frames.Toggle.Height),
             $"{scope} 相似聚类开关");
         double expectedToggleWidth = row ? DesignTokens.FilterToggleWidth : FilmCardGeometry.Width(FilmCardTier.Large);
         if (Math.Abs((double)toggle.Frame.Width - expectedToggleWidth) > Exact || Math.Abs((double)toggle.Frame.Height - WideFilterLayout.Height) > Exact)
             throw new InvalidOperationException($"{scope} 相似聚类开关不是 {expectedToggleWidth}×{WideFilterLayout.Height}：{toggle.Frame}");
         geometry.Add($"{scope}\tfilter.toggle\t({toggle.Frame.X:0.##},{toggle.Frame.Y:0.##},{toggle.Frame.Width:0.##},{toggle.Frame.Height:0.##})");
-        if (row && Math.Abs((double)toggle.Frame.Y - (double)visible[0].Frame.Y) > Exact)
+        if (row && Math.Abs((double)toggle.Frame.Y - (double)filterView.Frame.Y) > Exact)
             throw new InvalidOperationException($"{scope} 行布局 toggle 未与筛选控件同轴");
         if (!row)
         {
-            if (Math.Abs((double)visible[0].Frame.Width - 96) > Exact || Math.Abs((double)visible[0].Frame.X - 10) > Exact)
+            if (Math.Abs((double)filterView.Frame.Width - 96) > Exact || Math.Abs((double)filterView.Frame.X - 10) > Exact)
                 throw new InvalidOperationException($"{scope} 列布局筛选外框不是 96 宽居中");
-            if (Math.Abs((double)visible[0].Frame.Y - DesignTokens.ShellFilterLeadingInset) > Exact)
+            if (Math.Abs((double)filterView.Frame.Y - DesignTokens.ShellFilterLeadingInset) > Exact)
                 throw new InvalidOperationException($"{scope} 列布局筛选控件 y 不是 {DesignTokens.ShellFilterLeadingInset}");
-            if (Math.Abs((double)toggle.Frame.Y - (double)(visible[0].Frame.Y + 44 + 8)) > Exact)
+            if (Math.Abs((double)toggle.Frame.Y - (double)(filterView.Frame.Y + 44 + 8)) > Exact)
                 throw new InvalidOperationException($"{scope} 列布局开关未在筛选组下 8 点");
         }
 #else
@@ -791,18 +800,22 @@ internal static class NativeMainLayoutAcceptance
                 : new CGRect(item.X, item.Y + edge, item.Width, item.Height);
             RequireFrame(first, expected, $"{scope} 胶片首卡位置");
             var frames = window.FilterLayout;
-            var visible = filePane.Subviews.OfType<NSPopUpButton>().Where(popup => !popup.Hidden).ToArray();
-            if (visible.Length == 0) throw new InvalidOperationException($"{scope} 文件栏可见时筛选控件被隐藏");
             if (window.FilterCapsuleMode)
-                RequireFrame(visible.Single().Frame, new CGRect(panes.FileContent.X + frames.Control.X,
+            {
+                var visible = filePane.Subviews.OfType<NSGlassEffectView>().Select(glass => glass.ContentView).OfType<NSPopUpButton>().Where(popup => !popup.Hidden).ToArray();
+                RequireFrame(window.FilterCapsuleGlass.Frame, new CGRect(panes.FileContent.X + frames.Control.X,
                     panes.FileContent.Y + frames.Control.Y, frames.Control.Width, frames.Control.Height), $"{scope} 单胶囊");
+            }
             else
             {
+                var segmented = filePane.Subviews.OfType<NSGlassEffectView>().Select(glass => glass.ContentView).OfType<NSSegmentedControl>().SingleOrDefault()
+                    ?? throw new InvalidOperationException($"{scope} 文件栏可见时原生筛选连续控件被隐藏");
+                RequireFrame(window.FilterSegmentedGlass.Frame, new CGRect(panes.FileContent.X + frames.Control.X,
+                    panes.FileContent.Y + frames.Control.Y, frames.Control.Width, frames.Control.Height), $"{scope} 筛选连续控件");
                 var expectedFrames = new[] { frames.Sort, frames.Order, frames.Rating };
                 for (int index = 0; index < 3; index++)
-                    RequireFrame(visible[index].Frame, new CGRect(panes.FileContent.X + frames.Control.X + expectedFrames[index].X,
-                        panes.FileContent.Y + frames.Control.Y + expectedFrames[index].Y, expectedFrames[index].Width, expectedFrames[index].Height),
-                        $"{scope} 筛选段 {index}");
+                    if (Math.Abs((double)segmented.GetWidth(index) - expectedFrames[index].Width) > Exact)
+                        throw new InvalidOperationException($"{scope} 筛选段 {index} 宽度错误");
             }
         }
         if (window.Main.IsControlViewVisible)

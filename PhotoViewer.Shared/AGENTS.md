@@ -20,7 +20,7 @@
 | RatingControlGeometry.cs | RATING-07 星级控件几何：形态判定、控件矩形、六格槽位与主轴坐标→值映射、紧凑星簇分布、弹窗方向与夹取、`ExternalInBand` 跨入口取值带。 |
 | RatingGesture.cs | RATING-07 星级手势状态机：起手预览、沿星排移动、抬手提交、取消回滚，一次手势最多提交一次；支持延迟预览、强制提交与 0 号格改开来源弹窗。 |
 | RatingPopupLayout.cs | RATING-07 星级弹窗排版：星排步长收窄（下限 28 / 上限 44）、单条目横排与竖排、来源条目排版、面板尺寸、条目起点与分隔线位置；全部矩形相对条目左上角。 |
-| ToolbarFlowLayout.cs | TOOLBAR-01 宽形态控制栏流式排布：命令圆按钮 / 星级控件 / EXIF 分组尺寸由内容显式给出（EXIF 组取自 `ExifBlockGeometry`，无衬底纵排交叉轴固定为命令按钮边长），`Arrange` 一次输出文档宽高与每个分组在文档坐标中的矩形（整组换行、行内居中、交叉轴拉伸到行高、前导内边距可省略）；旧 `ControlBarLayout` 保持独立口径。 |
+| ToolbarFlowLayout.cs | TOOLBAR-01 宽形态控制栏流式排布：命令圆按钮 / 星级控件 / EXIF 分组尺寸由内容显式给出（EXIF 组取自 `ExifBlockGeometry`，无衬底纵排使用固有项宽且与按钮同轴），`Arrange` 一次输出文档宽高与每个分组在文档坐标中的矩形（整组换行、行内居中、交叉轴拉伸到行高、前导内边距可省略）；旧 `ControlBarLayout` 保持独立口径。 |
 | FilmSideGeometry.cs | SHELL-09 / FILM-07 / FILTER-07 左侧栏的末端几何：按刘海侧安全区、每档列表交叉轴内边距与胶片带厚算出内容末端锚点、栏宽与列表 X（`Measure`），把入口组或上下张按同一条末端对齐（`AlignTrailing`）；`PhoneScreenLayout`、iOS 宽形态筛选与根控制器共用。 |
 | ToolRegionGeometry.cs | SHELL-09/SHELL-12 工具区几何：分析栏与控制栏相邻时的共同外边距、接缝间距、独立/相邻控制列宽与居中起点；`PhoneScreenLayout` 与 `ToolbarFlowLayout` 共用。 |
 | ExifBlockGeometry.cs | TOOLBAR-05 EXIF 块几何：每项 52×36、项距 2、内边距 6、横排块高 44、圆角 12；固有尺寸与逐项矩形（槽位不足时等量收窄且不为负、长于固有长度不拉伸），以及内边距为零、按整项裁剪的无衬底变体。 |

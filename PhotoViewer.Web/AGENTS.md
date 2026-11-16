@@ -51,7 +51,7 @@ src/
       partition.js      # 宽形态行/列与手机竖/横分区、适应区、材质与分隔线
       filterbar.js      # FILTER-07@web 96/88 合体、手机竖圆按钮、AI 独立开关
       film.js / card.js # 两档胶片卡片与列表文档；位置/滚动业务仍取 filmscroll.js
-      controlbar.js     # EXIF→评分→命令、44 按钮、评分 224/88、手机固定槽位
+      controlbar.js     # EXIF→评分→命令、44 按钮、mac 评分恒 224、移动端评分 224/88、手机固定槽位
       analysis.js       # 瓦片等边长与独立/工具区相邻交叉轴
       similarity.js     # 相似面板让位（大档卡片）
       ratingpopover.js  # 星级来源浮窗

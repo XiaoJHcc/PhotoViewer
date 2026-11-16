@@ -20,6 +20,11 @@ public static class MacSymbols
         Symbols.Add(name, image);
         return image;
     }
+    /// <summary>取得带层级着色的系统符号，用于需要明确设计色的原生按钮或图像视图。</summary>
+    public static NSImage Get(string name, NSColor color)
+        => Get(name).GetImage(NSImageSymbolConfiguration.Create(color))
+            ?? throw new InvalidOperationException($"系统符号着色失败：{name}");
+
     /// <summary>创建原生方形图标按钮，尺寸由调用方指定。</summary>
     public static NSButton Button(string symbol, string tooltip, Action action, double size = 40, bool border = true)
     {

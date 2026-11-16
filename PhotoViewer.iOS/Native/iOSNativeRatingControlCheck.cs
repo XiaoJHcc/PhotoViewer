@@ -1172,9 +1172,14 @@ internal static class iOSNativeRatingControlCheck
                 if (popup.Rows.Count != 1)
                     throw new InvalidOperationException($"单条目弹窗应有 1 条星排，实际 {popup.Rows.Count}");
                 var row = popup.Rows[0];
-                if (row.Interactions.Length < 3)
+                if (row.Interactions.Length != 2
+                    || row.Interactions.OfType<UISelectionFeedbackGenerator>().SingleOrDefault() == null
+                    || row.Interactions.OfType<UIImpactFeedbackGenerator>().SingleOrDefault() == null)
                     throw new InvalidOperationException(
-                        $"星排交互不足（{row.Interactions.Length}）：应含指针交互与两种触感生成器");
+                        $"星排交互不足（{row.Interactions.Length}）：应含两种触感生成器");
+                if (row.SlotViews.Any(slot => slot.HoverStyle?.Effect == null
+                    || slot.HoverStyle.Shape == null || !slot.UserInteractionEnabled))
+                    throw new InvalidOperationException("星排格子未使用系统自动指针悬停效果与形状");
                 if (iOSRatingRow.LiveCount != baseline + 1)
                     throw new InvalidOperationException(
                         $"弹窗打开后星排实例数 {iOSRatingRow.LiveCount} ≠ 基线 {baseline} + 1");
@@ -2279,24 +2284,27 @@ internal static class iOSNativeRatingControlCheck
         }
 
         /// <summary>
-        /// 宽形态列布局的同列等宽与同轴（TOOLBAR-05）：无衬底 EXIF 列、星级控件与命令圆按钮的交叉轴宽度都是
-        /// 玻璃按钮边长 44；单列文档时三者中轴一致（多列是整组换列后的合法结果，只核对等宽）。
+        /// 宽形态列布局的同轴规则（TOOLBAR-05）：EXIF 使用自身固有项宽且不超过 64，星级与命令为 44；
+        /// 单列文档时三者中轴一致（多列是整组换列后的合法结果，只核对各自宽度）。
         /// </summary>
         /// <param name="context">报告范围名。</param>
         private void RequireWideColumnEqualWidth(string context)
         {
             var bar = _root.ControlBar;
             double size = DesignTokens.ShellGlassButtonSize;
-            var rating = FrameInBar(bar.RatingControl);
+            var rating = FrameInBar(bar.RatingControl.Capsule);
             if (Math.Abs((double)rating.Width - size) > Tolerance)
                 throw new InvalidOperationException($"{context} 星级控件列宽 {(double)rating.Width:0.#} ≠ {size:0.#}");
             var centers = new List<double> { (double)rating.GetMidX() };
+            double contentCross = size;
             if (bar.ExifGroup is { } exif)
             {
+                double exifWidth = ExifBlockGeometry.Size(exif.VisibleCount, false, bare: true).Width;
+                contentCross = Math.Max(contentCross, exifWidth);
                 var frame = FrameInBar(exif);
-                if (Math.Abs((double)frame.Width - size) > Tolerance)
+                if (Math.Abs((double)frame.Width - exifWidth) > Tolerance)
                     throw new InvalidOperationException(
-                        $"{context} 无衬底 EXIF 列宽 {(double)frame.Width:0.#} ≠ {size:0.#}（应与星级控件、命令按钮等宽）");
+                        $"{context} 无衬底 EXIF 列宽 {(double)frame.Width:0.#} ≠ 固有项宽 {exifWidth:0.#}");
                 centers.Add((double)frame.GetMidX());
             }
             foreach (var (command, button) in bar.Commands)
@@ -2309,12 +2317,12 @@ internal static class iOSNativeRatingControlCheck
             // 单列文档的交叉轴 = 两侧外边距 + 一列 44；出现整组换列时文档变宽，这是 TOOLBAR-08 的合法结果，
             // 只保留「每列等宽」的裁定（同轴仅对单列断言）。
             double documentCross = bar.Groups.Select(FrameInBar).Max(frame => (double)frame.GetMaxX()) + ToolbarFlowLayout.Padding;
-            bool singleColumn = Math.Abs(documentCross - (ToolbarFlowLayout.Padding * 2 + size)) <= Tolerance;
+            bool singleColumn = Math.Abs(documentCross - (ToolbarFlowLayout.Padding * 2 + contentCross)) <= Tolerance;
             if (singleColumn && centers.Any(center => Math.Abs(center - centers[0]) > Tolerance))
                 throw new InvalidOperationException(
                     $"{context} 单列文档里 EXIF / 星级 / 命令未同轴：中轴 {string.Join("、", centers.Select(center => $"{center:0.#}"))}");
-            _lines.Add($"PASS TOOLBAR-05 {context}：无衬底 EXIF 列 / 星级控件 / 命令圆按钮列宽同为 {size:0.#}，" +
-                (singleColumn ? "同列中轴一致" : "整组换列后仍保持列宽"));
+            _lines.Add($"PASS TOOLBAR-05 {context}：无衬底 EXIF 使用固有项宽，星级与命令为 {size:0.#}，" +
+                (singleColumn ? "同列中轴一致" : "整组换列后仍保持各自宽度"));
         }
 
         /// <summary>

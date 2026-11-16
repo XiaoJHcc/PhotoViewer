@@ -1,5 +1,4 @@
 using CoreGraphics;
-using Foundation;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Shared;
 using UIKit;
@@ -113,8 +112,9 @@ internal sealed class iOSRatingRow : UIView
             var slot = new UIImageView(CGRect.Empty)
             {
                 ContentMode = UIViewContentMode.Center,
-                UserInteractionEnabled = false,
+                UserInteractionEnabled = true,
                 BackgroundColor = UIColor.Clear,
+                HoverStyle = UIHoverStyle.Create(UIShape.CreateCircleShape()),
             };
             _slots[value] = slot;
             AddSubview(slot);
@@ -126,7 +126,6 @@ internal sealed class iOSRatingRow : UIView
             CancelsTouchesInView = false,
         };
         AddGestureRecognizer(_press);
-        AddInteraction(new UIPointerInteraction(new PointerDelegate(this)));
         _haptics = new iOSRatingHaptics(this);
         IsAccessibilityElement = true;
         AccessibilityTraits = UIAccessibilityTrait.Adjustable;
@@ -460,33 +459,4 @@ internal sealed class iOSRatingRow : UIView
         }
     }
 
-    /// <summary>指针逐格高亮：区域取指针下的格子，高亮取该格视图。</summary>
-    private sealed class PointerDelegate(iOSRatingRow owner) : UIPointerInteractionDelegate
-    {
-        /// <summary>指针所在的格子区域（标识为该格星级值）。</summary>
-        /// <param name="interaction">指针交互。</param>
-        /// <param name="request">指针请求（位置在星排坐标系中）。</param>
-        /// <param name="suggestedRegion">系统建议区域。</param>
-        /// <returns>格子区域。</returns>
-        public override UIPointerRegion GetRegionForRequest(
-            UIPointerInteraction interaction, UIPointerRegionRequest request, UIPointerRegion suggestedRegion)
-        {
-            int value = owner.ValueAt(owner._horizontal ? (double)request.Location.X : (double)request.Location.Y);
-            double main = owner.MainLength;
-            double cross = owner.CrossLength;
-            var rect = RatingControlGeometry.SlotRect(value, main, cross, owner._horizontal, owner._pitch);
-            return UIPointerRegion.Create(new CGRect(rect.X, rect.Y, rect.Width, rect.Height), NSNumber.FromInt32(value));
-        }
-
-        /// <summary>高亮指针下的格子视图。</summary>
-        /// <param name="interaction">指针交互。</param>
-        /// <param name="region">指针区域。</param>
-        /// <returns>系统指针样式。</returns>
-        public override UIPointerStyle GetStyleForRegion(UIPointerInteraction interaction, UIPointerRegion region)
-        {
-            int value = region.Identifier is NSNumber number ? number.Int32Value : 0;
-            var slot = owner._slots[Math.Clamp(value, 0, owner._slots.Length - 1)];
-            return UIPointerStyle.Create(UIPointerEffect.Create(new UITargetedPreview(slot)), null!);
-        }
-    }
 }

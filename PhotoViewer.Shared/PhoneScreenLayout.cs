@@ -26,7 +26,7 @@ public readonly record struct EdgeInsets(double Left, double Top, double Right, 
 /// <param name="FilmOuterPad">横屏纵向胶片条交叉轴两侧的卡片内边距（两侧同值）：靠刘海一侧让进安全区，靠主图一侧把卡片外框收进入口锚点。</param>
 /// <param name="AnalysisCross">分析栏交叉轴：竖屏为高，横屏为区域宽（已含按邻接测出的内边距与接缝间距）。</param>
 /// <param name="ExifCount">启用的 EXIF 项数；0 表示没有 EXIF 显示项。</param>
-/// <param name="ExifWidth">EXIF 固有宽：竖屏为带衬底的横排块；横屏的无衬底纵排列与玻璃按钮等宽同轴，不使用本值。</param>
+/// <param name="ExifWidth">EXIF 固有宽：竖屏为带衬底的横排块；横屏的无衬底纵排列使用固有项宽居中，最大不超过按钮与两侧边距之和。</param>
 /// <param name="ExifHeight">EXIF 固有高（同上，横屏为全部项纵排的总高）。</param>
 /// <param name="ExifItemSpacing">EXIF 相邻项间距；横屏按整项裁掉放不下的末尾项时使用。</param>
 /// <param name="RatingMinLength">横屏控制栏里星级控件至少保留的主轴长度（紧凑态最短长度）。</param>
@@ -179,7 +179,7 @@ public static class PhoneScreenLayout
 
     /// <summary>
     /// 横屏控制栏从下巴侧窗口缘起算的宽度：即实际控制区宽（内容 + 尾随内边距 + 与相邻分析栏共边时省略的前导内边距）。
-    /// EXIF 无衬底列的透明容器与玻璃按钮等宽同轴，列宽因此只由按钮边长与分析栏邻接关系决定，EXIF 开关不改变它。
+    /// EXIF 无衬底列使用固有项宽居中（不超过按钮与两侧边距之和），列宽只由按钮边长与分析栏邻接关系决定，EXIF 开关不改变它。
     /// 上下贴角探测取实际控制内容列，不含区域内边距。
     /// </summary>
     /// <param name="input">槽位输入。</param>
@@ -355,9 +355,9 @@ public static class PhoneScreenLayout
 
             if (exifHeight > 0)
             {
-                // 无衬底列的透明容器固定为玻璃按钮边长、与按钮同一中轴：文字在容器内尾部截断，
-                // 不拿项目固有宽（52）撑宽控制列，EXIF 开关因此不改变列宽与主图右避让。
-                exif = Rect(axis - button / 2, groupTop, button, exifHeight);
+                // 无衬底列按固有项宽居中，最大不超过按钮与两侧边距之和；开关不改变控制列宽。
+                double exifWidth = Math.Min(input.ExifWidth, button + ToolRegionGeometry.Padding * 2);
+                exif = Rect(axis - exifWidth / 2, groupTop, exifWidth, exifHeight);
             }
 
             double ratingTop = groupTop + exifHeight + exifGap;

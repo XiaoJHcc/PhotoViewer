@@ -190,7 +190,7 @@ internal static class NativeSimilarityAcceptance
     /// <summary>顶边悬停拖动区必须绕开筛选条全部可点控件，否则拖动层会盖住按钮使其时灵时不灵。</summary>
     private static void VerifyDragZonesClear(MacMainWindow window)
     {
-        var toggle = window.SimilarityToggle.Frame;
+        var toggle = window.SimilarityToggleGlass.Frame;
         foreach (var zone in window.DragZones)
         {
             if (zone.Frame.IntersectsWith(toggle))

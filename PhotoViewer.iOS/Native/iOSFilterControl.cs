@@ -155,6 +155,7 @@ internal sealed class iOSFilterControl : UIView
         };
         _similarity.TouchUpInside += (_, _) =>
             _main.FileVM.FilterBar.IsSimilarityPanelOpen = !_main.FileVM.FilterBar.IsSimilarityPanelOpen;
+        iOSGlassButtons.EnableHighlight(_similarity);
         AddSubview(_similarity);
 #else
         _similarity = null;

@@ -1,6 +1,6 @@
 /**
  * 控制栏几何（TOOLBAR-01/02/03/05/08、RATING-07、SHELL-08/09/12）。
- * 宽形态：EXIF → 评分 → 命令，44 点按钮，整组换行/换列、居中、溢出滚动。
+ * 宽形态：EXIF → 评分 → 命令，44 点按钮，整组换行/换列、居中、溢出滚动；mac 配置档评分恒为展开态。
  * 手机形态：固定槽位，不换行/不换列/不滚动；展开态评分 224、紧凑态 88、厚 44。
  * 矩形相对控制栏宿主；EXIF 块内项相对块。
  */
@@ -146,7 +146,7 @@ export function computeControlBar(spec, t) {
     const padding = t("toolbar.padding");
     const spacing = t("toolbar.group.spacing");
     const available = mainSize - padding * 2;
-    const ratingCompact = available < ratingMainLength(t);
+    const ratingCompact = profile !== "mac" && available < ratingMainLength(t);
     const specs = [];
     if (exifCount > 0) specs.push({ kind: "exif", count: exifCount });
     if (showRating) {

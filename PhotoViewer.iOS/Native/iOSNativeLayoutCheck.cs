@@ -1212,8 +1212,8 @@ internal static class iOSNativeLayoutCheck
             bool bare = !row;
             var (specWidth, specHeight) = ExifBlockGeometry.Size(exifCount, row, bare);
             double specMain = row ? specWidth : specHeight;
-            // 无衬底纵排的透明容器固定为玻璃按钮边长（44），与同列星级/按钮等宽同轴；项目固有宽不再决定列宽。
-            double specCross = row ? specHeight : DesignTokens.ShellGlassButtonSize;
+            // 无衬底纵排使用固有项宽（52，且不超过按钮与两侧边距之和 64），与同列星级/按钮同轴。
+            double specCross = row ? specHeight : specWidth;
             double frameMain = row ? (double)exif.Frame.Width : (double)exif.Frame.Height;
             double frameCross = row ? (double)exif.Frame.Height : (double)exif.Frame.Width;
             if (Math.Abs(frameMain - specMain) > Exact || Math.Abs(frameCross - specCross) > Exact)
@@ -1233,7 +1233,7 @@ internal static class iOSNativeLayoutCheck
                 var value = exif.ItemValues[index];
                 var item = ExifBlockGeometry.ItemRect(index, exifCount, row,
                     row ? (double)exif.Bounds.Width : (double)exif.Bounds.Height, bare);
-                // 运行时把项目矩形按块 bounds 夹取（无衬底纵排 44 内尾部截断），这里按同一口径核对。
+                // 运行时把项目矩形按块 bounds 夹取（无衬底纵排 52 内尾部截断），这里按同一口径核对。
                 double itemWidth = Math.Min(item.Width, (double)exif.Bounds.Width);
                 double itemX = Math.Clamp(item.X, 0, Math.Max(0, (double)exif.Bounds.Width - itemWidth));
                 item = new LayoutRect(itemX, item.Y, itemWidth, item.Height);
@@ -1265,9 +1265,9 @@ internal static class iOSNativeLayoutCheck
                     throw new InvalidOperationException($"{scope} 左右布局 EXIF 块仍显示模糊衬底");
                 if ((double)exif.Layer.CornerRadius > Exact)
                     throw new InvalidOperationException($"{scope} 左右布局 EXIF 块仍有圆角 {exif.Layer.CornerRadius}");
-                if (Math.Abs((double)exif.Bounds.Width - DesignTokens.ShellGlassButtonSize) > Exact)
+                if (Math.Abs((double)exif.Bounds.Width - specWidth) > Exact)
                     throw new InvalidOperationException(
-                        $"{scope} 无衬底 EXIF 列宽 {exif.Bounds.Width:0.##} ≠ 玻璃按钮边长 {DesignTokens.ShellGlassButtonSize:0.##}（无额外内外边距）");
+                        $"{scope} 无衬底 EXIF 列宽 {exif.Bounds.Width:0.##} ≠ 固有项宽 {specWidth:0.##}（无额外内外边距）");
             }
             exifSummary = $"{frameMain:0.##}×{frameCross:0.##}（{exifCount} 项{(row ? "横排带衬底" : "竖排无衬底")}）";
         }

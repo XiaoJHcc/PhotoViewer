@@ -117,7 +117,7 @@ internal sealed class iOSExifBlock : UIView
 
     /// <summary>
     /// 铺满衬底，并按共享矩形把每项的标签/数值对在项目内竖直居中；项目矩形再按块自身 bounds 夹取——
-    /// 无衬底纵排的透明容器固定为玻璃按钮边长（44），项目固有宽（52）不撑宽控制列，超出部分由标签尾部截断。
+    /// 无衬底纵排的透明容器使用固有项宽（52，且不超过按钮与两侧边距之和 64），与按钮同轴，超出部分由标签尾部截断。
     /// </summary>
     public override void LayoutSubviews()
     {

@@ -49,7 +49,10 @@ internal static class NativeToolbarAcceptance
                     NativeSnapshots.SaveMain(window, System.IO.Path.Combine(output, $"toolbar-{mode}-{size.Width:0}.png"));
                 }
             }
-            VerifyButtonSurface(window.ControlBar.Commands["Next"], output);
+            var surfaceButton = window.ControlBar.Commands["Next"];
+            var surfaceGlass = window.ControlBar.Groups.SelectMany(group => group.Subviews).OfType<NSGlassEffectView>()
+                .Single(glass => ReferenceEquals(glass.ContentView, surfaceButton));
+            await VerifyButtonSurfaceAsync(surfaceGlass, surfaceButton, output);
             var next = settings.Hotkeys.Single(hotkey => hotkey.Command == "Next");
             next.IsDisplay = false;
             await Task.Delay(150);
@@ -155,14 +158,27 @@ internal static class NativeToolbarAcceptance
             await Task.Delay(200);
             if (System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(first.File.RequireLocalPath())) == "toolbar")
             {
-                int targetRating = first.Rating == 3 ? 2 : 3;
-                var ratingButton = window.ControlBar.Ratings[targetRating];
-                ratingButton.PerformClick(ratingButton);
-                for (int attempt = 0; attempt < 100 && first.Rating != targetRating; attempt++) await Task.Delay(50);
-                var exif = await ExifLoader.LoadExifDataAsync(new LocalFileRef(first.File.RequireLocalPath()));
-                if (first.Rating != targetRating || exif?.Rating != targetRating || window.Main.CurrentFile != first)
-                    throw new InvalidOperationException("评分按钮写回/主图身份错误");
-                observations.Add($"real rating button changes owned fixture to {targetRating} stars and preserves current photo");
+                int originalRating = first.Rating;
+                try
+                {
+                    foreach (var mode in new[] { LayoutMode.Row, LayoutMode.Col })
+                    {
+                        settings.LayoutMode = mode;
+                        await Task.Delay(180);
+                        int targetRating = first.Rating == 3 ? 2 : 3;
+                        await ClickRatingButtonAsync(window, first, targetRating, mode);
+                        var exif = await ExifLoader.LoadExifDataAsync(new LocalFileRef(first.File.RequireLocalPath()));
+                        if (first.Rating != targetRating || exif?.Rating != targetRating || window.Main.CurrentFile != first)
+                            throw new InvalidOperationException($"{mode} 评分按钮写回/主图身份错误");
+                    }
+                }
+                finally
+                {
+                    await window.RateAsync(first, originalRating);
+                    settings.LayoutMode = LayoutMode.Row;
+                    await Task.Delay(150);
+                }
+                observations.Add("real pointer down/up changes owned fixture ratings in both row and column layouts and preserves current photo");
             }
             await VerifyRatingContinuityAsync(window, observations);
             await VerifyRatingConflictAsync(window, output, observations);
@@ -210,29 +226,26 @@ internal static class NativeToolbarAcceptance
         VerifyControlScroller(window);
         foreach (var button in bar.Commands.Values)
         {
-            if (button is not MacControlBar.ToolbarButton || button.Bordered)
-                throw new InvalidOperationException("工具按钮没有使用原生 NSButton");
-            double radius = Math.Min((double)button.Bounds.Width, (double)button.Bounds.Height) / 2;
-            if (!button.WantsLayer || button.Layer is not { } commandLayer || !commandLayer.MasksToBounds
-                || Math.Abs((double)commandLayer.CornerRadius - radius) > .01)
-                throw new InvalidOperationException($"命令按钮不是 44×44 正圆单层图层：{button.Frame}/{button.Layer?.CornerRadius}");
+            bool glassHosted = bar.Groups.SelectMany(group => group.Subviews).OfType<NSGlassEffectView>()
+                .Any(glass => ReferenceEquals(glass.ContentView, button));
+            if (button is not MacControlBar.ToolbarButton || !glassHosted
+                || button.BezelStyle != NSBezelStyle.Rounded || button.BorderShape != NSControlBorderShape.Circle
+                || !button.ShowsBorderOnlyWhileMouseInside)
+                throw new InvalidOperationException("命令按钮未使用 macOS 原生玻璃视图与圆钮");
         }
-        foreach (var rating in bar.Ratings)
-            if (rating.Layer is { } ratingLayer && (ratingLayer.MasksToBounds || Math.Abs((double)ratingLayer.CornerRadius) > .01))
-                throw new InvalidOperationException($"评分槽位状态面被误改为圆形裁切图层：{rating.Frame}/{ratingLayer.CornerRadius}");
-        foreach (var tile in bar.Groups[0].Subviews)
+        foreach (var tile in bar.Groups[0] is MacControlBar.ExifBlockView exifBlock ? exifBlock.Tiles : [])
         {
             var labels = tile.Subviews.OfType<NSTextField>().ToArray();
             if (labels.Length != 2 || tile.ToolTip == null || labels[1].Font.PointSize <= labels[0].Font.PointSize)
                 throw new InvalidOperationException("EXIF 标签/值层级丢失");
         }
         observations.Add($"{window.Main.Settings.LayoutMode}/{window.Window.ContentView!.Bounds.Size}: groups={string.Join(";", bar.Groups.Select(group => group.Frame))}; clip={window.ControlScroll.ContentView.Bounds}; document={bar.Frame}; padding/child margins/stretch retained");
-        var exifMaterial = bar.Groups.OfType<NSVisualEffectView>().FirstOrDefault();
+        var exifMaterial = bar.Groups.OfType<MacControlBar.ExifBlockView>().FirstOrDefault();
         var ratingCapsule = bar.Groups
             .SelectMany(group => group.Subviews.OfType<MacControlBar.RatingControlView>())
             .FirstOrDefault();
-        var firstCommandLayer = bar.Commands.Values.Select(button => button.Layer).FirstOrDefault(layer => layer != null);
-        observations.Add($"{window.Main.Settings.LayoutMode}: EXIF 衬底={exifMaterial?.Material}/{exifMaterial?.BlendingMode}/{exifMaterial?.Layer?.CornerRadius}; 评分胶囊圆角={ratingCapsule?.Layer?.CornerRadius}; 命令按钮圆角={firstCommandLayer?.CornerRadius}");
+        var firstCommand = bar.Commands.Values.FirstOrDefault();
+        observations.Add($"{window.Main.Settings.LayoutMode}: EXIF 原生分组={exifMaterial?.BoxType}; 评分控件={ratingCapsule != null}; 命令按钮={firstCommand?.BezelStyle}/{firstCommand?.BorderShape}");
     }
 
     private static void VerifyGroupContents(MacControlBar bar, bool horizontal)
@@ -240,27 +253,23 @@ internal static class NativeToolbarAcceptance
         for (int groupIndex = 0; groupIndex < bar.Groups.Count; groupIndex++)
         {
             var group = bar.Groups[groupIndex];
-            var children = group.Subviews;
+            var children = group is MacControlBar.ExifBlockView exifBlock ? exifBlock.Tiles.ToArray() : group.Subviews;
             switch (bar.GroupKinds[groupIndex])
             {
                 case ControlBarGroupKind.Exif:
                     double blockMain = horizontal ? (double)group.Bounds.Width : (double)group.Bounds.Height;
                     for (int index = 0; index < children.Length; index++)
                     {
-                        var expected = ExifBlockGeometry.ItemRect(index, children.Length, horizontal, blockMain);
+                        var expected = ExifBlockGeometry.ItemRect(index, children.Length, horizontal, blockMain, bare: !horizontal);
                         RequireFrame(children[index].Frame, ToRect(expected), $"组 {groupIndex} EXIF 项 {index}");
                         if (children[index].Subviews.OfType<NSTextField>().Count() != 2)
                             throw new InvalidOperationException($"组 {groupIndex} EXIF 项 {index} 缺少标签/值两行");
                     }
-                    if (group is not NSVisualEffectView exifMaterial
-                        || exifMaterial.Material != NSVisualEffectMaterial.Sidebar
-                        || exifMaterial.BlendingMode != NSVisualEffectBlendingMode.WithinWindow
-                        || exifMaterial.State != NSVisualEffectState.Active
-                        || exifMaterial.Appearance?.Name != NSAppearance.NameDarkAqua)
-                        throw new InvalidOperationException("EXIF 衬底不是深色窗口内取样的原生 NSVisualEffectView");
-                    if (group.Layer is not { } exifLayer || !exifLayer.MasksToBounds
-                        || Math.Abs((double)exifLayer.CornerRadius - ExifBlockGeometry.CornerRadius) > .01)
-                        throw new InvalidOperationException($"EXIF 衬底圆角不是 {ExifBlockGeometry.CornerRadius} 或缺少单层裁切");
+                    if (group is not MacControlBar.ExifBlockView exifMaterial
+                        || exifMaterial.BoxType != NSBoxType.NSBoxPrimary || exifMaterial.TitlePosition != NSTitlePosition.NoTitle
+                        || exifMaterial.ContentViewMargins != CGSize.Empty || exifMaterial.Appearance?.Name != NSAppearance.NameDarkAqua
+                        || exifMaterial.Bare == horizontal)
+                        throw new InvalidOperationException("EXIF 原生分组外观或竖排无衬底规则错误，或叠加了第二份边距");
                     break;
                 case ControlBarGroupKind.Rating:
                     if (children.Length != 1) throw new InvalidOperationException("评分组不是单个星级控件");
@@ -269,27 +278,27 @@ internal static class NativeToolbarAcceptance
                     var controlFrame = RatingControlGeometry.ControlFrame(
                         new LayoutRect(0, 0, (double)group.Bounds.Width, (double)group.Bounds.Height), horizontal);
                     RequireFrame(control.Frame, ToRect(controlFrame), "评分控件外框");
-                    if (control is not MacControlBar.RatingControlView ratingControl
-                        || !ratingControl.WantsLayer || ratingControl.Layer is not { } capsule || !capsule.MasksToBounds
-                        || Math.Abs((double)capsule.CornerRadius - RatingControlGeometry.Thickness / 2) > .01
-                        || capsule.BackgroundColor is null)
-                        throw new InvalidOperationException("评分控件外框未使用半圆端胶囊图层");
+                    if (control is not MacControlBar.RatingControlView ratingControl)
+                        throw new InvalidOperationException("评分组缺少星级控件");
                     if (form != RatingControlForm.Expanded)
                         throw new InvalidOperationException("验收窗口下评分控件应保持展开态");
                     double main = horizontal ? (double)control.Bounds.Width : (double)control.Bounds.Height;
+                    if (ratingControl.Style != NSGlassEffectViewStyle.Regular
+                        || Math.Abs((double)ratingControl.CornerRadius - RatingControlGeometry.Thickness / 2) > .01
+                        || ratingControl.ContentView is not { } content)
+                        throw new InvalidOperationException("评分控件外框未使用系统玻璃胶囊");
                     double cross = horizontal ? (double)control.Bounds.Height : (double)control.Bounds.Width;
-                    if (Math.Abs((double)capsule.CornerRadius * 2 - cross) > .01)
-                        throw new InvalidOperationException($"评分胶囊圆角 {capsule.CornerRadius} 未等于厚度 {cross} 的一半");
                     foreach (var button in bar.Ratings)
                     {
                         var slot = RatingControlGeometry.SlotRect((int)button.Tag, main, cross, horizontal, RatingControlGeometry.Slot);
                         RequireFrame(button.Frame, ToRect(slot), $"评分槽位 {button.Tag}");
-                        if (button.Layer is { } slotLayer && (slotLayer.MasksToBounds || Math.Abs((double)slotLayer.CornerRadius) > .01))
-                            throw new InvalidOperationException($"评分槽位 {button.Tag} 状态面被圆形裁切");
+                        if (!ReferenceEquals(button.Superview, content) || button is not MacControlBar.ToolbarButton native
+                            || !native.Bordered || !native.ShowsBorderOnlyWhileMouseInside
+                            || native.BezelStyle != NSBezelStyle.Rounded || native.BorderShape != NSControlBorderShape.Circle)
+                            throw new InvalidOperationException($"评分槽位 {button.Tag} 未使用玻璃内容区里的原生圆形悬停按钮");
                     }
-                    var expectedMain = RatingControlGeometry.ExpandedLength;
-                    if (Math.Abs(main - expectedMain) > .01)
-                        throw new InvalidOperationException($"评分外框主轴 {main} 不是展开态 {expectedMain}");
+                    if (Math.Abs(main - RatingControlGeometry.ExpandedLength) > .01)
+                        throw new InvalidOperationException($"评分外框主轴 {main} 不是展开态 {RatingControlGeometry.ExpandedLength}");
                     break;
                 case ControlBarGroupKind.Command:
                     double commandCross = horizontal ? (double)group.Bounds.Height : (double)group.Bounds.Width;
@@ -301,10 +310,11 @@ internal static class NativeToolbarAcceptance
                             ? new CGRect(position, offset, ToolbarFlowLayout.CommandSize, ToolbarFlowLayout.CommandSize)
                             : new CGRect(offset, position, ToolbarFlowLayout.CommandSize, ToolbarFlowLayout.CommandSize);
                         RequireFrame(children[index].Frame, expected, $"组 {groupIndex} 命令 {index}");
-                        if (children[index] is not MacControlBar.ToolbarButton command || command.Layer is not { } commandLayer
-                            || !commandLayer.MasksToBounds
-                            || Math.Abs((double)commandLayer.CornerRadius - ToolbarFlowLayout.CommandSize / 2) > .01)
-                            throw new InvalidOperationException($"组 {groupIndex} 命令 {index} 不是正圆单层图层");
+                        if (children[index] is not NSGlassEffectView glass
+                            || glass.ContentView is not MacControlBar.ToolbarButton command
+                            || command.BezelStyle != NSBezelStyle.Rounded || command.BorderShape != NSControlBorderShape.Circle
+                            || !command.ShowsBorderOnlyWhileMouseInside)
+                            throw new InvalidOperationException($"组 {groupIndex} 命令 {index} 未使用原生玻璃视图与圆钮");
                     }
                     break;
             }
@@ -322,17 +332,17 @@ internal static class NativeToolbarAcceptance
         try
         {
             // 独立固定几何：EXIF 4 项、评分展开 224、命令 6 个，组距/外边距各 10。
-            // 行布局内容主轴 774，三段总宽 774；列布局内容主轴 710，三段总高 710。
+            // 行布局内容主轴 774，三段总宽 774；列布局无衬底 EXIF 高 150，三段总高 698。
             (bool Horizontal, double Main, double Cross, CGRect[] Frames)[] cases =
             [
                 (true, 794, 64, [new(10, 10, 226, 44), new(246, 10, 224, 44), new(480, 10, 304, 44)]),
                 (true, 793, 118, [new(166.5, 10, 226, 44), new(402.5, 10, 224, 44), new(244.5, 64, 304, 44)]),
                 (true, 480, 118, [new(10, 10, 226, 44), new(246, 10, 224, 44), new(88, 64, 304, 44)]),
                 (true, 479, 172, [new(126.5, 10, 226, 44), new(127.5, 64, 224, 44), new(87.5, 118, 304, 44)]),
-                (false, 730, 84, [new(10, 10, 64, 162), new(10, 182, 64, 224), new(10, 416, 64, 304)]),
-                (false, 729, 138, [new(10, 166.5, 64, 162), new(10, 338.5, 64, 224), new(84, 212.5, 44, 304)]),
-                (false, 416, 138, [new(10, 10, 64, 162), new(10, 182, 64, 224), new(84, 56, 44, 304)]),
-                (false, 415, 192, [new(10, 126.5, 64, 162), new(84, 95.5, 44, 224), new(138, 55.5, 44, 304)]),
+                (false, 718, 72, [new(10, 10, 52, 150), new(10, 170, 52, 224), new(10, 404, 52, 304)]),
+                (false, 717, 126, [new(10, 166.5, 52, 150), new(10, 326.5, 52, 224), new(72, 206.5, 44, 304)]),
+                (false, 404, 126, [new(10, 10, 52, 150), new(10, 170, 52, 224), new(72, 50, 44, 304)]),
+                (false, 403, 180, [new(10, 126.5, 52, 150), new(72, 89.5, 44, 224), new(126, 49.5, 44, 304)]),
             ];
             foreach (var test in cases)
             {
@@ -345,7 +355,7 @@ internal static class NativeToolbarAcceptance
                     RequireFrame(bar.Groups[index].Frame, test.Frames[index], $"{test.Horizontal}/{test.Main} 组 {index}");
                 VerifyGroupContents(bar, test.Horizontal);
             }
-            VerifyCompactRating(window, observations);
+            VerifyNarrowRatingStaysExpanded(window, observations);
         }
         finally
         {
@@ -356,71 +366,48 @@ internal static class NativeToolbarAcceptance
         observations.Add("shared flow geometry: row/column wrap thresholds derived from EXIF 226 / rating 224 / commands 304; exact fit and one point below; 10 point padding/spacing; EXIF item rects, six 36×44 expanded slots and 44 command buttons all from shared geometry");
     }
 
-    /// <summary>
-    /// RATING-07：紧凑态与展开态共用同一半圆端胶囊——主轴 88、交叉轴 44、圆角恒为厚度的一半；
-    /// 六个槽位按钮收起，星簇首末字形中心落在两端半圆的圆心。
-    /// </summary>
-    private static void VerifyCompactRating(MacMainWindow window, List<string> observations)
+    /// <summary>桌面窄窗口也保留完整 224×44 展开星排，由整组换列或滚动吸收空间不足。</summary>
+    private static void VerifyNarrowRatingStaysExpanded(MacMainWindow window, List<string> observations)
     {
         var bar = window.ControlBar;
-        int ratingIndex = -1;
-        for (int index = 0; index < bar.GroupKinds.Count; index++)
-            if (bar.GroupKinds[index] == ControlBarGroupKind.Rating) { ratingIndex = index; break; }
-        if (ratingIndex < 0) throw new InvalidOperationException("紧凑胶囊验收缺少评分组");
-        int items = RatingControlGeometry.CompactItemCount(window.Main.CurrentFile?.HasRatingConflict == true);
+        int ratingIndex = Array.IndexOf(bar.GroupKinds.ToArray(), ControlBarGroupKind.Rating);
+        if (ratingIndex < 0) throw new InvalidOperationException("窄窗口展开评分验收缺少评分组");
         foreach (bool horizontal in new[] { true, false })
         {
             double availableMain = RatingControlGeometry.CompactMinLength + ToolbarFlowLayout.Padding * 2;
             var sizes = new List<ToolbarGroupSize>
             {
-                ToolbarFlowLayout.Exif(bar.ExifItemCount, horizontal),
-                ToolbarFlowLayout.Rating(ToolbarFlowLayout.ContentMain(availableMain)),
+                ToolbarFlowLayout.Exif(bar.ExifItemCount, horizontal, bare: !horizontal),
+                ToolbarFlowLayout.Rating(RatingControlGeometry.ExpandedLength),
                 ToolbarFlowLayout.Commands(bar.Commands.Count),
             };
             var expected = ToolbarFlowLayout.Arrange(sizes, horizontal, availableMain);
             bar.Arrange(horizontal ? new CGSize(availableMain, 180) : new CGSize(180, availableMain), horizontal);
-            if (bar.RatingForm != RatingControlForm.Compact)
-                throw new InvalidOperationException($"窄槽位未进入紧凑态：{bar.RatingForm}");
             var group = bar.Groups[ratingIndex];
-            RequireFrame(group.Frame, ToRect(expected.Groups[ratingIndex]), $"{horizontal} 紧凑评分组");
+            RequireFrame(group.Frame, ToRect(expected.Groups[ratingIndex]), $"{horizontal} 窄窗口展开评分组");
             var control = group.Subviews[0];
             var controlFrame = RatingControlGeometry.ControlFrame(
                 new LayoutRect(0, 0, (double)group.Bounds.Width, (double)group.Bounds.Height), horizontal);
-            RequireFrame(control.Frame, ToRect(controlFrame), $"{horizontal} 紧凑评分胶囊");
+            RequireFrame(control.Frame, ToRect(controlFrame), $"{horizontal} 窄窗口展开评分胶囊");
             double main = horizontal ? (double)control.Bounds.Width : (double)control.Bounds.Height;
             double cross = horizontal ? (double)control.Bounds.Height : (double)control.Bounds.Width;
-            if (Math.Abs(main - RatingControlGeometry.CompactMinLength) > .01
+            if (Math.Abs(main - RatingControlGeometry.ExpandedLength) > .01
                 || Math.Abs(cross - RatingControlGeometry.Thickness) > .01)
-                throw new InvalidOperationException(
-                    $"紧凑胶囊 {main}×{cross} 不是 {RatingControlGeometry.CompactMinLength}×{RatingControlGeometry.Thickness}");
-            if (control.Layer is not { } capsule || !capsule.MasksToBounds
-                || Math.Abs((double)capsule.CornerRadius - RatingControlGeometry.Thickness / 2) > .01)
-                throw new InvalidOperationException($"紧凑胶囊圆角 {control.Layer?.CornerRadius} 不是厚度 {cross} 的一半");
-            if (bar.Ratings.Any(button => !button.Hidden))
-                throw new InvalidOperationException("紧凑态仍显示六个槽位按钮");
-            var glyphs = control.Subviews.OfType<NSImageView>().Where(view => !view.Hidden).ToArray();
-            if (glyphs.Length != items)
-                throw new InvalidOperationException($"紧凑星簇条目 {glyphs.Length} 不是 {items}");
-            double nearest = double.MaxValue, farthest = double.MinValue;
-            foreach (var glyph in glyphs)
+                throw new InvalidOperationException($"窄窗口评分胶囊 {main}×{cross} 未保持 224×44 展开态");
+            if (control is not MacControlBar.RatingControlView glass
+                || glass.Style != NSGlassEffectViewStyle.Regular
+                || Math.Abs((double)glass.CornerRadius - RatingControlGeometry.Thickness / 2) > .01
+                || glass.ContentView is not { } content)
+                throw new InvalidOperationException("展开评分外框未使用系统玻璃胶囊");
+            if (bar.Ratings.Count != 6 || bar.Ratings.Any(button => button.Hidden) || content.Subviews.Length != 6)
+                throw new InvalidOperationException("窄窗口未完整显示六个评分槽位");
+            foreach (var button in bar.Ratings)
             {
-                double center = horizontal
-                    ? (double)(glyph.Frame.X + glyph.Frame.Width / 2)
-                    : (double)(glyph.Frame.Y + glyph.Frame.Height / 2);
-                double glyphCross = horizontal
-                    ? (double)(glyph.Frame.Y + glyph.Frame.Height / 2)
-                    : (double)(glyph.Frame.X + glyph.Frame.Width / 2);
-                if (Math.Abs(glyphCross - cross / 2) > .01)
-                    throw new InvalidOperationException($"紧凑星簇字形未沿胶囊中线：{glyph.Frame}/{cross}");
-                nearest = Math.Min(nearest, center);
-                farthest = Math.Max(farthest, center);
+                var slot = RatingControlGeometry.SlotRect((int)button.Tag, main, cross, horizontal, RatingControlGeometry.Slot);
+                RequireFrame(button.Frame, ToRect(slot), $"窄窗口评分槽位 {button.Tag}");
             }
-            double inset = RatingControlGeometry.Thickness / 2;
-            if (Math.Abs(nearest - inset) > .01 || Math.Abs(farthest - (main - inset)) > .01)
-                throw new InvalidOperationException(
-                    $"紧凑星簇首末字形中心 {nearest}/{farthest} 未落在两端半圆圆心 {inset}/{main - inset}");
         }
-        observations.Add("RATING-07 compact capsule: 88 × 44, same half-thickness radius as the 224 expanded capsule, six slots hidden, cluster inset half a thickness at both ends");
+        observations.Add("RATING-07 desktop narrow: rating stays expanded at 224 × 44 in both directions, all six native slots remain visible");
     }
 
     /// <summary>
@@ -455,6 +442,24 @@ internal static class NativeToolbarAcceptance
             throw new InvalidOperationException($"{stage}控制栏裁剪区被竖向滚动条挤窄 {gutter:0.##} 点：clip {scroll.ContentView.Bounds.Width} / bar {scroll.Bounds.Width}");
     }
 
+    /// <summary>以窗口中的真实鼠标按下/抬起驱动星级按钮，先核对命中对象再等待磁盘真值。</summary>
+    private static async Task ClickRatingButtonAsync(MacMainWindow window, ImageFile file, int target, LayoutMode mode)
+    {
+        var button = window.ControlBar.Ratings[target];
+        var location = button.ConvertPointToView(new CGPoint(button.Bounds.GetMidX(), button.Bounds.GetMidY()), null);
+        var hit = window.Window.ContentView!.HitTest(location);
+        if (!ReferenceEquals(hit, button))
+            throw new InvalidOperationException($"{mode} 星级指针命中错误：target={target}, hit={hit?.GetType().FullName ?? "null"}, hitTag={(hit as NSButton)?.Tag.ToString() ?? "-"}, point={location}, button={button.Frame}");
+        foreach (var type in new[] { NSEventType.LeftMouseDown, NSEventType.LeftMouseUp })
+        {
+            using var nativeEvent = NSEvent.MouseEvent(type, location, 0, NSProcessInfo.ProcessInfo.SystemUptime,
+                window.Window.WindowNumber, null!, 1, 1, type == NSEventType.LeftMouseDown ? 1 : 0)
+                ?? throw new InvalidOperationException("星级鼠标事件创建失败");
+            NSApplication.SharedApplication.PostEvent(nativeEvent, false);
+        }
+        await WaitAsync(() => file.Rating == target, $"{mode} 真实指针评分写回 {target}");
+    }
+
     /// <summary>TOOLBAR-03/RATING-04：点亮星 color.star.on、空心星 color.star.off、清零叉中性 color.star.clear；冲突时 0 号取 color.star.conflict。</summary>
     private static void VerifyRatingGroupColors(MacMainWindow window)
     {
@@ -463,14 +468,14 @@ internal static class NativeToolbarAcceptance
         int rating = window.Main.CurrentFile?.Rating ?? 0;
         if (window.Main.CurrentFile?.HasRatingConflict == true)
         {
-            if (!ReferenceEquals(bar.Ratings[0].Image, MacSymbols.Get(MacSymbols.RatingConflict)))
-                throw new InvalidOperationException("评分组冲突时 0 号未换成警示三角");
+            if (bar.Ratings[0].Image?.Template != false)
+                throw new InvalidOperationException("评分组冲突三角未使用原生层级着色");
             RequireColor(bar.Ratings[0].ContentTintColor, MacDesignColors.Argb(DesignTokens.ColorStarConflict), "评分组冲突三角");
         }
         else
         {
-            if (!ReferenceEquals(bar.Ratings[0].Image, MacSymbols.Get("xmark")))
-                throw new InvalidOperationException("评分组无冲突时 0 号不是清零叉");
+            if (bar.Ratings[0].Image?.Template != false)
+                throw new InvalidOperationException("评分组清零叉未使用原生层级着色");
             RequireColor(bar.Ratings[0].ContentTintColor, MacDesignColors.Argb(DesignTokens.ColorStarClear), "评分组清零叉");
         }
         for (int value = 1; value < 6; value++)
@@ -558,11 +563,11 @@ internal static class NativeToolbarAcceptance
         observations.Add($"scroll offset kept across rebuild ({rowOffset:0.##}→{rebuiltOffset:0.##}) and clamped after direction change to ({bounds.X:0.##},{bounds.Y:0.##}) within ({maximumX:0.##},{maximumY:0.##})");
     }
 
-    /// <summary>读取真实按钮绘制像素，避免 40×40 外框通过但系统边框仍只画成矮条。</summary>
-    private static void VerifyButtonSurface(NSButton button, string output)
+    /// <summary>读取整个原生玻璃控件，核对常态覆盖、真实指针命中、系统悬停配置与按下反馈。</summary>
+    private static async Task VerifyButtonSurfaceAsync(NSGlassEffectView glass, NSButton button, string output)
     {
         string path = System.IO.Path.Combine(output, "toolbar-button-surface.png");
-        NativeSnapshots.SaveView(button, path);
+        NativeSnapshots.SaveView(glass, path);
         using var bitmap = SKBitmap.Decode(path) ?? throw new InvalidOperationException("按钮绘制截图无法读取");
         var painted = Enumerable.Range(0, bitmap.Height).Where(row =>
         {
@@ -570,19 +575,28 @@ internal static class NativeToolbarAcceptance
             return color.Alpha > 0 && Math.Max(color.Red, Math.Max(color.Green, color.Blue)) > 25;
         }).ToArray();
         if (painted.Length == 0 || painted[^1] - painted[0] < bitmap.Height * .8)
-            throw new InvalidOperationException("系统按钮的实际边框没有覆盖方形区域");
-        using var hover = NSEvent.MouseEvent(NSEventType.MouseMoved, CGPoint.Empty, 0, NSProcessInfo.ProcessInfo.SystemUptime, button.Window!.WindowNumber, null!, 1, 1, 0)!;
-        button.MouseEntered(hover);
+            throw new InvalidOperationException("系统玻璃表面没有覆盖方形区域");
+        var window = button.Window ?? throw new InvalidOperationException("命令按钮没有原生窗口");
+        window.MakeKeyAndOrderFront(null);
+        var location = button.ConvertPointToView(new CGPoint(button.Bounds.GetMidX(), button.Bounds.GetMidY()), null);
+        using (var hover = NSEvent.MouseEvent(NSEventType.MouseMoved, location, 0,
+            NSProcessInfo.ProcessInfo.SystemUptime, window.WindowNumber, null!, 1, 1, 0)!)
+            NSApplication.SharedApplication.PostEvent(hover, false);
+        await Task.Delay(120);
         string hovered = Path.Combine(output, "toolbar-button-hover.png");
-        NativeSnapshots.SaveView(button, hovered);
-        if (File.ReadAllBytes(path).SequenceEqual(File.ReadAllBytes(hovered))) throw new InvalidOperationException("按钮悬停无可见反馈");
+        NativeSnapshots.SaveView(glass, hovered);
+        if (!ReferenceEquals(window.ContentView!.HitTest(location), button) || !button.ShowsBorderOnlyWhileMouseInside)
+            throw new InvalidOperationException("真实指针未命中命令按钮，或缺少 AppKit 悬停边框配置");
         button.Cell!.Highlighted = true;
         button.NeedsDisplay = true;
         string pressed = Path.Combine(output, "toolbar-button-pressed.png");
-        NativeSnapshots.SaveView(button, pressed);
+        NativeSnapshots.SaveView(glass, pressed);
         if (File.ReadAllBytes(hovered).SequenceEqual(File.ReadAllBytes(pressed))) throw new InvalidOperationException("按钮按下无可见反馈");
         button.Cell.Highlighted = false;
-        button.MouseExited(hover);
+        using (var leave = NSEvent.MouseEvent(NSEventType.MouseMoved, CGPoint.Empty, 0,
+            NSProcessInfo.ProcessInfo.SystemUptime, window.WindowNumber, null!, 1, 1, 0)!)
+            NSApplication.SharedApplication.PostEvent(leave, false);
+        await Task.Delay(80);
     }
 
     /// <summary>
@@ -739,8 +753,8 @@ internal static class NativeToolbarAcceptance
             if (clear.Tag != 0)
                 throw new InvalidOperationException($"评分组 0 号 Tag 不是 0：{clear.Tag}");
             RequireFrame(clear.Frame, ToRect(expectedSlot), "冲突三角改变了评分组 0 号槽位几何");
-            if (!ReferenceEquals(clear.Image, MacSymbols.Get(MacSymbols.RatingConflict)))
-                throw new InvalidOperationException("控制栏 0 号槽位未显示冲突警示三角");
+            if (clear.Image?.Template != false)
+                throw new InvalidOperationException("控制栏冲突三角未使用原生层级着色");
             RequireColor(clear.ContentTintColor, MacDesignColors.Argb(DesignTokens.ColorStarConflict), "控制栏冲突三角");
             if (clear.ToolTip != "评分来源冲突")
                 throw new InvalidOperationException($"控制栏冲突入口提示错误：{clear.ToolTip}");
@@ -902,19 +916,11 @@ internal static class NativeToolbarAcceptance
                         if (attempt == 0 && mode == LayoutMode.Row && index == 0)
                         {
                             var hoverStar = stars[1];
-                            string normalPath = System.IO.Path.Combine(output, "rating-source-star-normal.png");
-                            string hoverPath = System.IO.Path.Combine(output, "rating-source-star-hover.png");
-                            NativeSnapshots.SaveView(hoverStar, normalPath);
-                            using var hoverEvent = NSEvent.MouseEvent(NSEventType.MouseMoved, CGPoint.Empty, 0,
-                                NSProcessInfo.ProcessInfo.SystemUptime,
-                                (hoverStar.Window ?? throw new InvalidOperationException("来源星按钮没有原生窗口")).WindowNumber,
-                                null!, 1, 1, 0) ?? throw new InvalidOperationException("来源星按钮悬停事件创建失败");
-                            hoverStar.MouseEntered(hoverEvent);
-                            NativeSnapshots.SaveView(hoverStar, hoverPath);
-                            if (File.ReadAllBytes(normalPath).SequenceEqual(File.ReadAllBytes(hoverPath)))
-                                throw new InvalidOperationException("来源星按钮悬停没有可见反馈");
-                            hoverStar.MouseExited(hoverEvent);
-                            observations.Add("RATING-04: source star buttons use the control bar rating hover surface");
+                            if (hoverStar is not MacControlBar.ToolbarButton native || !native.Bordered
+                                || !native.ShowsBorderOnlyWhileMouseInside || native.BezelStyle != NSBezelStyle.Rounded
+                                || native.BorderShape != NSControlBorderShape.Circle)
+                                throw new InvalidOperationException("来源星按钮未使用 AppKit 原生悬停外观");
+                            observations.Add("RATING-04: source star buttons use AppKit hover / pressed appearance");
                         }
                     }
                     if (attempt == 0 && mode == LayoutMode.Row)
@@ -984,15 +990,15 @@ internal static class NativeToolbarAcceptance
                 throw new InvalidOperationException($"成功写回弹出了失败提示：{window.StatusToast.Text}");
             if (conflict.HasRatingConflict)
                 throw new InvalidOperationException("统一下发成功后仍保持冲突状态");
-            await WaitAsync(() => ReferenceEquals(window.ControlBar.Ratings[0].Image, MacSymbols.Get("xmark")), "成功后恢复清零叉");
+            await WaitAsync(() => window.ControlBar.Ratings[0].Image?.Template == false, "成功后恢复层级着色清零叉");
             RequireColor(window.ControlBar.Ratings[0].ContentTintColor, MacDesignColors.Argb(DesignTokens.ColorStarClear), "成功后清零叉颜色");
             observations.Add("RATING-04: conflict slot is unchanged; source rows share one vertical centre line with separators between entries; vertical source entries survive repeated reopening and pointer movement; bottom control opens upward, right control opens left, and any entry writes the whole group");
 
             // 卡片入口：非当前卡片的 0 号槽位只打开浮窗，不切主图、不写值。
             window.Main.CurrentFile = clean;
             await Task.Delay(200);
-            if (!ReferenceEquals(window.ControlBar.Ratings[0].Image, MacSymbols.Get("xmark")))
-                throw new InvalidOperationException("当前照片无冲突时控制栏 0 号未回到清零叉");
+            if (window.ControlBar.Ratings[0].Image?.Template != false)
+                throw new InvalidOperationException("无冲突时清零叉未使用原生层级着色");
             // 重新制造第二张卡片的冲突（写回成功后已收敛，这里用内存真值构造两份不同事实的展示态）。
             var conflictCard = await WaitForCardAsync(window, conflict);
             if (!ReferenceEquals(conflictCard.ClearSlot.Image, MacSymbols.Get("xmark")))

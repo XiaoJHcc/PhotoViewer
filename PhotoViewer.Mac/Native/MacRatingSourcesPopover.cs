@@ -229,13 +229,15 @@ internal sealed class MacRatingSourcesPopover : IDisposable
         for (int rating = 0; rating < StarCount; rating++)
         {
             int target = rating;
-            var button = MacControlBar.ToolbarButton.Create(
-                rating == 0 ? "xmark" : rating <= (rated ?? 0) ? "star.fill" : "star",
+            string symbol = rating == 0 ? "xmark" : rating <= (rated ?? 0) ? "star.fill" : "star";
+            var color = MacDesignColors.Argb(rating == 0 ? DesignTokens.ColorStarClear
+                : rating <= (rated ?? 0) ? DesignTokens.ColorStarOn : DesignTokens.ColorStarOff);
+            var button = MacControlBar.ToolbarButton.Create(symbol,
                 rating == 0 ? "无星级" : rating + " 星", () => _ = _main.RatingSources.SetRatingAsync(target), StarSize, false);
             button.Frame = new CGRect(padding + rating * (StarSize + StarSpacing), layout.StarsY, StarSize, StarSize);
             button.RefusesFirstResponder = true;
-            button.ContentTintColor = MacDesignColors.Argb(rating == 0 ? DesignTokens.ColorStarClear
-                : rating <= (rated ?? 0) ? DesignTokens.ColorStarOn : DesignTokens.ColorStarOff);
+            button.ContentTintColor = color;
+            button.Image = MacSymbols.Get(symbol, color);
             stars.Add(button);
         }
 

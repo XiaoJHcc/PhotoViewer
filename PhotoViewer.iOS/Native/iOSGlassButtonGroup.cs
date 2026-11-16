@@ -5,10 +5,8 @@ using UIKit;
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// 合体玻璃按钮：一个系统玻璃材质容器内按横轴或纵轴排布若干按钮段，
-/// 段主轴长度默认取 <see cref="DesignTokens.ShellGlassButtonSize"/>（命中区不小于 44 点），宿主可按区域几何覆盖。
-/// 段数、显隐与方向由宿主决定，本类只把可见段依次铺进内容区；胶囊外形交给系统
-/// <see cref="UIGlassEffect"/> 与 <see cref="UICornerConfiguration"/>，不自绘圆角或阴影。
+/// 合体玻璃按钮：一个交互式玻璃胶囊承载各段，段内指针高亮由系统效果提供。
+/// 段主轴长度默认取 <see cref="DesignTokens.ShellGlassButtonSize"/>，宿主可按区域几何覆盖。
 /// </summary>
 internal sealed class iOSGlassButtonGroup : UIVisualEffectView
 {
@@ -16,8 +14,17 @@ internal sealed class iOSGlassButtonGroup : UIVisualEffectView
     private bool _vertical;
     private bool _mirrored;
 
+    internal iOSGlassButtonGroup() : base(new UIGlassEffect { Interactive = true })
+    {
+        CornerConfiguration = UICornerConfiguration.CreateCapsule();
+        BackgroundColor = UIColor.Clear;
+    }
+
     /// <summary>各段的按钮实例（顺序即排布顺序，隐藏段跳过排布）。</summary>
     internal IReadOnlyList<UIButton> Buttons => _buttons;
+
+    /// <summary>合体组使用单一系统玻璃背景。</summary>
+    internal bool UsesSharedGlass => true;
 
     /// <summary>单段沿排布轴的长度；默认 44，宽形态筛选段为 48。</summary>
     internal double SegmentLength { get; set; } = DesignTokens.ShellGlassButtonSize;
@@ -46,18 +53,7 @@ internal sealed class iOSGlassButtonGroup : UIVisualEffectView
         }
     }
 
-    /// <summary>建立玻璃容器：交互式玻璃效果 + 系统胶囊外形。</summary>
-    internal iOSGlassButtonGroup() : base(new UIGlassEffect { Interactive = true })
-    {
-        CornerConfiguration = UICornerConfiguration.CreateCapsule();
-        BackgroundColor = UIColor.Clear;
-    }
-
     /// <summary>追加一个按钮段。</summary>
-    /// <param name="symbolName">SF Symbols 名称。</param>
-    /// <param name="label">读屏名称。</param>
-    /// <param name="action">点按回调。</param>
-    /// <returns>该段按钮，供宿主设显隐与强调色。</returns>
     internal UIButton Add(string symbolName, string label, Action? action)
     {
         var button = iOSGlassButtons.Segment(symbolName, label, action);
@@ -67,7 +63,6 @@ internal sealed class iOSGlassButtonGroup : UIVisualEffectView
         return button;
     }
 
-    /// <summary>按方向把可见段依次铺进内容区，段长取 <see cref="SegmentLength"/>。</summary>
     public override void LayoutSubviews()
     {
         base.LayoutSubviews();
@@ -107,7 +102,7 @@ internal static class iOSViewGeometry
     }
 }
 
-/// <summary>玻璃按钮工厂：单圆按钮取系统玻璃按钮配置，合体按钮的段取无底色配置（玻璃由所在容器承担）。</summary>
+/// <summary>玻璃按钮工厂：单圆按钮使用系统玻璃配置，合体段使用系统无底色配置，背景由所在玻璃容器统一承担。</summary>
 internal static class iOSGlassButtons
 {
     /// <summary>单圆按钮：系统玻璃按钮配置 + 系统符号，方形边长即系统胶囊形。</summary>
@@ -123,13 +118,15 @@ internal static class iOSGlassButtons
         var button = new UIButton(UIButtonType.System)
         {
             Configuration = configuration,
+            PointerInteractionEnabled = true,
             AccessibilityLabel = label,
         };
         if (action != null) button.TouchUpInside += (_, _) => action();
+        EnableHighlight(button);
         return button;
     }
 
-    /// <summary>合体按钮的一段：无底色配置，背景与外形由玻璃容器统一承担。</summary>
+    /// <summary>合体按钮的一段：系统无底色按钮，连续胶囊背景由所在的单一玻璃容器承担。</summary>
     /// <param name="symbolName">SF Symbols 名称。</param>
     /// <param name="label">读屏名称。</param>
     /// <param name="action">点按回调。</param>
@@ -142,11 +139,30 @@ internal static class iOSGlassButtons
         var button = new UIButton(UIButtonType.System)
         {
             Configuration = configuration,
+            PointerInteractionEnabled = true,
             AccessibilityLabel = label,
         };
         if (action != null) button.TouchUpInside += (_, _) => action();
+        EnableHighlight(button);
         return button;
     }
+
+    /// <summary>使用系统提供的按钮高亮指针效果，形状继续由按钮与系统建议决定。</summary>
+    internal static void EnableHighlight(UIButton button)
+    {
+        button.PointerInteractionEnabled = true;
+        button.PointerStyleProvider = (sender, _, _) =>
+        {
+            var preview = new UITargetedPreview(sender);
+            var rect = PointerRect(sender, preview);
+            var shape = UIPointerShape.CreateRounded(rect, (nfloat)(Math.Min(rect.Width, rect.Height) / 2));
+            return UIPointerStyle.Create(UIPointerHighlightEffect.Create(preview), shape);
+        };
+    }
+
+    /// <summary>指针形状使用预览容器的坐标系，并在按钮实际矩形内缩 4 点。</summary>
+    internal static CGRect PointerRect(UIButton button, UITargetedPreview preview)
+        => button.ConvertRectToView(button.Bounds, preview.Target.Container).Inset(4, 4);
 
     /// <summary>改写按钮的前景强调态（雾天增强开关），不改变几何与命中区。</summary>
     /// <param name="button">目标按钮。</param>
