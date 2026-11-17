@@ -118,10 +118,10 @@ internal static class NativeToolbarAcceptance
             settings.ShowRating = false;
             await Task.Delay(150);
             if (window.ControlBar.Ratings.Count != 0 || window.ControlBar.Groups.Count != 2) throw new InvalidOperationException("隐藏评分仍保留空分组");
-            var enabledExif = settings.ExifDisplayItems.Where(entry => entry.IsEnabled).ToArray();
-            var enabledCommands = settings.Hotkeys.Where(hotkey => hotkey.IsDisplay).ToArray();
-            foreach (var entry in enabledExif) entry.IsEnabled = false;
-            foreach (var hotkey in enabledCommands) hotkey.IsDisplay = false;
+            var enabledExif = settings.ExifDisplayItems.Where(entry => entry.IsEnabled).Select(entry => entry.PropertyName).ToArray();
+            var enabledCommands = settings.Hotkeys.Where(hotkey => hotkey.IsDisplay).Select(hotkey => hotkey.Command).ToArray();
+            foreach (var entry in settings.ExifDisplayItems) entry.IsEnabled = false;
+            foreach (var hotkey in settings.Hotkeys.Where(hotkey => enabledCommands.Contains(hotkey.Command))) hotkey.IsDisplay = false;
             await Task.Delay(150);
             if (window.ControlBar.Groups.Count != 0) throw new InvalidOperationException("空工具栏仍保留占位分组");
             foreach (bool horizontal in new[] { true, false })
@@ -129,8 +129,10 @@ internal static class NativeToolbarAcceptance
                 var empty = window.ControlBar.Measure(horizontal, 400);
                 if (empty.Width != 20 || empty.Height != 20) throw new InvalidOperationException("空工具栏除外边距之外仍保留组间占位");
             }
-            foreach (var entry in enabledExif) entry.IsEnabled = true;
-            foreach (var hotkey in enabledCommands) hotkey.IsDisplay = true;
+            // 设置保存轮次可能以新项替换列表：按业务标识在当前集合上恢复启用，而不是写回已脱离列表的旧项。
+            foreach (var entry in settings.ExifDisplayItems)
+                entry.IsEnabled = enabledExif.Contains(entry.PropertyName);
+            foreach (var hotkey in settings.Hotkeys.Where(hotkey => enabledCommands.Contains(hotkey.Command))) hotkey.IsDisplay = true;
             settings.ShowRating = true;
             var ratingCommand = settings.Hotkeys.Single(hotkey => hotkey.Command == "SetRating3");
             ratingCommand.IsDisplay = true;
@@ -181,6 +183,7 @@ internal static class NativeToolbarAcceptance
                 observations.Add("real pointer down/up changes owned fixture ratings in both row and column layouts and preserves current photo");
             }
             await VerifyRatingContinuityAsync(window, observations);
+            await VerifyLiveRefreshAsync(window, observations);
             await VerifyRatingConflictAsync(window, output, observations);
             await VerifyRatingSourcesLiveAsync(window, output, observations);
             await VerifySettingsImpactAsync(window, output, observations);
@@ -699,6 +702,99 @@ internal static class NativeToolbarAcceptance
         {
             try { await RestoreAsync(); }
             catch (Exception exception) { Console.Error.WriteLine("[NativeToolbar] 评分连续性收尾还原失败：" + exception.Message); }
+        }
+    }
+
+    /// <summary>
+    /// SHELL-12：切图与评分写回只刷新内容摘要，不重挂仍在的控件——命令按钮、评分控件与 EXIF 块
+    /// 保持同一实例，悬停、按下与键盘焦点因此不被打断。只对自有可写副本改写评级。
+    /// </summary>
+    private static async Task VerifyLiveRefreshAsync(MacMainWindow window, List<string> observations)
+    {
+        var settings = window.Main.Settings;
+        var filter = window.Main.FileVM.FilterBar;
+        var entry = window.Main.CurrentFile ?? throw new InvalidOperationException("就地刷新回归缺少进入时的当前照片");
+        string entryPath = entry.File.RequireLocalPath();
+        string? entryId = entry.File.StorageId.Value;
+        string entryFilter = filter.SelectedRatingFilter;
+        bool entryThumbnailVisible = window.Main.IsThumbnailViewVisible;
+        var entryRatings = new Dictionary<string, int>(StringComparer.Ordinal);
+        var entryExif = settings.ExifDisplayItems.ToDictionary(item => item.PropertyName, item => item.IsEnabled, StringComparer.Ordinal);
+        var fixtures = FixturePaths.Resolve("toolbar");
+        settings.ShowRating = true;
+        window.Main.IsThumbnailViewVisible = true;
+        filter.SelectedRatingFilter = "All";
+        // 设置保存轮次可能以新项替换列表：按当前生效集合重新启用四项摘要，作为本次回归的固定前提。
+        foreach (var item in settings.ExifDisplayItems)
+            item.IsEnabled = item.PropertyName is "Aperture" or "ExposureTime" or "Iso" or "EquivFocalLength";
+        await Task.Delay(250);
+        try
+        {
+            if (!IsOwnedFixtureFile(window.Main.CurrentFile)) await window.Main.FolderVM.OpenFolderAsync(new LocalFolderRef(fixtures));
+            await WaitAsync(() => window.Main.CurrentFile != null && window.Main.FileVM.ThumbnailList.FilteredFiles.Count == 3,
+                "就地刷新回归载入自有副本");
+            var files = window.Main.FileVM.ThumbnailList.FilteredFiles;
+            var first = files[0];
+            var second = files[1];
+            foreach (var candidate in window.Main.FolderVM.AllFiles)
+                entryRatings[candidate.File.StorageId.Value] =
+                    (await ExifLoader.LoadExifDataAsync(new LocalFileRef(candidate.File.RequireLocalPath())))?.Rating ?? 0;
+            window.Main.CurrentFile = first;
+            await Task.Delay(250);
+            await WaitAsync(() => window.ControlBar.Groups.OfType<MacControlBar.ExifBlockView>().Any(), "就地刷新回归 EXIF 组就绪");
+
+            var exif = window.ControlBar.Groups.OfType<MacControlBar.ExifBlockView>().Single();
+            var exifTile = exif.Tiles[0];
+            var ratingControl = window.ControlBar.RatingControl;
+            var ratingClear = window.ControlBar.Ratings[0];
+            var command = window.ControlBar.Commands["Next"];
+            void RequireSameInstances(string stage)
+            {
+                var nowExif = window.ControlBar.Groups.OfType<MacControlBar.ExifBlockView>().SingleOrDefault();
+                if (!ReferenceEquals(nowExif, exif)) throw new InvalidOperationException($"{stage}替换了 EXIF 块");
+                if (!ReferenceEquals(nowExif!.Tiles[0], exifTile)) throw new InvalidOperationException($"{stage}替换了 EXIF 信息项");
+                if (!ReferenceEquals(window.ControlBar.RatingControl, ratingControl))
+                    throw new InvalidOperationException($"{stage}替换了评分控件");
+                if (!ReferenceEquals(window.ControlBar.Ratings[0], ratingClear))
+                    throw new InvalidOperationException($"{stage}替换了评分槽位按钮");
+                if (!ReferenceEquals(window.ControlBar.Commands.GetValueOrDefault("Next"), command))
+                    throw new InvalidOperationException($"{stage}替换了命令按钮");
+            }
+
+            command.PerformClick(command);
+            await WaitAsync(() => ReferenceEquals(window.Main.CurrentFile, second), "就地刷新回归切到下一张");
+            await Task.Delay(250);
+            RequireSameInstances("切图后");
+            if (window.ControlBar.Commands["Open"].Enabled != true)
+                throw new InvalidOperationException("切图后命令可用态错误");
+            observations.Add("SHELL-12: switching photos refreshes EXIF text and rating state without replacing the command button, rating control or EXIF block");
+
+            int target = entryRatings[second.File.StorageId.Value] == 3 ? 2 : 3;
+            await ClickRatingButtonAsync(window, second, target, settings.LayoutMode);
+            await Task.Delay(250);
+            RequireSameInstances("评分写回后");
+            RequireColor(window.ControlBar.Ratings[target].ContentTintColor,
+                MacDesignColors.Argb(DesignTokens.ColorStarOn), "就地刷新后点亮星");
+            observations.Add("SHELL-12: a real rating writeback updates the retained rating slots in place, so hover, press and keyboard focus survive");
+        }
+        finally
+        {
+            foreach (var pair in entryRatings)
+            {
+                var candidate = window.Main.FolderVM.AllFiles.FirstOrDefault(file => file.File.StorageId.Value == pair.Key);
+                if (candidate != null && candidate.Rating != pair.Value) await window.Main.SetRatingAsync(candidate, pair.Value);
+            }
+            filter.SelectedRatingFilter = entryFilter;
+            window.Main.IsThumbnailViewVisible = entryThumbnailVisible;
+            foreach (var item in settings.ExifDisplayItems)
+                if (entryExif.TryGetValue(item.PropertyName, out bool enabled)) item.IsEnabled = enabled;
+            try
+            {
+                if (window.Main.CurrentFile?.File.StorageId.Value != entryId)
+                    await window.Main.FolderVM.OpenImageAsync(new LocalFileRef(entryPath));
+            }
+            catch (Exception exception) { Console.Error.WriteLine("[NativeToolbar] 就地刷新回归收尾还原失败：" + exception.Message); }
+            await Task.Delay(200);
         }
     }
 

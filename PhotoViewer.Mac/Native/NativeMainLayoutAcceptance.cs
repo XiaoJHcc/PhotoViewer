@@ -368,6 +368,9 @@ internal static class NativeMainLayoutAcceptance
         }
         else if (!window.ToolDivider.Hidden)
             throw new InvalidOperationException($"{scope} 纯评分/命令时仍画工具区外边界");
+        if (!showsTool && window.Main.IsControlViewVisible
+            && window.ControlBar.GroupKinds.Any(kind => kind is not (ControlBarGroupKind.Rating or ControlBarGroupKind.Command)))
+            throw new InvalidOperationException($"{scope} 无 EXIF 与分析栏时控制栏仍带其他分组：{string.Join(",", window.ControlBar.GroupKinds)}");
         observations.Add($"{scope}: 文件栏材质={fileMaterial.Material}, 工具区材质出现={showsTool}");
     }
 
@@ -766,6 +769,7 @@ internal static class NativeMainLayoutAcceptance
         yield return ("analysis-only", false, false, true, true, true, false);
         yield return ("rating-off", true, true, true, false, true, false);
         yield return ("exif-off", true, true, true, true, false, false);
+        yield return ("control-rating-only", false, true, false, true, false, false);
         yield return ("similarity-on", true, true, false, true, true, true);
     }
 

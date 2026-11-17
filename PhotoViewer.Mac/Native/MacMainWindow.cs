@@ -27,8 +27,8 @@ public sealed class MacMainWindow : IDisposable
     private readonly RootView _root;
     private readonly NSView _filePane;
     private readonly NSView _toolBackground;
-    private readonly NSView _fileDivider = Pane(NSColor.FromWhite(.2f, 1));
-    private readonly NSView _controlDivider = Pane(NSColor.FromWhite(.2f, 1));
+    private readonly NSView _fileDivider = Pane(MacDesignColors.Argb(DesignTokens.ColorDivider));
+    private readonly NSView _controlDivider = Pane(MacDesignColors.Argb(DesignTokens.ColorDivider));
     private readonly NSTextField _hintDetail = Label("", 11);
     private readonly NSTextField _hintDetailSeparator = Label("/", 11);
     private readonly NSTextField _hintDetailSuffix = Label("", 11);
@@ -105,6 +105,8 @@ public sealed class MacMainWindow : IDisposable
     private MacNativeSettingsPresenter? _settingsPresenter;
     private (double U, double V, double? Width, double? Height)? _activeDetail;
     private readonly NSObject _deactivationObserver;
+    private string? _controlSignature;
+    private bool _controlsBuilt;
 
     /// <summary>系统窗口，外部打开和验收工具可据此定位原生界面。</summary>
     public NSWindow Window { get; }
@@ -214,8 +216,8 @@ public sealed class MacMainWindow : IDisposable
         _main.RatingWriteFailedDetailed += OnRatingWriteFailed;
         _photoPane.AddSubview(Photo);
         _detailHighlight = new PassThroughPane();
-        _detailHighlight.Layer!.BorderColor = NSColor.FromRgb(0, 255, 0).CGColor;
-        _detailHighlight.Layer.BorderWidth = 3;
+        _detailHighlight.Layer!.BorderColor = MacDesignColors.Argb(DesignTokens.ColorAnalysisHighlight).CGColor;
+        _detailHighlight.Layer.BorderWidth = (nfloat)DesignTokens.AnalysisHighlightThickness;
         _detailHighlight.Hidden = true;
         _photoPane.AddSubview(_detailHighlight);
         _analysisPane = new MacAnalysisPanel(_main, Session) { Hidden = true };
@@ -248,10 +250,13 @@ public sealed class MacMainWindow : IDisposable
         _photoPane.AddSubview(_hintDetailSeparator);
         _photoPane.AddSubview(_hintDetailSuffix);
         _navigationHost = new NavigatorHostView { WantsLayer = true, CenterRequested = OnNavigatorCenterRequested };
-        _navigationHost.Layer!.BackgroundColor = NSColor.FromWhite(2f / 15, .6f).CGColor;
-        _navigationHost.Layer!.CornerRadius = 6;
+        _navigationHost.Layer!.BackgroundColor = MacDesignColors.Argb(
+            DesignTokens.ColorNavBackground, DesignTokens.ColorNavBackgroundAlpha).CGColor;
+        _navigationHost.Layer!.CornerRadius = (nfloat)DesignTokens.NavCornerRadius;
         _navigationImage = new NSImageView { ImageScaling = NSImageScale.ProportionallyUpOrDown };
-        _navigationFrame = Pane(NSColor.Clear); _navigationFrame.Layer!.BorderColor = NSColor.White.CGColor; _navigationFrame.Layer.BorderWidth = 1;
+        _navigationFrame = Pane(NSColor.Clear);
+        _navigationFrame.Layer!.BorderColor = MacDesignColors.Argb(DesignTokens.ColorNavFrame).CGColor;
+        _navigationFrame.Layer.BorderWidth = (nfloat)DesignTokens.NavFrameThickness;
         _zoomLabel = Label("", 12); _zoomLabel.Alignment = NSTextAlignment.Center;
         _zoomLabel.Font = NSFont.SystemFontOfSize(12, NSFontWeight.Semibold) ?? throw new InvalidOperationException("系统字体不可用");
         _navigationHost.AddSubview(_navigationImage); _navigationHost.AddSubview(_navigationFrame); _navigationHost.AddSubview(_zoomLabel);
@@ -286,7 +291,7 @@ public sealed class MacMainWindow : IDisposable
         _filterGlass = new MacGlassEffectView
         {
             ContentView = _filterSegments,
-            CornerRadius = 22,
+            CornerRadius = (nfloat)(DesignTokens.ShellGlassButtonSize / 2),
             Style = NSGlassEffectViewStyle.Regular,
         };
         _capsule.Bordered = true;
@@ -294,7 +299,7 @@ public sealed class MacMainWindow : IDisposable
         _capsuleGlass = new MacGlassEffectView
         {
             ContentView = _capsule,
-            CornerRadius = 22,
+            CornerRadius = (nfloat)(DesignTokens.ShellGlassButtonSize / 2),
             Style = NSGlassEffectViewStyle.Regular,
         };
 #if PHOTOVIEWER_DINO
@@ -313,7 +318,7 @@ public sealed class MacMainWindow : IDisposable
         _similarityGlass = new MacGlassEffectView
         {
             ContentView = _similarityToggle,
-            CornerRadius = 22,
+            CornerRadius = (nfloat)(DesignTokens.ShellGlassButtonSize / 2),
             Style = NSGlassEffectViewStyle.Regular,
         };
         foreach (var control in new NSView[] { _filterGlass, _capsuleGlass, _similarityGlass }) _filePane.AddSubview(control);
@@ -1053,11 +1058,24 @@ public sealed class MacMainWindow : IDisposable
     }
 #endif
 
-    /// <summary>共享设置/EXIF/评级生成控制区；原生符号按钮仍由用户显隐和顺序驱动。</summary>
+    /// <summary>
+    /// 共享设置/EXIF/评级生成控制区；原生符号按钮仍由用户显隐和顺序驱动。
+    /// 结构摘要不变时只就地刷新 EXIF 文本、评分显示值与命令可用态，
+    /// 保住悬停、按下与键盘焦点（SHELL-12、TOOLBAR-07、TOOLBAR-11）。
+    /// </summary>
     private void BuildControls()
     {
-        // 控制栏重建会销毁 0 号按钮：浮窗若锚在控制栏，先关闭并在新按钮上按同一目标重开，
-        // 失败时按磁盘真值刷新后仍保留浮窗（RATING-04）。
+        string signature = MacControlBar.Signature(_main);
+        if (_controlsBuilt && string.Equals(signature, _controlSignature, StringComparison.Ordinal))
+        {
+            _controlPane.UpdateExifSummary();
+            _controlPane.UpdateRatingDisplay();
+            _controlPane.UpdateCommandAvailability();
+            return;
+        }
+        _controlSignature = signature;
+        _controlsBuilt = true;
+        // 结构变化可能重排分组：浮窗若锚在控制栏，按同一目标在新位置重开（RATING-04）。
         bool reopen = _ratingSources.IsOpen && _ratingSources.IsAnchoredToControlBar;
         var sourceTarget = reopen ? _main.RatingSources.Target : null;
         if (reopen) _ratingSources.Close();

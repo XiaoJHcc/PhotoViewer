@@ -13,8 +13,8 @@ using PhotoViewer.ViewModels.Main.File;
 namespace PhotoViewer.Mac.Native;
 
 /// <summary>
-/// 原生相似聚类面板:几何与视觉与旧壳 <c>SimilarityListView</c> 同口径 —— 外框 <c>#1E1E1E</c> 底、
-/// <c>#404040</c> 1 点描边 + 圆角 6、最小 106×154(右侧 4 点外边距由调用方摆放时留出)。
+/// 原生相似聚类面板:几何与视觉与旧壳 <c>SimilarityListView</c> 同口径 —— 外框取 <c>color.sim.panel.background</c> /
+/// <c>color.sim.panel.border</c> 与 <c>sim.panel.border.width</c>、<c>sim.panel.cornerRadius</c>，最小 106×154(右侧 4 点外边距由调用方摆放时留出)。
 /// 无相似项时占位文字与动作区整体居中(间距 8、四周 4 点);有相似项时动作区按布局方向停靠
 /// (行布局停靠在右、列布局停靠在底),其余区域为单轴列表。
 /// 列表复用 <see cref="MacFilmstripLayout"/> 与 <see cref="MacThumbnailItem"/> 卡片,卡片第二行换成
@@ -27,10 +27,10 @@ internal sealed class MacSimilarityPanel : NSView
     private const double MinWidth = SimilarityPanelGeometry.MinWidth;
     /// <summary>旧壳面板 MinHeight（共享几何）。</summary>
     private const double MinHeight = SimilarityPanelGeometry.MinHeight;
-    /// <summary>外框 1 点描边。</summary>
-    private const double BorderWidth = 1;
-    /// <summary>外框圆角。</summary>
-    private const double CornerRadius = 6;
+    /// <summary>外框描边厚度（sim.panel.border.width）。</summary>
+    private const double BorderWidth = DesignTokens.SimPanelBorderWidth;
+    /// <summary>外框圆角（sim.panel.cornerRadius）。</summary>
+    private const double CornerRadius = DesignTokens.SimPanelCornerRadius;
     /// <summary>空态 StackPanel 间距。</summary>
     private const double EmptySpacing = 8;
     /// <summary>空态四周外边距。</summary>
@@ -59,11 +59,11 @@ internal sealed class MacSimilarityPanel : NSView
     /// <summary>列布局停靠区上下外边距。</summary>
     private const double DockColumnMarginVertical = 3;
 
-    private static readonly NSColor PanelColor = NSColor.FromRgb(0x1E, 0x1E, 0x1E);
-    private static readonly NSColor BorderColor = NSColor.FromRgb(0x40, 0x40, 0x40);
-    private static readonly NSColor PlaceholderColor = NSColor.FromRgb(0x55, 0x55, 0x55);
-    private static readonly NSColor IndexErrorColor = NSColor.FromRgb(0xCC, 0x44, 0x44);
-    private static readonly NSColor UnindexedColor = NSColor.FromRgb(0x77, 0x77, 0x77);
+    private static readonly NSColor PanelColor = MacDesignColors.Argb(DesignTokens.ColorSimPanelBackground);
+    private static readonly NSColor BorderColor = MacDesignColors.Argb(DesignTokens.ColorSimPanelBorder);
+    private static readonly NSColor PlaceholderColor = MacDesignColors.Argb(DesignTokens.ColorSimPlaceholder);
+    private static readonly NSColor IndexErrorColor = MacDesignColors.Argb(DesignTokens.ColorSimError);
+    private static readonly NSColor UnindexedColor = MacDesignColors.Argb(DesignTokens.ColorSimCaption);
 
     private readonly MainViewModel _main;
     private readonly SimilarityPanelViewModel _panel;
@@ -529,15 +529,16 @@ internal sealed class MacSimilarityPanel : NSView
         public ActionArea(Action start)
         {
             var frame = new CGRect(0, 0, ActionWidth, ActionHeight);
-            _button = new HoverButton(frame, NSColor.FromRgb(0x2A, 0x2A, 0x2A), NSColor.FromRgb(0x3A, 0x3A, 0x3A));
-            _button.Layer!.BorderColor = NSColor.FromRgb(0x55, 0x55, 0x55).CGColor;
+            _button = new HoverButton(frame, MacDesignColors.Argb(DesignTokens.ColorSimActionBackground),
+                MacDesignColors.Argb(DesignTokens.ColorSimActionHover));
+            _button.Layer!.BorderColor = MacDesignColors.Argb(DesignTokens.ColorSimActionBorder).CGColor;
             _button.Layer.BorderWidth = 1;
-            _button.Layer.CornerRadius = (nfloat)CornerRadius;
+            _button.Layer.CornerRadius = (nfloat)DesignTokens.SimActionCornerRadius;
             _button.Activated += (_, _) => start();
 
             _progressHost = new FlippedView(frame) { WantsLayer = true };
-            _progressHost.Layer!.BackgroundColor = NSColor.FromRgb(0x2A, 0x2A, 0x2A).CGColor;
-            _progressHost.Layer.CornerRadius = (nfloat)CornerRadius;
+            _progressHost.Layer!.BackgroundColor = MacDesignColors.Argb(DesignTokens.ColorSimActionBackground).CGColor;
+            _progressHost.Layer.CornerRadius = (nfloat)DesignTokens.SimActionCornerRadius;
             _progressHost.Layer.MasksToBounds = true;
             _progress = new NSProgressIndicator(new CGRect(3, 10, ActionWidth - 6, 8))
             {
@@ -547,7 +548,7 @@ internal sealed class MacSimilarityPanel : NSView
                 MinValue = 0,
                 MaxValue = 1,
             };
-            _progressText = WrappedLabel("", 10, NSColor.FromRgb(0xCC, 0xCC, 0xCC));
+            _progressText = WrappedLabel("", 10, MacDesignColors.Argb(DesignTokens.ColorSimActionForeground));
             _progressText.Frame = new CGRect(0, (ActionHeight - 14) / 2, ActionWidth, 14);
             _progressHost.AddSubview(_progress);
             _progressHost.AddSubview(_progressText);
@@ -576,7 +577,7 @@ internal sealed class MacSimilarityPanel : NSView
             using var paragraph = new NSMutableParagraphStyle { Alignment = NSTextAlignment.Center };
             using var attributes = new NSDictionary(
                 NSStringAttributeKey.Font, NSFont.SystemFontOfSize(11) ?? throw new InvalidOperationException("系统字体不可用"),
-                NSStringAttributeKey.ForegroundColor, NSColor.FromRgb(0xCC, 0xCC, 0xCC),
+                NSStringAttributeKey.ForegroundColor, MacDesignColors.Argb(DesignTokens.ColorSimActionForeground),
                 NSStringAttributeKey.ParagraphStyle, paragraph);
             _button.AttributedTitle = new NSAttributedString(title, attributes);
         }

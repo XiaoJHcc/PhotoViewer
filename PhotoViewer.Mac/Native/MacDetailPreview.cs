@@ -1,6 +1,7 @@
 using AppKit;
 using CoreGraphics;
 using Foundation;
+using PhotoViewer.Core.Design;
 
 namespace PhotoViewer.Mac.Native;
 
@@ -146,7 +147,7 @@ internal sealed class MacDetailPreview : NSView
             var square = new CGRect(.5f, .5f, (nfloat)side - 1, (nfloat)side - 1);
             using var path = NSBezierPath.FromRoundedRect(square, 6, 6);
             path.LineWidth = 1;
-            NSColor.FromRgb(0, 255, 0).SetStroke();
+            MacDesignColors.Argb(DesignTokens.ColorAnalysisHighlight).SetStroke();
             path.Stroke();
         }
     }

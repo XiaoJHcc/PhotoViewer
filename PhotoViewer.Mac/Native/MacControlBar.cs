@@ -16,8 +16,20 @@ internal sealed class MacControlBar : NSView
     private readonly List<NSView> _groups = [];
     private readonly List<ControlBarGroupKind> _kinds = [];
     private readonly List<SettingsViewModel.HotkeyItem> _hotkeys = [];
-    private readonly Dictionary<string, NSButton> _commands = [];
-    private readonly List<NSButton> _ratings = [];
+    private readonly Dictionary<string, NSButton> _commands = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, NSGlassEffectView> _commandHosts = new(StringComparer.Ordinal);
+    private readonly List<NSButton> _ratingButtons = [];
+    private readonly List<ExifTile> _exifTiles = [];
+    private ExifBlockView? _exifGroup;
+    private GroupView? _ratingGroup;
+    private GroupView? _commandGroup;
+    private RatingControlView? _ratingControl;
+    private MainViewModel? _main;
+    private Action<string>? _execute;
+    private Action<int>? _rate;
+    private Action? _openTools;
+    private Action<NSView>? _showSources;
+    private bool _ratingConflict;
     private bool _horizontal;
 
     public override bool IsFlipped => true;
@@ -25,14 +37,14 @@ internal sealed class MacControlBar : NSView
     internal IReadOnlyList<NSView> Groups => _groups;
     /// <summary>分组类型与 <see cref="Groups"/> 一一对应。</summary>
     internal IReadOnlyList<ControlBarGroupKind> GroupKinds => _kinds;
-    /// <summary>命令身份与原生按钮保持一一对应。</summary>
+    /// <summary>命令身份与原生按钮保持一一对应，顺序与设置一致。</summary>
     internal IReadOnlyDictionary<string, NSButton> Commands => _commands;
-    /// <summary>评分按钮按评分值索引，视觉顺序由布局方向决定。</summary>
-    internal IReadOnlyList<NSButton> Ratings => _ratings;
-    /// <summary>评分控件的实际外框视图。</summary>
-    internal NSView? RatingControl => _groups.FirstOrDefault(group => group.Subviews.FirstOrDefault() is RatingControlView)?.Subviews[0];
+    /// <summary>评分按钮按评分值索引，视觉顺序由布局方向决定；评分组隐藏时为空。</summary>
+    internal IReadOnlyList<NSButton> Ratings => _ratingGroup?.Superview == null ? [] : _ratingButtons;
+    /// <summary>评分控件的实际外框视图；评分组隐藏时为 null。</summary>
+    internal NSView? RatingControl => _ratingGroup?.Superview == null ? null : _ratingControl;
     /// <summary>实际显示的 EXIF 项数（工具区背景出现条件之一）。</summary>
-    internal int ExifItemCount { get; private set; }
+    internal int ExifItemCount => _exifTiles.Count;
 
     /// <summary>建立透明控制文档：栏位材质由主窗口的工具区宿主承担，本层不画第二份底色。</summary>
     internal MacControlBar(Action changed)
@@ -42,7 +54,33 @@ internal sealed class MacControlBar : NSView
         Layer!.BackgroundColor = NSColor.Clear.CGColor;
     }
 
-    /// <summary>根据共享设置重建三组控件，保留设置排序、主次手势与缺少照片时的状态。</summary>
+    /// <summary>
+    /// 控制栏结构摘要：只含决定分组与按钮增删的状态——评分显隐、EXIF 项的显隐与顺序、
+    /// 命令的显隐 / 顺序 / 绑定（悬停提示文案）与排列方向。评分值、EXIF 文本与命令可用态
+    /// 走就地刷新，不参与比对。
+    /// </summary>
+    /// <param name="main">共享主 VM。</param>
+    /// <returns>可逐字比较的结构摘要。</returns>
+    internal static string Signature(MainViewModel main)
+    {
+        var builder = new System.Text.StringBuilder();
+        builder.Append(main.Settings.ShowRating ? '1' : '0');
+        builder.Append(main.IsRowLayout ? 'r' : 'c');
+        builder.Append('|');
+        foreach (var entry in main.ControlVM.EnabledExifItems) builder.Append(entry.DisplayName).Append(';');
+        builder.Append('|');
+        foreach (var hotkey in main.ControlVM.EnabledControls)
+        {
+            if (AppleSymbolNames.ForCommand(hotkey.Command) == null) continue;
+            builder.Append(hotkey.Command).Append(',').Append(CommandTooltip(hotkey, main.Settings)).Append(';');
+        }
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// 按共享设置同步三组控件，就地复用现有实例：EXIF 项数不变只换文本、评分槽位与同名命令按钮保留、
+    /// 只摘除真正消失的项，切图与评分写回不重挂仍在的控件（SHELL-12、TOOLBAR-07）。
+    /// </summary>
     /// <param name="main">共享主 VM。</param>
     /// <param name="execute">命令执行回调。</param>
     /// <param name="rate">评分写回回调。</param>
@@ -51,79 +89,214 @@ internal sealed class MacControlBar : NSView
     internal void Rebuild(MainViewModel main, Action<string> execute, Action<int> rate, Action? openTools = null,
         Action<NSView>? showSources = null)
     {
-        ClearGroups();
-        var entries = main.ControlVM.EnabledExifItems;
-        ExifItemCount = entries.Count;
-        if (entries.Count > 0)
-        {
-            // EXIF 块使用系统分组外观，块内两行文字按共享几何落位。
-            var exif = new ExifBlockView { Clicked = openTools };
-            foreach (var entry in entries) exif.AddTile(new ExifTile(entry));
-            AddGroup(exif, ControlBarGroupKind.Exif);
-        }
-        if (main.Settings.ShowRating)
-        {
-            var ratingGroup = new GroupView { WantsLayer = false };
-            var control = new RatingControlView();
-            ratingGroup.AddSubview(control);
-            for (int rating = 0; rating < 6; rating++)
-            {
-                int value = rating;
-                bool conflict = value == 0 && main.CurrentFile?.HasRatingConflict == true;
-                bool active = rating > 0 && rating <= (main.CurrentFile?.Rating ?? 0);
-                string symbol = rating == 0 ? (conflict ? MacSymbols.RatingConflict : "xmark") : active ? "star.fill" : "star";
-                string tooltip = rating == 0 ? (conflict ? "评分来源冲突" : "无星级") : rating + " 星";
-                NSButton? button = null;
-                button = ToolbarButton.Create(symbol, tooltip, () =>
-                {
-                    if (value == 0 && conflict && showSources != null) showSources(button!);
-                    else rate(value);
-                }, 44, false, RatingControlGeometry.Slot, RatingControlGeometry.Thickness);
-                button.Tag = rating;
-                // TOOLBAR-03：点亮星 color.star.on、空心星 color.star.off、清零叉中性 color.star.clear；
-                // RATING-04 冲突时的警示三角取 color.star.conflict，几何与命中区不变。
-                var color = MacDesignColors.Argb(rating == 0 ? (conflict ? DesignTokens.ColorStarConflict : DesignTokens.ColorStarClear)
-                    : active ? DesignTokens.ColorStarOn : DesignTokens.ColorStarOff);
-                button.ContentTintColor = color;
-                button.Image = MacSymbols.Get(symbol, color);
-                button.Enabled = main.CurrentFile != null;
-                control.ContentView!.AddSubview(button);
-                _ratings.Add(button);
-            }
-            AddGroup(ratingGroup, ControlBarGroupKind.Rating);
-        }
-        var commandGroup = new GroupView();
-        foreach (var hotkey in main.ControlVM.EnabledControls)
-        {
-            string? symbol = AppleSymbolNames.ForCommand(hotkey.Command);
-            if (symbol == null) continue;
-            string tooltip = CommandTooltip(hotkey, main.Settings);
-            var button = ToolbarButton.Create(symbol, tooltip, () => execute(hotkey.Command), ToolbarFlowLayout.CommandSize);
-            // TOOLBAR-04：读屏名称与悬停提示一致，包含当前主/次绑定。
-            ((NSView)button).AccessibilityLabel = tooltip;
-            button.ContentTintColor = NSColor.Label;
-            button.Enabled = hotkey.Command == "Open" || main.CurrentFile != null;
-            if (hotkey.Command.StartsWith("SetRating", StringComparison.Ordinal))
-            {
-                // TOOLBAR-04：评分快捷命令 = 星形内叠数字（0 为清零叉）。
-                bool clear = hotkey.Command == "SetRating0";
-                button.Title = "";
-                button.Image = MacSymbols.Get(clear ? "xmark" : "star.fill");
-                button.ImagePosition = NSCellImagePosition.ImageOnly;
-                button.SymbolConfiguration = NSImageSymbolConfiguration.Create(
-                    (nfloat)DesignTokens.ToolbarCommandGlyphFontSize, (double)NSFontWeight.Regular);
-                if (!clear) button.AddSubview(RatingDigitLabel.Create(hotkey.Command[9..]));
-            }
-            commandGroup.AddSubview(GlassHost(button));
-            _commands.Add(hotkey.Command, button);
-        }
-        if (commandGroup.Subviews.Length > 0) AddGroup(commandGroup, ControlBarGroupKind.Command);
-        else commandGroup.Dispose();
+        _main = main;
+        _execute = execute;
+        _rate = rate;
+        _openTools = openTools;
+        _showSources = showSources;
+        SyncExif(main.ControlVM.EnabledExifItems);
+        SyncRatingGroup(main.Settings.ShowRating);
+        SyncCommands(main);
+        SyncGroupSequence();
+        foreach (var hotkey in _hotkeys) hotkey.PropertyChanged -= OnHotkeyChanged;
+        _hotkeys.Clear();
         foreach (var hotkey in main.Settings.Hotkeys)
         {
             _hotkeys.Add(hotkey);
             hotkey.PropertyChanged += OnHotkeyChanged;
         }
+        UpdateRatingDisplay();
+        UpdateCommandAvailability();
+    }
+
+    /// <summary>EXIF 文本（含切图后的占位值）就地更新，项数不变时不改动分组与项实例。</summary>
+    internal void UpdateExifSummary()
+    {
+        if (_main == null) return;
+        SyncExif(_main.ControlVM.EnabledExifItems);
+    }
+
+    /// <summary>按启用项同步 EXIF 块：项数不变只换两行文本与悬停提示，新增项追加、消失项摘除释放。</summary>
+    /// <param name="entries">设置启用的 EXIF 项，按设置顺序。</param>
+    private void SyncExif(IReadOnlyList<ExifDisplayEntry> entries)
+    {
+        if (entries.Count == 0)
+        {
+            if (_exifGroup != null) DisposeView(_exifGroup);
+            _exifGroup = null;
+            _exifTiles.Clear();
+            return;
+        }
+        if (_exifGroup == null)
+        {
+            _exifGroup = new ExifBlockView();
+            AddSubview(_exifGroup);
+        }
+        _exifGroup.Clicked = _openTools;
+        while (_exifTiles.Count > entries.Count)
+        {
+            var stale = _exifTiles[^1];
+            _exifTiles.RemoveAt(_exifTiles.Count - 1);
+            _exifGroup.RemoveTile(stale);
+        }
+        for (int index = 0; index < entries.Count; index++)
+        {
+            if (index < _exifTiles.Count) _exifTiles[index].SetEntry(entries[index]);
+            else
+            {
+                var tile = new ExifTile(entries[index]);
+                _exifTiles.Add(tile);
+                _exifGroup.AddTile(tile);
+            }
+        }
+    }
+
+    /// <summary>评分组只在「显示评分」开关变化时增删；槽位按钮与玻璃胶囊保持到窗口关闭。</summary>
+    /// <param name="visible">是否显示评分组。</param>
+    private void SyncRatingGroup(bool visible)
+    {
+        if (!visible)
+        {
+            _ratingGroup?.RemoveFromSuperview();
+            return;
+        }
+        if (_ratingGroup == null)
+        {
+            _ratingGroup = new GroupView { WantsLayer = false };
+            var control = new RatingControlView();
+            _ratingControl = control;
+            _ratingGroup.AddSubview(control);
+            for (int rating = 0; rating < 6; rating++) _ratingButtons.Add(CreateRatingButton(rating));
+            AddSubview(_ratingGroup);
+        }
+        else if (_ratingGroup.Superview == null) AddSubview(_ratingGroup);
+    }
+
+    /// <summary>建立单个评分槽位按钮；动作读取当前冲突状态，重建与否都不改变命中语义。</summary>
+    /// <param name="rating">评分值（0 为清零 / 冲突入口）。</param>
+    /// <returns>已挂进评分控件内容区的原生按钮。</returns>
+    private NSButton CreateRatingButton(int rating)
+    {
+        int value = rating;
+        NSButton? button = null;
+        button = ToolbarButton.Create("star", RatingTooltip(value, false), () =>
+        {
+            // RATING-04：冲突时 0 号槽位是来源浮窗入口，不当作清零写入。
+            if (value == 0 && _ratingConflict && _showSources != null) _showSources(button!);
+            else _rate?.Invoke(value);
+        }, DesignTokens.ShellGlassButtonSize, false, RatingControlGeometry.Slot, RatingControlGeometry.Thickness);
+        button.Tag = rating;
+        _ratingControl!.ContentView!.AddSubview(button);
+        return button;
+    }
+
+    /// <summary>评分槽位的悬停提示与读屏名称。</summary>
+    /// <param name="rating">评分值。</param>
+    /// <param name="conflict">是否为冲突入口。</param>
+    private static string RatingTooltip(int rating, bool conflict)
+        => rating == 0 ? (conflict ? "评分来源冲突" : "无星级") : rating + " 星";
+
+    /// <summary>评分值、冲突与可用态就地刷新，不替换槽位按钮（TOOLBAR-03、RATING-04）。</summary>
+    internal void UpdateRatingDisplay()
+    {
+        var file = _main?.CurrentFile;
+        int value = Math.Max(0, file?.Rating ?? 0);
+        bool conflict = file?.HasRatingConflict == true;
+        _ratingConflict = conflict;
+        bool enabled = file != null;
+        foreach (var button in _ratingButtons)
+        {
+            int rating = (int)button.Tag;
+            bool active = rating > 0 && rating <= value;
+            string symbol = rating == 0 ? (conflict ? MacSymbols.RatingConflict : "xmark") : active ? "star.fill" : "star";
+            string tooltip = RatingTooltip(rating, conflict);
+            // TOOLBAR-03：点亮星 color.star.on、空心星 color.star.off、清零叉中性 color.star.clear；
+            // RATING-04 冲突时的警示三角取 color.star.conflict，几何与命中区不变。
+            var color = MacDesignColors.Argb(rating == 0 ? (conflict ? DesignTokens.ColorStarConflict : DesignTokens.ColorStarClear)
+                : active ? DesignTokens.ColorStarOn : DesignTokens.ColorStarOff);
+            ((ToolbarButton)button).ApplySymbol(symbol, color);
+            button.ToolTip = tooltip;
+            ((NSView)button).AccessibilityLabel = tooltip;
+            button.Enabled = enabled;
+        }
+    }
+
+    /// <summary>命令可用态随当前照片就地切换（TOOLBAR-09），不替换按钮。</summary>
+    internal void UpdateCommandAvailability()
+    {
+        bool hasFile = _main?.CurrentFile != null;
+        foreach (var pair in _commands) pair.Value.Enabled = pair.Key == "Open" || hasFile;
+    }
+
+    /// <summary>
+    /// 命令按钮就地同步：同名命令保留原按钮实例（只刷新悬停提示与读屏名称），新命令追加、
+    /// 消失的命令摘除释放；字典与排版顺序都按本次生效顺序重排。
+    /// </summary>
+    /// <param name="main">共享主 VM。</param>
+    private void SyncCommands(MainViewModel main)
+    {
+        _commandGroup ??= new GroupView();
+        var desired = new List<(string Command, NSButton Button)>();
+        foreach (var hotkey in main.ControlVM.EnabledControls)
+        {
+            string? symbol = AppleSymbolNames.ForCommand(hotkey.Command);
+            if (symbol == null) continue;
+            string tooltip = CommandTooltip(hotkey, main.Settings);
+            if (!_commands.TryGetValue(hotkey.Command, out var button))
+            {
+                string command = hotkey.Command;
+                button = ToolbarButton.Create(symbol, tooltip, () => _execute?.Invoke(command), ToolbarFlowLayout.CommandSize);
+                // TOOLBAR-04：读屏名称与悬停提示一致，包含当前主/次绑定。
+                ((NSView)button).AccessibilityLabel = tooltip;
+                button.ContentTintColor = NSColor.Label;
+                if (command.StartsWith("SetRating", StringComparison.Ordinal))
+                {
+                    // TOOLBAR-04：评分快捷命令 = 星形内叠数字（0 为清零叉）。
+                    bool clear = command == "SetRating0";
+                    button.Title = "";
+                    button.Image = MacSymbols.Get(clear ? "xmark" : "star.fill");
+                    button.ImagePosition = NSCellImagePosition.ImageOnly;
+                    button.SymbolConfiguration = NSImageSymbolConfiguration.Create(
+                        (nfloat)DesignTokens.ToolbarCommandGlyphFontSize, (double)NSFontWeight.Regular);
+                    if (!clear) button.AddSubview(RatingDigitLabel.Create(command[9..]));
+                }
+                var glazed = GlassHost(button);
+                _commandHosts.Add(command, glazed);
+                _commandGroup.AddSubview(glazed);
+            }
+            else
+            {
+                button.ToolTip = tooltip;
+                ((NSView)button).AccessibilityLabel = tooltip;
+            }
+            desired.Add((hotkey.Command, button));
+        }
+        foreach (var pair in _commands.ToArray())
+        {
+            if (desired.Exists(entry => entry.Command == pair.Key)) continue;
+            if (_commandHosts.Remove(pair.Key, out var host)) DisposeView(host);
+            else pair.Value.Dispose();
+        }
+        _commands.Clear();
+        foreach (var (command, button) in desired) _commands.Add(command, button);
+        if (_commands.Count == 0)
+        {
+            _commandGroup.RemoveFromSuperview();
+            return;
+        }
+        if (_commandGroup.Superview == null) AddSubview(_commandGroup);
+        // 命令顺序属于用户设置：依次重挂把子视图顺序对齐本次生效顺序，实例本身保持不变。
+        foreach (var (command, _) in desired) _commandGroup.AddSubview(_commandHosts[command]);
+    }
+
+    /// <summary>按 EXIF、评分、命令的固定顺序投影当前可见分组，空分组不占流式位置。</summary>
+    private void SyncGroupSequence()
+    {
+        _groups.Clear();
+        _kinds.Clear();
+        if (_exifGroup is { Superview: not null }) { _groups.Add(_exifGroup); _kinds.Add(ControlBarGroupKind.Exif); }
+        if (_ratingGroup is { Superview: not null }) { _groups.Add(_ratingGroup); _kinds.Add(ControlBarGroupKind.Rating); }
+        if (_commandGroup is { Superview: not null }) { _groups.Add(_commandGroup); _kinds.Add(ControlBarGroupKind.Command); }
     }
 
     /// <summary>悬停描述包含业务名称和实际主次绑定：格式 `名称（主 / 次）` 取共享 <see cref="CommandTooltipText"/>，
@@ -138,16 +311,6 @@ internal sealed class MacControlBar : NSView
     {
         if (args.PropertyName is nameof(SettingsViewModel.HotkeyItem.IsDisplay) or nameof(SettingsViewModel.HotkeyItem.Name)
             or nameof(SettingsViewModel.HotkeyItem.PrimaryHotkey) or nameof(SettingsViewModel.HotkeyItem.SecondaryHotkey)) _changed();
-    }
-
-    /// <summary>登记非空业务分组及其类型，不把组内按钮摊平成可任意断开的列表。</summary>
-    /// <param name="group">已填好子控件的分组视图。</param>
-    /// <param name="kind">分组类型，决定共享布局口径。</param>
-    private void AddGroup(NSView group, ControlBarGroupKind kind)
-    {
-        _groups.Add(group);
-        _kinds.Add(kind);
-        AddSubview(group);
     }
 
     /// <summary>按当前内容求出共享流式分组尺寸（Mac 底部横排有衬底，右侧竖排无衬底）。</summary>
@@ -205,13 +368,13 @@ internal sealed class MacControlBar : NSView
         }
     }
 
-    /// <summary>使用 macOS 26 原生玻璃视图承载按钮，按钮自身只保留内容与事件。</summary>
+    /// <summary>使用 macOS 26 原生玻璃视图承载按钮，圆角取玻璃按钮令牌的半径。</summary>
     private static MacGlassEffectView GlassHost(NSButton button)
     {
         var host = new MacGlassEffectView
         {
             ContentView = button,
-            CornerRadius = 22,
+            CornerRadius = (nfloat)(DesignTokens.ShellGlassButtonSize / 2),
             Style = NSGlassEffectViewStyle.Regular,
         };
         button.Frame = host.Bounds;
@@ -244,9 +407,9 @@ internal sealed class MacControlBar : NSView
             case ControlBarGroupKind.Rating:
                 var controlFrame = RatingControlGeometry.ControlFrame(
                     new LayoutRect(0, 0, (double)bounds.Width, (double)bounds.Height), horizontal);
-                var control = (RatingControlView)group.Subviews[0];
+                var control = _ratingControl!;
                 control.Frame = new CGRect(controlFrame.X, controlFrame.Y, controlFrame.Width, controlFrame.Height);
-                control.Arrange(horizontal, _ratings);
+                control.Arrange(horizontal, _ratingButtons);
                 break;
             case ControlBarGroupKind.Command:
                 double cross = horizontal ? (double)bounds.Height : (double)bounds.Width;
@@ -264,13 +427,16 @@ internal sealed class MacControlBar : NSView
         }
     }
 
-    /// <summary>重建或关闭时释放控件并解除模型订阅。</summary>
+    /// <summary>关闭时释放三组控件并解除模型订阅。</summary>
     private void ClearGroups()
     {
         foreach (var hotkey in _hotkeys) hotkey.PropertyChanged -= OnHotkeyChanged;
         _hotkeys.Clear();
-        foreach (var group in _groups) DisposeView(group);
-        _groups.Clear(); _kinds.Clear(); _commands.Clear(); _ratings.Clear(); ExifItemCount = 0;
+        foreach (var group in new NSView?[] { _exifGroup, _ratingGroup, _commandGroup })
+            if (group != null) DisposeView(group);
+        _exifGroup = null; _ratingGroup = null; _commandGroup = null; _ratingControl = null;
+        _exifTiles.Clear(); _ratingButtons.Clear();
+        _groups.Clear(); _kinds.Clear(); _commands.Clear(); _commandHosts.Clear();
     }
 
     /// <summary>递归释放分组的托管控件，避免原生层持有旧按钮事件。</summary>
@@ -290,6 +456,8 @@ internal sealed class MacControlBar : NSView
 
     internal sealed class ToolbarButton : NSButton
     {
+        private string? _symbol;
+
         internal static ToolbarButton Create(string symbol, string tooltip, Action action, double size = 40,
             bool command = true, double? width = null, double? height = null)
         {
@@ -311,6 +479,19 @@ internal sealed class MacControlBar : NSView
             ((NSView)button).AccessibilityLabel = tooltip;
             button.Activated += (_, _) => action();
             return button;
+        }
+
+        /// <summary>按符号与设计色着色；同一符号只生成一次着色副本，符号不变时只更新色调。</summary>
+        /// <param name="symbol">SF Symbol 名称。</param>
+        /// <param name="color">内容色。</param>
+        internal void ApplySymbol(string symbol, NSColor color)
+        {
+            if (_symbol != symbol)
+            {
+                _symbol = symbol;
+                Image = MacSymbols.Get(symbol, color);
+            }
+            ContentTintColor = color;
         }
 
         public override bool AcceptsFirstResponder() => Enabled;
@@ -415,7 +596,16 @@ internal sealed class MacControlBar : NSView
         internal void AddTile(NSView tile)
         {
             _tiles.Add(tile);
-            AddSubview(tile);
+            // NSBox 把子视图挂进内容区，项坐标因此与主窗口同为顶部原点（TOOLBAR-05）。
+            ((NSView)ContentView!).AddSubview(tile);
+        }
+
+        /// <summary>摘除并释放消失的 EXIF 项，保留整组与其余项实例。</summary>
+        /// <param name="tile">要摘除的信息项。</param>
+        internal void RemoveTile(NSView tile)
+        {
+            _tiles.Remove(tile);
+            DisposeView(tile);
         }
 
         /// <summary>点击整组时触发回调；未接线时交给系统默认处理。</summary>
@@ -449,11 +639,20 @@ internal sealed class MacControlBar : NSView
 
         internal ExifTile(ExifDisplayEntry entry) : base(CGRect.Empty)
         {
-            ToolTip = entry.DisplayName + " · " + entry.DisplayValue;
-            _label = Text(entry.DisplayName, 10, false);
-            _value = Text(entry.DisplayValue, 12, true);
+            _label = Text("", 10, false);
+            _value = Text("", 12, true);
             AddSubview(_label);
             AddSubview(_value);
+            SetEntry(entry);
+        }
+
+        /// <summary>就地替换两行文本与悬停提示，项实例与几何不变。</summary>
+        /// <param name="entry">设置启用的 EXIF 项。</param>
+        internal void SetEntry(ExifDisplayEntry entry)
+        {
+            ToolTip = entry.DisplayName + " · " + entry.DisplayValue;
+            _label.StringValue = entry.DisplayName;
+            _value.StringValue = entry.DisplayValue;
         }
 
         /// <summary>块内文字只作内容，不拦截整块入口：命中落到本项，点击再交给 EXIF 衬底。</summary>

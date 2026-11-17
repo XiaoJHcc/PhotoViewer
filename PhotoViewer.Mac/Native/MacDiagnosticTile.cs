@@ -1,5 +1,6 @@
 using AppKit;
 using CoreGraphics;
+using PhotoViewer.Core.Design;
 
 namespace PhotoViewer.Mac.Native;
 
@@ -13,47 +14,47 @@ namespace PhotoViewer.Mac.Native;
 /// </summary>
 public sealed class MacDiagnosticTile : NSView
 {
-    /// <summary>外框圆角半径。</summary>
-    private const double OuterCornerRadius = 6;
-    /// <summary>内层内容裁剪圆角半径。</summary>
-    private const double InnerCornerRadius = 5;
-    /// <summary>外框描边宽度。</summary>
-    private const double BorderWidth = 1;
-    /// <summary>十字准星单臂长度上限(点);主线总长为 2 × 此值。</summary>
-    private const double CrosshairArmLength = 12;
-    /// <summary>瓦片内全部文字的字号。</summary>
-    private const double TextFontSize = 12;
+    /// <summary>外框圆角半径（analysis.tile.cornerRadius）。</summary>
+    private const double OuterCornerRadius = DesignTokens.AnalysisTileCornerRadius;
+    /// <summary>内层内容裁剪圆角半径（analysis.tile.innerCornerRadius）。</summary>
+    private const double InnerCornerRadius = DesignTokens.AnalysisTileInnerCornerRadius;
+    /// <summary>外框描边宽度（analysis.tile.border.width）。</summary>
+    private const double BorderWidth = DesignTokens.AnalysisTileBorderWidth;
+    /// <summary>十字准星单臂长度上限(点);主线总长为 2 × 此值（analysis.crosshair.arm）。</summary>
+    private const double CrosshairArmLength = DesignTokens.AnalysisCrosshairArm;
+    /// <summary>瓦片内全部文字的字号（analysis.caption.fontSize）。</summary>
+    private const double TextFontSize = DesignTokens.AnalysisCaptionFontSize;
     private const double CaptionMarginLeft = 4;
     private const double CaptionMarginTop = 6;
     private const double CaptionMarginRight = 4;
     private const double CaptionMarginBottom = 4;
-    /// <summary>角标药丸左右内边距。</summary>
-    private const double CornerPillPaddingX = 8;
-    /// <summary>角标药丸上下内边距。</summary>
-    private const double CornerPillPaddingY = 4;
-    /// <summary>角标药丸圆角半径(只圆外侧两角)。</summary>
-    private const double CornerPillRadius = 5;
-    /// <summary>背景缩略图压暗后的不透明度。</summary>
-    private const double BackgroundAlpha = 0.30;
+    /// <summary>角标药丸左右内边距（analysis.badge.paddingX）。</summary>
+    private const double CornerPillPaddingX = DesignTokens.AnalysisBadgePaddingX;
+    /// <summary>角标药丸上下内边距（analysis.badge.paddingY）。</summary>
+    private const double CornerPillPaddingY = DesignTokens.AnalysisBadgePaddingY;
+    /// <summary>角标药丸圆角半径(只圆外侧两角，analysis.badge.cornerRadius)。</summary>
+    private const double CornerPillRadius = DesignTokens.AnalysisBadgeCornerRadius;
+    /// <summary>背景缩略图压暗后的不透明度（analysis.background.alpha）。</summary>
+    private const double BackgroundAlpha = DesignTokens.AnalysisBackgroundAlpha;
     /// <summary>占位文本左右各留的空白,避免长文本顶到边框。</summary>
     private const double PlaceholderInset = 8;
     /// <summary>说明文字量高时给出的高度上限,仅用于取换行后的实际高度。</summary>
     private const double CaptionMeasureLimit = 10000;
 
-    /// <summary>外框填色 #222(同时是 letterbox 底色)。</summary>
-    private static readonly NSColor FrameFill = NSColor.FromRgb((byte)0x22, (byte)0x22, (byte)0x22);
-    /// <summary>外框描边 #444。</summary>
-    private static readonly NSColor FrameStroke = NSColor.FromRgb((byte)0x44, (byte)0x44, (byte)0x44);
-    /// <summary>占位文本颜色 #777。</summary>
-    private static readonly NSColor PlaceholderColor = NSColor.FromRgb((byte)0x77, (byte)0x77, (byte)0x77);
-    /// <summary>说明文字颜色 #888。</summary>
-    private static readonly NSColor CaptionColor = NSColor.FromRgb((byte)0x88, (byte)0x88, (byte)0x88);
-    /// <summary>角标药丸底色 #88000000。</summary>
-    private static readonly NSColor CornerPillFill = NSColor.FromRgba((byte)0x00, (byte)0x00, (byte)0x00, (byte)0x88);
-    /// <summary>角标药丸文字颜色 #aaffffff。</summary>
-    private static readonly NSColor CornerPillTextColor = NSColor.FromRgba((byte)0xff, (byte)0xff, (byte)0xff, (byte)0xaa);
-    /// <summary>十字准星颜色(纯白 1pt 线)。</summary>
-    private static readonly NSColor CrosshairColor = NSColor.White;
+    /// <summary>外框填色(同时是 letterbox 底色，color.analysis.tile.background)。</summary>
+    private static readonly NSColor FrameFill = MacDesignColors.Argb(DesignTokens.ColorAnalysisTileBackground);
+    /// <summary>外框描边（color.analysis.tile.border）。</summary>
+    private static readonly NSColor FrameStroke = MacDesignColors.Argb(DesignTokens.ColorAnalysisTileBorder);
+    /// <summary>占位文本颜色（color.analysis.placeholder）。</summary>
+    private static readonly NSColor PlaceholderColor = MacDesignColors.Argb(DesignTokens.ColorAnalysisPlaceholder);
+    /// <summary>说明文字颜色（color.analysis.caption）。</summary>
+    private static readonly NSColor CaptionColor = MacDesignColors.Argb(DesignTokens.ColorAnalysisCaption);
+    /// <summary>角标药丸底色（color.analysis.badge.background）。</summary>
+    private static readonly NSColor CornerPillFill = MacDesignColors.Argb(DesignTokens.ColorAnalysisBadgeBackground);
+    /// <summary>角标药丸文字颜色（color.analysis.badge.foreground）。</summary>
+    private static readonly NSColor CornerPillTextColor = MacDesignColors.Argb(DesignTokens.ColorAnalysisBadgeForeground);
+    /// <summary>十字准星颜色(纯白 1pt 线，color.analysis.crosshair)。</summary>
+    private static readonly NSColor CrosshairColor = MacDesignColors.Argb(DesignTokens.ColorAnalysisCrosshair);
     /// <summary>瓦片内所有文字共用的系统字体。</summary>
     private static readonly NSFont TextFont = NSFont.SystemFontOfSize((nfloat)TextFontSize) ?? throw new InvalidOperationException("系统字体不可用");
 

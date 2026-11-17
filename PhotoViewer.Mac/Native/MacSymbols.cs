@@ -25,16 +25,21 @@ public static class MacSymbols
         => Get(name).GetImage(NSImageSymbolConfiguration.Create(color))
             ?? throw new InvalidOperationException($"系统符号着色失败：{name}");
 
-    /// <summary>创建原生方形图标按钮，尺寸由调用方指定。</summary>
-    public static NSButton Button(string symbol, string tooltip, Action action, double size = 40, bool border = true)
+    /// <summary>创建原生方形图标按钮，尺寸与符号字号由调用点按用途传入设计令牌。</summary>
+    /// <param name="symbol">SF Symbol 名称。</param>
+    /// <param name="tooltip">悬停提示与读屏名称来源。</param>
+    /// <param name="action">点击动作。</param>
+    /// <param name="size">按钮边长。</param>
+    /// <param name="glyphSize">符号字号。</param>
+    /// <param name="border">是否使用系统边框。</param>
+    public static NSButton Button(string symbol, string tooltip, Action action, double size, double glyphSize, bool border = true)
     {
         var button = new NSButton(new CoreGraphics.CGRect(0, 0, size, size))
         {
             Image = Get(symbol), ImagePosition = NSCellImagePosition.ImageOnly,
             BezelStyle = NSBezelStyle.TexturedRounded, Bordered = border, ToolTip = tooltip,
         };
-        double pointSize = size <= 14 ? (symbol == "xmark" ? 8 : 10) : size <= 30 ? (symbol == "xmark" ? 12 : 16) : 18;
-        button.SymbolConfiguration = NSImageSymbolConfiguration.Create((nfloat)pointSize, (double)NSFontWeight.Regular);
+        button.SymbolConfiguration = NSImageSymbolConfiguration.Create((nfloat)glyphSize, (double)NSFontWeight.Regular);
         button.Activated += (_, _) => action();
         return button;
     }

@@ -67,14 +67,14 @@ public sealed class MacThumbnailItem : NSCollectionViewItem
         _card = new CardView(new CGRect(0, 0, FilmstripGeometry.CardWidth, FilmstripGeometry.CardHeight));
         View = _card;
         _surface = new FlippedView(new CGRect(3, 3, 90, 138)) { WantsLayer = true };
-        _surface.Layer!.BackgroundColor = NSColor.FromWhite(2f / 15, 1).CGColor;
-        _surface.Layer.BorderWidth = 2;
-        _surface.Layer.CornerRadius = 7;
+        _surface.Layer!.BackgroundColor = MacDesignColors.Argb(DesignTokens.ColorFilmCardBackground).CGColor;
+        _surface.Layer.BorderWidth = (nfloat)DesignTokens.FilmCardBorderWidth;
+        _surface.Layer.CornerRadius = (nfloat)DesignTokens.FilmCardCornerRadius;
         _card.AddSubview(_surface);
         _thumbnail = new NSImageView(new CGRect(5, 5, 80, 80)) { ImageScaling = NSImageScale.ProportionallyUpOrDown, WantsLayer = true };
-        _thumbnail.Layer!.CornerRadius = 4;
+        _thumbnail.Layer!.CornerRadius = (nfloat)DesignTokens.FilmThumbCornerRadius;
         _thumbnail.Layer.MasksToBounds = true;
-        _thumbnail.Layer.BackgroundColor = NSColor.FromWhite(.2f, 1).CGColor;
+        _thumbnail.Layer.BackgroundColor = MacDesignColors.Argb(DesignTokens.ColorFilmThumbnailWell).CGColor;
         _thumbnail.Layer.BorderWidth = 1;
         _placeholder = new NSImageView(new CGRect(33, 33, 24, 24)) { Image = MacSymbols.Get("photo"), ContentTintColor = NSColor.TertiaryLabel };
         _progress = new NSProgressIndicator(new CGRect(37, 37, 16, 16)) { Style = NSProgressIndicatorStyle.Spinning, Indeterminate = true };
@@ -83,18 +83,18 @@ public sealed class MacThumbnailItem : NSCollectionViewItem
         _name.Font = NSFont.SystemFontOfSize(10, NSFontWeight.Semibold) ?? throw new InvalidOperationException("系统字体不可用");
         _date.Font = NSFont.SystemFontOfSize(9, NSFontWeight.Bold) ?? throw new InvalidOperationException("系统字体不可用");
         _secondLineBar = new FlippedView(new CGRect(5, 103, SecondLineWidth, 11)) { WantsLayer = true };
-        _secondLineBar.Layer!.BackgroundColor = NSColor.FromRgb(0x44, 0x44, 0x44).CGColor;
-        _secondLineBar.Layer.CornerRadius = 4;
+        _secondLineBar.Layer!.BackgroundColor = MacDesignColors.Argb(DesignTokens.ColorFilmCardSecondLineTrack).CGColor;
+        _secondLineBar.Layer.CornerRadius = (nfloat)DesignTokens.FilmCardSecondLineBarCornerRadius;
         _secondLineBar.Layer.MasksToBounds = true;
         _secondLineFill = new FlippedView(new CGRect(0, 0, 0, 11)) { WantsLayer = true };
-        _secondLineFill.Layer!.BackgroundColor = NSColor.FromRgba(0x1E, 0x90, 0xFF, 0x99).CGColor;
+        _secondLineFill.Layer!.BackgroundColor = MacDesignColors.Argb(DesignTokens.ColorFilmCardSecondLineFill).CGColor;
         _secondLineBar.AddSubview(_secondLineFill);
         _secondLineBar.Hidden = true;
         _shake = Label(new CGRect(67, 67, 16, 16), 11);
         _shake.StringValue = "抖";
         _shake.WantsLayer = true;
-        _shake.Layer!.BackgroundColor = NSColor.FromRgb(255, 85, 0).CGColor;
-        _shake.Layer.CornerRadius = 2;
+        _shake.Layer!.BackgroundColor = MacDesignColors.Argb(DesignTokens.ColorFilmShakeBadge).CGColor;
+        _shake.Layer.CornerRadius = (nfloat)DesignTokens.FilmCardBadgeCornerRadius;
         _stars = new NSButton[6];
         for (int rating = 0; rating < 6; rating++)
         {
@@ -106,7 +106,8 @@ public sealed class MacThumbnailItem : NSCollectionViewItem
                 // RATING-04：冲突时 0 号槽位是来源浮窗入口，不当作清零写入。
                 if (value == 0 && _file.HasRatingConflict && _showSources != null) _showSources(_file, button!);
                 else _rate?.Invoke(_file, value);
-            }, 14, false);
+            }, DesignTokens.FilmCardStarSize,
+                rating == 0 ? DesignTokens.FilmCardClearGlyphSize : DesignTokens.FilmCardStarFontSize, false);
             button.Frame = new CGRect(3 + rating * 14, 116, 14, 14);
             // FILM-05：清零叉固定中性色 color.star.clear，不取系统次级色。
             button.ContentTintColor = rating == 0
@@ -123,7 +124,8 @@ public sealed class MacThumbnailItem : NSCollectionViewItem
     /// <summary>用原生标签显示卡片文字，超宽文件名通过 tooltip 查看。</summary>
     private static NSTextField Label(CGRect frame, double fontSize)
         => new(frame) { Editable = false, Selectable = false, Bordered = false, DrawsBackground = false,
-            Alignment = NSTextAlignment.Center, Font = NSFont.SystemFontOfSize((nfloat)fontSize) ?? throw new InvalidOperationException("系统字体不可用"), TextColor = NSColor.White, LineBreakMode = NSLineBreakMode.TruncatingTail };
+            Alignment = NSTextAlignment.Center, Font = NSFont.SystemFontOfSize((nfloat)fontSize) ?? throw new InvalidOperationException("系统字体不可用"),
+            TextColor = MacDesignColors.Argb(DesignTokens.ColorFilmCardName), LineBreakMode = NSLineBreakMode.TruncatingTail };
 
     /// <summary>绑定新文件，取消旧模型订阅，防止虚拟化复用时评分/缩略图串位；第二行文字与柱状条占比可覆盖拍摄时间。</summary>
     /// <param name="file">卡片对应的照片。</param>
@@ -166,7 +168,8 @@ public sealed class MacThumbnailItem : NSCollectionViewItem
         _surface.Layer!.BorderColor = (_selectByDisplayedImage ? _file.IsCurrentImage : _file.IsCurrent)
             ? NSColor.SystemBlue.CGColor : NSColor.Clear.CGColor;
         IsHighlighted = _selectByDisplayedImage ? _file.IsCurrentImage : _file.IsCurrent;
-        _thumbnail.Layer!.BorderColor = _file.IsInCache ? NSColor.FromRgba(70, 130, 180, 180).CGColor : NSColor.Clear.CGColor;
+        _thumbnail.Layer!.BorderColor = _file.IsInCache
+            ? MacDesignColors.Argb(DesignTokens.ColorFilmCardCachedBorder).CGColor : NSColor.Clear.CGColor;
         _placeholder.Hidden = !_file.ShowThumbnailPlaceholder;
         bool loading = _file.IsThumbnailLoading && _file.Thumbnail == null;
         _progress.Hidden = !loading;
@@ -179,11 +182,13 @@ public sealed class MacThumbnailItem : NSCollectionViewItem
         clearSlot.ContentTintColor = MacDesignColors.Argb(conflict ? DesignTokens.ColorStarConflict : DesignTokens.ColorStarClear);
         clearSlot.ToolTip = conflict ? "评分来源冲突" : "无星级";
         ((NSView)clearSlot).AccessibilityLabel = clearSlot.ToolTip;
-        clearSlot.SymbolConfiguration = NSImageSymbolConfiguration.Create((nfloat)(conflict ? 10 : 8), (double)NSFontWeight.Regular);
+        clearSlot.SymbolConfiguration = NSImageSymbolConfiguration.Create(
+            (nfloat)(conflict ? DesignTokens.FilmCardStarFontSize : DesignTokens.FilmCardClearGlyphSize), (double)NSFontWeight.Regular);
         for (int index = 1; index < _stars.Length; index++)
         {
             _stars[index].Image = MacSymbols.Get(index <= _file.Rating ? "star.fill" : "star");
-            _stars[index].ContentTintColor = index <= _file.Rating ? NSColor.FromRgb(255, 210, 20) : NSColor.Gray;
+            _stars[index].ContentTintColor = MacDesignColors.Argb(index <= _file.Rating
+                ? DesignTokens.ColorStarOn : DesignTokens.ColorStarOff);
         }
         var thumbnail = _file.Thumbnail;
         if (!ReferenceEquals(thumbnail, _lastThumbnail))
