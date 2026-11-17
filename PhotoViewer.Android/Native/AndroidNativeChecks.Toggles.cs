@@ -160,13 +160,16 @@ internal static partial class AndroidNativeChecks
             {
                 var filter = main.FileVM.FilterBar;
                 bool previous = filter.IsSimilarityPanelOpen;
+                filter.IsSimilarityPanelOpen = false;
+                await WaitLayoutAsync(root);
                 double filmWidthBefore = root.Filmstrip.Width;
-                filter.IsSimilarityPanelOpen = !previous;
+                filter.IsSimilarityPanelOpen = true;
                 await WaitLayoutAsync(root);
                 Check("toggles AI 相似面板开合改变文件栏让宽",
                     root.SimilarityPane.Visibility == global::Android.Views.ViewStates.Visible
                     && root.Filmstrip.Width < filmWidthBefore - 1,
-                    $"panel={root.SimilarityPane.Visibility} film={filmWidthBefore}->{root.Filmstrip.Width}");
+                    $"panel={root.SimilarityPane.Visibility} film={filmWidthBefore}->{root.Filmstrip.Width} "
+                    + $"open={filter.IsSimilarityPanelOpen} previous={previous}");
                 filter.IsSimilarityPanelOpen = previous;
                 await WaitLayoutAsync(root);
             }

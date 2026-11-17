@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  玻璃按钮状态层：主文字色（白）按 Material 3 状态层不透明度叠加在深色按钮底上。
+  按钮、合体分段与星级槽位共用同一份色板。
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+  <item android:state_pressed="true"
+        android:alpha="@dimen/m3_sys_state_pressed_state_layer_opacity"
+        android:color="@color/native_text" />
+  <item android:state_focused="true"
+        android:alpha="@dimen/m3_sys_state_focus_state_layer_opacity"
+        android:color="@color/native_text" />
+  <item android:state_hovered="true"
+        android:alpha="@dimen/m3_sys_state_hover_state_layer_opacity"
+        android:color="@color/native_text" />
+  <item android:alpha="0" android:color="@color/native_text" />
+</selector>

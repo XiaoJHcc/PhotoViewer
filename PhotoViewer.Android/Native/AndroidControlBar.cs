@@ -2,11 +2,8 @@ using System;
 using System.Collections.Generic;
 using Android.Content;
 using Android.Graphics;
-using Android.OS;
 using Android.Views;
-using AndroidX.Core.View;
-using AndroidX.Core.View.Accessibility;
-using AndroidX.CustomView.Widget;
+using Android.Widget;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Input;
 using PhotoViewer.Shared;
@@ -16,26 +13,20 @@ using PhotoViewer.ViewModels.Settings;
 namespace PhotoViewer.Android.Native;
 
 /// <summary>
-/// 控制栏（TOOLBAR-01/02）：EXIF 摘要 → 评分 → 命令三组的尺寸、整组换行/换列与行内居中全部取共享
+/// 控制栏（TOOLBAR-01/02）：EXIF 摘要 → 评分 → 命令三组。分组尺寸、整组换行/换列与行内居中全部取共享
 /// <see cref="ToolbarFlowLayout"/>，子控件矩形取 <see cref="ExifBlockGeometry"/>、
-/// <see cref="RatingControlGeometry"/> 与 <see cref="ToolbarFlowLayout.CommandOffset"/>；本类只自绘并按命中分发。
-/// 移动端左右布局的 EXIF 取无衬底纵排（透明 44 宽容器、整项裁剪），行布局保留衬底块。
+/// <see cref="RatingControlGeometry"/> 与 <see cref="ToolbarFlowLayout.CommandOffset"/>。
+/// EXIF 块、星级控件与命令按钮都是真实子视图：前两者是自绘定制组件，命令是 Material 圆按钮，
+/// 悬停/按下/焦点与禁用由 Material 状态层承担；本类只负责把共享矩形落到子视图上。
+/// 移动端左右布局的 EXIF 取无衬底纵排（透明项目宽容器、整项裁剪），行布局保留衬底块。
 /// </summary>
-internal sealed class AndroidControlBar : View
+internal sealed class AndroidControlBar : FrameLayout
 {
     private readonly MainViewModel _main;
-    private readonly Paint _textPaint;
-    private readonly Paint _valuePaint;
-    private readonly Paint _iconPaint;
-    private readonly Paint _solidIconPaint;
-    private readonly Paint _numberPaint;
-    private readonly Paint _starActive;
-    private readonly Paint _starInactive;
-    private readonly Paint _starClear;
-    private readonly Paint _starConflict;
-    private readonly Paint _compactConflict;
-    private bool _ratingCompact;
-    private readonly ControlBarExploreByTouchHelper _accessibility;
+    private readonly AndroidExifBlock _exifView;
+    private readonly AndroidRatingControl _ratingView;
+    private readonly Dictionary<string, AndroidGlassButton> _commandViews = new(StringComparer.Ordinal);
+    private readonly Dictionary<View, LayoutRect> _viewRects = [];
     private readonly List<Group> _groups = [];
     private readonly List<ToolbarGroupSize> _specs = [];
     private Action<string>? _execute;
@@ -47,6 +38,9 @@ internal sealed class AndroidControlBar : View
     private bool _joinedToAnalysis;
     private bool _dirty = true;
     private bool _builtHorizontal = true;
+    private bool _ratingCompact;
+    private double _documentWidth;
+    private double _documentHeight;
 
     /// <summary>分组数量（验收读取）。</summary>
     internal int GroupCount => _groups.Count;
@@ -72,6 +66,12 @@ internal sealed class AndroidControlBar : View
                 if (child.Command == command) return child.Icon;
         return null;
     }
+    /// <summary>命令按钮的真实视图（验收读取：确认是 Material 按钮并核对位置/读屏名）。</summary>
+    internal IReadOnlyDictionary<string, AndroidGlassButton> CommandViewsForChecks => _commandViews;
+    /// <summary>EXIF 块子视图（验收读取底色与变体）。</summary>
+    internal AndroidExifBlock ExifBlock => _exifView;
+    /// <summary>星级控件子视图（验收读取胶囊矩形与状态）。</summary>
+    internal AndroidRatingControl RatingControl => _ratingView;
     /// <summary>分组类型顺序（验收读取，与 <see cref="GroupFramesForChecks"/> 同序）。</summary>
     internal IReadOnlyList<ControlBarGroupKind> GroupKindsForChecks
         => _groups.ConvertAll(group => group.Kind);
@@ -110,7 +110,7 @@ internal sealed class AndroidControlBar : View
     {
         rect = new Rect();
         if (!IsAttachedToWindow) return false;
-        // 重建后分组还没有矩形：与 OnDraw 一样先 Arrange，避免一次无害刷新被当成“入口消失”。
+        // 重建后分组还没有矩形：与 OnLayout 一样先 Arrange，避免一次无害刷新被当成“入口消失”。
         if (_dirty || _groups.Count == 0) Arrange(_horizontal, _availableMain);
         var group = _groups.Find(item => item.Kind == ControlBarGroupKind.Rating);
         if (group == null || index < 0 || index >= group.Children.Count) return false;
@@ -127,12 +127,12 @@ internal sealed class AndroidControlBar : View
         return true;
     }
 
-    /// <summary>EXIF 整组点击入口（触摸与读屏虚拟节点共用同一回调；验收读取）。</summary>
+    /// <summary>EXIF 整组点击入口（与子视图的点击路径共用同一回调；验收读取）。</summary>
     internal void TapExifGroup() => _openTools?.Invoke();
 
     /// <summary>
-    /// 按视觉顺序展开的虚拟节点快照（验收用）：读屏名称、分组类型、本地 dp 矩形与禁用态，
-    /// 与 <c>ExploreByTouchHelper</c> 暴露给读屏的节点同源。
+    /// 按视觉顺序展开的节点快照（验收用）：读屏名称、分组类型、本地 dp 矩形与禁用态，
+    /// 与真实子视图同源（命令取真实按钮的读屏名称与布局矩形）。
     /// </summary>
     /// <returns>节点快照列表。</returns>
     internal IReadOnlyList<(string Name, string Kind, double X, double Y, double Width, double Height, bool Enabled)> NodesForChecks()
@@ -155,31 +155,16 @@ internal sealed class AndroidControlBar : View
     public AndroidControlBar(Context context, MainViewModel main) : base(context)
     {
         _main = main;
-        _textPaint = AndroidUiTheme.TextPaint(context, DesignTokens.ToolbarExifLabelFontSize, AndroidUiTheme.TextSecondary);
-        _valuePaint = AndroidUiTheme.TextPaint(context, DesignTokens.ToolbarExifValueFontSize, AndroidUiTheme.TextPrimary, bold: true);
-        _iconPaint = AndroidUiTheme.Paint(AndroidUiTheme.TextPrimary);
-        _iconPaint.TextSize = AndroidUiTheme.Sp(context, DesignTokens.ToolbarCommandGlyphFontSize);
-        _iconPaint.TextAlign = Paint.Align.Center;
-        _solidIconPaint = AndroidUiTheme.Paint(AndroidUiTheme.TextPrimary);
-        _solidIconPaint.TextSize = AndroidUiTheme.Sp(context, DesignTokens.ToolbarCommandGlyphFontSize);
-        _solidIconPaint.TextAlign = Paint.Align.Center;
-        _numberPaint = AndroidUiTheme.TextPaint(context, DesignTokens.ToolbarRatingDigitFontSize,
-            AndroidUiTheme.FromToken(DesignTokens.ColorToolbarCommandBackground), bold: true);
-        _starActive = AndroidUiTheme.Paint(AndroidUiTheme.StarActive);
-        _starInactive = AndroidUiTheme.Paint(AndroidUiTheme.StarInactive);
-        _starClear = AndroidUiTheme.Paint(AndroidUiTheme.StarClear, Math.Max(1, AndroidUiTheme.Dp(context, 1)));
-        _starConflict = AndroidUiTheme.TextPaint(context, DesignTokens.ToolbarRatingGlyphFontSize, AndroidUiTheme.StarConflict);
-        _compactConflict = AndroidUiTheme.TextPaint(context, RatingControlGeometry.CompactGlyph, AndroidUiTheme.StarConflict);
-        if (AndroidUiTheme.IconTypeface(context) is { } iconTypeface)
-        {
-            _starConflict.SetTypeface(iconTypeface);
-            _compactConflict.SetTypeface(iconTypeface);
-        }
-        SetWillNotDraw(false);
-        Focusable = true;
-        ImportantForAccessibility = ImportantForAccessibility.Yes;
-        _accessibility = new ControlBarExploreByTouchHelper(this);
-        ViewCompat.SetAccessibilityDelegate(this, _accessibility);
+        _exifView = new AndroidExifBlock(context);
+        _exifView.ExifActivated += () => _openTools?.Invoke();
+        _exifView.Visibility = ViewStates.Gone;
+        AddView(_exifView);
+        _ratingView = new AndroidRatingControl(context);
+        _ratingView.RateRequested += rating => _rate?.Invoke(rating);
+        _ratingView.ConflictRequested += () => _openRatingSources?.Invoke();
+        _ratingView.Visibility = ViewStates.Gone;
+        AddView(_ratingView);
+        SetClipChildren(true);
     }
 
     /// <summary>命令执行入口与评分入口；EXIF 块点击打开工具页，冲突三角打开来源浮窗。</summary>
@@ -199,7 +184,7 @@ internal sealed class AndroidControlBar : View
     /// <param name="joined">是否紧邻分析栏。</param>
     internal void SetJoinedToAnalysis(bool joined) => _joinedToAnalysis = joined;
 
-    /// <summary>按共享设置重建三组控件（显隐/顺序、当前星级与 EXIF 项）。</summary>
+    /// <summary>按共享设置重建三组控件（显隐/顺序、当前星级与 EXIF 项）；同名命令保留原按钮实例。</summary>
     internal void Rebuild()
     {
         _groups.Clear();
@@ -213,6 +198,12 @@ internal sealed class AndroidControlBar : View
             foreach (var entry in entries) children.Add(new Child { Exif = entry });
             _groups.Add(new Group(ControlBarGroupKind.Exif, children));
             _specs.Add(ToolbarFlowLayout.Exif(entries.Count, horizontal: _horizontal, bare: !_horizontal));
+            _exifView.SetContent(entries, _horizontal, !_horizontal, entries.Count);
+            _exifView.Visibility = ViewStates.Visible;
+        }
+        else
+        {
+            _exifView.Visibility = ViewStates.Gone;
         }
         if (_main.Settings.ShowRating)
         {
@@ -223,7 +214,6 @@ internal sealed class AndroidControlBar : View
             bool conflict = hasPhoto && _main.CurrentFile!.HasRatingConflict;
             for (int value = 0; value < 6; value++)
             {
-                // TOOLBAR-03：无照片时整组禁用，按钮保留几何可见。
                 children.Add(new Child
                 {
                     Rating = value,
@@ -234,19 +224,60 @@ internal sealed class AndroidControlBar : View
             }
             _groups.Add(new Group(ControlBarGroupKind.Rating, children));
             _specs.Add(ToolbarFlowLayout.Rating(ToolbarFlowLayout.ContentMain(_availableMain)));
+            _ratingView.SetOrientation(_horizontal);
+            _ratingView.SetState(rating, conflict, hasPhoto);
+            _ratingView.Visibility = ViewStates.Visible;
         }
+        else
+        {
+            _ratingView.Visibility = ViewStates.Gone;
+        }
+
         var commands = new List<Child>();
         foreach (var hotkey in _main.ControlVM.EnabledControls)
         {
+            bool ratingCommand = hotkey.Command.StartsWith("SetRating", StringComparison.Ordinal);
+            string? number = ratingCommand ? hotkey.Command[9..] : null;
+            string glyph = ratingCommand
+                ? (number == "0" ? AndroidUiTheme.IconGlyph(DesignTokens.IconClear)
+                    : AndroidUiTheme.IconGlyph(DesignTokens.IconStarFilled))
+                : hotkey.DisplaySymbol ?? string.Empty;
+            string description = BindingText(hotkey);
+            bool enabled = hotkey.Command == "Open" || _main.CurrentFile != null;
             commands.Add(new Child
             {
                 Command = hotkey.Command,
-                Icon = hotkey.DisplaySymbol,
-                Number = hotkey.Command.StartsWith("SetRating", StringComparison.Ordinal) ? hotkey.Command[9..] : null,
+                Icon = glyph,
+                Number = number,
                 Label = hotkey.Name,
-                Binding = BindingText(hotkey),
-                Enabled = hotkey.Command == "Open" || _main.CurrentFile != null,
+                Binding = description,
+                Enabled = enabled,
             });
+            if (!_commandViews.TryGetValue(hotkey.Command, out var button))
+            {
+                button = new AndroidGlassButton(Context!, glyph, description,
+                    solid: ratingCommand && number != "0", number);
+                button.Click += (_, _) =>
+                {
+                    if (button.Enabled) _execute?.Invoke(hotkey.Command);
+                };
+                _commandViews.Add(hotkey.Command, button);
+                AddView(button);
+            }
+            button.ContentDescription = description;
+            button.Enabled = enabled;
+            button.Visibility = ViewStates.Visible;
+        }
+        var stale = new List<string>();
+        foreach (var command in _commandViews.Keys)
+            if (!commands.Exists(child => child.Command == command)) stale.Add(command);
+        foreach (var command in stale)
+        {
+            var button = _commandViews[command];
+            _viewRects.Remove(button);
+            RemoveView(button);
+            button.Dispose();
+            _commandViews.Remove(command);
         }
         if (commands.Count > 0)
         {
@@ -261,7 +292,7 @@ internal sealed class AndroidControlBar : View
 
     /// <summary>
     /// 命令的读屏文本：格式 <c>名称（主 / 次）</c> 取共享 <see cref="CommandTooltipText"/>，与桌面悬停提示同一文案；
-    /// 本端只负责把绑定格式化成可读键名（TOOLBAR-04）。
+    /// 本端只负责把绑定格式化成可读键名（TOOLBAR-04）。移动端不设长按浮层。
     /// </summary>
     /// <param name="hotkey">共享快捷键项。</param>
     /// <returns>读屏文本。</returns>
@@ -280,11 +311,10 @@ internal sealed class AndroidControlBar : View
         if (_dirty || _groups.Count == 0 || _builtHorizontal != horizontal) Rebuild();
         UpdateRatingSpec();
         var document = ToolbarFlowLayout.Arrange(_specs, horizontal, _availableMain, CrossLeadingPadding());
-        return horizontal ? (document.Width, document.Height) : (document.Height, document.Width);
+        double main = horizontal ? document.Width : document.Height;
+        double cross = horizontal ? document.Height : document.Width;
+        return (Math.Max(main, _availableMain), cross);
     }
-
-    private double _documentWidth;
-    private double _documentHeight;
 
     /// <summary>交叉轴前导内边距：与相邻分析栏共边时省略，独立时取工具区内边距。</summary>
     private double CrossLeadingPadding() => ToolRegionGeometry.ControlLeadingInset(_joinedToAnalysis);
@@ -299,8 +329,13 @@ internal sealed class AndroidControlBar : View
         if (_dirty || _groups.Count == 0 || _builtHorizontal != horizontal) Rebuild();
         UpdateRatingSpec();
         var document = ToolbarFlowLayout.Arrange(_specs, horizontal, _availableMain, CrossLeadingPadding());
-        _documentWidth = document.Width;
-        _documentHeight = document.Height;
+        // 文档主轴至少填满视口：整行居中由共享 LineStart 给出，子视图必须落在自身宽高内才能被命中。
+        double documentMain = horizontal ? document.Width : document.Height;
+        double documentCross = horizontal ? document.Height : document.Width;
+        double main = Math.Max(documentMain, _availableMain);
+        _documentWidth = horizontal ? main : documentCross;
+        _documentHeight = horizontal ? documentCross : main;
+        _viewRects.Clear();
         for (int index = 0; index < _groups.Count && index < document.Groups.Count; index++)
         {
             var group = _groups[index];
@@ -308,9 +343,8 @@ internal sealed class AndroidControlBar : View
             group.Rect = frame;
             LayoutChildren(group, frame);
         }
-        _accessibility.InvalidateRoot();
         Invalidate();
-        return horizontal ? (document.Width, document.Height) : (document.Height, document.Width);
+        return (main, documentCross);
     }
 
     /// <summary>按当前主轴可用长度刷新评分分组尺寸：窗口跨过展开阈值时展开/紧凑必须真实切换。</summary>
@@ -321,18 +355,22 @@ internal sealed class AndroidControlBar : View
                 _specs[index] = ToolbarFlowLayout.Rating(ToolbarFlowLayout.ContentMain(_availableMain));
     }
 
-    /// <summary>按分组类型落子控件：EXIF 项目、评分六格或命令按钮。</summary>
+    /// <summary>
+    /// 按分组类型落子控件：EXIF 块与星级控件是分组本身，命令按钮在分组内按共享偏移落位，
+    /// 交叉轴按 (lineCross - size) / 2 居中（TOOLBAR-02）。
+    /// </summary>
     private void LayoutChildren(Group group, LayoutRect frame)
     {
         switch (group.Kind)
         {
             case ControlBarGroupKind.Exif:
+                _viewRects[_exifView] = frame;
                 double blockMain = _horizontal ? frame.Width : frame.Height;
                 double cross = _horizontal ? frame.Height : frame.Width;
                 for (int index = 0; index < group.Children.Count; index++)
                 {
                     var item = ExifBlockGeometry.ItemRect(index, group.Children.Count, _horizontal, blockMain, !_horizontal);
-                    // 无衬底纵排：透明容器固定 44 宽，项目宽（52）被容器裁切，文字在容器内截断。
+                    // 无衬底纵排：容器宽取项目固有宽，文字在容器内截断。
                     double itemCross = Math.Min(_horizontal ? item.Height : item.Width, cross);
                     group.Children[index].Rect = _horizontal
                         ? new LayoutRect(frame.X + item.X, frame.Y, item.Width, itemCross)
@@ -341,6 +379,7 @@ internal sealed class AndroidControlBar : View
                 break;
             case ControlBarGroupKind.Rating:
                 var control = RatingControlGeometry.ControlFrame(frame, _horizontal);
+                _viewRects[_ratingView] = control;
                 double rowLength = _horizontal ? control.Width : control.Height;
                 double rowCross = _horizontal ? control.Height : control.Width;
                 var form = RatingControlGeometry.ResolveForm(rowLength);
@@ -384,212 +423,69 @@ internal sealed class AndroidControlBar : View
                 break;
             default:
                 double side = ToolbarFlowLayout.CommandSize;
+                double lineCross = _horizontal ? frame.Height : frame.Width;
+                double crossOffset = (lineCross - side) / 2;
                 for (int index = 0; index < group.Children.Count; index++)
                 {
+                    var child = group.Children[index];
                     double offset = ToolbarFlowLayout.CommandOffset(index);
-                    group.Children[index].Rect = _horizontal
-                        ? new LayoutRect(frame.X + offset, frame.Y, side, side)
-                        : new LayoutRect(frame.X, frame.Y + offset, side, side);
+                    child.Rect = _horizontal
+                        ? new LayoutRect(frame.X + offset, frame.Y + crossOffset, side, side)
+                        : new LayoutRect(frame.X + crossOffset, frame.Y + offset, side, side);
+                    if (child.Command != null && _commandViews.TryGetValue(child.Command, out var button))
+                        _viewRects[button] = child.Rect;
                 }
                 break;
         }
     }
 
-    /// <summary>绘制分组与子控件。</summary>
-    /// <param name="canvas">画布。</param>
-    protected override void OnDraw(Canvas canvas)
+    /// <summary>给子视图按共享矩形精确测量（不与内容协商尺寸）。</summary>
+    /// <param name="widthMeasureSpec">宽约束。</param>
+    /// <param name="heightMeasureSpec">高约束。</param>
+    protected override void OnMeasure(int widthMeasureSpec, int heightMeasureSpec)
     {
-        base.OnDraw(canvas);
-        // 不能只 Rebuild：新分组还没有 Rect，OnDraw 会全部跳过，表现就是“只剩容器”。
-        if (_dirty || _groups.Count == 0) Arrange(_horizontal, _availableMain);
-        float density = (float)AndroidUiTheme.Density(Context!);
-        foreach (var group in _groups)
+        int width = MeasureSpec.GetSize(widthMeasureSpec), height = MeasureSpec.GetSize(heightMeasureSpec);
+        SetMeasuredDimension(width, height);
+        double density = AndroidUiTheme.Density(Context!);
+        foreach (var (view, rect) in _viewRects)
         {
-            if (group.Rect.Width <= 0 || group.Rect.Height <= 0) continue;
-            switch (group.Kind)
-            {
-                case ControlBarGroupKind.Exif:
-                    DrawExifGroup(canvas, group, density);
-                    break;
-                case ControlBarGroupKind.Rating:
-                    // TOOLBAR-10：评分块与 EXIF 块共用 #222222 底色。
-                    AndroidUiTheme.DrawRounded(canvas, ToRectF(group.Rect, density),
-                        (float)(RatingControlGeometry.Thickness / 2 * density), AndroidUiTheme.CardBackground);
-                    foreach (var child in group.Children) DrawRating(canvas, child, density);
-                    break;
-                default:
-                    foreach (var child in group.Children) DrawCommand(canvas, child, density);
-                    break;
-            }
+            int childWidth = Math.Max(0, (int)Math.Round(rect.Width * density));
+            int childHeight = Math.Max(0, (int)Math.Round(rect.Height * density));
+            view.Measure(MeasureSpec.MakeMeasureSpec(childWidth, MeasureSpecMode.Exactly),
+                MeasureSpec.MakeMeasureSpec(childHeight, MeasureSpecMode.Exactly));
         }
-    }
-
-    /// <summary>EXIF 组：行布局画带衬底的块，左右布局只画项目（无衬底、圆角与内边距都不绘制）。</summary>
-    private void DrawExifGroup(Canvas canvas, Group group, float density)
-    {
-        if (!ExifBare)
-        {
-            AndroidUiTheme.DrawRounded(canvas, ToRectF(group.Rect, density),
-                (float)(ExifBlockGeometry.CornerRadius * density), AndroidUiTheme.CardBackground);
-        }
-        foreach (var child in group.Children)
-        {
-            if (child.Rect.Width <= 0 || child.Rect.Height <= 0 || child.Exif == null) continue;
-            var rect = ToRectF(child.Rect, density);
-            canvas.Save();
-            canvas.ClipRect(rect.Left, rect.Top, Math.Min(rect.Right, Width), Math.Min(rect.Bottom, Height));
-            AndroidUiTheme.DrawCentered(canvas, child.Exif.DisplayName, _textPaint, rect.CenterX(),
-                rect.Top + rect.Height() * .36f, rect.Width());
-            AndroidUiTheme.DrawCentered(canvas, child.Exif.DisplayValue, _valuePaint, rect.CenterX(),
-                rect.Top + rect.Height() * .82f, rect.Width());
-            canvas.Restore();
-        }
-    }
-
-    /// <summary>评分子控件：0 号为清除叉（冲突时为警示三角），1–5 号按当前星级点亮。</summary>
-    private void DrawRating(Canvas canvas, Child child, float density)
-    {
-        var rect = ToRectF(child.Rect, density);
-        float cx = rect.CenterX(), cy = rect.CenterY();
-        int alpha = child.Enabled ? 255 : (int)Math.Round(255 * DesignTokens.ColorToolbarDisabledContentAlpha);
-        if (child.Rating == 0)
-        {
-            if (child.Conflict)
-            {
-                var conflictPaint = _ratingCompact ? _compactConflict : _starConflict;
-                conflictPaint.Alpha = alpha;
-                string glyph = AndroidUiTheme.IconGlyph(DesignTokens.IconWarning);
-                AndroidUiTheme.DrawGlyphCentered(canvas, glyph, conflictPaint, cx, cy);
-                return;
-            }
-            float arm = 4.5f * density;
-            _starClear.Alpha = alpha;
-            canvas.DrawLine(cx - arm, cy - arm, cx + arm, cy + arm, _starClear);
-            canvas.DrawLine(cx - arm, cy + arm, cx + arm, cy - arm, _starClear);
-            return;
-        }
-        _starActive.Alpha = alpha;
-        _starInactive.Alpha = alpha;
-        double glyphSize = _ratingCompact ? RatingControlGeometry.CompactGlyph : DesignTokens.ToolbarRatingGlyphFontSize;
-        using var star = StarPath(cx, cy, (float)(glyphSize / 2 * density), (float)(glyphSize * .2 * density));
-        canvas.DrawPath(star, child.Active ? _starActive : _starInactive);
     }
 
     /// <summary>
-    /// 命令按钮：44×44 圆角底 + 图标字体。评分快捷命令 1–5 为实心星内叠数字（数字取按钮底色），
-    /// 0 为描边字体的清零叉；两者与普通命令共用同一前景/禁用强调。
+    /// 只重绘的刷新路径（星级写回、透明度等）也要把新状态落到真实子视图上：
+    /// 几何没变时 Rebuild 只同步文本/状态与显隐，不移动任何控件。
     /// </summary>
-    private void DrawCommand(Canvas canvas, Child child, float density)
+    /// <param name="canvas">画布。</param>
+    protected override void DispatchDraw(Canvas canvas)
     {
-        var rect = ToRectF(child.Rect, density);
-        float cx = rect.CenterX(), cy = rect.CenterY();
-        AndroidUiTheme.DrawRounded(canvas, rect, Math.Min(rect.Width(), rect.Height()) / 2,
-            AndroidUiTheme.FromToken(DesignTokens.ColorToolbarCommandBackground));
-        var foreground = child.Enabled ? AndroidUiTheme.TextPrimary : Color.ParseColor("#666666")!;
-        int alpha = child.Enabled ? 255 : (int)Math.Round(255 * DesignTokens.ColorToolbarDisabledContentAlpha);
-        if (child.Number != null)
-        {
-            if (child.Number == "0")
-            {
-                var regular = AndroidUiTheme.IconTypeface(Context!);
-                if (regular != null) _iconPaint.SetTypeface(regular);
-                _iconPaint.Color = foreground;
-                _iconPaint.Alpha = alpha;
-                AndroidUiTheme.DrawGlyphCentered(canvas, AndroidUiTheme.IconGlyph(DesignTokens.IconClear), _iconPaint, cx, cy);
-                return;
-            }
-            var solid = AndroidUiTheme.IconSolidTypeface(Context!);
-            if (solid != null) _solidIconPaint.SetTypeface(solid);
-            _solidIconPaint.Color = foreground;
-            _solidIconPaint.Alpha = alpha;
-            AndroidUiTheme.DrawGlyphCentered(canvas, AndroidUiTheme.IconGlyph(DesignTokens.IconStarFilled), _solidIconPaint, cx, cy);
-            // 数字叠在星形中心，颜色取按钮底色；命中区域仍是整颗按钮，数字不单独拦截点击。
-            _numberPaint.Alpha = alpha;
-            AndroidUiTheme.DrawGlyphCentered(canvas, child.Number, _numberPaint, cx, cy);
-            return;
-        }
-        var typeface = AndroidUiTheme.IconTypeface(Context!);
-        if (typeface != null) _iconPaint.SetTypeface(typeface);
-        _iconPaint.Color = foreground;
-        _iconPaint.Alpha = alpha;
-        AndroidUiTheme.DrawGlyphCentered(canvas, child.Icon ?? "?", _iconPaint, cx, cy);
+        if (_dirty && _availableMain > 0) Arrange(_horizontal, _availableMain);
+        base.DispatchDraw(canvas);
     }
 
-    /// <summary>点按命中：EXIF 块开工具、评分写回、命令走共享命令表。</summary>
-    /// <param name="e">事件。</param>
-    /// <returns>消费。</returns>
-    public override bool OnTouchEvent(MotionEvent? e)
+    /// <summary>把每个子视图摆到共享矩形上。</summary>
+    /// <param name="changed">是否变化。</param>
+    /// <param name="l">左。</param>
+    /// <param name="t">上。</param>
+    /// <param name="r">右。</param>
+    /// <param name="b">下。</param>
+    protected override void OnLayout(bool changed, int l, int t, int r, int b)
     {
-        if (e == null) return false;
-        if (e.ActionMasked != MotionEventActions.Up) return true;
         double density = AndroidUiTheme.Density(Context!);
-        double x = e.GetX() / density, y = e.GetY() / density;
-        foreach (var group in _groups)
+        foreach (var (view, rect) in _viewRects)
         {
-            foreach (var child in group.Children)
-            {
-                if (!Contains(child.Rect, x, y)) continue;
-                switch (group.Kind)
-                {
-                    case ControlBarGroupKind.Exif:
-                        _openTools?.Invoke();
-                        break;
-                    case ControlBarGroupKind.Rating:
-                        if (!child.Enabled) break;
-                        // RATING-04：冲突三角只打开来源浮窗，不写 0。
-                        if (child.Rating == 0 && child.Conflict)
-                        {
-                            _openRatingSources?.Invoke();
-                            break;
-                        }
-                        _rate?.Invoke(child.Rating);
-                        break;
-                    default:
-                        if (child.Enabled && child.Command != null) _execute?.Invoke(child.Command);
-                        break;
-                }
-                return true;
-            }
+            int left = (int)Math.Round(rect.X * density), top = (int)Math.Round(rect.Y * density);
+            int width = Math.Max(0, (int)Math.Round(rect.Width * density));
+            int height = Math.Max(0, (int)Math.Round(rect.Height * density));
+            view.Layout(left, top, left + width, top + height);
         }
-        return true;
     }
 
-    /// <summary>命中的虚拟节点 id（按分组与子控件顺序展平）；未命中返回 -1。</summary>
-    /// <param name="x">本地横坐标（dp）。</param>
-    /// <param name="y">本地纵坐标（dp）。</param>
-    /// <returns>虚拟节点 id 或 -1。</returns>
-    private int VirtualViewIdAt(double x, double y)
-    {
-        int id = 0;
-        foreach (var group in _groups)
-        {
-            foreach (var child in group.Children)
-            {
-                if (child.Rect.Width > 0 && Contains(child.Rect, x, y)) return id;
-                id++;
-            }
-        }
-        return -1;
-    }
-
-    /// <summary>按展平 id 取子控件。</summary>
-    /// <param name="id">虚拟节点 id。</param>
-    /// <returns>分组与子控件；越界返回 null。</returns>
-    private (Group Group, Child Child)? ChildAt(int id)
-    {
-        int index = 0;
-        foreach (var group in _groups)
-        {
-            foreach (var child in group.Children)
-            {
-                if (index == id) return (group, child);
-                index++;
-            }
-        }
-        return null;
-    }
-
-    /// <summary>虚拟节点的读屏名称（TOOLBAR-11）。</summary>
+    /// <summary>虚拟节点/验收快照的读屏名称（与真实子视图文案同源，TOOLBAR-11）。</summary>
     private static string AccessibleName(Group group, Child child) => group.Kind switch
     {
         ControlBarGroupKind.Exif => child.Exif == null
@@ -601,114 +497,25 @@ internal sealed class AndroidControlBar : View
         _ => child.Binding ?? child.Label ?? child.Command ?? "",
     };
 
-    /// <summary>执行虚拟节点动作（与点按命中同一入口）。</summary>
-    private bool PerformVirtualAction(Group group, Child child)
+    /// <summary>释放命令按钮子视图。</summary>
+    /// <param name="disposing">是否释放托管资源。</param>
+    protected override void Dispose(bool disposing)
     {
-        if (!child.Enabled) return false;
-        switch (group.Kind)
+        if (disposing)
         {
-            case ControlBarGroupKind.Exif:
-                _openTools?.Invoke();
-                return true;
-            case ControlBarGroupKind.Rating:
-                // RATING-04：读屏点按冲突三角与触摸同义，只开浮窗、不写值。
-                if (child.Rating == 0 && child.Conflict)
-                {
-                    _openRatingSources?.Invoke();
-                    return true;
-                }
-                _rate?.Invoke(child.Rating);
-                return true;
-            default:
-                if (child.Command == null) return false;
-                _execute?.Invoke(child.Command);
-                return true;
-        }
-    }
-
-    private static bool Contains(LayoutRect rect, double x, double y)
-        => x >= rect.X && x <= rect.MaxX && y >= rect.Y && y <= rect.MaxY;
-
-    private static RectF ToRectF(LayoutRect rect, float density) => new(
-        (float)rect.X * density, (float)rect.Y * density,
-        (float)rect.MaxX * density, (float)rect.MaxY * density);
-
-    private static Path StarPath(float cx, float cy, float outer, float inner)
-        => AndroidUiTheme.StarPath(cx, cy, outer, inner);
-
-    /// <summary>
-    /// 控制栏虚拟节点（TOOLBAR-11）：按视觉顺序暴露 EXIF 块、评分 0–5 与命令，
-    /// 每个节点带名称、禁用态与位置，点按/回车走与触摸相同的执行入口。
-    /// </summary>
-    private sealed class ControlBarExploreByTouchHelper : ExploreByTouchHelper
-    {
-        private readonly AndroidControlBar _owner;
-
-        /// <summary>绑定控制栏。</summary>
-        /// <param name="owner">控制栏视图。</param>
-        public ControlBarExploreByTouchHelper(AndroidControlBar owner) : base(owner) => _owner = owner;
-
-        /// <summary>按本地像素坐标找虚拟节点。</summary>
-        protected override int GetVirtualViewAt(float x, float y)
-        {
-            double density = AndroidUiTheme.Density(_owner.Context!);
-            return _owner.VirtualViewIdAt(x / density, y / density);
-        }
-
-        /// <summary>按视觉顺序列出可见虚拟节点。</summary>
-        protected override void GetVisibleVirtualViews(IList<Java.Lang.Integer>? virtualViewIds)
-        {
-            if (virtualViewIds == null) return;
-            int id = 0;
-            foreach (var group in _owner._groups)
+            foreach (var button in _commandViews.Values)
             {
-                foreach (var child in group.Children)
-                {
-                    if (child.Rect.Width > 0 && child.Rect.Height > 0)
-                        virtualViewIds.Add(Java.Lang.Integer.ValueOf(id));
-                    id++;
-                }
+                RemoveView(button);
+                button.Dispose();
             }
+            _commandViews.Clear();
+            _viewRects.Clear();
+            RemoveView(_exifView);
+            _exifView.Dispose();
+            RemoveView(_ratingView);
+            _ratingView.Dispose();
         }
-
-        /// <summary>填充节点名称、禁用态、选中态与边界。</summary>
-        protected override void OnPopulateNodeForVirtualView(int virtualViewId, AccessibilityNodeInfoCompat? node)
-        {
-            if (node == null) return;
-            var pair = _owner.ChildAt(virtualViewId);
-            if (pair == null)
-            {
-                node.ContentDescription = "";
-                node.SetBoundsInScreen(new Rect());
-                return;
-            }
-
-            var (group, child) = pair.Value;
-            node.ContentDescription = AccessibleName(group, child);
-            node.Enabled = child.Enabled;
-            node.Clickable = child.Enabled;
-            node.Focusable = true;
-            node.VisibleToUser = true;
-            if (group.Kind == ControlBarGroupKind.Rating) node.Selected = child.Active;
-            if (child.Enabled) node.AddAction((int)global::Android.Views.Accessibility.Action.Click);
-            double density = AndroidUiTheme.Density(_owner.Context!);
-            // 虚拟节点边界用屏幕坐标，避免已弃用的 parent bounds。
-            var location = new int[2];
-            _owner.GetLocationOnScreen(location);
-            node.SetBoundsInScreen(new Rect(
-                location[0] + (int)Math.Round(child.Rect.X * density),
-                location[1] + (int)Math.Round(child.Rect.Y * density),
-                location[0] + (int)Math.Round(child.Rect.MaxX * density),
-                location[1] + (int)Math.Round(child.Rect.MaxY * density)));
-        }
-
-        /// <summary>读屏点按：复用控制栏的点按执行路径。</summary>
-        protected override bool OnPerformActionForVirtualView(int virtualViewId, int action, Bundle? arguments)
-        {
-            if (action != (int)global::Android.Views.Accessibility.Action.Click) return false;
-            var pair = _owner.ChildAt(virtualViewId);
-            return pair != null && _owner.PerformVirtualAction(pair.Value.Group, pair.Value.Child);
-        }
+        base.Dispose(disposing);
     }
 
     /// <summary>业务分组。</summary>

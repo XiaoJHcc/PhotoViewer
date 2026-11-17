@@ -74,7 +74,7 @@ Plan 3 把 iOS 敲定的静态布局推广到了 Web / Android / macOS，但 Mac
 ### 6.1 实现
 
 - **共享**：iPad 两段合体几何迁入 `PhotoViewer.Shared/MobileFilterLayout.cs`，iOS 与 Android 共用；`CoreContractCheck` 新增其契约，并把 `cae08ac` 遗留的横屏无衬底 EXIF 旧断言（44 宽）改为固有项宽 52、上限 64、与按钮同轴，EXIF 透明容器允许伸进分析栏接缝但不压瓦片。
-- **Android**：控制栏改为 `FrameLayout`，命令为 Material 圆按钮；筛选入口、手机圆按钮与全部合体统一为 Material 按钮 / 胶囊容器（修正刘海在右时分隔线落到胶囊外缘），宽形态改用「筛选 / 更多」96 合体；星级胶囊与按钮同底，逐格悬停 / 按下为原生涟漪内切正圆，补读屏范围与增减；EXIF 成对居中、衬底取令牌；星形统一 uicons；卡片读屏名、相似动作 Material 按钮、分析瓦片令牌化。滚动宿主保留自写实现（换原生滚动视图需重写两向固有测量与偏移迁移，既有断言全部保留）。
+- **Android**：控制栏改为 `FrameLayout`，命令为 Material 圆按钮；筛选入口、手机圆按钮与全部合体统一为 Material 按钮 / 胶囊容器（修正刘海在右时分隔线落到胶囊外缘），宽形态改用「筛选 / 更多」96 合体；主屏按钮统一为主题样式 `Widget.PhotoViewer.GlassButton`（Material 3 图标按钮，uicons 字形放在图标槽），按下 / 悬停 / 焦点与星级逐格共用主文字色的 Material 3 状态层 `pv_glass_state_layer`；星级胶囊与按钮同底，逐格悬停 / 按下为原生涟漪内切正圆，补读屏范围与增减；系统安全区与屏幕圆角按 SHELL-10 分开避让（先按安全区排出贴角元素，再按元素实际位置与半圆端外形求圆角避让线，两者取较大者）；EXIF 成对居中、衬底取令牌；星形统一 uicons；卡片读屏名、相似动作 Material 按钮、分析瓦片令牌化。滚动宿主保留自写实现（换原生滚动视图需重写两向固有测量与偏移迁移，既有断言全部保留）。
 - **macOS**：控制栏按结构摘要就地刷新，切图、评分写回、EXIF 到达保留控件实例；卡片文字色、玻璃圆角、分隔线、导航图、分析与相似面板颜色改取等值令牌；静态矩阵补「只剩评分与命令」组合。
 - **Web**：宽形态改为 Mac 形态（三段玻璃胶囊 / 单胶囊、段宽取各段最宽选项、评分恒 224、竖排 EXIF 无衬底 52、命令悬停出描边、评分槽内切圆悬停、禁用只降内容、细节瓦片悬停描边、卡片提示收窄到文字）；手机形态改用 `icon.filter` / `icon.more`，横屏 EXIF 52 同轴；`?platform=mac` 只保留窗口装饰几何差异。
 
@@ -87,13 +87,14 @@ Plan 3 把 iOS 敲定的静态布局推广到了 Web / Android / macOS，但 Mac
 | iOS | 双版模拟器构建 0 错误；运行时套件未复跑（共享改动为纯迁移，契约覆盖） |
 | Web | Node 352 PASS / 0 FAIL；`?check=all` 双版各 70/70；`?check=mac` 2/2；mac 配置档与 Mac 原生几何共有 213 节点，差异只在筛选段宽（导出工具近似测字）与段坐标空间 |
 | macOS | 双版 Debug / Release 0 错误；layout、toolbar、filmstrip、analysis、input 双版通过，AI similarity 通过；tools 套件因会话锁屏无法截图未在最终树复跑 |
-| Android | 双版构建 0 错误；手机与平板等效窗口 layout / form / input / filter / main / analysis 及 AI similarity / edition 全部 0 FAIL；平板 AI settings 2 条拖动断言失败，HEAD 基线同值失败，非本轮引入 |
+| Android | 双版构建 0 错误；圆角避让与按钮样式收尾后的最终树在手机与平板等效窗口复跑 layout / form / input / filter / main 及平板 analysis、AI similarity / edition 全部 0 FAIL（字形居中改为读按钮实际绘制像素）；平板 AI settings 2 条拖动断言失败，HEAD 基线同值失败，非本轮引入 |
 
 证据在 `artifacts/acceptance/new-ui/compliance/`（`android/`、`macos-standard/`、`macos-ai/`、`web/`）。
 
 ### 6.3 待作者复核
 
-- 三端截图观感、Android 真机触控与外接鼠标悬停（模拟器只能注入 hover）。
+- 三端截图观感、Android 真机触控与外接鼠标悬停（模拟器只能注入 hover）；Android 真机圆角屏上竖屏底行与横屏刘海侧列上下的实际边距、按下状态层观感（模拟器圆角约 18dp，小于按钮半圆端 22，圆角避让在模拟器上不产生让位，公式由合成半径检查覆盖）。
+- Android 栏底毛玻璃暂缓：`SurfaceView` 主图没有视图层的公开背衬模糊，唯一可行路线是在自有 GL 渲染器内对栏位区域做降采样模糊，需另行裁定 SHELL-12@android。
 - Mac 卡片文字色由纯白改为令牌 `color.film.card.name`（#EEEEEE）。
 - Android 相似聚类开关未选中文字取 `color.text.primary`（与其他 Material 按钮一致），已登记为平台差异。
 - 无令牌的遗留字面量：Mac 计算中药丸底色、栏位默认底，Android 分析瓦片 letterbox 底色；Web 三段胶囊段内边距与分隔线缩进（`web-shell-gaps.md` G55）。

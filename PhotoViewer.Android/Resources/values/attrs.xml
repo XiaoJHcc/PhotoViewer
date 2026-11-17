@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<resources>
+  <!-- 主屏玻璃按钮样式入口；由 Theme.PhotoViewer.Native.Base 指向 Widget.PhotoViewer.GlassButton。 -->
+  <attr name="pvGlassButtonStyle" format="reference" />
+</resources>

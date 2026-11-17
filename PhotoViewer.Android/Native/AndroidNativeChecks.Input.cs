@@ -7,6 +7,7 @@ using Android.Graphics;
 using Android.OS;
 using Android.Views;
 using PhotoViewer.Android.Core;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Input;
 using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Settings;
@@ -269,6 +270,7 @@ internal static partial class AndroidNativeChecks
         var root = _root!;
         var main = _main!;
         await Task.Delay(200);
+        await CheckRatingFeedbackAsync();
         if (root.Form != ScreenForm.Wide)
         {
             var nav = root.PhoneNavigation;
@@ -325,6 +327,146 @@ internal static partial class AndroidNativeChecks
             + $"rating={string.Join("/", ordered.Select(node => node.Name))} "
             + $"commands={commandNodes.Count}/{commands.Count} "
             + $"names=[{string.Join(" | ", commandNodes.Select(node => node.Name))}] expected=[{string.Join(" | ", expectedNames)}]");
+
+        // TOOLBAR-04 / TOOLBAR-10：命令是真实 Material 按钮，读屏名称与快照同源，且不设置长按浮层。
+        var commandViews = root.ControlBar.CommandViewsForChecks;
+        bool material = commandViews.Count == commands.Count
+            && commandViews.Values.All(view => view is AndroidGlassButton && view.Focusable);
+        bool noTooltip = true;
+        if (OperatingSystem.IsAndroidVersionAtLeast(26))
+        {
+#pragma warning disable CA1416
+            noTooltip = commandViews.Values.All(view => string.IsNullOrEmpty(view.TooltipText));
+#pragma warning restore CA1416
+        }
+        bool namesMatch = commandViews.Values.Select(view => (string?)view.ContentDescription ?? "").SequenceEqual(expectedNames);
+        Check("TOOLBAR-04 命令为真实 Material 按钮且读屏名同源", material && noTooltip && namesMatch,
+            $"views={commandViews.Count}/{commands.Count} material={material} tooltipFree={noTooltip} names={namesMatch} "
+            + $"actual=[{string.Join(" | ", commandViews.Values.Select(view => view.ContentDescription))}]");
+
+        // TOOLBAR-10：命令按钮的悬停/焦点由 Material 状态层承担（注入悬停事件读视图状态）。
+        var hoverTarget = commandViews.Values.FirstOrDefault();
+        if (hoverTarget != null)
+        {
+            long now = SystemClock.UptimeMillis();
+            using (var enter = HoverEvent(MotionEventActions.HoverEnter,
+                       hoverTarget.Width / 2f, hoverTarget.Height / 2f, now, InputSourceType.Mouse))
+                hoverTarget.OnHoverEvent(enter);
+            bool hovered = hoverTarget.Hovered;
+            using (var exit = HoverEvent(MotionEventActions.HoverExit, 0, 0, now + 20, InputSourceType.Mouse))
+                hoverTarget.OnHoverEvent(exit);
+            bool exited = !hoverTarget.Hovered;
+            bool focusable = hoverTarget.Focusable && hoverTarget.Clickable;
+            Check("TOOLBAR-10 命令按钮悬停状态层", hovered && exited && focusable,
+                $"hovered={hovered} exited={exited} focusable={focusable} cmd={hoverTarget.ContentDescription}");
+        }
+    }
+
+    /// <summary>
+    /// RATING-07 / TOOLBAR-10：展开态逐格悬停与按下在槽位内产生正圆反馈，点按仍按共享槽位映射写值；
+    /// 胶囊外轮廓与槽位几何不随状态变化。
+    /// </summary>
+    private static async Task CheckRatingFeedbackAsync()
+    {
+        var activity = _activity!;
+        double density = AndroidUiTheme.Density(activity);
+        var rating = new AndroidRatingControl(activity) { Horizontal = true };
+        try
+        {
+            int width = (int)Math.Round(RatingControlGeometry.ExpandedLength * density);
+            int height = (int)Math.Round(RatingControlGeometry.Thickness * density);
+            rating.Measure(global::Android.Views.View.MeasureSpec.MakeMeasureSpec(width, global::Android.Views.MeasureSpecMode.Exactly),
+                global::Android.Views.View.MeasureSpec.MakeMeasureSpec(height, global::Android.Views.MeasureSpecMode.Exactly));
+            rating.Layout(0, 0, width, height);
+            rating.SetState(3, false, true);
+            var hoverSlot = rating.SlotRectPx(2);
+            long now = SystemClock.UptimeMillis();
+            using (var hover = MotionEvent.Obtain(now, now, MotionEventActions.HoverMove,
+                       hoverSlot.CenterX(), hoverSlot.CenterY(), 0))
+                rating.OnHoverEvent(hover);
+            bool hovered = rating.HoverSlotForChecks == 2;
+
+            var pressSlot = rating.SlotRectPx(4);
+            int? rated = null;
+            rating.RateRequested += value => rated = value;
+            using (var down = MotionEvent.Obtain(now, now, MotionEventActions.Down,
+                       pressSlot.CenterX(), pressSlot.CenterY(), 0))
+                rating.OnTouchEvent(down);
+            bool pressed = rating.PressedSlotForChecks == 4;
+            using (var up = MotionEvent.Obtain(now, now + 40, MotionEventActions.Up,
+                       pressSlot.CenterX(), pressSlot.CenterY(), 0))
+                rating.OnTouchEvent(up);
+            bool cleared = rating.PressedSlotForChecks == -1;
+            using (var exit = MotionEvent.Obtain(now, now + 60, MotionEventActions.HoverExit, 0, 0, 0))
+                rating.OnHoverEvent(exit);
+            bool exited = rating.HoverSlotForChecks == -1;
+            // 正圆直径取槽位短边，不越出槽位；胶囊外轮廓仍是 44 厚；状态层与命令按钮同一色板。
+            double circle = Math.Min(pressSlot.Width(), pressSlot.Height()) / density;
+            var hoverCircle = rating.HoverCircleBoundsForChecks(2);
+            var ripple = rating.SlotRippleForChecks(2);
+            var stateLayer = AndroidX.Core.Content.ContextCompat.GetColorStateList(activity, Resource.Color.pv_glass_state_layer);
+            var pressedLayer = stateLayer == null ? Color.Transparent
+                : new(stateLayer.GetColorForState([global::Android.Resource.Attribute.StatePressed], Color.White));
+            bool circleGeometry = Math.Abs(hoverCircle.Width() - Math.Min(hoverSlot.Width(), hoverSlot.Height())) <= 1
+                && Math.Abs(hoverCircle.Height() - Math.Min(hoverSlot.Width(), hoverSlot.Height())) <= 1
+                && Near(hoverCircle.CenterX(), hoverSlot.CenterX()) && Near(hoverCircle.CenterY(), hoverSlot.CenterY());
+            bool rippleTheme = ripple != null && rating.HighlightColorForChecks == pressedLayer && rating.FillColorForChecks
+                == AndroidUiTheme.FromToken(DesignTokens.ColorToolbarCommandBackground);
+            Check("RATING-07 逐格悬停/按下正圆反馈", hovered && pressed && rated == 4 && cleared && exited
+                    && Near(circle, RatingControlGeometry.Slot) && circleGeometry && rippleTheme
+                    && Near(rating.Width / density, RatingControlGeometry.ExpandedLength)
+                    && Near(rating.Height / density, RatingControlGeometry.Thickness),
+                $"hover={rating.HoverSlotForChecks} pressed={pressed} rated={rated?.ToString() ?? "null"} "
+                + $"circle={circle:0.#} geom={circleGeometry} stateLayer={pressedLayer}/{rating.HighlightColorForChecks} "
+                + $"fill={rating.FillColorForChecks} view={rating.Width / density:0.#}x{rating.Height / density:0.#}");
+        }
+        finally
+        {
+            rating.Dispose();
+        }
+
+        await CaptureRatingHoverAsync();
+    }
+
+    /// <summary>
+    /// 在真实控制栏星级上注入悬停并截取该控件区域，作为「原生主题涟漪在胶囊上可见」的目视证据。
+    /// </summary>
+    private static async Task CaptureRatingHoverAsync()
+    {
+        var root = _root!;
+        if (root.Form != ScreenForm.Wide) return;
+        var rating = root.ControlBar.RatingControl;
+        if (rating.Visibility != ViewStates.Visible || rating.Width <= 0) return;
+        var slot = rating.SlotRectPx(2);
+        long now = SystemClock.UptimeMillis();
+        using (var hover = HoverEvent(MotionEventActions.HoverMove, slot.CenterX(), slot.CenterY(), now, InputSourceType.Mouse))
+            rating.OnHoverEvent(hover);
+        await Task.Delay(400);
+        try
+        {
+            using var full = Bitmap.CreateBitmap(root.Width, root.Height, Bitmap.Config.Argb8888!)!;
+            using (var canvas = new Canvas(full)) root.Draw(canvas);
+            var ratingLocation = new int[2];
+            var rootLocation = new int[2];
+            rating.GetLocationInWindow(ratingLocation);
+            root.GetLocationInWindow(rootLocation);
+            int left = Math.Max(0, ratingLocation[0] - rootLocation[0]);
+            int top = Math.Max(0, ratingLocation[1] - rootLocation[1]);
+            int width = Math.Min(rating.Width, full.Width - left);
+            int height = Math.Min(rating.Height, full.Height - top);
+            using var crop = Bitmap.CreateBitmap(full, left, top, width, height)!;
+            var directory = IOPath.Combine(_activity!.FilesDir!.AbsolutePath, "PhotoViewer");
+            Directory.CreateDirectory(directory);
+            using var stream = File.Create(IOPath.Combine(directory,
+                $"android-rating-hover-{AndroidAppCapabilities.EditionName}.png"));
+            crop.Compress(Bitmap.CompressFormat.Png!, 100, stream);
+        }
+        catch (Exception exception)
+        {
+            Check("RATING-07 悬停截图", false, exception.GetType().Name + "：" + exception.Message);
+        }
+        using (var exit = HoverEvent(MotionEventActions.HoverExit, 0, 0, now + 500, InputSourceType.Mouse))
+            rating.OnHoverEvent(exit);
     }
 
     /// <summary>TOOLBAR-04：命令读屏名称按设计格式在此独立拼装（空槽省略、主次相同只显示一次）。</summary>

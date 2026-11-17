@@ -77,19 +77,23 @@ internal readonly record struct AndroidWindowInsets(AndroidInsets SystemBars, An
     }
 
     /// <summary>
-    /// 窗口某个横向位置上的圆角避让（dp）：圆角半径 r 的圆心距窗口角为 r，带的上缘距窗口缘 y（0 ≤ y ≤ r）时，
-    /// 该处圆角边界到窗口缘的距离为 <c>r − √(r² − (r−y)²)</c>；y ≥ r 时完全离开圆角方块，避让为 0。
-    /// 半径与位置都是公开 <c>RoundedCorner</c> 读数，圆角为 0 的平台不会产生任何位移。
+    /// 贴角带的圆角避让线（dp，SHELL-10）：元素外形的端头是半径 ρ 的圆（44 高胶囊与圆按钮 ρ = 22，矩形 ρ = 0），
+    /// 近缘距相邻窗口缘 y 时，求端头圆恰好内切屏幕圆弧（圆心距窗口角 r、半径 r）时元素近端到另一窗口缘的距离：
+    /// <c>(r − ρ) − √((r − ρ)² − (r − ρ − y)²)</c>；端头圆心已离开圆角方块（y ≥ r − ρ）时为 0。
+    /// 半径取公开 <c>RoundedCorner</c> 读数，圆角为 0 的平台不产生位移。这条线与系统安全区并列取较大者，
+    /// 该带的边距再从较大者量起，两者不相加。
     /// </summary>
-    /// <param name="radius">圆角半径（dp）。</param>
-    /// <param name="edgeDistance">元素带近缘到窗口缘的距离（dp，负值按 0）。</param>
-    /// <returns>沿带方向需要的额外让位（dp）。</returns>
-    internal static double CornerInset(double radius, double edgeDistance)
+    /// <param name="radius">屏幕圆角半径（dp）。</param>
+    /// <param name="edgeDistance">元素近缘到相邻窗口缘的实际距离（dp，负值按 0）。</param>
+    /// <param name="shapeRadius">元素端头圆半径（dp）。</param>
+    /// <returns>沿带方向元素近端不得越过的位置（距窗口缘，dp）。</returns>
+    internal static double CornerInset(double radius, double edgeDistance, double shapeRadius)
     {
-        if (radius <= .5) return 0;
-        double y = Math.Clamp(edgeDistance, 0, radius);
-        double dx = radius - y;
-        return Math.Max(0, radius - Math.Sqrt(Math.Max(0, radius * radius - dx * dx)));
+        double span = radius - Math.Max(0, shapeRadius);
+        if (radius <= .5 || span <= 0) return 0;
+        double offset = span - Math.Max(0, edgeDistance);
+        if (offset <= 0) return 0;
+        return Math.Max(0, span - Math.Sqrt(Math.Max(0, span * span - offset * offset)));
     }
 
     /// <summary>

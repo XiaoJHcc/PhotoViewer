@@ -2,6 +2,7 @@ using System;
 using System.Text;
 using System.Threading.Tasks;
 using AndroidX.Core.View;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Main;
@@ -68,6 +69,33 @@ internal static partial class AndroidNativeChecks
             CheckGeometry(root, main, density, "横屏");
             CheckSafeInsets(root, landscape: true, "横屏");
             if (root.Form == ScreenForm.Wide) CheckLandscapeControlReachesBottom(root, density, main);
+
+            // FILTER-07：横屏刘海换到另一侧时，筛选/更多合体随真实槽位镜像，装饰不越出胶囊。
+            activity.RequestedOrientation = global::Android.Content.PM.ScreenOrientation.ReverseLandscape;
+            var reversedDeadline = DateTime.UtcNow.AddSeconds(8);
+            while (DateTime.UtcNow < reversedDeadline && !(root.Width > root.Height && !root.NotchOnLeft))
+                await Task.Delay(50);
+            bool reversed = root.Width > root.Height && !root.NotchOnLeft;
+            bool mirrorProbe = root.WindowInsetsForChecks.CutoutCenterX != null
+                || Math.Abs(root.SafeInsets.Left - root.SafeInsets.Right) > .5;
+            if (!mirrorProbe)
+            {
+                Check("layout 横屏刘海右布局（跳过）", true,
+                    $"无显示挖孔且左右安全区对称，镜像方向不可判定 safe={root.SafeInsets}");
+            }
+            else if (reversed)
+            {
+                await Task.Delay(500);
+                CheckRootForm(root, "横屏刘海右");
+                CheckGeometry(root, main, density, "横屏刘海右");
+                CheckSafeInsets(root, landscape: true, "横屏刘海右");
+            }
+            else
+            {
+                // 该设备不提供反向刘海（模拟器无显示挖孔或忽略反向方向）：用同一合体控件的镜像排布核验分段交换。
+                Check("layout 横屏刘海右布局（设备无反向刘海，按合成合体核验）", CheckComboMirror(),
+                    $"notchOnLeft={root.NotchOnLeft} px={root.Width}x{root.Height} safe={root.SafeInsets}");
+            }
 
             activity.RequestedOrientation = global::Android.Content.PM.ScreenOrientation.Portrait;
             await WaitAsync(() => root.Height > root.Width, "竖屏布局", 8000);
@@ -199,6 +227,26 @@ internal static partial class AndroidNativeChecks
             $"手势横屏B={gestureLandscape.Bottom:0.#} 三键横屏B={threeButtonLandscape.Bottom:0.#} "
             + $"手势+底部刘海横屏B={gestureCutoutLandscape.Bottom:0.#}/L={gestureCutoutLandscape.Left:0.#} "
             + $"三键竖屏B={threeButtonPortrait.Bottom:0.#}");
+
+        // SHELL-10：圆角避让线让元素半圆端恰好内切屏幕圆弧。取大圆角真机量级的合成半径，
+        // 逐个近缘距离核对：有让位时端头圆心到圆角圆心的距离等于 r − ρ；无让位时端头圆心已离开圆角方块。
+        const double screenRadius = 56.7, shapeRadius = 22;
+        var samples = new List<string>();
+        bool tangent = true;
+        foreach (double edge in new[] { 0d, 10, 16, 24, 34.7, 40 })
+        {
+            double inset = AndroidWindowInsets.CornerInset(screenRadius, edge, shapeRadius);
+            double span = screenRadius - shapeRadius;
+            bool ok = inset > 0
+                ? Math.Abs(Math.Sqrt(Math.Pow(span - inset, 2) + Math.Pow(span - edge, 2)) - span) < .01
+                : edge >= span - .01;
+            tangent &= ok;
+            samples.Add($"y={edge:0.#}→{inset:0.##}{(ok ? "" : "✗")}");
+        }
+        bool degenerate = Near(AndroidWindowInsets.CornerInset(18, 0, shapeRadius), 0)
+            && Near(AndroidWindowInsets.CornerInset(screenRadius, 0, 0), screenRadius);
+        Check("layout 圆角避让线端头内切（合成半径）", tangent && degenerate,
+            $"r={screenRadius} ρ={shapeRadius} {string.Join(' ', samples)} 小圆角无让位/矩形贴角让满={degenerate}");
     }
 
     /// <summary>横屏忽略手势导航条后，行/列布局的控制栏内容都铺到窗口下缘（栏位背景本就铺到屏幕边缘）。</summary>
@@ -247,11 +295,15 @@ internal static partial class AndroidNativeChecks
             var filter = root.FilterBar;
             var content = panes.FileContent;
             var filterTail = AndroidFilterBar.ShowsSimilarityToggle ? filter.SimilarityFrame : filter.ControlFrame;
+            bool filterInside = root.FilterScrollableForChecks
+                ? filter.ControlFrame.X >= -.6
+                : filter.ControlFrame.X >= -.6 && filterTail.MaxX <= content.Width + .6;
             Check($"{phase} 筛选条在文件栏内容区",
-                filter.ControlFrame.X >= -.6 && filterTail.MaxX <= content.Width + .6
-                && Near(filter.ControlFrame.Height, WideFilterLayout.Height),
-                $"control={filter.ControlFrame} tail={filterTail} content={content} row={row}");
-            if (row && !filter.SortFrame.Equals(filter.ControlFrame))
+                filterInside && Near(filter.ControlFrame.Height, MobileFilterLayout.Segment),
+                $"control={filter.ControlFrame} tail={filterTail} content={content} row={row} "
+                + $"scrollable={root.FilterScrollableForChecks}");
+            // FILTER-07：只有整组自然宽没有溢出安全内容区时才要求居中；窄屏从前导 filter.margin 起排。
+            if (row && !root.FilterScrollableForChecks)
                 Check($"{phase} 行布局筛选整组居中",
                     Near((filter.ControlFrame.X + filterTail.MaxX) / 2, content.Width / 2),
                     $"center={(filter.ControlFrame.X + filterTail.MaxX) / 2:0.#} expected={content.Width / 2:0.#}");
@@ -281,6 +333,31 @@ internal static partial class AndroidNativeChecks
             Check($"{phase} 控制栏分组与节点几何", root.ControlBar.GroupCount is >= 1 and <= 3 && nodesOk,
                 $"groups={root.ControlBar.GroupCount} nodes={nodes.Count} docMain={barMain:0.#} visible={visibleMain:0.#} "
                 + $"scroll={overflowMain} background={panes.ControlBackground}");
+        }
+    }
+
+    /// <summary>镜像排布：合体容器内前段落在右半，两段都不越出胶囊。</summary>
+    private static bool CheckComboMirror()
+    {
+        var activity = _activity!;
+        double density = AndroidUiTheme.Density(activity);
+        var combo = new AndroidGlassCombo(activity, DesignTokens.IconFilter, "筛选", DesignTokens.IconMore, "更多");
+        try
+        {
+            int width = (int)Math.Round(AndroidGlassCombo.Size * density);
+            int height = (int)Math.Round(MobileFilterLayout.Segment * density);
+            combo.SetMirrored(true);
+            combo.Measure(global::Android.Views.View.MeasureSpec.MakeMeasureSpec(width, global::Android.Views.MeasureSpecMode.Exactly),
+                global::Android.Views.View.MeasureSpec.MakeMeasureSpec(height, global::Android.Views.MeasureSpecMode.Exactly));
+            combo.Layout(0, 0, width, height);
+            return combo.First.Left == width / 2 && combo.First.Right == width
+                && combo.Second.Left == 0 && combo.Second.Right == width / 2
+                && combo.First.Top == 0 && combo.First.Bottom == height
+                && combo.Second.Top == 0 && combo.Second.Bottom == height;
+        }
+        finally
+        {
+            combo.Dispose();
         }
     }
 

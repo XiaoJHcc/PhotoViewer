@@ -3,8 +3,15 @@ using System.Collections.Generic;
 using Android.Content;
 using Android.Content.Res;
 using Android.Graphics;
+using Android.Graphics.Drawables;
+using Android.Graphics.Drawables.Shapes;
+using Android.OS;
+using Android.Util;
 using Android.Views;
 using Android.Widget;
+using AndroidX.Core.View;
+using AndroidX.Core.View.Accessibility;
+using AndroidX.CustomView.Widget;
 using Google.Android.Material.Button;
 using Google.Android.Material.Card;
 using Google.Android.Material.Shape;
@@ -35,101 +42,241 @@ internal sealed class AndroidBarScrim : View
 }
 
 /// <summary>
-/// 手机形态的玻璃圆按钮（SHELL-12）：Material 3 <see cref="MaterialButton"/> 承载胶囊底、状态层与涟漪，
-/// 字形取设计令牌的 uicons 码位，尺寸固定 <c>shell.glass.button.size</c>（44），不随文字拉宽。
+/// uicons 字形图标：按字形墨迹在自身边界内居中，可作为 <see cref="MaterialButton"/> 的图标槽（评分快捷命令另叠 1–5 数字）。
+/// 着色取 Material 的 <c>iconTint</c>（含禁用态），绘制时按当前状态解析到画笔。
+/// </summary>
+internal sealed class AndroidGlyphDrawable : Drawable
+{
+    private readonly string _glyph;
+    private readonly string? _digit;
+    private readonly Paint _glyphPaint;
+    private readonly Paint? _digitPaint;
+    private readonly int _size;
+    private ColorStateList? _tint;
+    private int _alpha = 255;
+
+    /// <summary>建一个字形图标。</summary>
+    /// <param name="context">宿主上下文。</param>
+    /// <param name="glyph">uicons 字形。</param>
+    /// <param name="solid">是否取实心图标字体（评分快捷命令的星底）。</param>
+    /// <param name="digit">叠在字形中心的数字（评分快捷命令 1–5；null 表示不叠）。</param>
+    public AndroidGlyphDrawable(Context context, string glyph, bool solid, string? digit)
+    {
+        _glyph = glyph;
+        _digit = string.IsNullOrEmpty(digit) ? null : digit;
+        _size = Math.Max(1, (int)Math.Ceiling(AndroidUiTheme.Sp(context, DesignTokens.ToolbarCommandGlyphFontSize)));
+        _glyphPaint = AndroidUiTheme.Paint(Color.White);
+        _glyphPaint.TextSize = _size;
+        var typeface = solid ? AndroidUiTheme.IconSolidTypeface(context) : AndroidUiTheme.IconTypeface(context);
+        if (typeface != null) _glyphPaint.SetTypeface(typeface);
+        if (_digit == null) return;
+        _digitPaint = AndroidUiTheme.TextPaint(context, DesignTokens.ToolbarRatingDigitFontSize,
+            AndroidUiTheme.FromToken(DesignTokens.ColorToolbarCommandBackground), bold: true);
+        _digitPaint.TextSize = AndroidUiTheme.Sp(context, DesignTokens.ToolbarRatingDigitFontSize);
+    }
+
+    /// <summary>字形文本（验收读取）。</summary>
+    internal string Glyph => _glyph;
+
+    /// <summary>叠在字形中心的数字（null 表示没有）。</summary>
+    internal string? Digit => _digit;
+
+    /// <summary>固有边长（px）：与字形字号一致，图标槽按它定尺寸并在按钮内居中。</summary>
+    public override int IntrinsicWidth => _size;
+
+    /// <summary>固有边长（px）。</summary>
+    public override int IntrinsicHeight => _size;
+
+    /// <summary>图标是否随状态变色（禁用只降内容强调）。</summary>
+    public override bool IsStateful => _tint?.IsStateful == true;
+
+    /// <summary>半透明像素：字形边缘需要抗锯齿混合。</summary>
+    public override int Opacity => (int)Format.Translucent;
+
+    /// <summary>外部透明度（图标槽动画等）与状态色 alpha 相乘后绘制。</summary>
+    /// <param name="alpha">0–255。</param>
+    public override void SetAlpha(int alpha)
+    {
+        if (_alpha == alpha) return;
+        _alpha = alpha;
+        InvalidateSelf();
+    }
+
+    /// <summary>颜色滤镜直接作用于字形画笔。</summary>
+    /// <param name="colorFilter">滤镜。</param>
+    public override void SetColorFilter(ColorFilter? colorFilter) => _glyphPaint.SetColorFilter(colorFilter);
+
+    /// <summary>Material 的 <c>iconTint</c> 着色入口。</summary>
+    /// <param name="tint">图标状态色。</param>
+    public override void SetTintList(ColorStateList? tint)
+    {
+        _tint = tint;
+        InvalidateSelf();
+    }
+
+    /// <summary>状态变化（启用/禁用、按下、悬停）后按状态色重绘。</summary>
+    /// <param name="state">当前 Drawable 状态。</param>
+    /// <returns>是否重绘。</returns>
+    protected override bool OnStateChange(int[] state)
+    {
+        if (_tint == null) return false;
+        InvalidateSelf();
+        return true;
+    }
+
+    /// <summary>在自身边界中心按墨迹绘制字形，再叠数字。</summary>
+    /// <param name="canvas">画布。</param>
+    public override void Draw(Canvas canvas)
+    {
+        var bounds = Bounds;
+        if (string.IsNullOrEmpty(_glyph) || bounds.Width() <= 0 || bounds.Height() <= 0) return;
+        int alpha = TintAlpha();
+        _glyphPaint.Color = Color.White;
+        _glyphPaint.Alpha = alpha;
+        AndroidUiTheme.DrawGlyphCentered(canvas, _glyph, _glyphPaint, bounds.ExactCenterX(), bounds.ExactCenterY());
+        if (_digitPaint == null || _digit == null) return;
+        _digitPaint.Alpha = alpha;
+        AndroidUiTheme.DrawGlyphCentered(canvas, _digit, _digitPaint, bounds.ExactCenterX(), bounds.ExactCenterY());
+    }
+
+    /// <summary>当前状态色的 alpha 与外部透明度合成。</summary>
+    private int TintAlpha()
+    {
+        int color = _tint?.GetColorForState(GetState(), Color.White) ?? Color.White.ToArgb();
+        return Color.GetAlphaComponent(color) * _alpha / 255;
+    }
+}
+
+/// <summary>
+/// 玻璃圆按钮（SHELL-12）：Material 3 图标按钮样式 <c>Widget.PhotoViewer.GlassButton</c> 承载底色、状态层与涟漪，
+/// uicons 字形放在 Material 图标槽并按墨迹居中，尺寸固定 <c>shell.glass.button.size</c>（44），
+/// 不随内容拉宽；禁用只把内容降到 <c>color.toolbar.disabled.content.alpha</c>，底色与几何不变。
 /// </summary>
 internal sealed class AndroidGlassButton : MaterialButton
 {
-    private string _glyph;
+    private readonly string _glyph;
+    private readonly string? _number;
+    private readonly bool _iconFont;
 
     /// <summary>按钮边长（dp）。</summary>
     internal static double Size => DesignTokens.ShellGlassButtonSize;
 
     /// <summary>建一个图标按钮。</summary>
     /// <param name="context">宿主上下文。</param>
-    /// <param name="glyph">uicons 字形（空串表示纯文字合体段由调用方另行设置）。</param>
+    /// <param name="glyph">uicons 字形或 <c>U+</c> 码位令牌；<paramref name="iconFont"/> 为 false 时是普通文字。</param>
     /// <param name="description">读屏名称（与按钮语义一致）。</param>
-    /// <param name="iconFont">是否用 uicons 字形绘制（false 时按普通文字绘制，用于文字入口）。</param>
-    public AndroidGlassButton(Context context, string glyph, string description, bool iconFont = true) : base(context)
+    /// <param name="solid">是否取实心图标字体（评分快捷命令的星底）。</param>
+    /// <param name="number">评分快捷命令的星级（1–5 叠在星形中心，"0" 为零清叉、不叠数字；null 表示非评分命令）。</param>
+    /// <param name="iconFont">是否用 uicons 字形绘制（false 为普通文字入口，如相似聚类开关）。</param>
+    public AndroidGlassButton(Context context, string glyph, string description, bool solid = false,
+        string? number = null, bool iconFont = true) : base(context, null, Resource.Attribute.pvGlassButtonStyle)
     {
-        _glyph = glyph.StartsWith("U+", StringComparison.Ordinal) ? AndroidUiTheme.IconGlyph(glyph) : glyph;
-        Text = iconFont ? string.Empty : glyph;
-        SetIncludeFontPadding(false);
-        SetWillNotDraw(iconFont);
-        DrawsGlyph = iconFont;
+        _glyph = iconFont && glyph.StartsWith("U+", StringComparison.Ordinal) ? AndroidUiTheme.IconGlyph(glyph) : glyph;
+        _number = number;
+        _iconFont = iconFont;
         ContentDescription = description;
-        SetAllCaps(false);
-        TextSize = 18;
-        Gravity = GravityFlags.Center;
-        if (iconFont && AndroidUiTheme.IconTypeface(context) is { } typeface) SetTypeface(typeface, TypefaceStyle.Normal);
-        else
-        {
-            TextSize = 12;
-            SetTypeface(Typeface.Create(Typeface.Default, TypefaceStyle.Normal), TypefaceStyle.Normal);
-        }
-        SetTextColor(AndroidUiTheme.TextPrimary);
-        InsetTop = 0;
-        InsetBottom = 0;
-        InsetLeft = 0;
-        InsetRight = 0;
-        SetMinWidth(0);
-        SetMinimumWidth(0);
-        SetMinHeight(0);
-        SetMinimumHeight(0);
-        SetPadding(0, 0, 0, 0);
-        var density = (float)AndroidUiTheme.Density(context);
-        CornerRadius = (int)Math.Round(Size / 2 * density);
-        StrokeWidth = 0;
-        BackgroundTintList = ColorStateList.ValueOf(AndroidUiTheme.ControlFill);
-        RippleColor = ColorStateList.ValueOf(Color.Argb(0x33, 255, 255, 255));
+        CornerRadius = (int)Math.Round(Size / 2 * AndroidUiTheme.Density(context));
+        BackgroundTintList = ColorStateList.ValueOf(AndroidUiTheme.FromToken(DesignTokens.ColorToolbarCommandBackground));
         Focusable = true;
+        Clickable = true;
+        if (iconFont)
+        {
+            var icon = new AndroidGlyphDrawable(context, _glyph, solid, number == "0" ? null : number);
+            Icon = icon;
+            IconSize = icon.IntrinsicWidth;
+            IconTint = ContentColors(context);
+            return;
+        }
+        Text = _glyph;
+        SetTextSize(ComplexUnitType.Sp, 12);
+        SetTypeface(Typeface.Create(Typeface.Default, TypefaceStyle.Normal), TypefaceStyle.Normal);
+        SetTextColor(ContentColors(context));
     }
 
-    /// <summary>当前绘制/读屏使用的字形（验收读取）。</summary>
+    /// <summary>当前使用的字形（验收读取）。</summary>
     internal string Glyph => _glyph;
 
-    /// <summary>合体容器统一绘制两段字形（按钮自身在 MaterialCardView 内会被内容区裁切时不重复绘制）。</summary>
-    internal bool DrawsGlyph { get; set; } = true;
+    /// <summary>评分快捷命令的星级（null 表示非评分命令；"0" 为零清叉、不叠数字）。</summary>
+    internal string? Number => _number;
 
-    /// <summary>按固定基线居中绘制字形，避免图标字体的原生行高把墨迹推到按钮底缘。</summary>
-    /// <param name="canvas">画布。</param>
-    protected override void OnDraw(Canvas canvas)
+    /// <summary>按钮实际底色（验收读取）。</summary>
+    internal Color FillColorForChecks => new(BackgroundTintList?.DefaultColor ?? 0);
+
+    /// <summary>字形颜色：可用主色、禁用按令牌降内容强调（不改底色）。</summary>
+    private static ColorStateList ContentColors(Context context)
     {
-        base.OnDraw(canvas);
-        if (!DrawsGlyph || string.IsNullOrEmpty(_glyph)) return;
-        if (AndroidUiTheme.IconTypeface(Context!) is not { } typeface) return;
-        using var paint = AndroidUiTheme.Paint(AndroidUiTheme.TextPrimary);
-        paint.TextSize = AndroidUiTheme.Sp(Context!, 18);
-        paint.SetTypeface(typeface);
-        paint.TextAlign = global::Android.Graphics.Paint.Align.Center;
-        canvas.DrawText(_glyph, Width / 2f, Height / 2f + paint.TextSize * .35f, paint);
+        var primary = AndroidUiTheme.TextPrimary;
+        int alpha = (int)Math.Round(255 * DesignTokens.ColorToolbarDisabledContentAlpha);
+        return new ColorStateList(
+            [new[] { global::Android.Resource.Attribute.StateEnabled }, []],
+            [primary.ToArgb(), Color.Argb(alpha, Color.GetRedComponent(primary),
+                Color.GetGreenComponent(primary), Color.GetBlueComponent(primary)).ToArgb()]);
     }
 
-    /// <summary>固定 44 见方：MaterialButton 的 style 最小宽高会把合体段撑成 88，这里只接受外部精确尺寸。</summary>
+    /// <summary>
+    /// 固定分段尺寸：先让按钮以最终外框建立内容布局（图标槽居中依赖它），再强制精确外框；
+    /// 文本入口在无界测量时按文本自然宽加左右内边距给出宽度。
+    /// </summary>
     /// <param name="widthMeasureSpec">宽约束。</param>
     /// <param name="heightMeasureSpec">高约束。</param>
     protected override void OnMeasure(int widthMeasureSpec, int heightMeasureSpec)
     {
-        SetMeasuredDimension(MeasureSpec.GetSize(widthMeasureSpec), MeasureSpec.GetSize(heightMeasureSpec));
+        int width = MeasureSpec.GetSize(widthMeasureSpec);
+        int height = MeasureSpec.GetSize(heightMeasureSpec);
+        if (!_iconFont && MeasureSpec.GetMode(widthMeasureSpec) != MeasureSpecMode.Exactly && Paint != null)
+            width = (int)Math.Ceiling(Paint.MeasureText(Text) + AndroidUiTheme.Dp(Context!, 24));
+        base.OnMeasure(MeasureSpec.MakeMeasureSpec(width, MeasureSpecMode.Exactly),
+            MeasureSpec.MakeMeasureSpec(height, MeasureSpecMode.Exactly));
+        SetMeasuredDimension(width, height);
     }
 
+    /// <summary>
+    /// 图标槽字形在按钮内的墨迹中心与边界（验收用）：把按钮实际绘制到离屏位图，取字形色（高亮且近不透明）像素的外接矩形，
+    /// 图标槽的横向落位（Material 图标位置）与纵向落位（TextView 复合图标居中）都以真实绘制结果为准。
+    /// </summary>
+    /// <returns>中心坐标（px）与墨迹矩形（px）。</returns>
+    internal (float CenterX, float CenterY, Rect Bounds) GlyphCenterForChecks()
+    {
+        int width = Width, height = Height;
+        if (width <= 0 || height <= 0) return (width / 2f, height / 2f, new Rect());
+        using var bitmap = Bitmap.CreateBitmap(width, height, Bitmap.Config.Argb8888!)!;
+        using (var canvas = new Canvas(bitmap)) Draw(canvas);
+        var pixels = new int[width * height];
+        bitmap.GetPixels(pixels, 0, width, 0, 0, width, height);
+        int left = width, top = height, right = -1, bottom = -1;
+        for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++)
+        {
+            int pixel = pixels[y * width + x];
+            if (Color.GetAlphaComponent(pixel) < 128 || Color.GetRedComponent(pixel) < 0x99) continue;
+            left = Math.Min(left, x);
+            top = Math.Min(top, y);
+            right = Math.Max(right, x + 1);
+            bottom = Math.Max(bottom, y + 1);
+        }
+        if (right < 0) return (width / 2f, height / 2f, new Rect());
+        return ((left + right) / 2f, (top + bottom) / 2f, new Rect(left, top, right, bottom));
+    }
 
-    /// <summary>换成另一个图标字形（外观状态变化时只改文字，不改变几何）。</summary>
-    /// <param name="glyph">新字形。</param>
-    internal void SetGlyph(string glyph)
-        => _glyph = glyph.StartsWith("U+", StringComparison.Ordinal) ? AndroidUiTheme.IconGlyph(glyph) : glyph;
+    /// <summary>合体分段用透明底：状态层与涟漪仍由 Material 背景绘制，胶囊外形只由容器一层承担。</summary>
+    internal void UseTransparentFill()
+    {
+        BackgroundTintList = ColorStateList.ValueOf(Color.Transparent);
+        CornerRadius = 0;
+    }
 }
 
 /// <summary>
-/// 两段玻璃合体按钮（SHELL-08、SHELL-09）：一个自绘胶囊容器（MaterialShapeDrawable 圆角与描边）内放两段
-/// <see cref="AndroidGlassButton"/>，胶囊只由容器一层绘制，段自身透明但仍保留 Material 状态层与涟漪；
-/// 段各自 44×44、读屏各有一项，镜像时只交换段的位置。
+/// 两段玻璃合体按钮（SHELL-08、SHELL-09）：Material <see cref="MaterialCardView"/> 胶囊容器承载材质，
+/// 内部两段透明底的 <see cref="AndroidGlassButton"/>，胶囊只由容器一层绘制，不画分隔线；
+/// 段各自 44×44、读屏各有一项，镜像时只交换两段的位置。
 /// </summary>
-internal sealed class AndroidGlassCombo : FrameLayout
+internal sealed class AndroidGlassCombo : MaterialCardView
 {
     private readonly AndroidGlassButton _first;
     private readonly AndroidGlassButton _second;
     private bool _vertical;
+    private bool _mirrored;
 
     /// <summary>建两段合体按钮。</summary>
     /// <param name="context">宿主上下文。</param>
@@ -140,34 +287,17 @@ internal sealed class AndroidGlassCombo : FrameLayout
     public AndroidGlassCombo(Context context, string firstGlyph, string firstDescription,
         string secondGlyph, string secondDescription) : base(context)
     {
-        var shape = new ShapeAppearanceModel.Builder()
-            .SetAllCornerSizes((float)AndroidUiTheme.Dp(context, Size / 2))
-            .Build();
-        var backdrop = new MaterialShapeDrawable(shape);
-        backdrop.FillColor = ColorStateList.ValueOf(AndroidUiTheme.ControlFill);
-        backdrop.StrokeColor = ColorStateList.ValueOf(AndroidUiTheme.ControlBorder);
-        backdrop.StrokeWidth = AndroidUiTheme.Dp(context, 1);
-        Background = backdrop;
+        Radius = (float)AndroidUiTheme.Dp(context, Size / 2);
+        CardElevation = 0;
+        StrokeWidth = 0;
+        SetCardBackgroundColor(AndroidUiTheme.FromToken(DesignTokens.ColorToolbarCommandBackground));
+        SetContentPadding(0, 0, 0, 0);
+        Clickable = false;
         _first = new AndroidGlassButton(context, firstGlyph, firstDescription);
         _second = new AndroidGlassButton(context, secondGlyph, secondDescription);
-        // 段默认透明但保留 Material 按下/聚焦状态层；胶囊外形由容器 Outline 裁剪。
-        var stateStates = new[]
-        {
-            new[] { global::Android.Resource.Attribute.StatePressed },
-            new[] { global::Android.Resource.Attribute.StateFocused },
-            new int[0],
-        };
-        var stateColors = new[]
-        {
-            Color.Argb(0x33, 255, 255, 255).ToArgb(),
-            Color.Argb(0x1F, 255, 255, 255).ToArgb(),
-            Color.Transparent!.ToArgb(),
-        };
-        var segmentTint = new ColorStateList(stateStates, stateColors);
         foreach (var button in new[] { _first, _second })
         {
-            button.BackgroundTintList = segmentTint;
-            button.CornerRadius = 0;
+            button.UseTransparentFill();
             AddView(button);
         }
         SetClipChildren(true);
@@ -186,6 +316,12 @@ internal sealed class AndroidGlassCombo : FrameLayout
     /// <summary>是否竖排（横屏控制栏的缩放/增强合体）。</summary>
     internal bool Vertical => _vertical;
 
+    /// <summary>横排时前段是否落在容器末端（刘海在右的手机横屏镜像）。</summary>
+    internal bool Mirrored => _mirrored;
+
+    /// <summary>胶囊容器实际底色（验收读取）。</summary>
+    internal Color FillColorForChecks => new(CardBackgroundColor?.DefaultColor ?? 0);
+
     /// <summary>设置排布方向：横排两段左右相接，竖排两段上下相接。</summary>
     /// <param name="vertical">是否竖排。</param>
     internal void SetVertical(bool vertical)
@@ -195,7 +331,16 @@ internal sealed class AndroidGlassCombo : FrameLayout
         RequestLayout();
     }
 
-    /// <summary>两段各占一半，镜像只改变视觉顺序（由调用方决定哪一段在窗口缘一侧）。</summary>
+    /// <summary>设置横排镜像：前段落在容器末端，与镜像后的真实槽位一致。</summary>
+    /// <param name="mirrored">是否镜像。</param>
+    internal void SetMirrored(bool mirrored)
+    {
+        if (_mirrored == mirrored) return;
+        _mirrored = mirrored;
+        RequestLayout();
+    }
+
+    /// <summary>两段各占一半；镜像只改变视觉顺序。</summary>
     /// <param name="changed">是否变化。</param>
     /// <param name="l">左。</param>
     /// <param name="t">上。</param>
@@ -209,12 +354,18 @@ internal sealed class AndroidGlassCombo : FrameLayout
             int half = height / 2;
             _first.Layout(0, 0, width, half);
             _second.Layout(0, half, width, height);
+            return;
+        }
+        int firstWidth = width / 2;
+        if (_mirrored)
+        {
+            _second.Layout(0, 0, firstWidth, height);
+            _first.Layout(firstWidth, 0, width, height);
         }
         else
         {
-            int half = width / 2;
-            _first.Layout(0, 0, half, height);
-            _second.Layout(half, 0, width, height);
+            _first.Layout(0, 0, firstWidth, height);
+            _second.Layout(firstWidth, 0, width, height);
         }
     }
 
@@ -236,17 +387,24 @@ internal sealed class AndroidGlassCombo : FrameLayout
 /// <summary>
 /// 星级控件（RATING-07）：Material <see cref="MaterialCardView"/> 胶囊外层承载材质与状态层，
 /// 槽位、字形与命中全部取共享 <see cref="RatingControlGeometry"/>；展开态六格可点，
-/// 紧凑态按共享星簇静态绘制。
+/// 紧凑态按共享星簇静态绘制。展开态逐格悬停/按下在槽位内画内切正圆，胶囊外轮廓不变；
+/// 读屏经 <see cref="ExploreByTouchHelper"/> 暴露六格与 0–5 的可调节范围。
 /// </summary>
 internal sealed class AndroidRatingControl : MaterialCardView
 {
-    private readonly Paint _starActive = AndroidUiTheme.Paint(AndroidUiTheme.StarActive);
-    private readonly Paint _starInactive = AndroidUiTheme.Paint(AndroidUiTheme.StarInactive);
+    private readonly Paint _starActive;
+    private readonly Paint _starInactive;
     private readonly Paint _starClear;
     private readonly Paint _conflictPaint;
+    private readonly RippleDrawable[] _slotRipples = new RippleDrawable[RatingControlGeometry.SlotCount];
+    private readonly ColorStateList _stateLayer;
+    private readonly Paint _focusPaint;
+    private readonly RatingAccessibilityHelper _accessibility;
     private bool _conflict;
     private int _rating;
     private bool _enabled = true;
+    private int _hoverSlot = -1;
+    private int _pressedSlot = -1;
 
     /// <summary>星级写回入口（0–5；冲突时 0 号由宿主决定是否改走来源浮窗）。</summary>
     internal event Action<int>? RateRequested;
@@ -257,11 +415,40 @@ internal sealed class AndroidRatingControl : MaterialCardView
     /// <summary>胶囊是否横排（竖屏底行为 true，横屏控制栏为 false）。</summary>
     internal bool Horizontal { get; set; } = true;
 
-    /// <summary>胶囊主轴长度（dp，布局落定后由 <see cref="SetSlot"/> 给出）。</summary>
+    /// <summary>胶囊主轴长度（dp，取布局落定后的视图宽高）。</summary>
     internal double SlotMain => Horizontal ? Width : Height;
 
     /// <summary>当前形态（验收读取）。</summary>
     internal RatingControlForm Form => RatingControlGeometry.ResolveForm(SlotMain / AndroidUiTheme.Density(Context!));
+
+    /// <summary>悬停槽位（-1 表示没有；验收读取）。</summary>
+    internal int HoverSlotForChecks => _hoverSlot;
+
+    /// <summary>按下槽位（-1 表示没有；验收读取）。</summary>
+    internal int PressedSlotForChecks => _pressedSlot;
+
+    /// <summary>胶囊实际底色（验收读取）：与命令圆按钮同一按钮材质。</summary>
+    internal Color FillColorForChecks => new(CardBackgroundColor?.DefaultColor ?? 0);
+
+    /// <summary>逐格悬停/按下状态层颜色（验收读取）：与按钮同一状态层色板，取按下态。</summary>
+    internal Color HighlightColorForChecks
+        => new(_stateLayer.GetColorForState([global::Android.Resource.Attribute.StatePressed], Color.White));
+
+    /// <summary>指定槽位的状态层（验收读取）。</summary>
+    /// <param name="slot">槽位 0–5。</param>
+    /// <returns>该槽位的涟漪 Drawable。</returns>
+    internal RippleDrawable SlotRippleForChecks(int slot) => _slotRipples[Math.Clamp(slot, 0, RatingControlGeometry.SlotCount - 1)];
+
+    /// <summary>指定槽位的内切正圆边界（px，验收读取）。</summary>
+    /// <param name="slot">槽位 0–5。</param>
+    /// <returns>该槽位的悬停/按下圆。</returns>
+    internal Rect HoverCircleBoundsForChecks(int slot)
+    {
+        var rect = SlotRectPx(slot);
+        int radius = Math.Min(rect.Width(), rect.Height()) / 2;
+        int cx = rect.CenterX(), cy = rect.CenterY();
+        return new Rect(cx - radius, cy - radius, cx + radius, cy + radius);
+    }
 
     /// <summary>建星级控件。</summary>
     /// <param name="context">宿主上下文。</param>
@@ -270,13 +457,38 @@ internal sealed class AndroidRatingControl : MaterialCardView
         Radius = (float)AndroidUiTheme.Dp(context, RatingControlGeometry.Thickness / 2);
         CardElevation = 0;
         StrokeWidth = 0;
-        SetCardBackgroundColor(AndroidUiTheme.CardBackground);
+        SetCardBackgroundColor(AndroidUiTheme.FromToken(DesignTokens.ColorToolbarCommandBackground));
         SetContentPadding(0, 0, 0, 0);
         Clickable = false;
-        _starClear = AndroidUiTheme.Paint(AndroidUiTheme.StarClear, Math.Max(1, AndroidUiTheme.Dp(context, 1)));
-        _conflictPaint = AndroidUiTheme.TextPaint(context, DesignTokens.ToolbarRatingGlyphFontSize, AndroidUiTheme.StarConflict);
-        if (AndroidUiTheme.IconTypeface(context) is { } typeface) _conflictPaint.SetTypeface(typeface);
+        _starActive = StarPaint(context, AndroidUiTheme.StarActive, solid: true);
+        _starInactive = StarPaint(context, AndroidUiTheme.StarInactive);
+        _starClear = StarPaint(context, AndroidUiTheme.StarClear);
+        _conflictPaint = StarPaint(context, AndroidUiTheme.StarConflict);
+        _stateLayer = AndroidX.Core.Content.ContextCompat.GetColorStateList(context, Resource.Color.pv_glass_state_layer)
+            ?? ColorStateList.ValueOf(Color.Transparent);
+        for (int slot = 0; slot < _slotRipples.Length; slot++)
+        {
+            var mask = new ShapeDrawable(new OvalShape());
+            var ripple = new RippleDrawable(_stateLayer, null, mask);
+            ripple.SetCallback(this);
+            ripple.SetVisible(true, false);
+            _slotRipples[slot] = ripple;
+        }
+        _focusPaint = AndroidUiTheme.Paint(AndroidUiTheme.Accent, Math.Max(1, AndroidUiTheme.Dp(context, 2)));
         Focusable = true;
+        ImportantForAccessibility = ImportantForAccessibility.Yes;
+        _accessibility = new RatingAccessibilityHelper(this);
+        ViewCompat.SetAccessibilityDelegate(this, _accessibility);
+        UpdateAccessibilityName();
+    }
+
+    private static Paint StarPaint(Context context, Color color, bool solid = false)
+    {
+        var paint = AndroidUiTheme.Paint(color);
+        paint.TextSize = AndroidUiTheme.Sp(context, DesignTokens.ToolbarRatingGlyphFontSize);
+        var typeface = solid ? AndroidUiTheme.IconSolidTypeface(context) : AndroidUiTheme.IconTypeface(context);
+        if (typeface != null) paint.SetTypeface(typeface);
+        return paint;
     }
 
     /// <summary>同步当前照片的评分与组级冲突态（不改变几何）。</summary>
@@ -289,6 +501,8 @@ internal sealed class AndroidRatingControl : MaterialCardView
         _rating = rating;
         _conflict = conflict;
         _enabled = enabled;
+        UpdateAccessibilityName();
+        _accessibility.InvalidateRoot();
         Invalidate();
     }
 
@@ -347,7 +561,7 @@ internal sealed class AndroidRatingControl : MaterialCardView
         => new((int)Math.Round(x * density), (int)Math.Round(y * density),
             (int)Math.Round((x + width) * density), (int)Math.Round((y + height) * density));
 
-    /// <summary>绘制胶囊内的星排或紧凑星簇。</summary>
+    /// <summary>绘制胶囊内的星排或紧凑星簇；展开态先画槽位内的悬停/按下正圆。</summary>
     /// <param name="canvas">画布。</param>
     protected override void DispatchDraw(Canvas canvas)
     {
@@ -359,6 +573,11 @@ internal sealed class AndroidRatingControl : MaterialCardView
         int alpha = _enabled ? 255 : (int)Math.Round(255 * DesignTokens.ColorToolbarDisabledContentAlpha);
         var form = Form;
         var (control, rowLength, rowCross) = ResolveControl();
+        if (form == RatingControlForm.Expanded && _enabled)
+        {
+            for (int value = 0; value < RatingControlGeometry.SlotCount; value++)
+                DrawSlotStateLayer(canvas, value, density);
+        }
         if (form == RatingControlForm.Expanded)
         {
             for (int value = 0; value < RatingControlGeometry.SlotCount; value++)
@@ -369,81 +588,253 @@ internal sealed class AndroidRatingControl : MaterialCardView
                 double centerCross = (Horizontal ? control.Y : control.X) + (Horizontal ? control.Height : control.Width) / 2;
                 DrawGlyph(canvas, value, centerMain, centerCross, density, alpha);
             }
-            return;
         }
-
-        bool conflict = _conflict;
-        double capsuleMain = Horizontal ? control.Width : control.Height;
-        double capsuleCross = Horizontal ? control.Height : control.Width;
-        if (conflict)
+        else
         {
-            double offset = RatingControlGeometry.CompactOffset(0, true, Horizontal, capsuleMain);
-            DrawGlyph(canvas, 0, (Horizontal ? control.X : control.Y) + capsuleMain / 2 + offset,
-                (Horizontal ? control.Y : control.X) + capsuleCross / 2, density, alpha);
+            bool conflict = _conflict;
+            double capsuleMain = Horizontal ? control.Width : control.Height;
+            double capsuleCross = Horizontal ? control.Height : control.Width;
+            if (conflict)
+            {
+                double offset = RatingControlGeometry.CompactOffset(0, true, Horizontal, capsuleMain);
+                DrawGlyph(canvas, 0, (Horizontal ? control.X : control.Y) + capsuleMain / 2 + offset,
+                    (Horizontal ? control.Y : control.X) + capsuleCross / 2, density, alpha);
+            }
+            for (int value = 1; value <= 5; value++)
+            {
+                double offset = RatingControlGeometry.CompactOffset(value, conflict, Horizontal, capsuleMain);
+                DrawGlyph(canvas, value, (Horizontal ? control.X : control.Y) + capsuleMain / 2 + offset,
+                    (Horizontal ? control.Y : control.X) + capsuleCross / 2, density, alpha);
+            }
         }
-        for (int value = 1; value <= 5; value++)
+        if (IsFocused)
         {
-            double offset = RatingControlGeometry.CompactOffset(value, conflict, Horizontal, capsuleMain);
-            DrawGlyph(canvas, value, (Horizontal ? control.X : control.Y) + capsuleMain / 2 + offset,
-                (Horizontal ? control.Y : control.X) + capsuleCross / 2, density, alpha);
+            var focus = new RectF(
+                (float)(control.X * density) + density, (float)(control.Y * density) + density,
+                (float)(control.MaxX * density) - density, (float)(control.MaxY * density) - density);
+            canvas.DrawRoundRect(focus, focus.Height() / 2, focus.Height() / 2, _focusPaint);
         }
     }
 
+    /// <summary>
+    /// 逐格状态层：原生 <see cref="RippleDrawable"/>（与按钮同一状态层色板、椭圆 mask），
+    /// 边界为该槽位的内切正圆，按悬停/按下设置 state_hovered / state_pressed。
+    /// </summary>
+    private void DrawSlotStateLayer(Canvas canvas, int value, float density)
+    {
+        var rect = SlotRectPx(value);
+        if (rect.Width() <= 0 || rect.Height() <= 0) return;
+        int radius = Math.Min(rect.Width(), rect.Height()) / 2;
+        int cx = rect.CenterX(), cy = rect.CenterY();
+        var ripple = _slotRipples[value];
+        ripple.SetBounds(cx - radius, cy - radius, cx + radius, cy + radius);
+        int[] state = value == _pressedSlot ? _pressedState
+            : value == _hoverSlot ? _hoveredState
+            : _emptyState;
+        ripple.SetState(state);
+        ripple.Draw(canvas);
+    }
+
+    private static readonly int[] _pressedState = [global::Android.Resource.Attribute.StatePressed];
+    private static readonly int[] _hoveredState = [global::Android.Resource.Attribute.StateHovered];
+    private static readonly int[] _emptyState = [];
+
+    /// <summary>按星级值绘制字形：0 为清零叉（冲突时警示三角），1–5 取实心/描边星。</summary>
     private void DrawGlyph(Canvas canvas, int value, double centerMain, double centerCross, float density, int alpha)
     {
         float x = (float)((Horizontal ? centerMain : centerCross) * density);
         float y = (float)((Horizontal ? centerCross : centerMain) * density);
+        double glyphSize = Form == RatingControlForm.Compact
+            ? RatingControlGeometry.CompactGlyph
+            : DesignTokens.ToolbarRatingGlyphFontSize;
         if (value == 0)
         {
             if (_conflict)
             {
+                _conflictPaint.TextSize = AndroidUiTheme.Sp(Context!, DesignTokens.ToolbarRatingGlyphFontSize);
                 _conflictPaint.Alpha = alpha;
                 AndroidUiTheme.DrawGlyphCentered(canvas, AndroidUiTheme.IconGlyph(DesignTokens.IconWarning), _conflictPaint, x, y);
                 return;
             }
+            _starClear.TextSize = AndroidUiTheme.Sp(Context!, DesignTokens.ToolbarRatingClearGlyphFontSize);
             _starClear.Alpha = alpha;
-            float arm = (float)(DesignTokens.ToolbarRatingClearGlyphFontSize / 2 * density);
-            canvas.DrawLine(x - arm, y - arm, x + arm, y + arm, _starClear);
-            canvas.DrawLine(x - arm, y + arm, x + arm, y - arm, _starClear);
+            AndroidUiTheme.DrawGlyphCentered(canvas, AndroidUiTheme.IconGlyph(DesignTokens.IconClear), _starClear, x, y);
             return;
         }
-        _starActive.Alpha = alpha;
-        _starInactive.Alpha = alpha;
         bool active = value <= _rating;
-        using var star = AndroidUiTheme.StarPath(x, y,
-            (float)(DesignTokens.ToolbarRatingGlyphFontSize / 2 * density),
-            (float)(DesignTokens.ToolbarRatingGlyphFontSize * .2 * density));
-        canvas.DrawPath(star, active ? _starActive : _starInactive);
+        var paint = active ? _starActive : _starInactive;
+        paint.TextSize = AndroidUiTheme.Sp(Context!, glyphSize);
+        paint.Alpha = alpha;
+        AndroidUiTheme.DrawGlyphCentered(canvas, AndroidUiTheme.IconGlyph(
+            active ? DesignTokens.IconStarFilled : DesignTokens.IconStar), paint, x, y);
     }
 
-    /// <summary>展开态点按写回评分；紧凑态为静态星簇。</summary>
+    /// <summary>展开态按下记录槽位，点按写回评分；紧凑态为静态星簇。</summary>
     /// <param name="e">触摸事件。</param>
     /// <returns>是否消费。</returns>
     public override bool OnTouchEvent(MotionEvent? e)
     {
         if (e == null) return false;
-        if (e.ActionMasked != MotionEventActions.Up) return true;
-        if (!_enabled || Form != RatingControlForm.Expanded) return true;
-        float density = (float)AndroidUiTheme.Density(Context!);
-        var (control, rowLength, _) = ResolveControl();
-        double localMain = (Horizontal ? e.GetX() : e.GetY()) / density - (Horizontal ? control.X : control.Y);
-        int value = RatingControlGeometry.ValueAt(localMain, rowLength, Horizontal, RatingControlGeometry.Slot);
-        if (value == 0 && _conflict) ConflictRequested?.Invoke();
-        else RateRequested?.Invoke(value);
+        switch (e.ActionMasked)
+        {
+            case MotionEventActions.Down:
+                _pressedSlot = _enabled ? SlotAt(e.GetX(), e.GetY()) : -1;
+                Invalidate();
+                return true;
+            case MotionEventActions.Move:
+                if (_pressedSlot >= 0)
+                {
+                    int slot = SlotAt(e.GetX(), e.GetY());
+                    if (slot != _pressedSlot)
+                    {
+                        _pressedSlot = slot;
+                        Invalidate();
+                    }
+                }
+                return true;
+            case MotionEventActions.Cancel:
+                _pressedSlot = -1;
+                Invalidate();
+                return true;
+            case MotionEventActions.Up:
+                _pressedSlot = -1;
+                Invalidate();
+                if (!_enabled || Form != RatingControlForm.Expanded) return true;
+                float density = (float)AndroidUiTheme.Density(Context!);
+                var (control, rowLength, _) = ResolveControl();
+                double localMain = (Horizontal ? e.GetX() : e.GetY()) / density - (Horizontal ? control.X : control.Y);
+                int value = RatingControlGeometry.ValueAt(localMain, rowLength, Horizontal, RatingControlGeometry.Slot);
+                if (value == 0 && _conflict) ConflictRequested?.Invoke();
+                else RateRequested?.Invoke(value);
+                return true;
+            default:
+                return true;
+        }
+    }
+
+    /// <summary>真实鼠标/触控板悬停：记录命中的槽位，位置变化才重绘。</summary>
+    /// <param name="e">悬停事件。</param>
+    /// <returns>是否消费。</returns>
+    public override bool OnHoverEvent(MotionEvent? e)
+    {
+        if (e == null) return false;
+        int slot = e.ActionMasked == MotionEventActions.HoverExit || !_enabled
+            ? -1
+            : SlotAt(e.GetX(), e.GetY());
+        if (slot != _hoverSlot)
+        {
+            _hoverSlot = slot;
+            Invalidate();
+        }
         return true;
+    }
+
+    /// <summary>触点命中的展开态槽位（0–5）；未命中或紧凑态返回 -1。</summary>
+    /// <param name="x">本地横坐标（px）。</param>
+    /// <param name="y">本地纵坐标（px）。</param>
+    /// <returns>槽位值或 -1。</returns>
+    internal int SlotAt(float x, float y)
+    {
+        if (Form != RatingControlForm.Expanded) return -1;
+        for (int value = 0; value < RatingControlGeometry.SlotCount; value++)
+        {
+            var rect = SlotRectPx(value);
+            if (rect.Width() > 0 && rect.Contains((int)x, (int)y)) return value;
+        }
+        return -1;
+    }
+
+    private void UpdateAccessibilityName()
+        => ContentDescription = !_enabled
+            ? "无照片"
+            : _conflict ? "星级冲突" : _rating <= 0 ? "无星级" : $"星级 {_rating}";
+
+    /// <summary>读屏：六格各为一个按钮节点，整体带 0–5 的整数范围与增减动作（RATING-07）。</summary>
+    private sealed class RatingAccessibilityHelper : ExploreByTouchHelper
+    {
+        private readonly AndroidRatingControl _owner;
+
+        /// <summary>绑定星级控件。</summary>
+        /// <param name="owner">星级控件。</param>
+        public RatingAccessibilityHelper(AndroidRatingControl owner) : base(owner) => _owner = owner;
+
+        /// <summary>按本地像素坐标找槽位。</summary>
+        protected override int GetVirtualViewAt(float x, float y) => _owner.SlotAt(x, y);
+
+        /// <summary>展开态列出六格；紧凑态不提供逐格节点。</summary>
+        protected override void GetVisibleVirtualViews(IList<Java.Lang.Integer>? virtualViewIds)
+        {
+            if (virtualViewIds == null || _owner.Form != RatingControlForm.Expanded) return;
+            for (int value = 0; value < RatingControlGeometry.SlotCount; value++)
+                virtualViewIds.Add(Java.Lang.Integer.ValueOf(value));
+        }
+
+        /// <summary>填充名称、选中态、范围、增减动作与屏幕边界。</summary>
+        protected override void OnPopulateNodeForVirtualView(int virtualViewId, AccessibilityNodeInfoCompat? node)
+        {
+            if (node == null) return;
+            if (virtualViewId < 0 || virtualViewId >= RatingControlGeometry.SlotCount)
+            {
+                node.ContentDescription = "";
+                node.SetBoundsInScreen(new Rect());
+                return;
+            }
+            node.ContentDescription = virtualViewId == 0
+                ? (_owner._conflict ? "星级冲突" : "无星级")
+                : $"{virtualViewId} 星";
+            node.ClassName = "android.widget.RadioButton";
+            node.Focusable = true;
+            node.Enabled = _owner._enabled;
+            node.Clickable = _owner._enabled;
+            node.VisibleToUser = true;
+            node.Selected = virtualViewId > 0 && _owner._rating == virtualViewId;
+            if (_owner._enabled)
+            {
+                node.AddAction((int)global::Android.Views.Accessibility.Action.Click);
+                node.AddAction((int)global::Android.Views.Accessibility.Action.ScrollForward);
+                node.AddAction((int)global::Android.Views.Accessibility.Action.ScrollBackward);
+            }
+            node.RangeInfo = AccessibilityNodeInfoCompat.RangeInfoCompat.Obtain(
+                AccessibilityNodeInfoCompat.RangeInfoCompat.RangeTypeInt, 0, 5, Math.Clamp(_owner._rating, 0, 5));
+            var rect = _owner.SlotRectPx(virtualViewId);
+            var location = new int[2];
+            _owner.GetLocationOnScreen(location);
+            node.SetBoundsInScreen(new Rect(location[0] + rect.Left, location[1] + rect.Top,
+                location[0] + rect.Right, location[1] + rect.Bottom));
+        }
+
+        /// <summary>读屏点按与增减：与触摸同一写入入口，增减动作按 0–5 夹取。</summary>
+        protected override bool OnPerformActionForVirtualView(int virtualViewId, int action, Bundle? arguments)
+        {
+            if (!_owner._enabled) return false;
+            if (action == (int)global::Android.Views.Accessibility.Action.ScrollForward)
+            {
+                _owner.RateRequested?.Invoke(Math.Clamp(_owner._rating + 1, 0, 5));
+                return true;
+            }
+            if (action == (int)global::Android.Views.Accessibility.Action.ScrollBackward)
+            {
+                _owner.RateRequested?.Invoke(Math.Clamp(_owner._rating - 1, 0, 5));
+                return true;
+            }
+            if (action != (int)global::Android.Views.Accessibility.Action.Click) return false;
+            if (virtualViewId == 0 && _owner._conflict) _owner.ConflictRequested?.Invoke();
+            else _owner.RateRequested?.Invoke(virtualViewId);
+            return true;
+        }
     }
 }
 
 /// <summary>
 /// EXIF 摘要块（TOOLBAR-05）：项目、内边距与整项裁剪取共享 <see cref="ExifBlockGeometry"/>；
-/// 竖屏顶行为带衬底的横排块（MaterialShapeDrawable 圆角半透明底），横屏控制栏为无衬底纵排列，
-/// 容器宽度固定为玻璃按钮边长、文字在容器内尾部截断。整块点击进入 EXIF 详情（TOOLBAR-06）。
+/// 横排为带衬底的块（<c>color.toolbar.block.background</c> 圆角底），竖排无衬底变体直接放在栏背景上，
+/// 容器宽度为项目固有宽、文字在容器内尾部截断。整块只有一个点按目标并直达 EXIF 详情（TOOLBAR-06）。
 /// </summary>
 internal sealed class AndroidExifBlock : View
 {
     private readonly Paint _labelPaint;
     private readonly Paint _valuePaint;
-    private readonly MaterialShapeDrawable? _backdrop;
+    private readonly MaterialShapeDrawable _backdrop;
     private IReadOnlyList<ExifDisplayEntry> _items = Array.Empty<ExifDisplayEntry>();
     private int _visibleCount;
     private bool _horizontal = true;
@@ -462,14 +853,24 @@ internal sealed class AndroidExifBlock : View
             .SetAllCornerSizes((float)AndroidUiTheme.Dp(context, DesignTokens.ToolbarExifCornerRadius))
             .Build();
         _backdrop = new MaterialShapeDrawable(shape);
-        _backdrop.FillColor = ColorStateList.ValueOf(Color.Argb(0xD9, 0x22, 0x22, 0x22));
+        _backdrop.FillColor = ColorStateList.ValueOf(AndroidUiTheme.FromToken(DesignTokens.ColorToolbarBlockBackground));
         Clickable = true;
         Focusable = true;
         ContentDescription = "EXIF 详情";
+        Click += (_, _) => ExifActivated?.Invoke();
     }
 
     /// <summary>当前显示的 EXIF 项（验收读取）。</summary>
     internal IReadOnlyList<ExifDisplayEntry> Items => _items;
+
+    /// <summary>衬底颜色（验收读取；无衬底变体仍返回令牌值，绘制由视图背景决定）。</summary>
+    internal Color BackdropColorForChecks => AndroidUiTheme.FromToken(DesignTokens.ColorToolbarBlockBackground);
+
+    /// <summary>是否使用衬底（验收读取）。</summary>
+    internal bool HasBackdropForChecks => !_bare;
+
+    /// <summary>实际显示的项数（整项裁剪后）。</summary>
+    internal int ShownItemCount => Math.Min(_items.Count, Math.Max(0, _visibleCount));
 
     /// <summary>同步内容与变体；只改文本与绘制，不改变外部几何。</summary>
     /// <param name="items">启用的 EXIF 项。</param>
@@ -487,60 +888,57 @@ internal sealed class AndroidExifBlock : View
     }
 
     /// <summary>当前可见项目的实际矩形（dp，验收用）：按完整块固有高度计算，再按可见项数截取。</summary>
-    /// <returns>前 <see cref="ExifBlockGeometry.ItemRect"/> 个可见项目矩形。</returns>
+    /// <returns>前 <see cref="ShownItemCount"/> 个可见项目矩形。</returns>
     internal IReadOnlyList<LayoutRect> ItemFramesForChecks()
     {
-        var intrinsic = ExifBlockGeometry.Size(_items.Count, _horizontal, _bare);
+        int shown = ShownItemCount;
+        var intrinsic = ExifBlockGeometry.Size(shown, _horizontal, _bare);
         double density = AndroidUiTheme.Density(Context!);
         double blockMain = _bare && !_horizontal
             ? intrinsic.Height
             : (_horizontal ? Width : Height) / (density == 0 ? 1 : density);
-        var frames = new List<LayoutRect>(_visibleCount);
-        for (int index = 0; index < _visibleCount; index++)
-            frames.Add(ExifBlockGeometry.ItemRect(index, _items.Count, _horizontal, blockMain, _bare));
+        var frames = new List<LayoutRect>(shown);
+        for (int index = 0; index < shown; index++)
+            frames.Add(ExifBlockGeometry.ItemRect(index, shown, _horizontal, blockMain, _bare));
         return frames;
     }
 
-    /// <summary>绘制项目：标签在上、值在下，居中并在整项内尾部截断。</summary>
+    /// <summary>绘制项目：标签在上、值在下，按字体度量成对居中，并在整项内尾部截断。</summary>
     /// <param name="canvas">画布。</param>
     protected override void OnDraw(Canvas canvas)
     {
         base.OnDraw(canvas);
-        if (_items.Count == 0 || _visibleCount <= 0 || Width < 1 || Height < 1) return;
+        int shown = ShownItemCount;
+        if (shown <= 0 || Width < 1 || Height < 1) return;
         float density = (float)AndroidUiTheme.Density(Context!);
-        // 无衬底纵排按「完整块」的固有高度计算项目，再只画放得下的前 ExifItems 项；
+        // 无衬底纵排按「完整块」的固有高度计算项目，再只画放得下的前几项；
         // 若把已裁短的外框高度当整块高度，各项会被垂直压缩。
-        var intrinsic = ExifBlockGeometry.Size(_items.Count, _horizontal, _bare);
-        // 只有无衬底纵排需要按完整块固有高度取整项；有衬底横排被槽位压短时仍等分缩窄。
+        var intrinsic = ExifBlockGeometry.Size(shown, _horizontal, _bare);
         double blockMain = _bare && !_horizontal
             ? intrinsic.Height
             : (_horizontal ? Width : Height) / density;
-        for (int index = 0; index < _visibleCount; index++)
+        float gap = AndroidUiTheme.Dp(Context!, 1);
+        for (int index = 0; index < shown; index++)
         {
-            var rect = ExifBlockGeometry.ItemRect(index, _items.Count, _horizontal, blockMain, _bare);
+            var rect = ExifBlockGeometry.ItemRect(index, shown, _horizontal, blockMain, _bare);
             var item = _items[index];
             float left = (float)(rect.X * density), top = (float)(rect.Y * density);
             float width = (float)(rect.Width * density), height = (float)(rect.Height * density);
             float centerX = left + width / 2;
-            float labelBaseline = top + height * .36f;
-            float valueBaseline = top + height * .82f;
             _labelPaint.TextSize = AndroidUiTheme.Sp(Context!, DesignTokens.ToolbarExifLabelFontSize);
             _valuePaint.TextSize = AndroidUiTheme.Sp(Context!, DesignTokens.ToolbarExifValueFontSize);
+            var labelMetrics = _labelPaint.GetFontMetrics()!;
+            var valueMetrics = _valuePaint.GetFontMetrics()!;
+            float labelHeight = labelMetrics.Bottom - labelMetrics.Top;
+            float valueHeight = valueMetrics.Bottom - valueMetrics.Top;
+            float pairTop = top + (height - (labelHeight + gap + valueHeight)) / 2;
+            float labelBaseline = pairTop - labelMetrics.Top;
+            float valueBaseline = pairTop + labelHeight + gap - valueMetrics.Top;
             canvas.Save();
             canvas.ClipRect(left, top, left + Math.Min(width, Width), top + height);
             AndroidUiTheme.DrawCentered(canvas, item.DisplayName, _labelPaint, centerX, labelBaseline, Math.Min(width, Width));
             AndroidUiTheme.DrawCentered(canvas, item.DisplayValue, _valuePaint, centerX, valueBaseline, Math.Min(width, Width));
             canvas.Restore();
         }
-    }
-
-    /// <summary>点按整块进入 EXIF 详情。</summary>
-    /// <param name="e">触摸事件。</param>
-    /// <returns>是否消费。</returns>
-    public override bool OnTouchEvent(MotionEvent? e)
-    {
-        if (e == null) return false;
-        if (e.ActionMasked == MotionEventActions.Up) ExifActivated?.Invoke();
-        return true;
     }
 }

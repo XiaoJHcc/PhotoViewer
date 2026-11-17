@@ -5,6 +5,7 @@ using Android.Content;
 using Android.Graphics;
 using Android.Views;
 using PhotoViewer.Core.AI;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Main;
@@ -67,15 +68,9 @@ internal sealed class AndroidAnalysisHost : IAnalysisHost
 /// </summary>
 internal sealed class AndroidAnalysisPanel : View
 {
-    private const int TileRadiusDp = 6;
-    private const int ContentInsetDp = 1;
-
     private readonly AnalysisPresenter _presenter;
     private readonly PhotoLoadSession _session;
-    private readonly Paint _tileFill;
-    private readonly Paint _tileBorder;
     private readonly Paint _textPaint;
-    private readonly Paint _labelPaint;
     private readonly Paint _placeholderPaint;
     private readonly Paint _crosshairPaint;
     private readonly Paint _focusPaint;
@@ -140,13 +135,14 @@ internal sealed class AndroidAnalysisPanel : View
     {
         _presenter = presenter;
         _session = session;
-        _tileFill = AndroidUiTheme.Paint(Color.ParseColor("#222222")!);
-        _tileBorder = AndroidUiTheme.Paint(Color.ParseColor("#444444")!, Math.Max(1, AndroidUiTheme.Dp(context, 1)));
-        _textPaint = AndroidUiTheme.TextPaint(context, 9, Color.White, bold: true);
-        _labelPaint = AndroidUiTheme.Paint(Color.Argb(160, 0, 0, 0)!);
-        _placeholderPaint = AndroidUiTheme.TextPaint(context, 10, Color.ParseColor("#777777")!);
-        _crosshairPaint = AndroidUiTheme.Paint(Color.Argb(220, 255, 255, 255)!, Math.Max(1, AndroidUiTheme.Dp(context, 1)));
-        _focusPaint = AndroidUiTheme.Paint(Color.Rgb(0, 255, 0)!, Math.Max(1, AndroidUiTheme.Dp(context, 1)));
+        _textPaint = AndroidUiTheme.TextPaint(context, 9,
+            AndroidUiTheme.FromToken(DesignTokens.ColorAnalysisBadgeForeground), bold: true);
+        _placeholderPaint = AndroidUiTheme.TextPaint(context, DesignTokens.AnalysisCaptionFontSize,
+            AndroidUiTheme.FromToken(DesignTokens.ColorAnalysisPlaceholder));
+        _crosshairPaint = AndroidUiTheme.Paint(AndroidUiTheme.FromToken(DesignTokens.ColorAnalysisCrosshair),
+            Math.Max(1, AndroidUiTheme.Dp(context, DesignTokens.AnalysisTileBorderWidth)));
+        _focusPaint = AndroidUiTheme.Paint(AndroidUiTheme.FromToken(DesignTokens.ColorAnalysisHighlight),
+            Math.Max(1, AndroidUiTheme.Dp(context, DesignTokens.AnalysisHighlightThickness)));
         SetWillNotDraw(false);
         Clickable = true;
         _presenter.TilesChanged += OnTilesChanged;
@@ -229,14 +225,19 @@ internal sealed class AndroidAnalysisPanel : View
         {
             if (!_frames.TryGetValue(tile, out var frame)) continue;
             var outer = ToRectF(frame, density);
-            AndroidUiTheme.DrawRounded(canvas, outer, TileRadiusDp * density, Color.ParseColor("#222222")!, AndroidUiTheme.ControlBorder, Math.Max(1, density));
-            float inset = ContentInsetDp * density;
+            float radius = (float)(DesignTokens.AnalysisTileCornerRadius * density);
+            AndroidUiTheme.DrawRounded(canvas, outer, radius,
+                AndroidUiTheme.FromToken(DesignTokens.ColorAnalysisTileBackground),
+                AndroidUiTheme.FromToken(DesignTokens.ColorAnalysisTileBorder),
+                Math.Max(1, AndroidUiTheme.Dp(Context!, DesignTokens.AnalysisTileBorderWidth)));
+            float inset = (float)(DesignTokens.AnalysisTileBorderWidth * density);
             var content = new RectF(outer.Left + inset, outer.Top + inset, outer.Right - inset, outer.Bottom - inset);
             Bitmap? source = tile.Kind == AnalysisTileKind.Detail ? DetailSource(tile) : ImageFor(tile);
             var background = tile.Kind == AnalysisTileKind.Detail ? null : BitmapFor(tile.Background);
             canvas.Save();
             using var clip = new Path();
-            clip.AddRoundRect(content, (TileRadiusDp - 1) * density, (TileRadiusDp - 1) * density, Path.Direction.Cw!);
+            clip.AddRoundRect(content, (float)(DesignTokens.AnalysisTileInnerCornerRadius * density),
+                (float)(DesignTokens.AnalysisTileInnerCornerRadius * density), Path.Direction.Cw!);
             canvas.ClipPath(clip);
             canvas.DrawColor(Color.ParseColor("#1A1A1A")!);
             if (background != null) DrawFitted(canvas, background, content, .30f);
@@ -261,10 +262,14 @@ internal sealed class AndroidAnalysisPanel : View
                     DrawFocusFrame(canvas, content, frameWidth, frameHeight);
                 if (ReferenceEquals(tile, ActiveDetail))
                 {
-                    using var highlight = new Paint(PaintFlags.AntiAlias) { StrokeWidth = 2 * density };
+                    using var highlight = new Paint(PaintFlags.AntiAlias)
+                    {
+                        StrokeWidth = AndroidUiTheme.Dp(Context!, DesignTokens.AnalysisHighlightThickness),
+                    };
                     highlight.SetStyle(global::Android.Graphics.Paint.Style.Stroke);
-                    highlight.Color = Color.Rgb(0, 255, 0)!;
-                    canvas.DrawRoundRect(content, (TileRadiusDp - 1) * density, (TileRadiusDp - 1) * density, highlight);
+                    highlight.Color = AndroidUiTheme.FromToken(DesignTokens.ColorAnalysisHighlight);
+                    canvas.DrawRoundRect(content, (float)(DesignTokens.AnalysisTileInnerCornerRadius * density),
+                        (float)(DesignTokens.AnalysisTileInnerCornerRadius * density), highlight);
                 }
             }
             canvas.Restore();
@@ -273,10 +278,14 @@ internal sealed class AndroidAnalysisPanel : View
             string label = tile.ShortLabel;
             if (!string.IsNullOrEmpty(label))
             {
-                var labelWidth = _textPaint.MeasureText(label) + 10 * density;
+                var labelWidth = _textPaint.MeasureText(label)
+                    + 2 * AndroidUiTheme.Dp(Context!, DesignTokens.AnalysisBadgePaddingX);
+                float pillHeight = _textPaint.TextSize
+                    + 2 * AndroidUiTheme.Dp(Context!, DesignTokens.AnalysisBadgePaddingY);
                 var pill = new RectF(outer.Left + 3 * density, outer.Top + 3 * density,
-                    Math.Min(outer.Right - 3 * density, outer.Left + 3 * density + labelWidth), outer.Top + 17 * density);
-                AndroidUiTheme.DrawRounded(canvas, pill, 8 * density, Color.Argb(160, 0, 0, 0)!);
+                    Math.Min(outer.Right - 3 * density, outer.Left + 3 * density + labelWidth), outer.Top + 3 * density + pillHeight);
+                AndroidUiTheme.DrawRounded(canvas, pill, (float)(DesignTokens.AnalysisBadgeCornerRadius * density),
+                    AndroidUiTheme.FromToken(DesignTokens.ColorAnalysisBadgeBackground));
                 AndroidUiTheme.DrawCentered(canvas, label, _textPaint, pill.CenterX(),
                     pill.CenterY() + _textPaint.TextSize * .36f, pill.Width() - 2 * density);
             }

@@ -34,11 +34,11 @@ internal sealed class AndroidThumbnailCard : View
     private readonly Paint _thumbnailBackground;
     private readonly Paint _textPaint;
     private readonly Paint _datePaint;
-    private readonly Paint _starPaint;
-    private readonly Paint _starFillPaint;
+    private readonly Paint _starOutline;
+    private readonly Paint _starFilled;
     private readonly Paint _badgePaint;
     private readonly Paint _badgeTextPaint;
-    private readonly Paint _linePaint;
+    private readonly Paint _clearPaint;
     private readonly Paint _conflictPaint;
     private readonly GestureDetector _gestures;
     private readonly CardExploreByTouchHelper _accessibility;
@@ -116,23 +116,30 @@ internal sealed class AndroidThumbnailCard : View
         _thumbnailBackground = AndroidUiTheme.Paint(AndroidUiTheme.FromToken(DesignTokens.ColorFilmThumbnailWell));
         _textPaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardNameFontSize, AndroidUiTheme.TextPrimary, bold: true);
         _datePaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardSecondLineFontSize, AndroidUiTheme.TextPrimary, bold: true);
-        _starPaint = AndroidUiTheme.Paint(AndroidUiTheme.StarInactive, Math.Max(1, AndroidUiTheme.Dp(context, 1)));
-        _starPaint.SetStyle(Paint.Style.Stroke);
-        _starFillPaint = AndroidUiTheme.Paint(AndroidUiTheme.StarActive);
+        _starOutline = AndroidUiTheme.Paint(AndroidUiTheme.StarInactive);
+        _starFilled = AndroidUiTheme.Paint(AndroidUiTheme.StarActive);
+        if (AndroidUiTheme.IconTypeface(context) is { } outlineTypeface) _starOutline.SetTypeface(outlineTypeface);
+        if (AndroidUiTheme.IconSolidTypeface(context) is { } solidTypeface) _starFilled.SetTypeface(solidTypeface);
+        _starOutline.TextSize = AndroidUiTheme.Sp(context, DesignTokens.FilmCardStarFontSize);
+        _starFilled.TextSize = AndroidUiTheme.Sp(context, DesignTokens.FilmCardStarFontSize);
         _badgePaint = AndroidUiTheme.Paint(AndroidUiTheme.ShakeBadge);
         _badgeTextPaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardBadgeFontSize, Color.White, bold: true);
         // FILM-05：清零叉使用中性图形色，不随评分点亮。
-        _linePaint = AndroidUiTheme.Paint(AndroidUiTheme.StarClear, Math.Max(1, AndroidUiTheme.Dp(context, 1)));
+        _clearPaint = AndroidUiTheme.Paint(AndroidUiTheme.StarClear);
+        if (AndroidUiTheme.IconTypeface(context) is { } clearTypeface) _clearPaint.SetTypeface(clearTypeface);
+        _clearPaint.TextSize = AndroidUiTheme.Sp(context, DesignTokens.FilmCardStarFontSize);
         _conflictPaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardStarFontSize, AndroidUiTheme.StarConflict);
         if (AndroidUiTheme.IconTypeface(context) is { } iconTypeface) _conflictPaint.SetTypeface(iconTypeface);
         _smallNamePaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardSmallNameFontSize, AndroidUiTheme.TextPrimary, bold: true);
         _smallBadgePaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardSmallBadgeFontSize, Color.White, bold: true);
-        _smallStarPaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardSmallBadgeFontSize, AndroidUiTheme.StarActive, bold: true);
+        _smallStarPaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardSmallBadgeFontSize, AndroidUiTheme.StarActive);
+        if (AndroidUiTheme.IconSolidTypeface(context) is { } smallSolid) _smallStarPaint.SetTypeface(smallSolid);
         _smallConflictPaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardSmallBadgeFontSize, AndroidUiTheme.StarConflict);
         if (AndroidUiTheme.IconTypeface(context) is { } smallIcon) _smallConflictPaint.SetTypeface(smallIcon);
         _gestures = new GestureDetector(context, new CardGestureListener(this));
         Focusable = true;
         Clickable = true;
+        Click += (_, _) => { if (_file != null) _select?.Invoke(_file); };
         _accessibility = new CardExploreByTouchHelper(this);
         ViewCompat.SetAccessibilityDelegate(this, _accessibility);
     }
@@ -165,6 +172,7 @@ internal sealed class AndroidThumbnailCard : View
         _thumbnail = null;
         _thumbnailSource = null;
         file.PropertyChanged += OnFileChanged;
+        UpdateAccessibilityName();
         Invalidate();
     }
 
@@ -178,13 +186,31 @@ internal sealed class AndroidThumbnailCard : View
         _showSources = null;
         _thumbnail = null;
         _thumbnailSource = null;
+        ContentDescription = null;
     }
 
     /// <summary>模型事件封送主线程，消费前核对复用后的绑定。</summary>
     /// <param name="sender">事件源。</param>
     /// <param name="args">变化参数。</param>
     private void OnFileChanged(object? sender, PropertyChangedEventArgs args)
-        => Post(() => { if (ReferenceEquals(sender, _file)) Invalidate(); });
+        => Post(() =>
+        {
+            if (!ReferenceEquals(sender, _file)) return;
+            UpdateAccessibilityName();
+            Invalidate();
+        });
+
+    /// <summary>整卡读屏名称：文件名 + 当前星级（组级冲突如实朗读）。</summary>
+    private void UpdateAccessibilityName()
+    {
+        if (_file == null)
+        {
+            ContentDescription = null;
+            return;
+        }
+        string rating = _file.HasRatingConflict ? "星级冲突" : _file.Rating > 0 ? $"{_file.Rating} 星" : "无星级";
+        ContentDescription = $"{_file.DisplayName}，{rating}";
+    }
 
     /// <summary>绘制整卡。</summary>
     /// <param name="canvas">画布。</param>
@@ -292,21 +318,16 @@ internal sealed class AndroidThumbnailCard : View
                 {
                     if (conflict)
                     {
-                        string glyph = AndroidUiTheme.IconGlyph(DesignTokens.IconWarning);
-                        using var bounds = new Rect();
-                        _conflictPaint.GetTextBounds(glyph, 0, glyph.Length, bounds);
-                        canvas.DrawText(glyph, cx, cy - bounds.ExactCenterY(), _conflictPaint);
+                        AndroidUiTheme.DrawGlyphCentered(canvas, AndroidUiTheme.IconGlyph(DesignTokens.IconWarning), _conflictPaint, cx, cy);
                         continue;
                     }
-                    float arm = 3.2f * d;
-                    canvas.DrawLine(cx - arm, cy - arm, cx + arm, cy + arm, _linePaint);
-                    canvas.DrawLine(cx - arm, cy + arm, cx + arm, cy - arm, _linePaint);
+                    AndroidUiTheme.DrawGlyphCentered(canvas, AndroidUiTheme.IconGlyph(DesignTokens.IconClear), _clearPaint, cx, cy);
                     continue;
                 }
                 bool active = rating <= _file.Rating;
-                using var star = StarPath(cx, cy, 5.4f * d, 2.5f * d);
-                if (active) canvas.DrawPath(star, _starFillPaint);
-                else canvas.DrawPath(star, _starPaint);
+                AndroidUiTheme.DrawGlyphCentered(canvas,
+                    AndroidUiTheme.IconGlyph(active ? DesignTokens.IconStarFilled : DesignTokens.IconStar),
+                    active ? _starFilled : _starOutline, cx, cy);
             }
         }
         canvas.Restore();
@@ -403,8 +424,8 @@ internal sealed class AndroidThumbnailCard : View
             }
             if (file.Rating > 0)
             {
-                AndroidUiTheme.DrawGlyphCentered(canvas, "★", _smallStarPaint, right - (float)(10 * d),
-                    baseline - (float)(badgeHeight * d) / 2);
+                AndroidUiTheme.DrawGlyphCentered(canvas, AndroidUiTheme.IconGlyph(DesignTokens.IconStarFilled),
+                    _smallStarPaint, right - (float)(10 * d), baseline - (float)(badgeHeight * d) / 2);
                 _smallBadgePaint.TextAlign = Paint.Align.Right;
                 _smallBadgePaint.TextSize = AndroidUiTheme.Sp(Context!, DesignTokens.FilmCardSmallBadgeFontSize);
                 canvas.DrawText(file.Rating.ToString(), right, baseline, _smallBadgePaint);
@@ -456,23 +477,6 @@ internal sealed class AndroidThumbnailCard : View
         finally { image.Release(); }
     }
 
-    /// <summary>生成五角星路径。</summary>
-    private static Path StarPath(float cx, float cy, float outer, float inner)
-    {
-        var path = new Path();
-        for (int i = 0; i < 10; i++)
-        {
-            double angle = -Math.PI / 2 + i * Math.PI / 5;
-            float radius = i % 2 == 0 ? outer : inner;
-            float x = (float)(cx + Math.Cos(angle) * radius);
-            float y = (float)(cy + Math.Sin(angle) * radius);
-            if (i == 0) path.MoveTo(x, y);
-            else path.LineTo(x, y);
-        }
-        path.Close();
-        return path;
-    }
-
     /// <summary>触摸：单击命中星级或整卡，长按弹评分菜单。</summary>
     /// <param name="e">事件。</param>
     /// <returns>消费。</returns>
@@ -496,7 +500,7 @@ internal sealed class AndroidThumbnailCard : View
                 ActivateSlot(slot);
                 return true;
             }
-            _select?.Invoke(_file);
+            PerformClick();
         }
         return true;
     }

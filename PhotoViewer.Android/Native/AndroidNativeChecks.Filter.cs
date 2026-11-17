@@ -11,17 +11,14 @@ using PhotoViewer.ViewModels.Main.File;
 namespace PhotoViewer.Android.Native;
 
 /// <summary>
-/// <c>--es pv-check filter</c>（验收专用）：筛选条三个自绘下拉的存活与锚点语义。
-/// 全部从真实 UI 入口进入——点按直接派发到筛选条控件、走它自己的命中链，
-/// 选项经弹出窗里真实行视图的点击回调写回共享筛选 VM；覆盖跨周期存活、重复布局、窄屏双 Arrange、
-/// 滚动偏移保留、真实锚点失效（滚动/隐藏/旋转）与行选择。
+/// <c>--es pv-check filter</c>（验收专用）：筛选入口的存活与锚点语义。
+/// 入口全部是真实 Material 按钮——点按经控件自身的派发链落到按钮点击，选项经弹出窗里真实行视图的
+/// 回调写回共享筛选 VM；覆盖跨内存探测周期存活、重复布局、无关设置、星级设置、行选择、锚点隐藏、
+/// 旋转与窄屏滚动。
 /// </summary>
 internal static partial class AndroidNativeChecks
 {
-    /// <summary>筛选下拉类型（与产品命中顺序一致）。</summary>
-    private enum FilterKind { Sort, Order, Rating }
-
-    /// <summary>筛选下拉验收入口：竖屏三下拉存活 → 设置/行选择/隐藏 → 横屏窄屏双 Arrange 与滚动。</summary>
+    /// <summary>筛选验收入口：真实入口可见 → 分组菜单存活/重排/选择 → 隐藏/旋转/窄屏滚动。</summary>
     private static async Task RunFilterBarChecksAsync()
     {
         var root = _root!;
@@ -33,39 +30,39 @@ internal static partial class AndroidNativeChecks
         await Task.Delay(400);
 
         var filter = root.FilterBar;
-        Check("filter 筛选条可见", filter.Visibility == ViewStates.Visible && filter.SortFrame.Width > 0,
-            $"visible={filter.Visibility} sort={filter.SortFrame} row={main.IsRowLayout} capsule={filter.IsCapsuleForChecks} phone={filter.IsPhone}");
+        Check("filter 筛选入口可见", filter.Visibility == ViewStates.Visible && filter.EntryFrameForChecks.Width > 0,
+            $"visible={filter.Visibility} entry={filter.EntryFrameForChecks} control={filter.ControlFrame} "
+            + $"row={main.IsRowLayout} phone={filter.IsPhone}");
 
-        if (filter.IsPhone || filter.IsCapsuleForChecks)
-        {
-            await RunGroupedFilterChecksAsync();
-            return;
-        }
-
-        foreach (var kind in new[] { FilterKind.Sort, FilterKind.Order, FilterKind.Rating })
-            await RunStepAsync($"filter {kind} 下拉", () => CheckDropdownLifetimeAsync(kind));
-
-        await RunStepAsync("filter 无关设置", CheckUnrelatedSettingAsync);
-        await RunStepAsync("filter 星级设置", CheckSettingImpactAsync);
-        await RunStepAsync("filter 行选择", CheckRowSelectionAsync);
-        await RunStepAsync("filter 锚点隐藏", CheckHiddenClosesAsync);
-        await RunStepAsync("filter 旋转与窄屏", CheckAnchorAndNarrowAsync);
+        await RunStepAsync("filter 分组菜单", CheckGroupedMenuAsync);
+        await RunStepAsync("filter 无关设置", CheckGroupedUnrelatedSettingAsync);
+        await RunStepAsync("filter 星级设置", CheckGroupedSettingImpactAsync);
+        await RunStepAsync("filter 行选择", CheckGroupedRowSelectionAsync);
+        await RunStepAsync("filter 锚点隐藏", CheckGroupedHiddenClosesAsync);
+        await RunStepAsync("filter 旋转与窄屏", CheckGroupedRotationAndNarrowAsync);
     }
 
-    /// <summary>单胶囊/手机入口：分组菜单保持展开、重排不挪位不改宽，行选择立即写回且菜单不收起。</summary>
-    private static async Task RunGroupedFilterChecksAsync()
+    /// <summary>真实入口点按打开 → 同一实例跨周期存活 → 重排/同几何 Arrange 不收起 → 行选择保持展开 → 返回键收起。</summary>
+    private static async Task CheckGroupedMenuAsync()
     {
         var root = _root!;
         var main = _main!;
         var filter = root.FilterBar;
         root.DismissFilterDropdown();
         await Task.Delay(120);
-        bool opened = OpenGroupedMenu(root);
+        bool opened = await OpenGroupedMenuAsync(root);
         Check("filter 分组菜单实际点按打开", opened && filter.IsDropdownOpen && filter.DropdownKindForChecks == "Grouped",
             $"open={filter.IsDropdownOpen} kind={filter.DropdownKindForChecks} anchor={filter.DropdownAnchorForChecks}");
         if (!opened) return;
         var instance = filter.DropdownInstanceForChecks;
         var anchor = filter.DropdownAnchorForChecks;
+        for (int cycle = 1; cycle <= 2; cycle++)
+        {
+            await Task.Delay(2000);
+            Check($"filter 分组菜单 {cycle * 2}s 同一实例仍开",
+                ReferenceEquals(filter.DropdownInstanceForChecks, instance) && filter.IsDropdownOpen,
+                $"same={ReferenceEquals(filter.DropdownInstanceForChecks, instance)} open={filter.IsDropdownOpen}");
+        }
         for (int pass = 0; pass < 3; pass++)
         {
             root.RequestLayout();
@@ -73,6 +70,17 @@ internal static partial class AndroidNativeChecks
             filter.CommitLayout();
         }
         Check("filter 分组菜单重排不挪位不改宽",
+            ReferenceEquals(filter.DropdownInstanceForChecks, instance) && filter.IsDropdownOpen
+            && filter.DropdownAnchorForChecks == anchor,
+            $"same={ReferenceEquals(filter.DropdownInstanceForChecks, instance)} open={filter.IsDropdownOpen} "
+            + $"anchor={anchor}→{filter.DropdownAnchorForChecks}");
+
+        // 与 OnLayout 完全相同的参数再 Arrange 一次（幂等几何），不能因调用次数收起。
+        var (row, contentWidth, leadingInset) = CurrentFilterGeometry(root);
+        filter.Arrange(row, contentWidth, leadingInset);
+        filter.Arrange(row, contentWidth, leadingInset);
+        filter.CommitLayout();
+        Check("filter 分组菜单重复相同 Arrange 仍开",
             ReferenceEquals(filter.DropdownInstanceForChecks, instance) && filter.IsDropdownOpen
             && filter.DropdownAnchorForChecks == anchor,
             $"same={ReferenceEquals(filter.DropdownInstanceForChecks, instance)} open={filter.IsDropdownOpen} "
@@ -94,19 +102,24 @@ internal static partial class AndroidNativeChecks
             $"dismissed={dismissed} open={filter.IsDropdownOpen}");
     }
 
-    private static bool OpenGroupedMenu(AndroidNativeRootView root)
+    /// <summary>经真实入口的派发链点开分组菜单。</summary>
+    /// <param name="root">主屏根视图。</param>
+    /// <returns>打开返回 true。</returns>
+    private static async Task<bool> OpenGroupedMenuAsync(AndroidNativeRootView root)
     {
         var filter = root.FilterBar;
-        var frame = filter.IsPhone ? filter.PhoneFilterFrame : filter.ControlFrame;
+        var frame = filter.EntryFrameForChecks;
         if (frame.Width <= 0) return false;
         double density = AndroidUiTheme.Density(root.Context!);
         float x = (float)((frame.X + frame.Width / 2) * density);
         float y = (float)((frame.Y + frame.Height / 2) * density);
-        long now = global::Android.OS.SystemClock.UptimeMillis();
-        using (var down = MotionEvent.Obtain(now, now, MotionEventActions.Down, x, y, 0))
-            filter.OnTouchEvent(down);
-        using (var up = MotionEvent.Obtain(now, now + 10, MotionEventActions.Up, x, y, 0))
-            filter.OnTouchEvent(up);
+        long now = SystemClock.UptimeMillis();
+        using (var down = TouchEvent(MotionEventActions.Down, x, y, now))
+            filter.DispatchTouchEvent(down);
+        using (var up = TouchEvent(MotionEventActions.Up, x, y, now + 40))
+            filter.DispatchTouchEvent(up);
+        // 视图把抬手后的点击排到 UI 线程执行：等它落地再读入口状态。
+        await Task.Delay(200);
         return filter.IsDropdownOpen;
     }
 
@@ -124,65 +137,13 @@ internal static partial class AndroidNativeChecks
         return false;
     }
 
-    /// <summary>单个下拉：真实点按打开 → 跨三个 2s 周期同一实例仍开 → 重复布局/同几何 Arrange 仍开 → 返回键收起。</summary>
-    /// <param name="kind">下拉类型。</param>
-    private static async Task CheckDropdownLifetimeAsync(FilterKind kind)
-    {
-        var root = _root!;
-        var filter = root.FilterBar;
-        root.DismissFilterDropdown();
-        await Task.Delay(100);
-
-        bool opened = OpenDropdown(root, kind);
-        Check($"filter {kind} 实际点按打开", opened && filter.IsDropdownOpen && filter.DropdownKindForChecks == kind.ToString(),
-            $"open={filter.IsDropdownOpen} kind={filter.DropdownKindForChecks} anchor={filter.DropdownAnchorForChecks}");
-        if (!opened) return;
-
-        var instance = filter.DropdownInstanceForChecks;
-        var started = DateTime.UtcNow;
-        for (int cycle = 1; cycle <= 3; cycle++)
-        {
-            await Task.Delay(2000);
-            double elapsed = (DateTime.UtcNow - started).TotalSeconds;
-            Check($"filter {kind} {cycle * 2}s 同一实例仍开",
-                ReferenceEquals(filter.DropdownInstanceForChecks, instance) && filter.IsDropdownOpen,
-                $"elapsed={elapsed:0.0}s same={ReferenceEquals(filter.DropdownInstanceForChecks, instance)} open={filter.IsDropdownOpen}");
-        }
-
-        for (int pass = 1; pass <= 3; pass++)
-        {
-            root.RequestLayout();
-            await Task.Delay(160);
-        }
-        Check($"filter {kind} 重复 RequestLayout 仍开",
-            ReferenceEquals(filter.DropdownInstanceForChecks, instance) && filter.IsDropdownOpen,
-            $"same={ReferenceEquals(filter.DropdownInstanceForChecks, instance)} open={filter.IsDropdownOpen}");
-
-        // 与 OnLayout 完全相同的参数再 Arrange 一次（幂等几何），不能因调用次数收起。
-        var (row, contentWidth, leadingInset) = CurrentFilterGeometry(root);
-        int anchorX = filter.DropdownAnchorForChecks.X;
-        filter.Arrange(row, contentWidth, leadingInset);
-        filter.Arrange(row, contentWidth, leadingInset);
-        filter.CommitLayout();
-        Check($"filter {kind} 重复相同 Arrange 仍开",
-            ReferenceEquals(filter.DropdownInstanceForChecks, instance) && filter.IsDropdownOpen
-            && filter.DropdownAnchorForChecks.X == anchorX,
-            $"same={ReferenceEquals(filter.DropdownInstanceForChecks, instance)} open={filter.IsDropdownOpen} "
-            + $"anchor={anchorX}→{filter.DropdownAnchorForChecks.X}");
-
-        bool dismissed = root.DismissFilterDropdown();
-        Check($"filter {kind} 返回键收起", dismissed && !filter.IsDropdownOpen,
-            $"dismissed={dismissed} open={filter.IsDropdownOpen}");
-        await Task.Delay(120);
-    }
-
     /// <summary>与呈现无关的设置变更不得整条硬刷并把已打开下拉关掉。</summary>
-    private static async Task CheckUnrelatedSettingAsync()
+    private static async Task CheckGroupedUnrelatedSettingAsync()
     {
         var root = _root!;
         var main = _main!;
         var filter = root.FilterBar;
-        if (!OpenDropdown(root, FilterKind.Order))
+        if (!await OpenGroupedMenuAsync(root))
         {
             Check("filter 无关设置不收起", false, "下拉未打开");
             return;
@@ -200,16 +161,14 @@ internal static partial class AndroidNativeChecks
         root.DismissFilterDropdown();
     }
 
-    /// <summary>
-    /// 有呈现影响的设置（星级显隐）即时到达控制栏：评分分组消失/恢复，且不影响已打开的下拉。
-    /// </summary>
-    private static async Task CheckSettingImpactAsync()
+    /// <summary>有呈现影响的设置（星级显隐）即时到达控制栏，且不影响已打开的下拉。</summary>
+    private static async Task CheckGroupedSettingImpactAsync()
     {
         var root = _root!;
         var main = _main!;
         var filter = root.FilterBar;
         bool original = main.Settings.ShowRating;
-        if (!OpenDropdown(root, FilterKind.Sort))
+        if (!await OpenGroupedMenuAsync(root))
         {
             Check("filter 星级设置即时生效且不收起下拉", false, "下拉未打开");
             return;
@@ -230,13 +189,17 @@ internal static partial class AndroidNativeChecks
             main.Settings.ShowRating = original;
             root.DismissFilterDropdown();
             await Task.Delay(700);
-            Check("filter 星级设置恢复评分组", root.ControlBar.HasRatingGroup == original,
-                $"ratingGroup={root.ControlBar.HasRatingGroup} expected={original}");
+            bool restored = root.Form == ScreenForm.Wide
+                ? root.ControlBar.HasRatingGroup == original
+                : (root.PhoneRating.Visibility == ViewStates.Visible) == original;
+            Check("filter 星级设置恢复评分组", restored,
+                $"ratingGroup={root.ControlBar.HasRatingGroup} phoneRating={root.PhoneRating.Visibility} "
+                + $"form={root.Form} expected={original}");
         }
     }
 
-    /// <summary>真实行选择：点排序下拉里的非当前项，VM 改变且下拉关闭。</summary>
-    private static async Task CheckRowSelectionAsync()
+    /// <summary>真实行选择：分组菜单里点非当前排序项，VM 改变且菜单保持展开。</summary>
+    private static async Task CheckGroupedRowSelectionAsync()
     {
         var root = _root!;
         var main = _main!;
@@ -253,42 +216,54 @@ internal static partial class AndroidNativeChecks
             targetMode = mode;
             break;
         }
-        if (targetLabel == null || !OpenDropdown(root, FilterKind.Sort))
+        if (targetLabel == null || !await OpenGroupedMenuAsync(root))
         {
-            Check("filter 行选择改 VM 并关闭", false, $"target={targetLabel ?? "无"} open={filter.IsDropdownOpen}");
+            Check("filter 行选择改 VM 且菜单保持", false, $"target={targetLabel ?? "无"} open={filter.IsDropdownOpen}");
             return;
         }
-
-        bool clicked = TryClickDropdownRow(root, targetLabel);
+        bool clicked = ClickMenuText(filter.DropdownContentViewForChecks, targetLabel);
         await Task.Delay(400);
-        Check("filter 行选择改 VM 并关闭",
-            clicked && bar.SortMode == targetMode && !filter.IsDropdownOpen,
+        Check("filter 行选择改 VM 且菜单保持",
+            clicked && bar.SortMode == targetMode && filter.IsDropdownOpen,
             $"clicked={clicked} label={targetLabel} sort={bar.SortMode} 期望 {targetMode} open={filter.IsDropdownOpen}");
-        // 还原为原值，后续步骤不受筛选变化影响。
         bar.SortMode = current;
+        root.DismissFilterDropdown();
         await Task.Delay(200);
     }
 
     /// <summary>筛选条被隐藏后锚点真实失效：下拉必须收起。</summary>
-    private static async Task CheckHiddenClosesAsync()
+    private static async Task CheckGroupedHiddenClosesAsync()
     {
         var root = _root!;
         var main = _main!;
         var filter = root.FilterBar;
-        if (!OpenDropdown(root, FilterKind.Rating))
+        if (!await OpenGroupedMenuAsync(root))
         {
             Check("filter 锚点隐藏关闭", false, "下拉未打开");
             return;
         }
         var instance = filter.DropdownInstanceForChecks;
         bool originalVisible = main.IsThumbnailViewVisible;
+        bool wide = root.Form == ScreenForm.Wide;
         try
         {
             main.IsThumbnailViewVisible = false;
-            await WaitAsync(() => !filter.IsDropdownOpen, "隐藏筛选条后收起下拉", 3000);
-            Check("filter 锚点隐藏关闭",
-                !filter.IsDropdownOpen && !ReferenceEquals(filter.DropdownInstanceForChecks, instance),
-                $"open={filter.IsDropdownOpen} bar={filter.Visibility} visible={originalVisible}");
+            if (wide)
+            {
+                await WaitAsync(() => !filter.IsDropdownOpen, "隐藏筛选条后收起下拉", 3000);
+                Check("filter 锚点隐藏关闭",
+                    !filter.IsDropdownOpen && !ReferenceEquals(filter.DropdownInstanceForChecks, instance),
+                    $"open={filter.IsDropdownOpen} bar={filter.Visibility} visible={originalVisible}");
+            }
+            else
+            {
+                // 手机形态的筛选入口属于固定顶行，不随胶片栏隐藏；入口仍在即可继续使用。
+                await Task.Delay(600);
+                Check("filter 锚点隐藏关闭（手机入口常驻）",
+                    filter.IsDropdownOpen && ReferenceEquals(filter.DropdownInstanceForChecks, instance)
+                    && filter.Visibility == ViewStates.Visible,
+                    $"open={filter.IsDropdownOpen} bar={filter.Visibility} film={main.IsThumbnailViewVisible}");
+            }
         }
         finally
         {
@@ -298,10 +273,10 @@ internal static partial class AndroidNativeChecks
     }
 
     /// <summary>
-    /// 旋转：已打开下拉在方向变化后必须收起；随后在竖屏行布局上复核窄屏双 Arrange 与真实滚动
+    /// 旋转：已打开下拉在方向变化后必须收起；随后在行布局上复核窄屏文档宽度与真实滚动
     /// （视口/文档宽度与是否可滚只按实测，窄屏由外部 <c>wm density</c> 造成，不伪造几何）。
     /// </summary>
-    private static async Task CheckAnchorAndNarrowAsync()
+    private static async Task CheckGroupedRotationAndNarrowAsync()
     {
         var root = _root!;
         var main = _main!;
@@ -316,7 +291,7 @@ internal static partial class AndroidNativeChecks
         {
             main.Settings.LayoutMode = LayoutMode.Auto;
             await Task.Delay(300);
-            if (!OpenDropdown(root, FilterKind.Sort))
+            if (!await OpenGroupedMenuAsync(root))
             {
                 Check("filter 旋转关闭", false, "下拉未打开");
                 return;
@@ -341,25 +316,6 @@ internal static partial class AndroidNativeChecks
                 $"density={AndroidUiTheme.Density(root.Context!):0.###} row={row} viewport={contentWidth:0.#} "
                 + $"document={documentWidth:0.#} scrollable={root.FilterScrollableForChecks} narrow={narrow}");
 
-            // 一次 OnLayout 的两次 Arrange（视口宽 → 文档宽）：中间态与最终态都不能关掉已打开的下拉。
-            if (!OpenDropdown(root, FilterKind.Rating))
-            {
-                Check("filter 双 Arrange 不收起", false, "下拉未打开");
-                return;
-            }
-            var instance = filter.DropdownInstanceForChecks;
-            filter.Arrange(row, contentWidth, leadingInset);
-            filter.CommitLayout();
-            bool openAfterViewport = ReferenceEquals(filter.DropdownInstanceForChecks, instance) && filter.IsDropdownOpen;
-            filter.Arrange(row, documentWidth, leadingInset);
-            filter.CommitLayout();
-            Check("filter 双 Arrange 不收起",
-                openAfterViewport && ReferenceEquals(filter.DropdownInstanceForChecks, instance) && filter.IsDropdownOpen,
-                $"afterViewport={openAfterViewport} afterDocument={filter.IsDropdownOpen} "
-                + $"anchor={filter.DropdownAnchorForChecks}");
-            root.DismissFilterDropdown();
-            await Task.Delay(120);
-
             if (!narrow)
             {
                 Check("filter 滚动（非窄屏跳过）", true,
@@ -373,7 +329,7 @@ internal static partial class AndroidNativeChecks
             if (offset <= 0) return;
 
             // 下拉打开后重复重建：滚动偏移保持不变，同一实例仍开。
-            if (!OpenDropdown(root, FilterKind.Order))
+            if (!await OpenGroupedMenuAsync(root))
             {
                 Check("filter 滚动偏移跨重建保留", false, "下拉未打开");
                 return;
@@ -418,69 +374,8 @@ internal static partial class AndroidNativeChecks
         double contentWidth = row
             ? Math.Max(1, root.Panes.FileContent.Width)
             : MainScreenLayout.FileBarContentWidth;
-        return (row, contentWidth, MainScreenLayout.FilterMargin);
-    }
-
-    /// <summary>经控件自身命中链点开下拉（真实 UI 入口，不做反射）。</summary>
-    /// <param name="root">主屏根视图。</param>
-    /// <param name="kind">下拉类型。</param>
-    /// <returns>打开返回 true。</returns>
-    private static bool OpenDropdown(AndroidNativeRootView root, FilterKind kind)
-    {
-        var bar = root.FilterBar;
-        var frame = kind switch
-        {
-            FilterKind.Sort => bar.SortFrame,
-            FilterKind.Order => bar.OrderFrame,
-            _ => bar.RatingFrame,
-        };
-        double density = AndroidUiTheme.Density(root.Context!);
-        float x = (float)((frame.X + frame.Width / 2) * density);
-        float y = (float)((frame.Y + frame.Height / 2) * density);
-        long now = SystemClock.UptimeMillis();
-        using (var down = TouchEvent(MotionEventActions.Down, x, y, now))
-            bar.DispatchTouchEvent(down);
-        using (var up = TouchEvent(MotionEventActions.Up, x, y, now + 40))
-            bar.DispatchTouchEvent(up);
-        return bar.IsDropdownOpen;
-    }
-
-    /// <summary>点弹出窗里按文本匹配的真实行视图（回调就是产品写回筛选 VM 的那一个）。</summary>
-    /// <param name="root">主屏根视图。</param>
-    /// <param name="label">行文本。</param>
-    /// <returns>点到了返回 true。</returns>
-    private static bool TryClickDropdownRow(AndroidNativeRootView root, string label)
-    {
-        var content = root.FilterBar.DropdownContentViewForChecks;
-        var row = content == null ? null : FindClickableRow(content, label);
-        if (row == null) return false;
-        row.PerformClick();
-        return true;
-    }
-
-    private static View? FindClickableRow(View view, string label)
-    {
-        if (view is ViewGroup group)
-        {
-            for (int index = 0; index < group.ChildCount; index++)
-            {
-                if (group.GetChildAt(index) is not { } child) continue;
-                if (child.Clickable && child.Enabled && ContainsLabel(child, label)) return child;
-                if (FindClickableRow(child, label) is { } nested) return nested;
-            }
-        }
-        return null;
-    }
-
-    private static bool ContainsLabel(View view, string label)
-    {
-        if (view is TextView text && string.Equals(text.Text, label, StringComparison.Ordinal)) return true;
-        if (view is ViewGroup group)
-        {
-            for (int index = 0; index < group.ChildCount; index++)
-                if (group.GetChildAt(index) is { } child && ContainsLabel(child, label)) return true;
-        }
-        return false;
+        double leadingInset = (row ? 0 : root.SafeInsets.Top) + MainScreenLayout.FilterMargin;
+        return (row, contentWidth, leadingInset);
     }
 
     /// <summary>在筛选条滚动宿主上拖一次（真实 Down/Move/Up 手势），返回稳定后的滚动偏移（px）。</summary>

@@ -96,7 +96,7 @@ internal static partial class AndroidNativeChecks
         bool wide = root.Form == ScreenForm.Wide;
         Check("发行版筛选入口与能力匹配",
             AndroidFilterBar.ShowsSimilarityToggle == AndroidAppCapabilities.HasDino
-            && Near(bar.ControlFrame.Height, WideFilterLayout.Height)
+            && Near(bar.ControlFrame.Height, MobileFilterLayout.Segment)
             && bar.CountFrame.Width <= 0,
             $"toggle={AndroidFilterBar.ShowsSimilarityToggle} control={bar.ControlFrame} count={bar.CountFrame} form={root.Form}");
 #if PHOTOVIEWER_DINO

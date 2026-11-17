@@ -369,8 +369,16 @@ internal sealed class AndroidRatingSourcesPopup : IDisposable
             _dividerPaint = AndroidUiTheme.Paint(AndroidUiTheme.FromToken(DesignTokens.ColorMenuSeparator));
             _starOnPaint = AndroidUiTheme.Paint(AndroidUiTheme.StarActive);
             _starOffPaint = AndroidUiTheme.Paint(AndroidUiTheme.StarInactive);
-            _clearPaint = AndroidUiTheme.Paint(AndroidUiTheme.StarClear, Math.Max(1, Px(1)));
-            _clearPaint.SetStyle(Paint.Style.Stroke);
+            _clearPaint = AndroidUiTheme.Paint(AndroidUiTheme.StarClear);
+            if (AndroidUiTheme.IconSolidTypeface(context) is { } solidTypeface) _starOnPaint.SetTypeface(solidTypeface);
+            if (AndroidUiTheme.IconTypeface(context) is { } iconTypeface)
+            {
+                _starOffPaint.SetTypeface(iconTypeface);
+                _clearPaint.SetTypeface(iconTypeface);
+            }
+            _starOnPaint.TextSize = AndroidUiTheme.Sp(context, DesignTokens.ToolbarRatingGlyphFontSize);
+            _starOffPaint.TextSize = AndroidUiTheme.Sp(context, DesignTokens.ToolbarRatingGlyphFontSize);
+            _clearPaint.TextSize = AndroidUiTheme.Sp(context, DesignTokens.ToolbarRatingClearGlyphFontSize);
             _badgePaint = AndroidUiTheme.Paint(AndroidUiTheme.FromToken(DesignTokens.ColorMenuItemPressed));
             ContentDescription = "评分来源";
             // 浮窗自身持有焦点，硬件键盘的 Esc 才会送到这里（返回键由 PopupWindow 处理）。
@@ -534,14 +542,15 @@ internal sealed class AndroidRatingSourcesPopup : IDisposable
                 float cx = slot.CenterX(), cy = slot.CenterY();
                 if (rating == 0)
                 {
-                    float arm = 4.5f * _density;
-                    canvas.DrawLine(cx - arm, cy - arm, cx + arm, cy + arm, _clearPaint);
-                    canvas.DrawLine(cx - arm, cy + arm, cx + arm, cy - arm, _clearPaint);
+                    AndroidUiTheme.DrawGlyphCentered(canvas, AndroidUiTheme.IconGlyph(DesignTokens.IconClear),
+                        _clearPaint, cx, cy);
                     continue;
                 }
                 // 只有 Rated 才点亮：Missing / 无效 / 不可读 / 冲突 / 已拒绝都不冒充 0 星。
-                using var star = AndroidUiTheme.StarPath(cx, cy, 7 * _density, 3.2f * _density);
-                canvas.DrawPath(star, rating <= (rated ?? 0) ? _starOnPaint : _starOffPaint);
+                bool active = rating <= (rated ?? 0);
+                AndroidUiTheme.DrawGlyphCentered(canvas,
+                    AndroidUiTheme.IconGlyph(active ? DesignTokens.IconStarFilled : DesignTokens.IconStar),
+                    active ? _starOnPaint : _starOffPaint, cx, cy);
             }
         }
 

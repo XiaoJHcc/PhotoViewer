@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Android.App;
+using Android.Graphics;
 using Android.Views;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Settings;
@@ -173,7 +174,9 @@ internal static partial class AndroidNativeChecks
         var activity = _activity!;
         double density = AndroidUiTheme.Density(activity);
 
-        // 88 / 224 两档：控制栏真实节点。
+        // 88 / 224 两档：控制栏真实节点。评分组显隐受用户设置影响，本段固定打开并在结束时还原。
+        bool showRating = _main!.Settings.ShowRating;
+        _main.Settings.ShowRating = true;
         var bar = new AndroidControlBar(activity, _main!);
         try
         {
@@ -217,6 +220,7 @@ internal static partial class AndroidNativeChecks
         finally
         {
             bar.Dispose();
+            _main.Settings.ShowRating = showRating;
         }
 
         // 槽宽 > 224：ControlFrame 居中偏移必须同时进入绘制与命中；横/纵两向都要对。
@@ -362,8 +366,8 @@ internal static partial class AndroidNativeChecks
             $"fit={root.FitArea} photoPane={panes.Photo}");
 
         var filter = root.FilterBar;
-        Check($"{phase} 宽形态筛选高度 44", Near(filter.ControlFrame.Height, WideFilterLayout.Height),
-            $"control={filter.ControlFrame} height={filter.ControlFrame.Height:0.#} capsule={filter.SortFrame.Equals(filter.ControlFrame)}");
+        Check($"{phase} 宽形态筛选高度 44", Near(filter.ControlFrame.Height, MobileFilterLayout.Segment),
+            $"control={filter.ControlFrame} height={filter.ControlFrame.Height:0.#}");
         Check($"{phase} 宽形态筛选在内容区", root.Panes.FileContent.Width > 0
                 && filter.ControlFrame.X >= -0.6 && filter.ControlFrame.MaxX <= root.Panes.FileContent.Width + .6,
             $"control={filter.ControlFrame} content={root.Panes.FileContent}");
@@ -373,20 +377,41 @@ internal static partial class AndroidNativeChecks
             double toggleGap = row ? toggle.X - filter.ControlFrame.MaxX : toggle.Y - filter.ControlFrame.MaxY;
             double toggleWidth = row ? filter.ToggleNaturalWidthForChecks : FilmCardGeometry.Width(FilmCardTier.Large);
             Check($"{phase} AI 开关行自然宽/列 96×44 与 8 间距",
-                Near(toggle.Width, toggleWidth) && Near(toggle.Height, 44)
-                && Near(toggleGap, WideFilterLayout.Gap),
-                $"toggle={toggle} expectedWidth={toggleWidth:0.#} gap={toggleGap:0.#} expectedGap={WideFilterLayout.Gap:0.#}");
+                Near(toggle.Width, toggleWidth) && Near(toggle.Height, MobileFilterLayout.Segment)
+                && Near(toggleGap, MobileFilterLayout.Gap),
+                $"toggle={toggle} expectedWidth={toggleWidth:0.#} gap={toggleGap:0.#} expectedGap={MobileFilterLayout.Gap:0.#}");
         }
+        // FILTER-07：宽形态合体必须与共享 MobileFilterLayout 的结果逐项一致（不复制公式）。
+        double filterLeading = (row ? 0 : root.SafeInsets.Top) + MainScreenLayout.FilterMargin;
+        double filterContent = row
+            ? Math.Max(1, widthDp - root.SafeInsets.Left - root.SafeInsets.Right)
+            : FilmCardGeometry.BandThickness(FilmCardTier.Large, false);
+        var filmSide = FilmSideGeometry.Measure(root.SafeInsets.Left, filterContent,
+            FilmCardGeometry.CrossLead(FilmCardTier.Large, false), FilmCardGeometry.CrossTrail(FilmCardTier.Large, false),
+            MobileFilterLayout.GroupWidth);
+        double expectedToggle = !AndroidFilterBar.ShowsSimilarityToggle ? 0
+            : row ? filter.ToggleNaturalWidthForChecks : FilmCardGeometry.Width(FilmCardTier.Large);
+        var expectedFilter = MobileFilterLayout.Compute(row, filterContent, filterLeading, expectedToggle,
+            row ? null : filmSide.ContentTrailing - root.Panes.FileContent.X);
+        bool filterMatches = Near(filter.ControlFrame.X, expectedFilter.Control.X)
+            && Near(filter.ControlFrame.Y, expectedFilter.Control.Y)
+            && Near(filter.ControlFrame.Width, MobileFilterLayout.GroupWidth)
+            && Near(filter.ControlFrame.Height, MobileFilterLayout.Segment)
+            && Near(filter.PhoneFilterFrame.X - expectedFilter.Control.X, expectedFilter.Filter.X)
+            && Near(filter.PhoneFilterFrame.Width, MobileFilterLayout.SegmentWidth)
+            && Near(filter.PhoneMoreFrame.X - expectedFilter.Control.X, expectedFilter.More.X)
+            && Near(filter.PhoneMoreFrame.Width, MobileFilterLayout.SegmentWidth)
+            && Near(filter.MainLengthForChecks, expectedFilter.MainLength);
+        Check($"{phase} 宽形态筛选合体等于 MobileFilterLayout", filterMatches,
+            $"control={filter.ControlFrame} expected={expectedFilter.Control} filter={filter.PhoneFilterFrame} "
+            + $"more={filter.PhoneMoreFrame} main={filter.MainLengthForChecks:0.#}/{expectedFilter.MainLength:0.#} row={row}");
 
         var card = root.Filmstrip.CardAt(0);
         Check($"{phase} 宽形态卡片大档 96×144", card != null && card.Tier == FilmCardTier.Large
                 && Near(card.Width / density, 96) && Near(card.Height / density, 144),
             card == null ? "首卡未创建" : $"{card.Width / density:0.#}×{card.Height / density:0.#} tier={card.Tier}");
-        double filterMain = row
-            ? WideFilterLayout.Height + WideFilterLayout.Margin * 2
-            : MainScreenLayout.FilterMargin + WideFilterLayout.Height
-                + (AndroidFilterBar.ShowsSimilarityToggle ? WideFilterLayout.Gap + WideFilterLayout.Height : 0)
-                + WideFilterLayout.Margin;
+        double filterMain = MobileFilterLayout.MainLength(row, row ? 0 : filterLeading,
+            AndroidFilterBar.ShowsSimilarityToggle);
         var filmFrame = FrameOf(root.Filmstrip, root, density);
         if (card != null)
         {
@@ -437,10 +462,10 @@ internal static partial class AndroidNativeChecks
         {
             if (node.Kind != ControlBarGroupKind.Exif.ToString()) continue;
             exifDetail.Append($"{node.Width:0.#}x{node.Height:0.#}/");
-            // 横排项 52×44；无衬底纵排是 44 宽容器 + 整项 36 高（项目宽 52 被容器裁切）。
+            // 横排项 52×44；无衬底纵排是 52 宽容器 + 整项 36 高。
             if (root.ControlBar.ExifBare)
             {
-                if (!Near(node.Width, RatingControlGeometry.Thickness)
+                if (!Near(node.Width, ExifBlockGeometry.ItemWidth)
                     || !Near(node.Height, ExifBlockGeometry.ItemHeight)) exifItemOk = false;
             }
             else if (!Near(node.Width, ExifBlockGeometry.ItemWidth)
@@ -448,6 +473,86 @@ internal static partial class AndroidNativeChecks
         }
         Check($"{phase} EXIF 项尺寸", exifItemOk,
             $"bare={root.ControlBar.ExifBare} sizes={exifDetail.ToString().TrimEnd('/')}");
+
+        // TOOLBAR-02：命令是真实 Material 按钮，行/列交叉轴居中。
+        bool commandViewsOk = true;
+        var commandDetail = new StringBuilder();
+        foreach (var (command, view) in root.ControlBar.CommandViewsForChecks)
+        {
+            var node = nodes.FirstOrDefault(item => item.Kind == ControlBarGroupKind.Command.ToString()
+                && item.Name == view.ContentDescription);
+            bool insideFrame = root.ControlBar.GroupFramesForChecks().Any(frame =>
+                node.X >= frame.X - .6 && node.X + node.Width <= frame.MaxX + .6
+                && node.Y >= frame.Y - .6 && node.Y + node.Height <= frame.MaxY + .6);
+            bool ok = view is AndroidGlassButton && Near(view.Width / density, 44) && Near(view.Height / density, 44)
+                && node.Width > 0 && insideFrame
+                && !string.IsNullOrEmpty(view.ContentDescription);
+            if (!ok) commandViewsOk = false;
+            commandDetail.Append($"{command}:{view.Width / density:0.#}x{view.Height / density:0.#}@{node.X:0.#},{node.Y:0.#} ");
+        }
+        bool commandsCentered = commandViewsOk && nodes.Where(node => node.Kind == ControlBarGroupKind.Command.ToString())
+            .All(node =>
+            {
+                var kindFrame = root.ControlBar.GroupFramesForChecks()[groupKinds.ToList().IndexOf(ControlBarGroupKind.Command)];
+                double center = row ? kindFrame.Y + kindFrame.Height / 2 : kindFrame.X + kindFrame.Width / 2;
+                double nodeCenter = row ? node.Y + node.Height / 2 : node.X + node.Width / 2;
+                return Near(nodeCenter, center);
+            });
+        Check($"{phase} 命令为真实 Material 按钮且在交叉轴居中", commandsCentered,
+            $"views={root.ControlBar.CommandViewsForChecks.Count} nodes={nodes.Count} row={row} {commandDetail}");
+
+        // RATING-07：评分胶囊自身是分组内的真实控件，交叉轴恒为 44（不被行高拉宽）。
+        var ratingView = root.ControlBar.RatingControl;
+        if (root.ControlBar.HasRatingGroup)
+        {
+            double ratingCross = row ? ratingView.Height / density : ratingView.Width / density;
+            var commandFill = AndroidUiTheme.FromToken(DesignTokens.ColorToolbarCommandBackground);
+            Check($"{phase} 评分胶囊交叉轴 44", Near(ratingCross, RatingControlGeometry.Thickness),
+                $"view={ratingView.Width / density:0.#}x{ratingView.Height / density:0.#} cross={ratingCross:0.#} row={row}");
+            Check($"{phase} 评分胶囊与命令按钮同底",
+                ratingView.FillColorForChecks == commandFill
+                && root.ControlBar.CommandViewsForChecks.Values.All(view => view.FillColorForChecks == commandFill),
+                $"rating={ratingView.FillColorForChecks} command={commandFill} "
+                + $"views={string.Join("/", root.ControlBar.CommandViewsForChecks.Values.Select(v => v.FillColorForChecks))}");
+            var stateLayer = AndroidX.Core.Content.ContextCompat.GetColorStateList(_activity!, Resource.Color.pv_glass_state_layer);
+            var pressedLayer = stateLayer == null ? Color.Transparent
+                : new(stateLayer.GetColorForState([global::Android.Resource.Attribute.StatePressed], Color.White));
+            bool rippleOk = true;
+            var rippleDetail = new StringBuilder();
+            for (int slot = 0; slot < RatingControlGeometry.SlotCount; slot++)
+            {
+                var ripple = ratingView.SlotRippleForChecks(slot);
+                var circle = ratingView.HoverCircleBoundsForChecks(slot);
+                var slotRect = ratingView.SlotRectPx(slot);
+                bool ok = ripple != null && ratingView.HighlightColorForChecks == pressedLayer
+                    && Math.Abs(circle.Width() - Math.Min(slotRect.Width(), slotRect.Height())) <= 1
+                    && Math.Abs(circle.Height() - Math.Min(slotRect.Width(), slotRect.Height())) <= 1
+                    && Near(circle.CenterX(), slotRect.CenterX()) && Near(circle.CenterY(), slotRect.CenterY());
+                if (!ok) rippleOk = false;
+                rippleDetail.Append($"{slot}:{circle.Width()}x{circle.Height()} ");
+            }
+            Check($"{phase} 星级逐格状态层取按钮状态层色板", rippleOk && pressedLayer.A != 0,
+                $"stateLayer={pressedLayer} ratingHighlight={ratingView.HighlightColorForChecks} circles={rippleDetail}");
+        }
+
+        // TOOLBAR-10：合体与命令按钮的字形墨迹中心必须落在各自分段中心，且完整在分段内。
+        Check($"{phase} 筛选/更多合体字形居中", ComboGlyphsCentered(root.FilterBar.ComboForChecks, density, out var comboDetail), comboDetail);
+        bool commandGlyphs = true;
+        var commandGlyphDetail = new StringBuilder();
+        foreach (var (command, view) in root.ControlBar.CommandViewsForChecks)
+        {
+            bool ok = ButtonGlyphCentered(view, density, out var glyphDetail);
+            if (!ok) commandGlyphs = false;
+            commandGlyphDetail.Append(command).Append(':').Append(glyphDetail).Append(" | ");
+        }
+        Check($"{phase} 命令按钮字形居中", commandGlyphs, commandGlyphDetail.ToString());
+
+        // TOOLBAR-05 / TOOLBAR-10：EXIF 块底色取 color.toolbar.block.background，竖排无衬底、横排带衬底。
+        var exifBlock = root.ControlBar.ExifBlock;
+        Check($"{phase} EXIF 底色取 color.toolbar.block.background",
+            exifBlock.BackdropColorForChecks == AndroidUiTheme.FromToken(DesignTokens.ColorToolbarBlockBackground)
+            && exifBlock.HasBackdropForChecks == row,
+            $"row={row} backdrop={exifBlock.HasBackdropForChecks} color={exifBlock.BackdropColorForChecks}");
 
         var controlDoc = root.ControlBar.DocumentSizeForChecks;
         var controlViewport = row ? panes.ControlContent.Width : panes.ControlContent.Height;
@@ -523,16 +628,47 @@ internal static partial class AndroidNativeChecks
             Check($"{phase} 顶行筛选/EXIF/更多同高", Near(slots.Filter.Y, slots.More.Y)
                     && (!Has(slots.Exif) || Near(slots.Exif.Y + slots.Exif.Height / 2, slots.Filter.Y + 22)),
                 $"filter={slots.Filter} exif={slots.Exif} more={slots.More}");
+            var filterButton = FrameOf(root.FilterBar.FilterButtonForChecks, root, density);
+            Check($"{phase} 筛选圆按钮为原生按钮且与槽位同形", SameFrame(filterButton, slots.Filter)
+                    && Near(root.FilterBar.FilterButtonForChecks.ContentDescription is { Length: > 0 } ? 1 : 0, 1),
+                $"button={filterButton} slot={slots.Filter} desc={root.FilterBar.FilterButtonForChecks.ContentDescription}");
         }
         else
         {
-            Check($"{phase} 筛选/更多 88 合体", Near(slots.FilterMoreGroup.Width, 88)
-                    && Near(slots.FilterMoreGroup.Height, 44),
-                $"group={slots.FilterMoreGroup} filter={slots.Filter} more={slots.More}");
+            var combo = root.FilterBar.ComboForChecks;
+            var comboFrame = FrameOf(combo, root, density);
+            var first = FrameOf(combo.First, root, density);
+            var second = FrameOf(combo.Second, root, density);
+            bool segments = SameFrame(first, slots.Filter) && SameFrame(second, slots.More);
+            bool insideCombo = first.X >= comboFrame.X - .6 && first.MaxX <= comboFrame.MaxX + .6
+                && second.X >= comboFrame.X - .6 && second.MaxX <= comboFrame.MaxX + .6;
+            Check($"{phase} 筛选/更多 88 合体为原生分段", Near(slots.FilterMoreGroup.Width, 88)
+                    && Near(slots.FilterMoreGroup.Height, 44) && SameFrame(comboFrame, slots.FilterMoreGroup),
+                $"group={slots.FilterMoreGroup} combo={comboFrame} filter={slots.Filter} more={slots.More}");
+            // FILTER-07：刘海在右镜像后两段位置随真实槽位交换，既分隔线也没有越出胶囊的多余装饰。
+            Check($"{phase} 镜像下合体分段随槽位且无越界装饰",
+                segments && insideCombo && combo.ChildCount == 2,
+                $"first={first} second={second} expected={slots.Filter}/{slots.More} "
+                + $"combo={comboFrame} mirrored={combo.Mirrored} children={combo.ChildCount}");
             Check($"{phase} 刘海侧列入口/上下张共用末端", !Has(slots.Navigation)
                     || Near(slots.FilterMoreGroup.MaxX, slots.Navigation.MaxX),
                 $"entry={slots.FilterMoreGroup} nav={slots.Navigation} leadStrip={PhoneScreenLayout.LeadStripWidth(in input):0.#}");
         }
+
+        if (portrait)
+        {
+            Check($"{phase} 筛选圆按钮字形居中",
+                ButtonGlyphCentered(root.FilterBar.FilterButtonForChecks, density, out var buttonDetail), buttonDetail);
+        }
+        else
+        {
+            Check($"{phase} 筛选/更多合体字形居中",
+                ComboGlyphsCentered(root.FilterBar.ComboForChecks, density, out var comboDetail), comboDetail);
+        }
+        Check($"{phase} 上下张合体字形居中",
+            ComboGlyphsCentered(root.PhoneNavigation, density, out var navDetail), navDetail);
+        Check($"{phase} 缩放/增强合体字形居中",
+            ComboGlyphsCentered(root.PhoneFitEnhance, density, out var fitDetail), fitDetail);
 
         Check($"{phase} 胶片条贯穿主轴", SameFrame(FrameOf(root.Filmstrip, root, density), slots.Filmstrip),
             $"actual={FrameOf(root.Filmstrip, root, density)} expected={slots.Filmstrip} tier={root.Filmstrip.Tier}");
@@ -563,6 +699,31 @@ internal static partial class AndroidNativeChecks
             var rating = FrameOf(root.PhoneRating, root, density);
             Check($"{phase} 星级控件落位", SameFrame(rating, slots.Rating),
                 $"actual={rating} expected={slots.Rating} form={root.PhoneRating.Form}");
+            var stateLayer = AndroidX.Core.Content.ContextCompat.GetColorStateList(_activity!, Resource.Color.pv_glass_state_layer);
+            var pressedLayer = stateLayer == null ? Color.Transparent
+                : new(stateLayer.GetColorForState([global::Android.Resource.Attribute.StatePressed], Color.White));
+            var commandFill = AndroidUiTheme.FromToken(DesignTokens.ColorToolbarCommandBackground);
+            bool rippleOk = true;
+            var circleDetail = new StringBuilder();
+            for (int slot = 0; slot < RatingControlGeometry.SlotCount; slot++)
+            {
+                var slotRect = root.PhoneRating.SlotRectPx(slot);
+                if (slotRect.Width() <= 0) continue;
+                var ripple = root.PhoneRating.SlotRippleForChecks(slot);
+                var circle = root.PhoneRating.HoverCircleBoundsForChecks(slot);
+                bool ok = ripple != null && root.PhoneRating.HighlightColorForChecks == pressedLayer
+                    && Math.Abs(circle.Width() - Math.Min(slotRect.Width(), slotRect.Height())) <= 1
+                    && Math.Abs(circle.Height() - Math.Min(slotRect.Width(), slotRect.Height())) <= 1
+                    && Near(circle.CenterX(), slotRect.CenterX()) && Near(circle.CenterY(), slotRect.CenterY());
+                if (!ok) rippleOk = false;
+                circleDetail.Append($"{slot}:{circle.Width()}x{circle.Height()} ");
+            }
+            Check($"{phase} 手机星级胶囊与命令按钮同底且用同一状态层色板",
+                root.PhoneRating.FillColorForChecks == commandFill && rippleOk
+                && root.PhoneNavigation.FillColorForChecks == commandFill
+                && root.PhoneFitEnhance.FillColorForChecks == commandFill
+                && root.PhoneNavigation.First.FillColorForChecks == Color.Transparent,
+                $"rating={root.PhoneRating.FillColorForChecks} command={commandFill} stateLayer={pressedLayer} circles={circleDetail}");
         }
         if (Has(slots.Exif) && slots.ExifItems > 0)
             Check($"{phase} EXIF 块落位", SameFrame(FrameOf(root.PhoneExif, root, density), slots.Exif),
@@ -582,6 +743,30 @@ internal static partial class AndroidNativeChecks
     }
 
     private static bool Has(LayoutRect rect) => rect.Width > 0 && rect.Height > 0;
+
+    /// <summary>合体两段的字形墨迹中心与分段中心偏差 ≤0.5dp，且墨迹完整落在分段内。</summary>
+    private static bool ComboGlyphsCentered(AndroidGlassCombo combo, double density, out string detail)
+    {
+        bool firstOk = ButtonGlyphCentered(combo.First, density, out var first);
+        bool secondOk = ButtonGlyphCentered(combo.Second, density, out var second);
+        detail = $"first={first} second={second} mirrored={combo.Mirrored}";
+        return firstOk && secondOk;
+    }
+
+    /// <summary>单个圆按钮的字形墨迹中心与按钮中心偏差 ≤0.5dp，且完整落在按钮内。</summary>
+    private static bool ButtonGlyphCentered(AndroidGlassButton button, double density, out string detail)
+    {
+        var (centerX, centerY, bounds) = button.GlyphCenterForChecks();
+        double dx = Math.Abs(centerX - button.Width / 2f) / density;
+        double dy = Math.Abs(centerY - button.Height / 2f) / density;
+        bool inside = bounds.Left >= 0 && bounds.Top >= 0
+            && bounds.Right <= button.Width && bounds.Bottom <= button.Height
+            && bounds.Width() > 0 && bounds.Height() > 0;
+        detail = $"{button.Width}x{button.Height} center=({centerX:0.#},{centerY:0.#}) "
+            + $"target=({button.Width / 2f:0.#},{button.Height / 2f:0.#}) d=({dx:0.##},{dy:0.##}) "
+            + $"bounds={bounds} inside={inside}";
+        return dx <= .5 && dy <= .5 && inside;
+    }
 
     /// <summary>真实视图在根视图坐标中的 dp 矩形。</summary>
     private static LayoutRect FrameOf(View view, AndroidNativeRootView root, double density)

@@ -253,7 +253,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
             bar.Visibility = ViewStates.Gone;
             AddView(bar, 1);
         }
-        _phoneMoreButton = new AndroidGlassButton(activity, "更多", "更多", iconFont: false);
+        _phoneMoreButton = new AndroidGlassButton(activity, DesignTokens.IconMore, "更多");
         _phoneMoreButton.Click += (_, _) => ShowPhotoMenuAt(_phoneMoreButton);
         _phoneMoreButton.Visibility = ViewStates.Gone;
         AddView(_phoneMoreButton);
@@ -549,7 +549,9 @@ internal sealed class AndroidNativeRootView : FrameLayout
         double bandCross = FilmCardGeometry.BandThickness(tier, false);
         var filmSide = FilmSideGeometry.Measure(_insets.Left, bandCross, FilmCardGeometry.CrossLead(tier, false),
             FilmCardGeometry.CrossTrail(tier, false), FilmCardGeometry.Width(tier));
-        double leadingInset = MainScreenLayout.FilterMargin;
+        // FILTER-07：列布局的首控件让出该列位置上的顶部遮挡（此处为系统栏/状态栏）再留一份外边距；
+        // 行布局的内容区已从安全区顶边开始，只留一份外边距。
+        double leadingInset = (row ? 0 : _insets.Top) + MainScreenLayout.FilterMargin;
         double filterContentWidth = row
             ? Math.Max(1, widthDp - _insets.Left - _insets.Right)
             : FilmCardGeometry.BandThickness(tier, false);
@@ -631,11 +633,13 @@ internal sealed class AndroidNativeRootView : FrameLayout
             double contentWidth = row
                 ? Math.Max(1, content.Width)
                 : Math.Max(1, Math.Min(MainScreenLayout.FileBarContentWidth, content.Width));
-            _filterBar.Arrange(row, contentWidth, leadingInset);
+            // 列布局的末端锚点是窗口坐标，筛选条自身从内容区左缘起排，换算到视图本地坐标。
+            _filterBar.Arrange(row, contentWidth, leadingInset, row ? null : filmSide.ContentTrailing - content.X);
             var filterRect = new LayoutRect(content.X, content.Y, Math.Max(1, content.Width), filterMain);
+            double filterDocument = row ? _filterBar.DocumentWidth(row, contentWidth) : filterMain;
             _filterScrollHost.Configure(row,
                 (int)Math.Round((row ? content.Width : filterMain) * density),
-                (int)Math.Round((row ? filterRect.Width : filterMain) * density));
+                (int)Math.Round(filterDocument * density));
             // FILM-07：列布局胶片条纵贯内容全高，筛选组浮在列表上方，不能被列表覆盖。
             _filterScrollHost.BringToFront();
             LayoutChild(_filterScrollHost, filterRect, density);
@@ -724,42 +728,49 @@ internal sealed class AndroidNativeRootView : FrameLayout
             GroupGap: DesignTokens.ShellGlassGroupGap,
             ShowRating: _main.Settings.ShowRating);
 
+        // SHELL-10：系统安全区与屏幕圆角是两种独立避让。先只按安全区排出各贴角元素的实际位置，
+        // 再按元素外形（44 高胶囊与圆按钮的半圆端）在该位置求圆角避让线，与安全区取较大者交回共享几何。
         var provisional = Input(plain, plain);
+        var placed = PhoneScreenLayout.Compute(in provisional);
+        double shape = button / 2;
         EdgeInsets lead, control;
         if (portrait)
         {
-            // 顶行：只让出该行位置上的左右圆角；上边仍取系统安全区。
-            double rowTop = PhoneScreenLayout.TopRowY(in provisional);
+            double rowTop = Math.Max(0, placed.Filter.Y);
             lead = new EdgeInsets(
-                Math.Max(plain.Left, AndroidWindowInsets.CornerInset(corners.TopLeft, rowTop)),
+                Math.Max(plain.Left, AndroidWindowInsets.CornerInset(corners.TopLeft, rowTop, shape)),
                 plain.Top,
-                Math.Max(plain.Right, AndroidWindowInsets.CornerInset(corners.TopRight, rowTop)), 0);
-            // 底行：按产品规则压入 Home 安全区后的行位置取左右圆角。
-            double bottomTop = heightDp - Math.Max(plain.Bottom - rowInset, rowInset) - button;
+                Math.Max(plain.Right, AndroidWindowInsets.CornerInset(corners.TopRight, rowTop, shape)), 0);
+            var bottomRow = Has(placed.FitEnhance) ? placed.FitEnhance : placed.Rating;
+            double rowBottom = Has(bottomRow)
+                ? Math.Max(0, heightDp - bottomRow.MaxY)
+                : Math.Max(plain.Bottom - rowInset, rowInset);
             control = new EdgeInsets(
-                Math.Max(plain.Left, AndroidWindowInsets.CornerInset(corners.BottomLeft,
-                    Math.Max(0, heightDp - bottomTop - button))),
+                Math.Max(plain.Left, AndroidWindowInsets.CornerInset(corners.BottomLeft, rowBottom, shape)),
                 0,
-                Math.Max(plain.Right, AndroidWindowInsets.CornerInset(corners.BottomRight,
-                    Math.Max(0, heightDp - bottomTop - button))),
+                Math.Max(plain.Right, AndroidWindowInsets.CornerInset(corners.BottomRight, rowBottom, shape)),
                 plain.Bottom);
         }
         else
         {
-            // 刘海侧列：整列贯穿窗口，下上缘各让出该列内容内缘位置上的圆角。
+            // 刘海侧列：按入口合体（上下张与它同一末端锚点、同宽）离刘海侧窗口缘的实际距离求上下缘。
+            var group = placed.FilterMoreGroup;
+            double leadEdge = Has(group)
+                ? Math.Max(0, _notchOnLeft ? group.X : widthDp - group.MaxX)
+                : 0;
             lead = new EdgeInsets(plain.Left,
-                Math.Max(plain.Top, AndroidWindowInsets.CornerInset(_notchOnLeft ? corners.TopLeft : corners.TopRight, 0)),
+                Math.Max(plain.Top, AndroidWindowInsets.CornerInset(
+                    _notchOnLeft ? corners.TopLeft : corners.TopRight, leadEdge, shape)),
                 plain.Right,
                 Math.Max(plain.Bottom, AndroidWindowInsets.CornerInset(
-                    _notchOnLeft ? corners.BottomLeft : corners.BottomRight, 0)));
-            // 控制列：下巴侧系统对称内缩不参与落位，只见该列内缘位置的圆角。
-            // 控制列贴角探测距离恒取工具区内边距（相邻/独立都是 10），不随列宽变化。
+                    _notchOnLeft ? corners.BottomLeft : corners.BottomRight, leadEdge, shape)));
+            // 控制列：下巴侧系统对称内缩不参与落位；控制内容列（44 宽）距下巴侧窗口缘恒为一份工具区内边距。
             control = new EdgeInsets(0,
                 Math.Max(plain.Top, AndroidWindowInsets.CornerInset(
-                    _notchOnLeft ? corners.TopRight : corners.TopLeft, ToolRegionGeometry.Padding)),
+                    _notchOnLeft ? corners.TopRight : corners.TopLeft, ToolRegionGeometry.Padding, shape)),
                 0,
                 Math.Max(plain.Bottom, AndroidWindowInsets.CornerInset(
-                    _notchOnLeft ? corners.BottomRight : corners.BottomLeft, ToolRegionGeometry.Padding)));
+                    _notchOnLeft ? corners.BottomRight : corners.BottomLeft, ToolRegionGeometry.Padding, shape)));
         }
 
         double analysisMain = portrait

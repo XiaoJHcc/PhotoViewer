@@ -74,15 +74,32 @@ internal static partial class AndroidNativeChecks
         if (_root == null || _main == null || _session == null || _activity == null) return;
         if (IsStandaloneMode)
         {
-            _ = RunAsync();
+            _ = RunGuardedAsync();
             return;
         }
-        if (_session.Image == null && _main.CurrentFile != null && _attempt++ < 60)
+        // 启动参数打开文件夹时 CurrentFile 要等枚举完成才出现；首图未上屏前统一等待，
+        // 否则慢启动会把“还在打开文件夹”误判成“无图可检查”。
+        if (_session.Image == null && _attempt++ < 60)
         {
             new Handler(Looper.MainLooper!).PostDelayed(Tick, 200);
             return;
         }
-        _ = RunAsync();
+        _ = RunGuardedAsync();
+    }
+
+    /// <summary>跑检查并兜住未处理异常：异常写成一条 FAIL 并落报告，不让检查线程静默消失。</summary>
+    private static async System.Threading.Tasks.Task RunGuardedAsync()
+    {
+        try
+        {
+            await RunAsync();
+        }
+        catch (Exception exception)
+        {
+            Console.WriteLine($"[NativeCheck] 中止：{exception}");
+            Check("检查中止", false, exception.GetType().Name + "：" + exception.Message);
+            WriteReport();
+        }
     }
 
     private static async System.Threading.Tasks.Task RunAsync()
@@ -112,6 +129,12 @@ internal static partial class AndroidNativeChecks
                 || root.ControlBar.CommandIconForChecks("ToggleEnhance") == AndroidUiTheme.IconGlyph(DesignTokens.IconCommandToggleEnhance),
             $"form={root.Form} icon={DescribeGlyph(root.ControlBar.CommandIconForChecks("ToggleEnhance") ?? string.Empty)}");
 
+        if (session.Image == null)
+        {
+            Check("跳过图像相关检查", false, "首图未上屏");
+            WriteReport();
+            return;
+        }
         // Fit ↔ 物理 100% 往返（大素材才具备向上空间；小素材按契约夹回适应态也算通过）。
         bool canZoom = session.Image!.SourceWidth > 0 && root.Photo.Viewport.FitScale < 1 / density - 1e-9;
         root.Photo.ToggleFit();
@@ -362,7 +385,7 @@ internal static partial class AndroidNativeChecks
 #else
         // EDITION-02：标准版没有相似聚类入口、面板与关联任务。
         Check("标准版筛选控件 44 高且无 toggle 空槽",
-            !AndroidFilterBar.ShowsSimilarityToggle && Near(filter.ControlFrame.Height, WideFilterLayout.Height)
+            !AndroidFilterBar.ShowsSimilarityToggle && Near(filter.ControlFrame.Height, MobileFilterLayout.Segment)
                 && filter.SimilarityFrame.Width <= 0 && filter.CountFrame.Width <= 0,
             $"toggle={AndroidFilterBar.ShowsSimilarityToggle} control={filter.ControlFrame}"
                 + $" count={filter.CountFrame} similarity={filter.SimilarityFrame} form={root.Form}");

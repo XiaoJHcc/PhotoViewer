@@ -2,10 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using Android.Content;
+using Android.Content.Res;
 using Android.Graphics;
 using Android.Views;
 using Android.Widget;
 using AndroidX.RecyclerView.Widget;
+using Google.Android.Material.Button;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
@@ -32,10 +34,8 @@ internal sealed class AndroidSimilarityPanel : LinearLayout
     private readonly TextView _empty;
     private readonly TextView _error;
     private readonly TextView _status;
-    private readonly TextView _action;
-    private readonly TextView _emptyAction;
-    private readonly View _actionSlot;
-    private readonly View _emptyActionSlot;
+    private readonly MaterialButton _actionSlot;
+    private readonly MaterialButton _emptyActionSlot;
     private readonly LinearLayout _emptyHost;
     private bool _horizontal = true;
     private bool _disposed;
@@ -63,7 +63,7 @@ internal sealed class AndroidSimilarityPanel : LinearLayout
     {
         _main = main;
         _panel = main.FileVM.SimilarityPanel;
-        Orientation = Orientation.Vertical;
+        Orientation = global::Android.Widget.Orientation.Vertical;
         var border = new global::Android.Graphics.Drawables.GradientDrawable();
         border.SetColor(AndroidUiTheme.SimPanelBackground);
         border.SetStroke((int)Math.Max(1, AndroidUiTheme.Dp(context, DesignTokens.SimPanelBorderWidth)),
@@ -81,7 +81,7 @@ internal sealed class AndroidSimilarityPanel : LinearLayout
         _list.SetItemAnimator(null);
         AddView(_list, new LayoutParams(LayoutParams.MatchParent, 0) { Weight = 1 });
 
-        _footer = new LinearLayout(context) { Orientation = Orientation.Vertical };
+        _footer = new LinearLayout(context) { Orientation = global::Android.Widget.Orientation.Vertical };
         _footer.SetGravity(GravityFlags.CenterHorizontal);
         // SIM-10：列表态动作区同样承载提取错误，不只在空态显示。
         _footerError = Text("", 10, AndroidUiTheme.SimError);
@@ -89,8 +89,7 @@ internal sealed class AndroidSimilarityPanel : LinearLayout
         _footerError.SetMaxWidth(AndroidUiTheme.DpPx(this, DesignTokens.SimErrorMaxWidth));
         _footerError.Visibility = ViewStates.Gone;
         _status = Text("", 10, AndroidUiTheme.SimCaption);
-        _action = ActionLabel("提取全部");
-        _actionSlot = ActionSlot(_action, () =>
+        _actionSlot = ActionButton("提取全部", () =>
         {
             Console.WriteLine("[Native] 相似聚类：开始提取全部");
             _panel.StartIndexingCommand();
@@ -101,7 +100,7 @@ internal sealed class AndroidSimilarityPanel : LinearLayout
         _footer.AddView(_footerRow, new LayoutParams(LayoutParams.MatchParent, AndroidUiTheme.DpPx(this, 44)));
         _footer.Visibility = ViewStates.Gone;
 
-        _emptyHost = new LinearLayout(context) { Orientation = Orientation.Vertical };
+        _emptyHost = new LinearLayout(context) { Orientation = global::Android.Widget.Orientation.Vertical };
         _emptyHost.SetGravity(GravityFlags.Center);
         int emptyMargin = AndroidUiTheme.DpPx(this, DesignTokens.SimEmptyMargin);
         _emptyHost.SetPadding(emptyMargin, emptyMargin, emptyMargin, emptyMargin);
@@ -109,8 +108,7 @@ internal sealed class AndroidSimilarityPanel : LinearLayout
         _empty.Gravity = GravityFlags.Center;
         _error = Text("", 10, AndroidUiTheme.SimError);
         _error.Gravity = GravityFlags.Center;
-        _emptyAction = ActionLabel("提取全部");
-        _emptyActionSlot = ActionSlot(_emptyAction, () =>
+        _emptyActionSlot = ActionButton("提取全部", () =>
         {
             Console.WriteLine("[Native] 相似聚类：开始提取全部（空态）");
             _panel.StartIndexingCommand();
@@ -154,7 +152,7 @@ internal sealed class AndroidSimilarityPanel : LinearLayout
     /// <param name="horizontal">是否行布局。</param>
     private void ArrangeFooter(bool horizontal)
     {
-        _footerRow.Orientation = horizontal ? Orientation.Horizontal : Orientation.Vertical;
+        _footerRow.Orientation = horizontal ? global::Android.Widget.Orientation.Horizontal : global::Android.Widget.Orientation.Vertical;
         _footerRow.SetGravity(horizontal ? GravityFlags.CenterVertical : GravityFlags.CenterHorizontal);
         _footerRow.RemoveAllViews();
         if (horizontal)
@@ -198,11 +196,9 @@ internal sealed class AndroidSimilarityPanel : LinearLayout
         _footerError.Text = _panel.IndexError ?? "";
         _footerError.Visibility = listState && _panel.ShowActionAreaError ? ViewStates.Visible : ViewStates.Gone;
         _actionSlot.Visibility = listState && _panel.ShowActionButton ? ViewStates.Visible : ViewStates.Gone;
-        _action.Text = _panel.ActionButtonText;
-        _actionSlot.ContentDescription = _panel.ActionButtonText;
+        _actionSlot.Text = _panel.ActionButtonText;
         _emptyActionSlot.Visibility = !listState && _panel.ShowActionButton ? ViewStates.Visible : ViewStates.Gone;
-        _emptyAction.Text = _panel.ActionButtonText;
-        _emptyActionSlot.ContentDescription = _panel.ActionButtonText;
+        _emptyActionSlot.Text = _panel.ActionButtonText;
         // SIM-03：文本进度保留，提取中用进度色，未提取计数用说明色。
         _status.SetTextColor(_panel.IsStateIndexing ? AndroidUiTheme.SimProgress : AndroidUiTheme.SimCaption);
         _status.Text = _panel.IsStateIndexing
@@ -273,38 +269,39 @@ internal sealed class AndroidSimilarityPanel : LinearLayout
         return view;
     }
 
-    /// <summary>动作按钮文字外观（SIM-03：90×28、#2A2A2A 底、#555555 描边、#CCCCCC 字）。</summary>
+    /// <summary>
+    /// 相似面板动作按钮（SIM-03）：Material 文本动作，底色、描边、圆角与文字取 <c>color.sim.action.*</c> /
+    /// <c>sim.action.*</c> 令牌，点按区为 90×44（不小于 44dp）。
+    /// </summary>
     /// <param name="text">按钮文案。</param>
-    /// <returns>按钮文本。</returns>
-    private TextView ActionLabel(string text)
-    {
-        var view = Text(text, 11, AndroidUiTheme.SimActionForeground);
-        var background = new global::Android.Graphics.Drawables.GradientDrawable();
-        background.SetColor(AndroidUiTheme.SimActionBackground);
-        background.SetStroke(
-            (int)Math.Max(1, AndroidUiTheme.Dp(Context!, DesignTokens.SimPanelBorderWidth)),
-            AndroidUiTheme.SimActionBorder);
-        background.SetCornerRadius((float)AndroidUiTheme.Dp(Context!, DesignTokens.SimActionCornerRadius));
-        view.Background = background;
-        return view;
-    }
-
-    /// <summary>动作按钮的 44dp 点按宿主，内部保持 90×28 的可见几何。</summary>
-    /// <param name="label">按钮文本。</param>
     /// <param name="action">点击动作。</param>
-    /// <returns>可点击宿主。</returns>
-    private View ActionSlot(TextView label, Action action)
+    /// <returns>按钮。</returns>
+    private MaterialButton ActionButton(string text, Action action)
     {
-        var slot = new FrameLayout(Context!) { Clickable = true, Focusable = true };
-        slot.AddView(label, new FrameLayout.LayoutParams(
-            AndroidUiTheme.DpPx(this, DesignTokens.SimActionWidth),
-            AndroidUiTheme.DpPx(this, DesignTokens.SimActionHeight))
+        var button = new MaterialButton(Context!)
         {
-            Gravity = GravityFlags.Center,
-        });
-        slot.Click += (_, _) => action();
-        slot.ContentDescription = label.Text;
-        return slot;
+            Text = text,
+        };
+        button.SetTextSize(global::Android.Util.ComplexUnitType.Sp, (float)DesignTokens.SimDockFontSize);
+        button.SetAllCaps(false);
+        button.SetIncludeFontPadding(false);
+        button.SetTextColor(AndroidUiTheme.SimActionForeground);
+        button.SetPadding(0, 0, 0, 0);
+        button.InsetTop = 0;
+        button.InsetBottom = 0;
+        button.InsetLeft = 0;
+        button.InsetRight = 0;
+        button.SetMinWidth(0);
+        button.SetMinimumWidth(0);
+        button.SetMinimumHeight(0);
+        button.CornerRadius = AndroidUiTheme.DpPx(this, DesignTokens.SimActionCornerRadius);
+        button.BackgroundTintList = ColorStateList.ValueOf(AndroidUiTheme.SimActionBackground);
+        // 与主屏命令按钮同一状态层色板。
+        button.RippleColor = AndroidX.Core.Content.ContextCompat.GetColorStateList(Context!, Resource.Color.pv_glass_state_layer);
+        button.StrokeWidth = Math.Max(1, AndroidUiTheme.DpPx(this, DesignTokens.SimPanelBorderWidth));
+        button.StrokeColor = ColorStateList.ValueOf(AndroidUiTheme.SimActionBorder);
+        button.Click += (_, _) => action();
+        return button;
     }
 
     /// <summary>相似项适配器：复用胶片栏卡片，第二行换成百分比 + 柱状条。</summary>
