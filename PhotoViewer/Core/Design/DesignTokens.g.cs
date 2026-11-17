@@ -73,10 +73,6 @@ public static class DesignTokens
     public const uint ColorDropdownBorderHover = 0xCCFFFFFFu;
     /// <summary>color.dropdown.chevron（color） FILTER-08：下拉箭头色（白 80%）。</summary>
     public const uint ColorDropdownChevron = 0xCCFFFFFFu;
-    /// <summary>color.dropdown.item.selected（color） FILTER-08：下拉当前项底（强调色 60%），整行直角高亮，无勾号。</summary>
-    public const uint ColorDropdownItemSelected = 0x990078D7u;
-    /// <summary>color.dropdown.item.selected.hover（color） FILTER-08：下拉当前项悬停底（强调色 80%）。</summary>
-    public const uint ColorDropdownItemSelectedHover = 0xCC0078D7u;
     /// <summary>color.film.card.background（color） FILM-05：卡片内层占位区 / EXIF 与评分块底色。</summary>
     public const uint ColorFilmCardBackground = 0xFF222222u;
     /// <summary>color.film.card.cachedBorder（color） FILM-05：主图已缓存的淡蓝细边（70.6% 不透明的 #4682B4），独立一层压在缩略图上。</summary>
@@ -379,6 +375,8 @@ public static class DesignTokens
     public const string IconCommandZoomOutPreset = "U+F94E";
     /// <summary>icon.command.zoomOutScale TOOLBAR-04：命令 ZoomOutScale 图标：uicons fi-rr-minus。</summary>
     public const string IconCommandZoomOutScale = "U+F94E";
+    /// <summary>icon.filter FILTER-07：筛选入口（fi-rr-bars-filter）：手机竖屏圆按钮、筛选/更多合体的筛选段。</summary>
+    public const string IconFilter = "U+F215";
     /// <summary>icon.font TOOLBAR-04：主屏图标字体：Flaticon UIcons Regular Rounded（描边字形），四端与 Web 共用 PhotoViewer/Assets/Fonts 下的 ttf；实心星取 icon.fontSolid。</summary>
     public const string IconFont = "uicons-regular-rounded";
     /// <summary>icon.fontSolid TOOLBAR-03：实心字形字体：Flaticon UIcons Solid Straight（PhotoViewer/Assets/Fonts），只用于点亮的星与评分快捷命令的星底。</summary>
@@ -397,6 +395,8 @@ public static class DesignTokens
     public const string IconMenuSettings = "U+FBD2";
     /// <summary>icon.menu.tools MENU-06：主图菜单工具图标：uicons fi-rr-tools。</summary>
     public const string IconMenuTools = "U+FDCB";
+    /// <summary>icon.more MENU-08：更多入口（fi-rr-menu-dots）：手机竖屏圆按钮、筛选/更多合体的更多段。</summary>
+    public const string IconMore = "U+F927";
     /// <summary>icon.photoPlaceholder FILM-05：缩略图未就绪/失败占位（fi-rr-picture）。</summary>
     public const string IconPhotoPlaceholder = "U+FA78";
     /// <summary>icon.star TOOLBAR-04：星形（fi-rr-star 描边；点亮用同字形填色 color.star.on）。评分快捷命令为星形内叠数字（0 为叉 fi-rr-cross U+F4F7）。</summary>

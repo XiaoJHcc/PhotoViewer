@@ -458,13 +458,33 @@ internal static class PhoneScreenLayoutChecks
         {
             if (ScrollsUnderButtons(input, rects[first].Name, rects[second].Name)) continue;
 
-            if (Intersects(rects[first].Rect, rects[second].Rect))
+            var firstRect = ToolContent(rects[first].Name, rects[first].Rect, rects[second].Rect);
+            var secondRect = ToolContent(rects[second].Name, rects[second].Rect, rects[first].Rect);
+            if (Intersects(firstRect, secondRect))
             {
                 problems.Add(label + rects[first].Name + " 与 " + rects[second].Name + " 相交 "
                     + RectText(rects[first].Rect) + " / " + RectText(rects[second].Rect));
             }
         }
     }
+
+    /// <summary>
+    /// SHELL-12：与控制栏相邻的分析栏交叉轴含朝控制栏的接缝；无衬底 EXIF 透明容器按固有项宽居中，
+    /// 可以伸进接缝但不得压到瓦片，故与其他元素比较时去掉朝对方一侧的接缝。
+    /// </summary>
+    private static LayoutRect ToolContent(string name, LayoutRect rect, LayoutRect other)
+    {
+        if (name != "分析栏") return rect;
+        double seam = DesignTokens.ShellToolRegionSpacing;
+        bool otherAfter = other.X + other.Width / 2 > rect.X + rect.Width / 2;
+        return otherAfter
+            ? new LayoutRect(rect.X, rect.Y, Math.Max(0, rect.Width - seam), rect.Height)
+            : new LayoutRect(rect.X + seam, rect.Y, Math.Max(0, rect.Width - seam), rect.Height);
+    }
+
+    /// <summary>横屏无衬底 EXIF 列宽：固有项宽，最大不超过按钮与两侧边距之和（TOOLBAR-05）。</summary>
+    private static double LandscapeExifWidth(in PhoneLayoutInput input)
+        => Math.Min(input.ExifWidth, ButtonSize + ToolPadding * 2);
 
     /// <summary>横屏胶片条纵贯整窗并自刘海侧按钮下方穿过，按设计不与这两类按钮相斥。</summary>
     private static bool ScrollsUnderButtons(in PhoneLayoutInput input, string first, string second)
@@ -706,8 +726,8 @@ internal static class PhoneScreenLayoutChecks
         if (layout.ExifItems <= 0 || layout.ExifItems > input.ExifCount)
             problems.Add(label + $"横屏 EXIF 显示项 {layout.ExifItems} 越出 1..{input.ExifCount}");
 
-        if (!Near(layout.Exif.Width, input.ButtonSize))
-            problems.Add(label + "横屏 EXIF 无衬底列宽应等于玻璃按钮边长（与按钮同宽同轴） " + RectText(layout.Exif));
+        if (!Near(layout.Exif.Width, LandscapeExifWidth(input)))
+            problems.Add(label + "横屏 EXIF 无衬底列宽应取固有项宽且不超过按钮与两侧边距之和 " + RectText(layout.Exif));
         if (!Near(layout.Exif.X + layout.Exif.Width / 2, layout.FitEnhance.X + ButtonSize / 2))
             problems.Add(label + "横屏 EXIF 列未与按钮同中轴");
         if (Has(layout.Rating) && layout.Exif.MaxY > layout.Rating.Y + Epsilon)
@@ -922,9 +942,9 @@ internal static class PhoneScreenLayoutChecks
                     && Near(noExif.TrailingBar.MaxY, size.Height),
                 $"栏背景 {RectText(noExif.TrailingBar)}，分析 {RectText(noExif.Analysis)}");
 
-            // EXIF 开关不改变控制列宽：无衬底容器与按钮等宽同轴（44），只收起那一列并让整组重新居中。
+            // EXIF 开关不改变控制列宽：无衬底容器按固有项宽与按钮同轴，只收起那一列并让整组重新居中。
             c.True(size.Name + " 横屏 EXIF 开关不改变控制列宽（分析栏、星级列、右栏背景与主图避让）",
-                Near(layout.Exif.Width, ButtonSize)
+                Near(layout.Exif.Width, LandscapeExifWidth(input))
                     && Near(layout.Exif.X + layout.Exif.Width / 2, layout.FitEnhance.X + ButtonSize / 2)
                     && Near(layout.FitEnhance.X, noExif.FitEnhance.X)
                     && Near(layout.FitEnhance.Width, noExif.FitEnhance.Width)
@@ -1002,13 +1022,13 @@ internal static class PhoneScreenLayoutChecks
                 $"左 {RectText(layout.Rating)} / 增强 {RectText(layout.FitEnhance)}，"
                 + $"右 {RectText(mirrored.Rating)} / 增强 {RectText(mirrored.FitEnhance)}");
 
-            // EXIF 开关：无衬底列与按钮等宽同轴（44），整组随 EXIF 出现与否重新居中。
+            // EXIF 开关：无衬底列按固有项宽与按钮同轴，整组随 EXIF 出现与否重新居中。
             var withExif = PhoneScreenLayout.Compute(input with { ExifVisible = true });
             double exifTopMargin = withExif.Exif.Y - columnTop;
             double exifBottomMargin = columnBottom - withExif.FitEnhance.MaxY;
-            c.True(size.Name + " 横屏 EXIF 开关仍 44 同轴、整组重新居中",
+            c.True(size.Name + " 横屏 EXIF 开关保持同轴、整组重新居中",
                 Has(withExif.Exif)
-                    && Near(withExif.Exif.Width, ButtonSize)
+                    && Near(withExif.Exif.Width, LandscapeExifWidth(input))
                     && Near(withExif.Exif.X + withExif.Exif.Width / 2, withExif.FitEnhance.X + ButtonSize / 2)
                     && Near(withExif.Rating.X, layout.Rating.X)
                     && Near(withExif.Rating.MaxX, layout.Rating.MaxX)
@@ -1468,7 +1488,8 @@ internal static class PhoneScreenLayoutChecks
                     && Near(strip, 54)
                     && Near(PhoneScreenLayout.ControlStripWidth(input with { ExifVisible = false }), strip)
                     && Near(size.Width - strip, layout.FitEnhance.X)
-                    && (!Has(layout.Exif) || Near(size.Width - strip, layout.Exif.X))
+                    && (!Has(layout.Exif)
+                        || Near(layout.Exif.X + layout.Exif.Width / 2, layout.FitEnhance.X + ButtonSize / 2))
                     && Near(standaloneStrip, 64)
                     && Near(size.Width - standaloneStrip, standalone.TrailingBar.X)
                     && Near(standalone.TrailingBar.X + ToolPadding, standalone.FitEnhance.X),
@@ -1562,9 +1583,9 @@ internal static class PhoneScreenLayoutChecks
             $"EXIF {RectText(landscapeLayout.Exif)}，星级 {RectText(landscapeLayout.Rating)}，"
             + $"增强 {RectText(landscapeLayout.FitEnhance)}");
 
-        c.True("iPhone 17 横屏 874×402：EXIF 无衬底列 44 宽（与按钮同宽同轴）、无额外内外边距",
-            Near(landscapeLayout.Exif.Width, ButtonSize)
-                && Near(landscapeLayout.Exif.X, 820)
+        c.True("iPhone 17 横屏 874×402：EXIF 无衬底列取固有项宽 52 并与按钮同轴、无额外内外边距",
+            Near(landscapeLayout.Exif.Width, DesignTokens.ToolbarExifItemWidth)
+                && Near(landscapeLayout.Exif.X, 816)
                 && Near(landscapeLayout.Exif.X + landscapeLayout.Exif.Width / 2, 842)
                 && landscapeLayout.ExifItems == 3,
             $"EXIF {RectText(landscapeLayout.Exif)}，显示项 {landscapeLayout.ExifItems}");

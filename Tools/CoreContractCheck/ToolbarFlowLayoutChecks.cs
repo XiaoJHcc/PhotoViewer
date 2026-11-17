@@ -1,3 +1,4 @@
+using PhotoViewer.Core.Design;
 using PhotoViewer.Shared;
 
 namespace CoreContractCheck;
@@ -65,9 +66,9 @@ internal static class ToolbarFlowLayoutChecks
         c.True("EXIF 分组尺寸与 EXIF 块几何一致（0–7 项、两向）", exifMatchesBlock);
 
         var bareColumn = ToolbarFlowLayout.Exif(3, false, bare: true);
-        c.True("无衬底纵排三项主轴 112、交叉轴默认取命令按钮边长 44",
-            Near(bareColumn.Main, 112) && Near(bareColumn.Cross, ToolbarFlowLayout.CommandSize)
-            && Near(bareColumn.Cross, 44),
+        c.True("无衬底纵排三项主轴 112、交叉轴取固有项宽 52",
+            Near(bareColumn.Main, 112) && Near(bareColumn.Cross, DesignTokens.ToolbarExifItemWidth)
+            && Near(bareColumn.Cross, 52),
             $"{bareColumn.Main}×{bareColumn.Cross}");
         var bareRow = ToolbarFlowLayout.Exif(3, true, bare: true);
         c.True("无衬底横排三项主轴 160、交叉轴 44",

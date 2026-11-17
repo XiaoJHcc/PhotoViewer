@@ -1,6 +1,8 @@
 # PhotoViewer 设计规范总则
 
-本目录是四端（Windows / macOS / iOS·iPadOS / Android）与 Web 参考壳 UI 与交互的唯一设计基准。Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本目录实现，是本规范的可执行版本：规则改动可以先在它上面验证，它与各端的差异用来发现规范缺口。Avalonia 旧壳退役后，对标不再以任何一个平台的实现为准：先改设计，再分别在四端执行。
+本目录是四端（Windows / macOS / iOS·iPadOS / Android）与 Web 参考壳 UI 与交互的唯一设计基准。Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与行为只依据本目录实现，是本规范的可执行版本：规则改动可以先在它上面验证，它与各端的差异用来发现规范缺口。Avalonia 旧壳退役后，对标不再以任何一个平台的实现为准：先改设计，再分别在四端执行。
+
+外观对标链：移动端（Android）以 iOS·iPadOS 为参照，macOS 以 iPadOS 宽形态为参照；需要自绘主屏控件的桌面宽形态（Web）以 macOS 原生壳为外观参照，Windows 的界面迁移再以 Web 为基准。参照只决定形状、材质层次与状态出现方式，几何与颜色仍取本目录与令牌。
 
 ## 1. 组成
 
@@ -28,7 +30,7 @@
 | 范围 | 对标强度 |
 |---|---|
 | 主窗口分区结构、几何、占位、边距、方形约束、动效参数 | 必须对齐 tokens 与 Web 参考壳导出的几何 |
-| 主窗口内的小型控件（下拉、菜单、按钮外观、tooltip、滚动条） | 功能与操作必须一致；外观可以原生。没有原生控件、需要自绘的平台（Web、Android 自绘弹层）以旧壳 Avalonia Fluent 深色外观为准，数值见 `dropdown.*`、`popup.*`、`menu.*`、`tooltip.*` 令牌 |
+| 主窗口内的小型控件（下拉、菜单、按钮外观、tooltip、滚动条） | 功能与操作必须一致；外观可以原生。自绘的主屏按钮（Web）按上述对标链以 macOS 原生壳为外观参照（TOOLBAR-10）；自绘的下拉、菜单与 tooltip（Web、Android 自绘弹层）以旧壳 Avalonia Fluent 深色外观为准，数值见 `dropdown.*`、`popup.*`、`menu.*`、`tooltip.*` 令牌 |
 | 设置窗口、工具窗口 | 分类、项目、行为与持久化必须一致；工具窗口的导航与容器与该平台设置统一（macOS 原生侧栏、iPad 分组列表 + 设置同款 sheet、Windows 常驻分类、Android Material 浮层）；视觉应当遵循各平台规范（macOS 系统设置、Win11 设置、iOS 设置、Material 3） |
 | 主屏图标 | 语义与字形必须一致：四端与 Web 共用 `icon.font`（uicons Regular Rounded，描边）/ `icon.fontSolid`（uicons Solid Straight，只用于实心星）与 `icon.*` 码位，尺寸取各控件的 glyph 字号令牌；平台系统图标集只能作为已登记的平台差异 |
 | 色彩、画质、物理 100% | 必须一致，由验收素材与色卡判定，不由 Web 参考壳判定（其照片为合成数据） |

@@ -63,7 +63,7 @@
 ## TOOLBAR-05 EXIF 摘要：内容、格式与更新 · 必须
 
 - 内容 = 设置启用的 EXIF 项，按设置顺序；默认光圈、快门、ISO、等效焦距。
-- EXIF 摘要是一个整块（几何见 TOOLBAR-02）：上下布局与手机竖屏是深色半透明圆角矩形，块内按设置顺序排各项，横排时项沿宽排开，竖排（列布局）时自上而下；移动端左右布局控制栏（iPad 宽形态与手机横屏）以及 macOS 右侧竖排取无衬底变体——没有块的模糊衬底与块内边距，只剩项目与项距（纵排），直接放在控制栏背景上；macOS 底部横排保留原生分组外框。无衬底纵排仍有透明宽度容器，最大为 `toolbar.exif.item.width`（52，且不超过按钮与两侧边距之和 64），与同列按钮和星级控件同轴，不被文字内容继续撑大，不加额外内外边距；文字超宽时在容器内尾部截断，不以项目固有宽撑大控制栏。每项上为标签 `toolbar.exif.label.fontSize`（10）次要色，下为值 `toolbar.exif.value.fontSize`（12）半粗主色，两者居中、尾部截断，标签不得与值同字号同色。有衬底的块被槽位压短时各项等分缩窄，不丢项；无衬底变体只按整项显示，放不下的末尾项裁掉，被裁的项仍可点整块进入 EXIF 详情查看（TOOLBAR-06）。小字号下半粗与常规难以区分的平台可以取加粗（TOOLBAR-05@win）。
+- EXIF 摘要是一个整块（几何见 TOOLBAR-02），块内按设置顺序排各项：横排（上下布局控制栏与手机竖屏顶行）是深色半透明圆角矩形，项沿宽排开；竖排（宽形态左右布局控制栏与手机横屏控制栏）一律取无衬底变体——没有块的模糊衬底与块内边距，只剩自上而下的项目与项距，直接放在控制栏背景上。无衬底纵排仍有透明宽度容器，最大为 `toolbar.exif.item.width`（52，且不超过按钮与两侧边距之和 64），与同列按钮和星级控件同轴，不被文字内容继续撑大，不加额外内外边距；文字超宽时在容器内尾部截断，不以项目固有宽撑大控制栏。每项上为标签 `toolbar.exif.label.fontSize`（10）次要色，下为值 `toolbar.exif.value.fontSize`（12）半粗主色，两者居中、尾部截断，标签不得与值同字号同色。有衬底的块被槽位压短时各项等分缩窄，不丢项；无衬底变体只按整项显示，放不下的末尾项裁掉，被裁的项仍可点整块进入 EXIF 详情查看（TOOLBAR-06）。小字号下半粗与常规难以区分的平台可以取加粗（TOOLBAR-05@win）。
 - 值按摄影习惯格式化：光圈 `f/2.8`（至多 1 位小数、去尾零）；快门 <1 s 且接近 1/n（偏差 ≤2%）写 `1/250`，否则写小数秒（至多 2 位，`0.3s`），≥1 s 写 `2s`、`1s`、`1.5s`；ISO 整数；焦距 `14mm`、`10.5mm`（至多 1 位小数、去尾零）；曝光补偿 `+0.7 EV`；拍摄时间摘要 `yyyy-MM-dd HH:mm`（完整值见悬停提示）；缺失值显示 `--`，不留空块、不猜测、不用别的字段顶替。
 - 完整值必须可查看：桌面悬停提示 `标签 · 值`；触屏没有悬停，完整值由整组点击进入的 EXIF 详情承担（TOOLBAR-06）。
 - 切图后不得残留上一张照片的 EXIF 值：先显示占位或新值，EXIF 异步就绪后再更新；更新只改文本，不改变分组数量与几何。
@@ -101,18 +101,19 @@
 
 ## TOOLBAR-10 视觉与反馈 · 应当
 
-- 圆按钮与合体按钮按 SHELL-12 用平台原生按钮材质与系统状态外观；本条的自绘底色、描边与圆角只约束自绘控件（EXIF 块与星级控件的自绘部分）。EXIF 块是深色半透明圆角矩形（圆角 `toolbar.exif.cornerRadius`），有平台深色模糊材质时取该材质，没有时取 `color.toolbar.block.background`（#222222）；星级控件的胶囊按 RATING-07 取平台原生按钮材质；命令按钮 `color.toolbar.command.background`（#333333）+ 描边 `color.toolbar.command.border`（#555555）；圆角 `toolbar.cornerRadius`（6）只由控件自身一层裁切产生，不叠卡中卡双层圆角，也不把自绘圆角与系统按钮 bezel 或系统描边裁切叠加成二次裁角。
+- 圆按钮与合体按钮按 SHELL-12 用平台原生按钮材质与系统状态外观。没有原生按钮材质、主屏按钮需要自绘的桌面宽形态（Web，以及以 Web 为迁移基准的 Windows）以 macOS 原生壳为外观参照：形状、材质层次与状态出现的方式对标 macOS，颜色取本条令牌。本条的自绘底色、描边与圆角只约束自绘部分。EXIF 块是深色半透明圆角矩形（圆角 `toolbar.exif.cornerRadius`），有平台深色模糊材质时取该材质，没有时取 `color.toolbar.block.background`（#222222）；星级控件的胶囊按 RATING-07 取平台原生按钮材质，自绘平台与命令圆按钮取同一按钮材质；自绘命令圆按钮常态只有按钮材质（无材质时取 `color.toolbar.command.background`，#333333），常态不画描边；圆角 `toolbar.cornerRadius`（6）只由控件自身一层裁切产生，不叠卡中卡双层圆角，也不把自绘圆角与系统按钮 bezel 或系统描边裁切叠加成二次裁角。
 - 评分星形字号 `toolbar.rating.glyph.fontSize`（16），0 号清零叉 `toolbar.rating.clearGlyph.fontSize`（12），冲突警示三角 `icon.warning` 取 `toolbar.rating.glyph.fontSize`（16）并占同一 0 号槽位（`color.star.conflict`）；星形不因槽位小而缩小到不可辨，换成三角不改变槽位几何与命中区。
 - 每个小控件有常态、悬停、按下、禁用、焦点五态。任何状态切换都不得引起布局抖动、残留旧态或裁切内容：不改尺寸与占位、不缩放、不绘制到父容器之外；焦点用可见焦点环或描边表达，本身不被裁切。
 - 自绘控件按令牌绘制状态色，只改底色、描边与前景色，不加过渡动画，避免连续划过按钮时闪烁。原生控件可以使用系统状态色与轻量状态动效（L4），但占位、命中区与令牌几何一致。
 - 常态/悬停/按下：
-  - 命令按钮：悬停 `color.toolbar.command.hover.background`（#3D3D3D）+ 描边 `color.toolbar.command.hover.border`（#666666），按下 `color.toolbar.command.pressed.background`（#2A2A2A）。
-  - 评分按钮：常态与禁用均为透明底，悬停 `color.toolbar.rating.hover.background`（#333333），按下 `color.toolbar.rating.pressed.background`（#3A3A3A）。
+  - 命令按钮：悬停 `color.toolbar.command.hover.background`（#3D3D3D）+ 描边 `color.toolbar.command.hover.border`（#666666），按下 `color.toolbar.command.pressed.background`（#2A2A2A）；描边只在指针进入后出现，与 macOS 按钮的悬停边框同一出现方式。
+  - 评分按钮：常态与禁用均为透明底；悬停与按下在槽位内画一个内切正圆（直径取槽位短边，不越出槽位），与原生平台逐格的系统正圆悬停同形。槽位在星级胶囊内时正圆取容器内状态层 `color.menu.item.hover` / `.pressed`（叠加在胶囊材质上）；评分按钮直接排在栏位上时取 `color.toolbar.rating.hover.background`（#333333）与 `color.toolbar.rating.pressed.background`（#3A3A3A）。
+  - 胶囊容器内的分段（筛选合体与单胶囊、手机合体按钮）：悬停与按下的状态层随段形——在段内按同心圆角内缩，端段与胶囊同为半圆端，填 `color.menu.item.hover` / `.pressed`，不画直角或小圆角矩形。
   - 相似聚类开关：未选中悬停 `color.filter.toggle.hover`（#333333）/文字 `color.filter.toggle.hover.foreground`（#CCCCCC）；选中悬停底色 `color.filter.toggle.checked.hover.background`（#26477A）、文字 `color.filter.toggle.checked.hover.foreground`（#CFE0F5）。任何状态都不得让文字回落到黑色。
 - 自绘控件禁用**不换底色、不换描边、不改尺寸**，只把内容（字形/文字）降到 `color.toolbar.disabled.content.alpha`（0.42）；不得用 `Opacity≈0.1` 近似隐藏。原生控件可用系统禁用外观（系统色），但必须仍清楚可辨、尺寸与占位不变，不得近似隐藏。无照片时评分组与照片相关命令呈禁用态，"打开文件"仍可用。
 - 焦点态取系统焦点色或平台焦点描边；焦点环不改变几何、不被父容器裁切，鼠标点击不强制留下常驻焦点环。
 - 控件保持方形实际绘制区域（`shell.glass.button.size`，44），原生按钮边框不得只画出扁条。
-- 小型控件（下拉、菜单、tooltip）外观可以走平台原生，但占位尺寸必须与 TOOLBAR-02 / FILTER 的几何一致；有原生控件的平台不另画一套下拉。没有原生控件、只能自绘的平台按旧壳 Avalonia Fluent 深色外观（`dropdown.*`、`popup.*`、`menu.*`、`tooltip.*`），不模仿某个平台的原生外观（README §3）。
+- 小型控件（下拉、菜单、tooltip）外观可以走平台原生，但占位尺寸必须与 TOOLBAR-02 / FILTER 的几何一致；有原生控件的平台不另画一套下拉。没有原生下拉、菜单与 tooltip、只能自绘的平台，这三类弹出控件按旧壳 Avalonia Fluent 深色外观（`dropdown.*`、`popup.*`、`menu.*`、`tooltip.*`）绘制（README §3）。
 - 观片环境固定深色，语义色取平台（PRIN-08、PRIN-09）。
 
 ## TOOLBAR-11 焦点与键盘 · 必须

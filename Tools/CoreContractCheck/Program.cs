@@ -72,6 +72,7 @@ internal static class Program
             FilmCardGeometryChecks.Run(checks);
             ExifBlockGeometryChecks.Run(checks);
             WideFilterLayoutChecks.Run(checks);
+            MobileFilterLayoutChecks.Run(checks);
             TitleBarLayoutChecks.Run(checks);
             ScreenFormChecks.Run(checks);
             PhoneScreenLayoutChecks.Run(checks);

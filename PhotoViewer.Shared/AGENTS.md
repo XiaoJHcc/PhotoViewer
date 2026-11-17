@@ -24,7 +24,8 @@
 | FilmSideGeometry.cs | SHELL-09 / FILM-07 / FILTER-07 左侧栏的末端几何：按刘海侧安全区、每档列表交叉轴内边距与胶片带厚算出内容末端锚点、栏宽与列表 X（`Measure`），把入口组或上下张按同一条末端对齐（`AlignTrailing`）；`PhoneScreenLayout`、iOS 宽形态筛选与根控制器共用。 |
 | ToolRegionGeometry.cs | SHELL-09/SHELL-12 工具区几何：分析栏与控制栏相邻时的共同外边距、接缝间距、独立/相邻控制列宽与居中起点；`PhoneScreenLayout` 与 `ToolbarFlowLayout` 共用。 |
 | ExifBlockGeometry.cs | TOOLBAR-05 EXIF 块几何：每项 52×36、项距 2、内边距 6、横排块高 44、圆角 12；固有尺寸与逐项矩形（槽位不足时等量收窄且不为负、长于固有长度不拉伸），以及内边距为零、按整项裁剪的无衬底变体。 |
-| WideFilterLayout.cs | FILTER-07 宽形态筛选控件几何（Mac / Android 三合体或单胶囊）：形态判定、行布局整组居中（含相似聚类开关与 8 点间距、空间不足从外边距起排）、列布局固定卡片列宽并把余量均分三段、开关下方同宽、控件主轴长度与段矩形。iOS iPad 用本端两段合体几何，Web 按 `@web` 条目采用同样的两段合体。 |
+| WideFilterLayout.cs | FILTER-07 桌面宽形态筛选控件几何（三合体或单胶囊）：形态判定、行布局整组居中（含相似聚类开关与 8 点间距、空间不足从外边距起排）、列布局固定卡片列宽并把余量均分三段、开关下方同宽、控件主轴长度与段矩形。 |
+| MobileFilterLayout.cs | FILTER-07 移动端宽形态（iPadOS / Android）「筛选 / 更多」两段合体几何：合体与大档卡片同宽（96，两段各 48），行布局整组含相似聚类开关按自然宽居中，列布局合体与开关靠主图侧取 `FilmSideGeometry` 内容末端、开关在下方隔 8 同宽；给出控件主轴长度。 |
 | TitleBarLayout.cs | SHELL-02 桌面标题栏判定：行布局筛选挖空与窗口控制器区间相交（且非全屏、文件栏可见）时改为常驻回退；挖空与背景是否绘制。Mac / Windows 共用，标题最小宽与材质留在各端。 |
 | AnalysisPanelGeometry.cs | 分析栏瓦片几何：边长、主轴槽位起点与独立面板交叉轴；Mac / iPad 共用，Android 同一份数学。共同工具区取 `ToolRegionGeometry`，iOS 手机竖屏交叉轴取 `TileSize` + 2 × `RowInset`。 |
 | SimilarityPanelGeometry.cs | 相似聚类面板几何：MinWidth 106 / MinHeight 154、外边距 4、列表内边距 8、列布局面板宽（卡片 96 + 内边距 + 描边）与行布局「从胶片栏右侧切出」的宽度规则（`RowWidth(hasItems, itemCount, paneWidth, dockWidth = 0)`：卡片数 × 96 + `sim.list.padding` + 2 × 描边 + 停靠区宽，封顶可用宽度一半）。 |
