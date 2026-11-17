@@ -1432,9 +1432,9 @@ internal static class iOSNativeFormCheck
             return;
         }
         // ---- 左右布局 ----
-        if (Math.Abs((double)root.FilterBar.Frames.Control.Width - iOSFilterLayout.GroupWidth) > Tolerance)
+        if (Math.Abs((double)root.FilterBar.Frames.Control.Width - MobileFilterLayout.GroupWidth) > Tolerance)
             throw new InvalidOperationException(
-                $"{scope} 左右布局筛选胶囊宽 {root.FilterBar.Frames.Control.Width:0.##} ≠ 合体组 {iOSFilterLayout.GroupWidth:0.##}（2 × 48，与大档卡片同宽）");
+                $"{scope} 左右布局筛选胶囊宽 {root.FilterBar.Frames.Control.Width:0.##} ≠ 合体组 {MobileFilterLayout.GroupWidth:0.##}（2 × 48，与大档卡片同宽）");
         // 文件栏与控制栏内容纵贯窗口：顶部/底部安全区不推列表与右栏。列表内容区收在胶片条上（左栏宽由 FilmSideGeometry 给出）。
         var filmSide = root.FilmSide;
         double largeBand = FilmCardGeometry.BandThickness(FilmCardTier.Large, false);
@@ -1470,9 +1470,9 @@ internal static class iOSNativeFormCheck
                 throw new InvalidOperationException(
                     $"{scope} 左右布局卡片外框右缘 {cardRight:0.##} 未与 header 右缘 {filmSide.ContentTrailing:0.##} 同线");
             var entryBand = root.FilmEntryBandFrame;
-            if (Math.Abs((double)entryBand.X - (filmSide.ContentTrailing - iOSFilterLayout.GroupWidth)) > Tolerance
+            if (Math.Abs((double)entryBand.X - (filmSide.ContentTrailing - MobileFilterLayout.GroupWidth)) > Tolerance
                 || Math.Abs((double)entryBand.Y) > Tolerance
-                || Math.Abs((double)entryBand.Width - iOSFilterLayout.GroupWidth) > Tolerance
+                || Math.Abs((double)entryBand.Width - MobileFilterLayout.GroupWidth) > Tolerance
                 || Math.Abs((double)entryBand.Height - (double)bounds.Height) > Tolerance)
                 throw new InvalidOperationException(
                     $"{scope} 左右布局入口带不是 header 实际 x 范围 + 整高：{CGRect(entryBand)}（末端 {filmSide.ContentTrailing:0.#}）");
@@ -1512,7 +1512,7 @@ internal static class iOSNativeFormCheck
         double fileMain = FilmSideGeometry.Measure((double)injected.Left,
             FilmCardGeometry.BandThickness(FilmCardTier.Large, false),
             FilmCardGeometry.CrossLead(FilmCardTier.Large, false),
-            FilmCardGeometry.CrossTrail(FilmCardTier.Large, false), iOSFilterLayout.GroupWidth).Width
+            FilmCardGeometry.CrossTrail(FilmCardTier.Large, false), MobileFilterLayout.GroupWidth).Width
             + MainScreenLayout.Divider;
         const double controlMain = 84;
         const double analysisCross = 64;
@@ -1531,9 +1531,9 @@ internal static class iOSNativeFormCheck
         // 列布局 header 铺满 116 带，合体胶囊与相似聚类开关靠共同末端右对齐；前导让位只推胶囊自身。
         const double contentWidth = MainScreenLayout.FileBarContentWidth;
         const double trailing = contentWidth - MainScreenLayout.FilterMargin;
-        var shallow = iOSFilterLayout.Compute(false, contentWidth, 10, 0, trailing);
-        var deep = iOSFilterLayout.Compute(false, contentWidth, 34, 0, trailing);
-        var withToggle = iOSFilterLayout.Compute(false, contentWidth, 10, FilmCardGeometry.Width(FilmCardTier.Large), trailing);
+        var shallow = MobileFilterLayout.Compute(false, contentWidth, 10, 0, trailing);
+        var deep = MobileFilterLayout.Compute(false, contentWidth, 34, 0, trailing);
+        var withToggle = MobileFilterLayout.Compute(false, contentWidth, 10, FilmCardGeometry.Width(FilmCardTier.Large), trailing);
         if (Math.Abs((double)shallow.Control.Y - 10) > Tolerance || Math.Abs((double)deep.Control.Y - 34) > Tolerance
             || Math.Abs((double)shallow.Control.MaxX - trailing) > Tolerance || Math.Abs((double)deep.Control.MaxX - trailing) > Tolerance
             || Math.Abs((double)withToggle.Toggle.MaxX - trailing) > Tolerance)

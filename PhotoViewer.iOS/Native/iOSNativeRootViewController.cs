@@ -809,10 +809,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
         const FilmCardTier tier = FilmCardTier.Large;
         double band = FilmCardGeometry.BandThickness(tier, false);
         FilmSide = FilmSideGeometry.Measure((double)safe.Left, band,
-            FilmCardGeometry.CrossLead(tier, false), FilmCardGeometry.CrossTrail(tier, false), iOSFilterLayout.GroupWidth);
+            FilmCardGeometry.CrossLead(tier, false), FilmCardGeometry.CrossTrail(tier, false), MobileFilterLayout.GroupWidth);
         FilmEntryBandFrame = row
             ? new CGRect(0, safe.Top, width, DesignTokens.ShellGlassButtonSize)
-            : new CGRect(FilmSide.ContentTrailing - iOSFilterLayout.GroupWidth, 0, iOSFilterLayout.GroupWidth, height);
+            : new CGRect(FilmSide.ContentTrailing - MobileFilterLayout.GroupWidth, 0, MobileFilterLayout.GroupWidth, height);
         var filterBand = ProbeBand(FilmEntryBandFrame,
             row ? UIViewLayoutRegionAdaptivityAxis.Horizontal : UIViewLayoutRegionAdaptivityAxis.Vertical);
         double leadingInset = (row ? 0 : filterBand.Top) + MainScreenLayout.FilterMargin;

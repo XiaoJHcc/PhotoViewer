@@ -227,9 +227,9 @@ internal static class iOSNativeEditionCheck
         if (bar.FilterButton.Hidden || bar.MoreButton.Hidden)
             throw new InvalidOperationException(
                 $"筛选 / 更多段可见性不符：筛选隐藏={bar.FilterButton.Hidden}，更多隐藏={bar.MoreButton.Hidden}");
-        if (Math.Abs((double)frames.Control.Width - iOSFilterLayout.GroupWidth) > 1)
+        if (Math.Abs((double)frames.Control.Width - MobileFilterLayout.GroupWidth) > 1)
             throw new InvalidOperationException(
-                $"合体胶囊宽 {frames.Control.Width:0.##} ≠ {iOSFilterLayout.GroupWidth:0.##}（2 × 48）");
+                $"合体胶囊宽 {frames.Control.Width:0.##} ≠ {MobileFilterLayout.GroupWidth:0.##}（2 × 48）");
         if (bar.FilterButton.Menu is not { } filterMenu)
             throw new InvalidOperationException("筛选段没有菜单");
         if (filterMenu.Children.Length != 3)
@@ -245,7 +245,7 @@ internal static class iOSNativeEditionCheck
         if (frames.Toggle.Width > 0 || frames.Toggle.Height > 0)
             throw new InvalidOperationException($"标准版筛选控件不应为相似聚类开关保留矩形：{frames.Toggle}");
 #endif
-        double expected = iOSFilterLayout.Segment + iOSFilterLayout.Margin * 2;
+        double expected = MobileFilterLayout.Segment + MobileFilterLayout.Margin * 2;
         if (Math.Abs((double)bar.Frame.Height - expected) > 1)
             throw new InvalidOperationException($"行布局筛选控件高度 {bar.Frame.Height:0.##} ≠ {expected:0.##}");
         if (Math.Abs(bar.MainLength(true, 0) - expected) > 1)

@@ -7,96 +7,10 @@ using UIKit;
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// 宽形态筛选控件的落位结果（FILTER-07，iOS）：两段合体胶囊、筛选/更多两段、相似聚类开关与控件主轴长度。
-/// </summary>
-/// <param name="Control">合体胶囊矩形（文件栏内容区坐标）。</param>
-/// <param name="Filter">筛选段（相对胶囊左上角）。</param>
-/// <param name="More">更多段（相对胶囊左上角）。</param>
-/// <param name="Toggle">相似聚类开关矩形（文件栏内容区坐标；标准版为零矩形）。</param>
-/// <param name="MainLength">筛选控件自身的主轴长度（含外边距）。</param>
-internal readonly record struct iOSFilterFrames(
-    LayoutRect Control,
-    LayoutRect Filter,
-    LayoutRect More,
-    LayoutRect Toggle,
-    double MainLength);
-
-/// <summary>
-/// 宽形态筛选控件的纯几何（FILTER-07，iOS）：筛选/更多两段合体宽 96（2 × 48），与大档卡片同宽，列布局按卡片外框的内容末端对齐，
-/// 行布局把合体与相似聚类开关当成一组按自然宽居中；列布局开关 96 宽落在合体下方隔 8 点。
-/// 全部以点为单位，只做算术，不依赖 UIKit。
-/// </summary>
-internal static class iOSFilterLayout
-{
-    /// <summary>控件高。</summary>
-    internal static double Segment => DesignTokens.ShellGlassButtonSize;
-
-    /// <summary>两段合体宽：与大档胶片卡片外框同宽。</summary>
-    internal static double GroupWidth => FilmCardGeometry.Width(FilmCardTier.Large);
-
-    /// <summary>单段宽：筛选与更多等分合体。</summary>
-    internal static double SegmentWidth => GroupWidth / 2;
-
-    /// <summary>控件与相似聚类开关之间的间距。</summary>
-    internal static double Gap => DesignTokens.ShellGlassGroupGap;
-
-    /// <summary>行布局的外边距（同时也是控件到内容区边缘的最小距离）。</summary>
-    internal static double Margin => MainScreenLayout.FilterMargin;
-
-    /// <summary>控件自身的主轴长度：行布局为高加两侧外边距，列布局为前导让位、合体、开关与尾部外边距之和。</summary>
-    /// <param name="row">是否行布局。</param>
-    /// <param name="leadingInset">列布局的前导让位（行布局忽略）。</param>
-    /// <param name="includeToggle">是否显示相似聚类开关（标准版为 false）。</param>
-    /// <returns>主轴长度。</returns>
-    internal static double MainLength(bool row, double leadingInset, bool includeToggle)
-        => row
-            ? Segment + Margin * 2
-            : leadingInset + Segment + (includeToggle ? Gap + Segment : 0) + Margin;
-
-    /// <summary>
-    /// 计算合体胶囊、两段与相似聚类开关的矩形：行布局整组（含开关）自然宽居中，
-    /// 列布局的合体与开关共用卡片外框的内容末端，开关在合体下方隔 <see cref="Gap"/>。
-    /// </summary>
-    /// <param name="row">是否行布局。</param>
-    /// <param name="contentWidth">文件栏内容区宽度（列布局含实际遮挡后的占用范围）。</param>
-    /// <param name="leadingInset">列布局的前导让位。</param>
-    /// <param name="toggleWidth">相似聚类开关宽度（行布局为自然宽，列布局为卡片列宽）；0 表示没有开关。</param>
-    /// <returns>各矩形与主轴长度。</returns>
-    internal static iOSFilterFrames Compute(bool row, double contentWidth, double leadingInset, double toggleWidth,
-        double? contentTrailing = null)
-    {
-        bool includeToggle = toggleWidth > 0;
-        if (row)
-        {
-            double total = GroupWidth + (includeToggle ? Gap + toggleWidth : 0);
-            double start = Math.Max(Margin, (contentWidth - total) / 2);
-            var control = new LayoutRect(start, Margin, GroupWidth, Segment);
-            var toggle = includeToggle
-                ? new LayoutRect(control.MaxX + Gap, Margin, toggleWidth, Segment)
-                : default;
-            return new iOSFilterFrames(control, SegmentRect(0), SegmentRect(1), toggle, Segment + Margin * 2);
-        }
-
-        double trailing = contentTrailing ?? contentWidth - Margin;
-        var column = FilmSideGeometry.AlignTrailing(trailing, leadingInset, GroupWidth, Segment);
-        var columnToggle = includeToggle
-            ? FilmSideGeometry.AlignTrailing(trailing, column.MaxY + Gap, toggleWidth, Segment)
-            : default;
-        return new iOSFilterFrames(column, SegmentRect(0), SegmentRect(1), columnToggle,
-            leadingInset + Segment + (includeToggle ? Gap + Segment : 0) + Margin);
-    }
-
-    /// <summary>第几段的局部矩形：两段沿主轴首尾相接，高占满控件。</summary>
-    /// <param name="index">段序（0 = 筛选，1 = 更多）。</param>
-    /// <returns>相对胶囊左上角的矩形。</returns>
-    private static LayoutRect SegmentRect(int index) => new(index * SegmentWidth, 0, SegmentWidth, Segment);
-}
-
-/// <summary>
 /// 宽形态筛选控件（FILTER-07）：一个交互式玻璃胶囊内并排两段——筛选段弹出与手机形态相同的三分组菜单
 /// （点选保持展开、失焦关闭），更多段承接宿主传入的主图菜单（与手机「更多」同源，
 /// 经 <see cref="SetMoreMenu"/> 一次性接入）。AI 版另有相似聚类开关，行布局紧随合体、列布局落在合体下方同宽。
-/// <para>几何取本文件内的纯函数 <see cref="iOSFilterLayout"/>：合体宽 96（2 × 48），与大档卡片同宽，列布局按卡片外框的内容末端对齐，
+/// <para>几何取本文件内的纯函数 <see cref="MobileFilterLayout"/>：合体宽 96（2 × 48），与大档卡片同宽，列布局按卡片外框的内容末端对齐，
 /// 行布局整组（含开关）自然宽居中；本类只把结果落成 UIKit frame，并把筛选菜单交
 /// <see cref="iOSFilterMenu"/> 按稳定业务标识更新选择状态。</para>
 /// </summary>
@@ -110,7 +24,7 @@ internal sealed class iOSFilterControl : UIView
     private readonly UIButton _filter;
     private readonly UIButton _more;
     private readonly UIButton? _similarity;
-    private iOSFilterFrames _frames;
+    private MobileFilterFrames _frames;
     private bool? _toggleOpen;
     private int _toggleConfigurationUpdates;
 
@@ -130,7 +44,7 @@ internal sealed class iOSFilterControl : UIView
     internal int ToggleConfigurationUpdates => _toggleConfigurationUpdates;
 
     /// <summary>最近一次排布算出的各矩形与主轴长度。</summary>
-    internal iOSFilterFrames Frames => _frames;
+    internal MobileFilterFrames Frames => _frames;
 
     /// <summary>构建合体胶囊（筛选 / 更多两段）与相似聚类开关，并接入当前筛选状态。</summary>
     /// <param name="main">共享主 VM。</param>
@@ -138,7 +52,7 @@ internal sealed class iOSFilterControl : UIView
     {
         _main = main;
         BackgroundColor = UIColor.Clear;
-        _group = new iOSGlassButtonGroup { SegmentLength = iOSFilterLayout.SegmentWidth };
+        _group = new iOSGlassButtonGroup { SegmentLength = MobileFilterLayout.SegmentWidth };
         _filter = _group.Add("line.3.horizontal.decrease", "筛选", null);
         _filter.ShowsMenuAsPrimaryAction = true;
         _filter.AccessibilityHint = "下拉选择排序、方向与星级筛选";
@@ -194,7 +108,7 @@ internal sealed class iOSFilterControl : UIView
     /// <param name="leadingInset">列布局的前导让位。</param>
     /// <returns>主轴长度（行布局为高，列布局为内容区内的筛选段长度）。</returns>
     internal double MainLength(bool row, double leadingInset)
-        => iOSFilterLayout.MainLength(row, leadingInset, _similarity != null);
+        => MobileFilterLayout.MainLength(row, leadingInset, _similarity != null);
 
     /// <summary>
     /// 按纯几何落位：合体胶囊、两段与相似聚类开关。
@@ -204,11 +118,11 @@ internal sealed class iOSFilterControl : UIView
     /// <param name="cardWidth">列布局的胶片卡片列宽（相似聚类开关保留自身内容宽度）。</param>
     /// <param name="leadingInset">列布局的前导让位。</param>
     /// <returns>各矩形与主轴长度。</returns>
-    internal iOSFilterFrames Arrange(bool row, double contentWidth, double cardWidth, double leadingInset,
+    internal MobileFilterFrames Arrange(bool row, double contentWidth, double cardWidth, double leadingInset,
         double? contentTrailing = null)
     {
         double toggleWidth = _similarity == null ? 0 : row ? NaturalWidth(_similarity) : cardWidth;
-        var frames = iOSFilterLayout.Compute(row, contentWidth, leadingInset, toggleWidth, contentTrailing);
+        var frames = MobileFilterLayout.Compute(row, contentWidth, leadingInset, toggleWidth, contentTrailing);
         _frames = frames;
         _group.Vertical = false;
         iOSViewGeometry.SetRectIfNeeded(_group, ToCGRect(frames.Control));
