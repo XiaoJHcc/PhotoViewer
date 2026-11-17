@@ -35,6 +35,8 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
     private readonly Action<Rect?> _setHighlight;
     private readonly Border _frame;
     private readonly WindowsAnalysisTilePanel _tiles;
+    private bool _isRowLayout = true;
+    private bool _joinedToControls;
     private readonly AnalysisPresenter _presenter;
 
     private readonly AnalysisPreviewTile _focusTile;
@@ -100,11 +102,10 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
         // 边长由布局系统给出;变化后只重建细节预览裁剪图,绝不在布局回调里碰位图。
         _tiles.SideChanged = _ => UpdatePreviewTiles();
 
+        // SHELL-12：栏背景与唯一外边界由主窗口工具区承担（交换链内亚克力 + 一条分隔线），面板本身透明。
         _frame = new Border
         {
-            Background = new SolidColorBrush(WindowsLayout.BarBackground),
-            BorderBrush = new SolidColorBrush(WindowsLayout.Divider),
-            BorderThickness = new Thickness(0, WindowsLayout.DividerThickness, 0, 0),
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
             Padding = new Thickness(WindowsLayout.AnalysisPadding),
             Child = _tiles,
         };
@@ -354,15 +355,43 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
         _capturedPreview = null;
     }
 
-    /// <summary>切换上下/左右布局:上下布局瓦片横排(顶部分隔线),左右布局竖排(左侧分隔线)。</summary>
+    /// <summary>切换上下/左右布局:上下布局瓦片横排,左右布局竖排。</summary>
     /// <param name="isRowLayout">是否为上下布局。</param>
     public void SetOrientation(bool isRowLayout)
     {
+        _isRowLayout = isRowLayout;
         _tiles.Orientation = isRowLayout ? Orientation.Horizontal : Orientation.Vertical;
-        _frame.BorderThickness = isRowLayout
-            ? new Thickness(0, WindowsLayout.DividerThickness, 0, 0)
-            : new Thickness(WindowsLayout.DividerThickness, 0, 0, 0);
+        ApplyRegionPadding();
     }
+
+    /// <summary>
+    /// SHELL-12：与控制栏相邻时并入同一工具区——朝主图一侧与主轴两端各留 <see cref="ToolRegionGeometry.Padding"/>,
+    /// 靠控制栏一侧只留一份接缝 <see cref="ToolRegionGeometry.Spacing"/>,不再叠加面板自身的内边距。
+    /// </summary>
+    /// <param name="joined">是否紧邻控制栏。</param>
+    internal void SetJoinedToControls(bool joined)
+    {
+        if (_joinedToControls == joined)
+        {
+            return;
+        }
+
+        _joinedToControls = joined;
+        ApplyRegionPadding();
+    }
+
+    /// <summary>按方向与相邻关系落内边距：交叉轴尾侧(行布局为下、列布局为右)在相邻时取接缝间距。</summary>
+    private void ApplyRegionPadding()
+    {
+        double padding = ToolRegionGeometry.Padding;
+        double trailing = _joinedToControls ? ToolRegionGeometry.Spacing : padding;
+        _frame.Padding = _isRowLayout
+            ? new Thickness(padding, padding, padding, trailing)
+            : new Thickness(padding, padding, trailing, padding);
+    }
+
+    /// <summary>瓦片集合数量变化(进出对焦点等):主窗口据此重算分析栏交叉轴(ANALYSIS-03)。</summary>
+    internal event Action? TileCountChanged;
 
     /// <summary>释放 presenter、订阅与自持位图。</summary>
     public void Detach()
@@ -454,10 +483,16 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
             || !views.SequenceEqual(_tiles.Children.Cast<UIElement>());
         if (orderChanged)
         {
+            int previousCount = _tiles.Children.Count;
             _tiles.Children.Clear();
             foreach (var view in views)
             {
                 _tiles.Children.Add(view);
+            }
+
+            if (previousCount != views.Count)
+            {
+                TileCountChanged?.Invoke();
             }
         }
 

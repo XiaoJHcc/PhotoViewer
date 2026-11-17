@@ -180,7 +180,7 @@ internal sealed class WindowsSimilarityPanel : Grid
 
     /// <summary>
     /// 按可用宽度落面板宽度(SIM-01/SIM-07):行布局取共享 <see cref="SimilarityPanelGeometry.RowWidth"/>
-    /// （已含停靠区、可用宽一半上限与 4 点外边距）;列布局固定 <see cref="SimilarityPanelGeometry.PanelWidth"/>。
+    /// （已含停靠区、可用宽一半上限与 4 点外边距）;列布局固定 <see cref="SimilarityPanelGeometry.PanelWidth"/> 加同一份外边距。
     /// </summary>
     /// <param name="availableWidth">文件栏/窗口可用宽度。</param>
     /// <param name="hasItems">是否有相似项。</param>
@@ -208,8 +208,9 @@ internal sealed class WindowsSimilarityPanel : Grid
             return;
         }
 
-        Width = SimilarityPanelGeometry.PanelWidth;
-        MaxWidth = SimilarityPanelGeometry.PanelWidth;
+        // SIM-07：列布局面板宽 sim.panel.width，文件栏再加一份 sim.panel.margin 作右侧留白。
+        Width = SimilarityPanelGeometry.PanelWidth + WindowsLayout.SimilarityPanelMargin;
+        MaxWidth = Width;
         _frame.Margin = new Thickness(0, 0, WindowsLayout.SimilarityPanelMargin, 0);
     }
 

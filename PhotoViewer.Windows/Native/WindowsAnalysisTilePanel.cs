@@ -82,10 +82,10 @@ internal sealed class WindowsAnalysisTilePanel : Panel
 
         double side = ResolveSide(finalSize, count);
         NotifySide(side);
-        double span = (side * count) + (ItemSpacing * (count - 1));
         bool horizontal = Orientation == Orientation.Horizontal;
-        double x = horizontal ? (finalSize.Width - span) / 2 : (finalSize.Width - side) / 2;
-        double y = horizontal ? (finalSize.Height - side) / 2 : (finalSize.Height - span) / 2;
+        // ANALYSIS-03：与共享 AnalysisPanelGeometry.TileOffset 同口径，从主轴前导起排，不足一枚的零头留在末端；交叉轴居中。
+        double x = horizontal ? 0 : (finalSize.Width - side) / 2;
+        double y = horizontal ? (finalSize.Height - side) / 2 : 0;
 
         foreach (var child in Children)
         {

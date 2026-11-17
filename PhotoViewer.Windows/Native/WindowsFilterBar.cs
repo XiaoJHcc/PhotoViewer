@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
@@ -10,88 +11,203 @@ using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Main.File;
 using Windows.Foundation;
-using Windows.UI;
 
 namespace PhotoViewer.Windows.Native;
 
 /// <summary>
-/// 原生筛选条:排序方式、升降序、星级筛选与筛选后计数,名称与取值语义与旧壳一致(契约 FILTER-01)。
-/// 控件位置直接消费共享 <see cref="MainScreenLayout.FilterBarFrames"/>:行布局整组居中、
-/// 列布局在 116 栏内纵排;AI 版末位另有相似聚类 toggle(共五项),标准版只有四项且不留空槽(EDITION-02)。
+/// 筛选控件（FILTER-01）：排序方式、升降序、星级筛选与筛选后计数收在同一个玻璃胶囊里。
+/// 桌面宽形态是三段合体（FILTER-07）——每段显示当前选项、各自弹出原生单选菜单；
+/// 三段放不下时退化为单一「筛选」胶囊，弹出同一套「排序 / 方向 / 星级」无标题分组菜单。
+/// 计数「共 N 张」固定在控件内部（FILTER-04），不参与段宽，也不单独成为入口。
+/// 几何全部取共享 <see cref="WideFilterLayout"/>：行布局整组居中、列布局固定胶片卡片列宽；
+/// AI 版末位另有相似聚类开关（FILTER-06），标准版不创建也不留空槽（EDITION-02）。
 /// </summary>
 internal sealed class WindowsFilterBar : Panel
 {
-    /// <summary>本条筛选条是否渲染相似聚类开关(标准版为 false)。</summary>
+    /// <summary>本条筛选条是否渲染相似聚类开关（标准版为 false）。</summary>
     internal const bool ShowsSimilarityToggle = WindowsProductInfo.HasDino;
 
+    private const string PrimaryForegroundBrushKey = "TextFillColorPrimaryBrush";
+    private const string SecondaryForegroundBrushKey = "TextFillColorSecondaryBrush";
+    private const string SubtleHoverBrushKey = "SubtleFillColorSecondaryBrush";
+    private const string SubtlePressedBrushKey = "SubtleFillColorTertiaryBrush";
+    private const string CapsuleFillBrushKey = "ControlFillColorDefaultBrush";
+    private const string CapsuleBorderBrushKey = "ControlElevationBorderBrush";
+    private const string DividerBrushKey = "DividerStrokeColorDefaultBrush";
+
+    /// <summary>状态层四周的内缩量（TOOLBAR-10：段内按同心圆角内缩，端段与胶囊同为半圆端）。</summary>
+    private const double StatePillInset = 3;
+
+    private static readonly SolidColorBrush TransparentBrush = new(Microsoft.UI.Colors.Transparent);
+
+    /// <summary>胶囊高度（玻璃按钮边长）。</summary>
+    private static readonly double CapsuleHeight = WideFilterLayout.Height;
+
+    /// <summary>胶囊圆角（高度一半，端段即半圆端）。</summary>
+    private static readonly double CapsuleCornerRadius = CapsuleHeight / 2;
+
+    /// <summary>状态层圆角：与胶囊同心，故取 高度 / 2 − 内缩。</summary>
+    private static readonly double StatePillCornerRadius = CapsuleHeight / 2 - StatePillInset;
+
+    /// <summary>
+    /// 上带（当前选项）高度：带边界仍落在 44 − filter.count.height 处，只按状态层内缩裁掉下缘；
+    /// 因此三段与单胶囊的标签落在同一 Y。
+    /// </summary>
+    private static readonly double LabelBandHeight = CapsuleHeight - DesignTokens.FilterCountHeight - StatePillInset;
+
+    /// <summary>下带（计数）高度：计数带上缘同上，下缘内缩一份状态层。</summary>
+    private static readonly double CountBandHeight = DesignTokens.FilterCountHeight - StatePillInset;
+
     private readonly FilterBarViewModel _filter;
-    private readonly ComboBox _sortMode;
-    private readonly ComboBox _sortOrder;
-    private readonly ComboBox _ratingFilter;
-    private readonly TextBlock _count;
+    private readonly Border _capsule;
+    private readonly Border _dividerBeforeOrder;
+    private readonly Border _dividerBeforeRating;
+    private readonly Button _sortEntry;
+    private readonly Button _orderEntry;
+    private readonly Button _ratingEntry;
+    private readonly Button _capsuleEntry;
+    private readonly MenuFlyout _sortMenu;
+    private readonly MenuFlyout _orderMenu;
+    private readonly MenuFlyout _ratingMenu;
+    private readonly MenuFlyout _capsuleMenu;
+    private readonly FilterGroup _sortGroup;
+    private readonly FilterGroup _orderGroup;
+    private readonly FilterGroup _ratingGroup;
+    private readonly TextBlock _capsuleLabel;
+    private readonly TextBlock _ratingCount;
+    private readonly TextBlock _capsuleCount;
+    private readonly Button[] _segmentedEntries;
+    private readonly Button[] _capsuleEntries;
 #if PHOTOVIEWER_DINO
     private readonly ToggleButton _similarityToggle;
 #endif
+    private string _countText = "共 0 张";
+    private FilterControlMode _mode = FilterControlMode.Segmented;
+    private WideFilterFrames _frames;
+    private (double Sort, double Order, double Rating) _naturalWidths;
+    private bool _naturalWidthsMeasured;
     private bool _syncing;
     private bool _isRowLayout = true;
-    private MainScreenLayout.FilterFrames _frames;
 
     /// <summary>
-    /// 创建筛选条。
+    /// 创建筛选控件。
     /// </summary>
-    /// <param name="filter">筛选视图模型</param>
+    /// <param name="filter">筛选视图模型，选项名、取值与写入都来自它。</param>
     public WindowsFilterBar(FilterBarViewModel filter)
     {
         _filter = filter;
 
-        _sortMode = CreateComboBox();
-        _sortMode.ItemsSource = _filter.SortModes.Select(option => option.DisplayName).ToList();
-        _sortMode.SelectionChanged += OnSortModeChanged;
+        _sortGroup = new FilterGroup("Sort", "排序方式",
+            _filter.SortModes.Select(option => option.DisplayName).ToArray(),
+            _filter.SortModes.Select(option => option.Value).ToArray(),
+            () => _filter.SortMode,
+            index =>
+            {
+                if (!_syncing) _filter.SortMode = (SortMode)_filter.SortModes[index].Value;
+            });
+        _orderGroup = new FilterGroup("Order", "排序方向",
+            _filter.SortOrders.Select(option => option.DisplayName).ToArray(),
+            _filter.SortOrders.Select(option => option.Value).ToArray(),
+            () => _filter.SortOrder,
+            index =>
+            {
+                if (!_syncing) _filter.SortOrder = (SortOrder)_filter.SortOrders[index].Value;
+            });
+        _ratingGroup = new FilterGroup("Rating", "星级筛选",
+            _filter.RatingFilters.Select(option => option.DisplayName).ToArray(),
+            _filter.RatingFilters.Select(option => option.Key).ToArray(),
+            () => _filter.SelectedRatingFilter,
+            index =>
+            {
+                if (!_syncing) _filter.SelectedRatingFilter = _filter.RatingFilters[index].Key;
+            });
 
-        _sortOrder = CreateComboBox();
-        _sortOrder.ItemsSource = _filter.SortOrders.Select(option => option.DisplayName).ToList();
-        _sortOrder.SelectionChanged += OnSortOrderChanged;
+        _ratingCount = CreateBandText(DesignTokens.FilterCountFontSize, SecondaryForegroundBrushKey);
+        _capsuleLabel = CreateBandText(DesignTokens.DropdownFontSize, PrimaryForegroundBrushKey);
+        _capsuleLabel.Text = "筛选";
+        _capsuleCount = CreateBandText(DesignTokens.FilterCountFontSize, SecondaryForegroundBrushKey);
 
-        _ratingFilter = CreateComboBox();
-        _ratingFilter.ItemsSource = _filter.RatingFilters.Select(option => option.DisplayName).ToList();
-        _ratingFilter.SelectionChanged += OnRatingFilterChanged;
-        foreach (var comboBox in new[] { _sortMode, _sortOrder, _ratingFilter })
+        _sortEntry = CreateEntryButton(CreateBandGrid(_sortGroup.Label, null));
+        _orderEntry = CreateEntryButton(CreateBandGrid(_orderGroup.Label, null));
+        _ratingEntry = CreateEntryButton(CreateBandGrid(_ratingGroup.Label, _ratingCount));
+        _capsuleEntry = CreateEntryButton(CreateBandGrid(_capsuleLabel, _capsuleCount));
+
+        _capsule = new Border
         {
-            comboBox.DropDownOpened += (_, _) => PopupOpening?.Invoke();
-        }
+            Background = ThemeBrush(CapsuleFillBrushKey),
+            BorderBrush = ThemeBrush(CapsuleBorderBrushKey),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(CapsuleCornerRadius),
+            // 与 Web 参考壳一致：胶囊只是材质衬底，指针交给它上面的段按钮。
+            IsHitTestVisible = false,
+        };
+        _dividerBeforeOrder = CreateDivider();
+        _dividerBeforeRating = CreateDivider();
+
+        _sortMenu = CreateMenu(_sortGroup.SegmentItems);
+        _orderMenu = CreateMenu(_orderGroup.SegmentItems);
+        _ratingMenu = CreateMenu(_ratingGroup.SegmentItems);
+        _capsuleMenu = CreateMenu(_sortGroup.CapsuleItems);
+        AddMenuGroup(_capsuleMenu, _orderGroup.CapsuleItems, separator: true);
+        AddMenuGroup(_capsuleMenu, _ratingGroup.CapsuleItems, separator: true);
+        _sortEntry.Flyout = _sortMenu;
+        _orderEntry.Flyout = _orderMenu;
+        _ratingEntry.Flyout = _ratingMenu;
+        _capsuleEntry.Flyout = _capsuleMenu;
 
 #if PHOTOVIEWER_DINO
         _similarityToggle = CreateSimilarityToggle();
 #endif
-        _count = new TextBlock
-        {
-            FontSize = 12,
-            Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xDD, 0xDD, 0xDD)),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextAlignment = TextAlignment.Center,
-        };
 
-        Children.Add(_sortMode);
-        Children.Add(_sortOrder);
-        Children.Add(_ratingFilter);
-        Children.Add(_count);
+        _segmentedEntries = new[] { _sortEntry, _orderEntry, _ratingEntry };
+        _capsuleEntries = new[] { _capsuleEntry };
+
+        Children.Add(_capsule);
+        Children.Add(_sortEntry);
+        Children.Add(_dividerBeforeOrder);
+        Children.Add(_orderEntry);
+        Children.Add(_dividerBeforeRating);
+        Children.Add(_ratingEntry);
+        Children.Add(_capsuleEntry);
 #if PHOTOVIEWER_DINO
         Children.Add(_similarityToggle);
 #endif
+        ApplyMode(FilterControlMode.Segmented);
 
         _filter.PropertyChanged += OnFilterChanged;
         SyncFromViewModel();
     }
 
-    /// <summary>RATING-04：下拉打开前关闭来源浮窗。</summary>
+    /// <summary>RATING-04：菜单打开前关闭来源浮窗。</summary>
     internal event Action? PopupOpening;
-
-    /// <summary>验收专用：排序方式下拉（真实 ComboBox，展开时驱动原生下拉弹层）。</summary>
-    internal ComboBox SortModeDropDown => _sortMode;
 
     /// <summary>实际筛选控件边界在布局后发生变化，标题栏据此重算挖空与窄宽度回退。</summary>
     internal event Action? InteractiveBoundsChanged;
+
+    /// <summary>验收专用：最近一次落位得到的控件形态。</summary>
+    internal FilterControlMode Mode => _mode;
+
+    /// <summary>验收专用：当前形态下的筛选入口（分段为排序 / 方向 / 星级，单胶囊为唯一入口）。</summary>
+    internal IReadOnlyList<Button> Entries => _mode == FilterControlMode.Segmented ? _segmentedEntries : _capsuleEntries;
+
+    /// <summary>验收专用：各入口当前显示的选项名。</summary>
+    internal IReadOnlyList<string> EntryLabels => _mode == FilterControlMode.Segmented
+        ? new[] { _sortGroup.Label.Text, _orderGroup.Label.Text, _ratingGroup.Label.Text }
+        : new[] { _capsuleLabel.Text };
+
+    /// <summary>验收专用：当前承载排序选项的入口（排序段，或单胶囊）。</summary>
+    internal Button SortEntry => _mode == FilterControlMode.Segmented ? _sortEntry : _capsuleEntry;
+
+    /// <summary>验收专用：当前承载排序选项的菜单（排序段菜单，或含三分组的单胶囊菜单）。</summary>
+    internal MenuFlyout SortMenu => _mode == FilterControlMode.Segmented ? _sortMenu : _capsuleMenu;
+
+    /// <summary>验收专用：控件内的计数文本。</summary>
+    internal string CountText => _countText;
+
+#if PHOTOVIEWER_DINO
+    /// <summary>验收专用：相似聚类开关。</summary>
+    internal ToggleButton SimilarityToggle => _similarityToggle;
+#endif
 
     /// <summary>
     /// 释放订阅。
@@ -99,10 +215,9 @@ internal sealed class WindowsFilterBar : Panel
     public void Detach() => _filter.PropertyChanged -= OnFilterChanged;
 
     /// <summary>
-    /// 切换排布方向:上下布局横排居中,左右布局在文件栏单列内纵排。
-    /// 位置统一由 <see cref="MainScreenLayout.FilterBarFrames"/> 给出。
+    /// 切换排布方向：上下布局整组横向居中，左右布局在文件栏单列内纵排。
     /// </summary>
-    /// <param name="isRowLayout">是否为上下布局</param>
+    /// <param name="isRowLayout">是否为上下布局。</param>
     public void SetOrientation(bool isRowLayout)
     {
         if (_isRowLayout == isRowLayout)
@@ -115,22 +230,40 @@ internal sealed class WindowsFilterBar : Panel
         InvalidateArrange();
     }
 
-    /// <summary>刷新计数文本。</summary>
-    public void RefreshCount() => _count.Text = $"共 {_filter.FilteredCount} 张";
+    /// <summary>刷新计数文本（FILTER-04：计数在控件内部，且不改各段宽度）。</summary>
+    public void RefreshCount()
+    {
+        _countText = $"共 {_filter.FilteredCount} 张";
+        _ratingCount.Text = _countText;
+        _capsuleCount.Text = _countText;
+        UpdateAutomationNames();
+    }
+
+    /// <summary>
+    /// 计算当前宽度下的形态与矩形（纯计算，布局与验收共用）。
+    /// 列布局的前导让位取 <see cref="MainScreenLayout.FilterMargin"/>：Windows 的标题栏不覆盖文件栏。
+    /// </summary>
+    /// <param name="row">是否行布局。</param>
+    /// <param name="contentWidth">文件栏内容区宽度。</param>
+    /// <returns>形态、整块矩形、三段局部矩形、开关矩形与主轴长度。</returns>
+    internal WideFilterFrames ComputeFrames(bool row, double contentWidth)
+    {
+        var (sortWidth, orderWidth, ratingWidth) = NaturalSegmentWidths();
+        double capsuleWidth = FilmCardGeometry.Width(FilmCardTier.Large);
+        return WideFilterLayout.Compute(row, contentWidth, capsuleWidth, MainScreenLayout.FilterMargin,
+            sortWidth, orderWidth, ratingWidth, capsuleWidth, ShowsSimilarityToggle, DesignTokens.FilterToggleWidth);
+    }
 
     /// <summary>取得实际筛选控件的边界，供标题栏避让；不包含横向拉伸的外层网格。</summary>
     /// <param name="relativeTo">用于表示边界坐标的参考元素。</param>
-    /// <returns>实际控件组合在参考元素内的逻辑坐标边界。</returns>
+    /// <returns>筛选控件（AI 版含相似聚类开关）在参考元素内的逻辑坐标边界。</returns>
     internal Rect GetInteractiveBounds(UIElement relativeTo)
     {
-        var sort = _frames.Sort;
-        var order = _frames.Order;
-        var rating = _frames.Rating;
-        var count = _frames.Count;
-        double left = Math.Min(Math.Min(sort.X, order.X), Math.Min(rating.X, count.X));
-        double top = Math.Min(Math.Min(sort.Y, order.Y), Math.Min(rating.Y, count.Y));
-        double right = Math.Max(Math.Max(sort.MaxX, order.MaxX), Math.Max(rating.MaxX, count.MaxX));
-        double bottom = Math.Max(Math.Max(sort.MaxY, order.MaxY), Math.Max(rating.MaxY, count.MaxY));
+        var control = _frames.Control;
+        double left = control.X;
+        double top = control.Y;
+        double right = control.MaxX;
+        double bottom = control.MaxY;
 #if PHOTOVIEWER_DINO
         var toggle = _frames.Toggle;
         left = Math.Min(left, toggle.X);
@@ -138,110 +271,340 @@ internal sealed class WindowsFilterBar : Panel
         right = Math.Max(right, toggle.MaxX);
         bottom = Math.Max(bottom, toggle.MaxY);
 #endif
-
         return TransformToVisual(relativeTo).TransformBounds(new Rect(left, top, right - left, bottom - top));
     }
 
     /// <inheritdoc/>
     protected override Size MeasureOverride(Size availableSize)
     {
-        foreach (var child in Children)
-        {
-            child.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        }
-
-        double countWidth = Math.Max(1, _count.DesiredSize.Width);
-        if (_isRowLayout)
-        {
-            double width = double.IsInfinity(availableSize.Width) ? DesiredRowWidth(countWidth) : availableSize.Width;
-            _frames = MainScreenLayout.FilterBarFrames(true, width, 0, countWidth, ShowsSimilarityToggle);
-            return new Size(width, MainScreenLayout.FilterControlHeight + MainScreenLayout.FilterMargin * 2);
-        }
-
-        _frames = MainScreenLayout.FilterBarFrames(
-            false, MainScreenLayout.FileBarContentWidth, MainScreenLayout.FilterMargin, countWidth, ShowsSimilarityToggle);
-        return new Size(
-            MainScreenLayout.FileBarContentWidth,
-            MainScreenLayout.FilterBarMainLength(false, MainScreenLayout.FilterMargin, ShowsSimilarityToggle));
+        double contentWidth = double.IsInfinity(availableSize.Width) ? NaturalContentWidth() : availableSize.Width;
+        var frames = ComputeFrames(_isRowLayout, contentWidth);
+        // FILTER-07：形态在量测阶段就定好，切换只改可见性，避免重排后段内容滞后一帧。
+        ApplyMode(frames.Mode);
+        MeasureChildren(frames);
+        return new Size(contentWidth, frames.MainLength);
     }
 
     /// <inheritdoc/>
     protected override Size ArrangeOverride(Size finalSize)
     {
-        var previousFrames = _frames;
-        double countWidth = Math.Max(1, _count.DesiredSize.Width);
-        _frames = _isRowLayout
-            ? MainScreenLayout.FilterBarFrames(true, finalSize.Width, 0, countWidth, ShowsSimilarityToggle)
-            : MainScreenLayout.FilterBarFrames(
-                false, MainScreenLayout.FileBarContentWidth, MainScreenLayout.FilterMargin, countWidth, ShowsSimilarityToggle);
+        var previous = _frames;
+        var frames = ComputeFrames(_isRowLayout, finalSize.Width);
+        _frames = frames;
+        ApplyMode(frames.Mode);
 
-        ArrangeChild(_sortMode, _frames.Sort);
-        ArrangeChild(_sortOrder, _frames.Order);
-        ArrangeChild(_ratingFilter, _frames.Rating);
-        ArrangeChild(_count, _frames.Count);
+        ArrangeChild(_capsule, RectOf(frames.Control));
+        if (frames.Mode == FilterControlMode.Segmented)
+        {
+            ArrangeChild(_sortEntry, Offset(frames.Control, frames.Sort));
+            ArrangeChild(_orderEntry, Offset(frames.Control, frames.Order));
+            ArrangeChild(_ratingEntry, Offset(frames.Control, frames.Rating));
+            ArrangeChild(_dividerBeforeOrder, DividerRect(frames, frames.Sort.MaxX));
+            ArrangeChild(_dividerBeforeRating, DividerRect(frames, frames.Order.MaxX));
+        }
+        else
+        {
+            ArrangeChild(_capsuleEntry, RectOf(frames.Control));
+        }
 #if PHOTOVIEWER_DINO
-        ArrangeChild(_similarityToggle, _frames.Toggle);
+        ArrangeChild(_similarityToggle, RectOf(frames.Toggle));
 #endif
-        if (_frames != previousFrames)
+        if (frames != previous)
         {
             InteractiveBoundsChanged?.Invoke();
         }
+
         return finalSize;
     }
 
-    /// <summary>行布局在未知宽度下的自然宽:三个控件 + 计数 + 间距与两侧外边距(AI 版另加相似聚类 toggle)。</summary>
-    /// <param name="countWidth">计数文本自然宽。</param>
-    /// <returns>自然宽。</returns>
-    private static double DesiredRowWidth(double countWidth)
-        => MainScreenLayout.FilterMargin * 2
-            + MainScreenLayout.FilterControlWidth * 3
-            + MainScreenLayout.FilterGap * (ShowsSimilarityToggle ? 4 : 3)
-            + countWidth
-            + (ShowsSimilarityToggle ? WindowsLayout.FilterToggleWidth : 0);
+    /// <summary>未知宽度下的自然宽：三段 + 相似聚类开关运行段 + 两侧外边距（列布局退回文件栏内容宽）。</summary>
+    /// <returns>自然内容宽。</returns>
+    private double NaturalContentWidth()
+    {
+        if (!_isRowLayout)
+        {
+            return MainScreenLayout.FileBarContentWidth;
+        }
 
-    /// <summary>把子控件落到共享几何给出的矩形。</summary>
-    /// <param name="child">子控件。</param>
-    /// <param name="rect">目标矩形。</param>
-    private static void ArrangeChild(UIElement child, LayoutRect rect)
-        => child.Arrange(new Rect(rect.X, rect.Y, rect.Width, rect.Height));
+        var (sortWidth, orderWidth, ratingWidth) = NaturalSegmentWidths();
+        double toggleRun = ShowsSimilarityToggle ? WideFilterLayout.Gap + DesignTokens.FilterToggleWidth : 0;
+        return sortWidth + orderWidth + ratingWidth + toggleRun + WideFilterLayout.Margin * 2;
+    }
 
     /// <summary>
-    /// 创建下拉框(占位与旧壳同为 90×32)。外观交给 WinUI 原生模板：
-    /// 只保留几何尺寸，不再覆写描边、圆角或字号（Design/README §3 允许小型控件走原生）。
+    /// 三段自然宽：各段选项名在 <see cref="DesignTokens.DropdownFontSize"/> 下的最大文本宽加两侧内边距，上取整。
+    /// 计数文本不计入（FILTER-07：计数变长不改变段宽），选项固定故只算一次。
     /// </summary>
-    private static ComboBox CreateComboBox() => new()
+    /// <returns>排序、方向、星级三段的自然宽。</returns>
+    private (double Sort, double Order, double Rating) NaturalSegmentWidths()
     {
-        Width = WindowsLayout.FilterItemWidth,
-        Height = WindowsLayout.FilterItemHeight,
-        MinWidth = 0,
-        HorizontalAlignment = HorizontalAlignment.Center,
+        if (!_naturalWidthsMeasured)
+        {
+            _naturalWidths = (
+                MeasureSegment(_filter.SortModes.Select(option => option.DisplayName)),
+                MeasureSegment(_filter.SortOrders.Select(option => option.DisplayName)),
+                MeasureSegment(_filter.RatingFilters.Select(option => option.DisplayName)));
+            _naturalWidthsMeasured = true;
+        }
+
+        return _naturalWidths;
+    }
+
+    /// <summary>单段自然宽：用离树 <see cref="TextBlock"/> 量测该段最长选项名，再加左右内边距。</summary>
+    /// <param name="names">该段的选项显示名。</param>
+    /// <returns>自然宽（点）。</returns>
+    private static double MeasureSegment(IEnumerable<string> names)
+    {
+        var probe = new TextBlock { FontSize = DesignTokens.DropdownFontSize };
+        double textWidth = 0;
+        foreach (var name in names)
+        {
+            probe.Text = name;
+            probe.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            textWidth = Math.Max(textWidth, probe.DesiredSize.Width);
+        }
+
+        return Math.Ceiling(textWidth) + DesignTokens.DropdownPaddingLeft * 2;
+    }
+
+    /// <summary>按几何给出的矩形量测子控件：段按钮按自身段宽，单胶囊按整块宽。</summary>
+    /// <param name="frames">本次落位结果。</param>
+    private void MeasureChildren(WideFilterFrames frames)
+    {
+        MeasureChild(_capsule, RectOf(frames.Control));
+        if (frames.Mode == FilterControlMode.Segmented)
+        {
+            MeasureChild(_sortEntry, Offset(frames.Control, frames.Sort));
+            MeasureChild(_orderEntry, Offset(frames.Control, frames.Order));
+            MeasureChild(_ratingEntry, Offset(frames.Control, frames.Rating));
+            MeasureChild(_dividerBeforeOrder, DividerRect(frames, frames.Sort.MaxX));
+            MeasureChild(_dividerBeforeRating, DividerRect(frames, frames.Order.MaxX));
+        }
+        else
+        {
+            MeasureChild(_capsuleEntry, RectOf(frames.Control));
+        }
+#if PHOTOVIEWER_DINO
+        MeasureChild(_similarityToggle, RectOf(frames.Toggle));
+#endif
+    }
+
+    /// <summary>按形态切换段内容与单胶囊内容：只改可见性，不重建控件，也不动已展开的菜单。</summary>
+    /// <param name="mode">目标形态。</param>
+    private void ApplyMode(FilterControlMode mode)
+    {
+        _mode = mode;
+        bool segmented = mode == FilterControlMode.Segmented;
+        Show(_sortEntry, segmented);
+        Show(_orderEntry, segmented);
+        Show(_ratingEntry, segmented);
+        Show(_dividerBeforeOrder, segmented);
+        Show(_dividerBeforeRating, segmented);
+        Show(_capsuleEntry, !segmented);
+    }
+
+    /// <summary>幂等设置可见性，避免每次布局都触发无效重排。</summary>
+    /// <param name="element">子控件。</param>
+    /// <param name="visible">是否显示。</param>
+    private static void Show(UIElement element, bool visible)
+    {
+        var target = visible ? Visibility.Visible : Visibility.Collapsed;
+        if (element.Visibility != target)
+        {
+            element.Visibility = target;
+        }
+    }
+
+    /// <summary>段矩形是相对控件左上角的局部坐标，叠加控件原点后才是本面板坐标。</summary>
+    /// <param name="control">整块矩形。</param>
+    /// <param name="segment">段局部矩形。</param>
+    /// <returns>面板坐标矩形。</returns>
+    private static Rect Offset(LayoutRect control, LayoutRect segment)
+        => new(control.X + segment.X, control.Y + segment.Y, segment.Width, segment.Height);
+
+    /// <summary>共享矩形转布局矩形。</summary>
+    /// <param name="rect">共享矩形。</param>
+    /// <returns>布局矩形。</returns>
+    private static Rect RectOf(LayoutRect rect) => new(rect.X, rect.Y, rect.Width, rect.Height);
+
+    /// <summary>把子控件落到指定矩形。</summary>
+    /// <param name="child">子控件。</param>
+    /// <param name="rect">目标矩形。</param>
+    private static void ArrangeChild(UIElement child, Rect rect) => child.Arrange(rect);
+
+    /// <summary>量测子控件到指定矩形尺寸。</summary>
+    /// <param name="child">子控件。</param>
+    /// <param name="rect">目标矩形。</param>
+    private static void MeasureChild(UIElement child, Rect rect) => child.Measure(new Size(rect.Width, rect.Height));
+
+    /// <summary>段间 1 点分隔线：贴段边界，上下按 filter.margin 内缩（TOOLBAR-10）。</summary>
+    /// <param name="frames">本次落位结果。</param>
+    /// <param name="localX">段边界在控件内的横坐标。</param>
+    /// <returns>面板坐标矩形。</returns>
+    private static Rect DividerRect(WideFilterFrames frames, double localX)
+    {
+        double inset = MainScreenLayout.FilterMargin;
+        return new Rect(frames.Control.X + localX, frames.Control.Y + inset, MainScreenLayout.Divider,
+            Math.Max(0, frames.Control.Height - inset * 2));
+    }
+
+    /// <summary>
+    /// 段 / 胶囊入口按钮：透明 Subtle 底，悬停与按下在段内按同心圆角内缩填状态色（TOOLBAR-10），
+    /// 模板内边距清零、内容拉伸到整块，使文字带与命中区都是那个内缩胶囊。
+    /// </summary>
+    /// <param name="content">入口内容（上带当前选项、下带计数的两带栅格）。</param>
+    /// <returns>入口按钮。</returns>
+    private static Button CreateEntryButton(UIElement content)
+    {
+        var button = new Button
+        {
+            Content = content,
+            Margin = new Thickness(StatePillInset),
+            Padding = new Thickness(0),
+            MinWidth = 0,
+            MinHeight = 0,
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(StatePillCornerRadius),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            VerticalContentAlignment = VerticalAlignment.Stretch,
+        };
+        ApplySubtleStates(button);
+        return button;
+    }
+
+    /// <summary>
+    /// 覆盖按钮模板的四态键：常态透明、悬停/按下取菜单项状态色、描边恒透明、前景恒主文字色，
+    /// 禁用不换底色（只由系统降内容强调）。
+    /// </summary>
+    /// <param name="button">入口按钮。</param>
+    private static void ApplySubtleStates(Button button)
+    {
+        button.Resources["ButtonBackground"] = TransparentBrush;
+        button.Resources["ButtonBackgroundPointerOver"] = ThemeBrush(SubtleHoverBrushKey);
+        button.Resources["ButtonBackgroundPressed"] = ThemeBrush(SubtlePressedBrushKey);
+        button.Resources["ButtonBackgroundDisabled"] = TransparentBrush;
+        button.Resources["ButtonBorderBrush"] = TransparentBrush;
+        button.Resources["ButtonBorderBrushPointerOver"] = TransparentBrush;
+        button.Resources["ButtonBorderBrushPressed"] = TransparentBrush;
+        button.Resources["ButtonBorderBrushDisabled"] = TransparentBrush;
+        button.Resources["ButtonForeground"] = ThemeBrush(PrimaryForegroundBrushKey);
+        button.Resources["ButtonForegroundPointerOver"] = ThemeBrush(PrimaryForegroundBrushKey);
+        button.Resources["ButtonForegroundPressed"] = ThemeBrush(SecondaryForegroundBrushKey);
+        button.Resources["ButtonForegroundDisabled"] = ThemeBrush(PrimaryForegroundBrushKey);
+    }
+
+    /// <summary>段内文字：单行、水平居中、超宽尾部省略。</summary>
+    /// <param name="fontSize">字号。</param>
+    /// <param name="brushKey">前景主题画刷键。</param>
+    /// <returns>文字控件。</returns>
+    private static TextBlock CreateBandText(double fontSize, string brushKey) => new()
+    {
+        FontSize = fontSize,
+        Foreground = ThemeBrush(brushKey),
+        HorizontalAlignment = HorizontalAlignment.Stretch,
+        VerticalAlignment = VerticalAlignment.Center,
+        TextAlignment = TextAlignment.Center,
+        TextWrapping = TextWrapping.NoWrap,
+        TextTrimming = TextTrimming.CharacterEllipsis,
     };
 
     /// <summary>
-    /// 相似聚类开关(旧壳 FilterBarView 的 ToggleButton):90×27、选中态走蓝底蓝框,
-    /// 直接写回 <see cref="FilterBarViewModel.IsSimilarityPanelOpen"/>(持久化在设置里)。
-    /// WinUI 的 ToggleButton 模板用主题键画四态,统一由 <see cref="WindowsControlStyles"/> 覆盖,
-    /// 悬停/按下不会回落到系统主题色。标准版没有这个入口,不创建控件(EDITION-02)。
+    /// 入口内容的两带栅格：上带当前选项，下带计数（FILTER-04 计数在控件内部）。
+    /// 两带高度扣掉状态层内缩，带边界仍在 44 − filter.count.height，故各段标签落在同一 Y。
     /// </summary>
+    /// <param name="label">上带文字。</param>
+    /// <param name="count">下带计数文字，不需要计数的段传 null。</param>
+    /// <returns>入口内容。</returns>
+    private static Grid CreateBandGrid(TextBlock label, TextBlock? count)
+    {
+        var grid = new Grid
+        {
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+        };
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(LabelBandHeight) });
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(CountBandHeight) });
+        Grid.SetRow(label, 0);
+        grid.Children.Add(label);
+        if (count != null)
+        {
+            Grid.SetRow(count, 1);
+            grid.Children.Add(count);
+        }
+
+        return grid;
+    }
+
+    /// <summary>段间分隔线：1 点宽的纯色条，不参与命中。</summary>
+    /// <returns>分隔线条。</returns>
+    private static Border CreateDivider() => new()
+    {
+        Background = ThemeBrush(DividerBrushKey),
+        IsHitTestVisible = false,
+    };
+
+    /// <summary>
+    /// 原生单选菜单：贴入口正下方展开，展开前通知宿主关闭来源浮窗（RATING-04）。
+    /// 入口用 <see cref="Button.Flyout"/> 挂载，点击、Enter 与空格都由原生按钮语义打开。
+    /// </summary>
+    /// <param name="items">首组选项。</param>
+    /// <returns>菜单。</returns>
+    private MenuFlyout CreateMenu(IReadOnlyList<RadioMenuFlyoutItem> items)
+    {
+        var menu = new MenuFlyout { Placement = FlyoutPlacementMode.Bottom };
+        foreach (var item in items)
+        {
+            menu.Items.Add(item);
+        }
+
+        menu.Opening += (_, _) => PopupOpening?.Invoke();
+        return menu;
+    }
+
+    /// <summary>向单胶囊菜单追加一组选项；多组之间只放分隔线，不加标题（FILTER-08）。</summary>
+    /// <param name="menu">单胶囊菜单。</param>
+    /// <param name="items">该组选项。</param>
+    /// <param name="separator">是否在本组之前放分隔线。</param>
+    private static void AddMenuGroup(MenuFlyout menu, IReadOnlyList<RadioMenuFlyoutItem> items, bool separator)
+    {
+        if (separator)
+        {
+            menu.Items.Add(new MenuFlyoutSeparator());
+        }
+
+        foreach (var item in items)
+        {
+            menu.Items.Add(item);
+        }
+    }
+
 #if PHOTOVIEWER_DINO
+    /// <summary>
+    /// 相似聚类开关（FILTER-06）：原生 <see cref="ToggleButton"/> 默认样式——勾选态走系统强调色，
+    /// 不覆盖任何状态画刷；只给几何（共享开关矩形）与字号，勾选写回视图模型（持久化在设置里）。
+    /// 标准版没有这个入口，不创建控件（EDITION-02）。
+    /// </summary>
+    /// <returns>开关。</returns>
     private ToggleButton CreateSimilarityToggle()
     {
         var toggle = new ToggleButton
         {
             Content = "相似聚类",
-            Width = WindowsLayout.FilterToggleWidth,
-            Height = WindowsLayout.FilterToggleHeight,
+            Width = DesignTokens.FilterToggleWidth,
+            Height = CapsuleHeight,
             MinWidth = 0,
             MinHeight = 0,
-            FontSize = WindowsLayout.SimilarityToggleFontSize,
-            CornerRadius = new CornerRadius(DesignTokens.FilterToggleCornerRadius),
-            BorderThickness = new Thickness(1),
-            HorizontalAlignment = HorizontalAlignment.Center,
+            // 开关文字与计数同为 12 点小字。
+            FontSize = DesignTokens.FilterCountFontSize,
+            CornerRadius = new CornerRadius(CapsuleCornerRadius),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
         };
         ToolTipService.SetToolTip(toggle, "展开/关闭相似聚类面板");
-        WindowsControlStyles.ApplySimilarityToggle(toggle);
         toggle.Checked += (_, _) =>
         {
             if (!_syncing) _filter.IsSimilarityPanelOpen = true;
@@ -254,40 +617,9 @@ internal sealed class WindowsFilterBar : Panel
     }
 #endif
 
-    /// <summary>排序方式变化。</summary>
-    private void OnSortModeChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_syncing || _sortMode.SelectedIndex < 0)
-        {
-            return;
-        }
-
-        _filter.SortMode = (SortMode)_filter.SortModes[_sortMode.SelectedIndex].Value;
-    }
-
-    /// <summary>升降序变化。</summary>
-    private void OnSortOrderChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_syncing || _sortOrder.SelectedIndex < 0)
-        {
-            return;
-        }
-
-        _filter.SortOrder = (SortOrder)_filter.SortOrders[_sortOrder.SelectedIndex].Value;
-    }
-
-    /// <summary>星级筛选变化。</summary>
-    private void OnRatingFilterChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_syncing || _ratingFilter.SelectedIndex < 0)
-        {
-            return;
-        }
-
-        _filter.SelectedRatingFilter = _filter.RatingFilters[_ratingFilter.SelectedIndex].Key;
-    }
-
-    /// <summary>视图模型 → 控件(单向,不回写避免循环)。</summary>
+    /// <summary>视图模型 → 控件（单向，不回写避免循环）。</summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="e">变更参数。</param>
     private void OnFilterChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         switch (e.PropertyName)
@@ -308,15 +640,18 @@ internal sealed class WindowsFilterBar : Panel
         }
     }
 
-    /// <summary>按视图模型选中当前值。</summary>
+    /// <summary>
+    /// 按视图模型就地同步：只改菜单项勾选与段标签文字，不重建菜单或按钮，
+    /// 因此无关通知不会关掉已展开的菜单（FILTER-08）。
+    /// </summary>
     private void SyncFromViewModel()
     {
         _syncing = true;
         try
         {
-            _sortMode.SelectedIndex = IndexOf(_filter.SortModes.Select(option => (object)option.Value).ToList(), _filter.SortMode);
-            _sortOrder.SelectedIndex = IndexOf(_filter.SortOrders.Select(option => (object)option.Value).ToList(), _filter.SortOrder);
-            _ratingFilter.SelectedIndex = IndexOf(_filter.RatingFilters.Select(option => (object)option.Key).ToList(), _filter.SelectedRatingFilter);
+            SyncGroup(_sortGroup);
+            SyncGroup(_orderGroup);
+            SyncGroup(_ratingGroup);
 #if PHOTOVIEWER_DINO
             _similarityToggle.IsChecked = _filter.IsSimilarityPanelOpen;
 #endif
@@ -328,10 +663,30 @@ internal sealed class WindowsFilterBar : Panel
         }
     }
 
-    /// <summary>查找取值对应的索引;找不到记录日志并返回 -1,避免配置漂移在 UI 回调里抛异常。</summary>
-    private static int IndexOf(IReadOnlyList<object> values, object? target)
+    /// <summary>把一组的当前值同步到段菜单与单胶囊菜单的勾选态，并更新段标签。</summary>
+    /// <param name="group">单选分组。</param>
+    private void SyncGroup(FilterGroup group)
     {
-        for (var index = 0; index < values.Count; index++)
+        int current = CurrentIndexOf(group);
+        for (var index = 0; index < group.Names.Length; index++)
+        {
+            bool selected = index == current;
+            group.SegmentItems[index].IsChecked = selected;
+            group.CapsuleItems[index].IsChecked = selected;
+        }
+
+        group.Label.Text = current < 0 ? string.Empty : group.Names[current];
+        UpdateAutomationNames();
+    }
+
+    /// <summary>当前值在选项里的下标；不一致时记录日志并返回 -1，避免配置漂移在 UI 回调里抛异常。</summary>
+    /// <param name="group">单选分组。</param>
+    /// <returns>下标，找不到为 -1。</returns>
+    private static int CurrentIndexOf(FilterGroup group)
+    {
+        var values = group.Values;
+        var target = group.CurrentValue();
+        for (var index = 0; index < values.Length; index++)
         {
             if (Equals(values[index], target))
             {
@@ -341,5 +696,88 @@ internal sealed class WindowsFilterBar : Panel
 
         NativeStartupLog.Write($"筛选选项缺少取值 {target};视图模型与控件选项不一致,已清空选择。");
         return -1;
+    }
+
+    /// <summary>读屏名称随选项与计数更新（分段报当前值，单胶囊报「筛选，共 N 张」）。</summary>
+    private void UpdateAutomationNames()
+    {
+        AutomationProperties.SetName(_sortEntry, $"{_sortGroup.AutomationLabel}：{_sortGroup.Label.Text}");
+        AutomationProperties.SetName(_orderEntry, $"{_orderGroup.AutomationLabel}：{_orderGroup.Label.Text}");
+        AutomationProperties.SetName(_ratingEntry,
+            $"{_ratingGroup.AutomationLabel}：{_ratingGroup.Label.Text}，{_countText}");
+        AutomationProperties.SetName(_capsuleEntry, $"筛选，{_countText}");
+    }
+
+    /// <summary>读取 WinUI 主题画刷；缺失时退回透明，避免资源键漂移让控件构造失败。</summary>
+    /// <param name="key">资源键。</param>
+    /// <returns>画刷。</returns>
+    private static Brush ThemeBrush(string key)
+        => Application.Current.Resources.TryGetValue(key, out var value) && value is Brush brush
+            ? brush
+            : TransparentBrush;
+
+    /// <summary>
+    /// 一个单选分组（排序方式 / 排序方向 / 星级筛选）：选项名与共享取值来自视图模型，
+    /// 菜单项备两套实例——段菜单与单胶囊菜单各持一套（同一项不能同时属于两个菜单）。
+    /// </summary>
+    private sealed class FilterGroup
+    {
+        /// <summary>创建分组。</summary>
+        /// <param name="key">菜单分组名前缀，保证同组单选且不与别的组串联。</param>
+        /// <param name="automationLabel">读屏名称里的组名（排序方式 / 排序方向 / 星级筛选）。</param>
+        /// <param name="names">选项显示名。</param>
+        /// <param name="values">选项对应的共享取值。</param>
+        /// <param name="currentValue">读取视图模型当前取值。</param>
+        /// <param name="apply">写入视图模型。</param>
+        internal FilterGroup(string key, string automationLabel, string[] names, object[] values,
+            Func<object?> currentValue, Action<int> apply)
+        {
+            AutomationLabel = automationLabel;
+            Names = names;
+            Values = values;
+            CurrentValue = currentValue;
+            Apply = apply;
+            Label = CreateBandText(DesignTokens.DropdownFontSize, PrimaryForegroundBrushKey);
+            for (var index = 0; index < names.Length; index++)
+            {
+                SegmentItems.Add(CreateItem(key + "Segment", index));
+                CapsuleItems.Add(CreateItem(key + "Capsule", index));
+            }
+        }
+
+        /// <summary>读屏名称里的组名。</summary>
+        internal string AutomationLabel { get; }
+
+        /// <summary>选项显示名。</summary>
+        internal string[] Names { get; }
+
+        /// <summary>选项对应的共享取值。</summary>
+        internal object[] Values { get; }
+
+        /// <summary>读取视图模型当前取值。</summary>
+        internal Func<object?> CurrentValue { get; }
+
+        /// <summary>写入视图模型。</summary>
+        internal Action<int> Apply { get; }
+
+        /// <summary>段按钮上的当前选项文字。</summary>
+        internal TextBlock Label { get; }
+
+        /// <summary>段菜单的选项（进入本组的段弹出菜单）。</summary>
+        internal List<RadioMenuFlyoutItem> SegmentItems { get; } = new();
+
+        /// <summary>单胶囊菜单的选项（三分组共用同一个菜单）。</summary>
+        internal List<RadioMenuFlyoutItem> CapsuleItems { get; } = new();
+
+        /// <summary>创建一个单选菜单项，选中即写回共享状态（原生菜单随后自行关闭）。</summary>
+        /// <param name="groupName">单选组名。</param>
+        /// <param name="index">选项下标。</param>
+        /// <returns>菜单项。</returns>
+        private RadioMenuFlyoutItem CreateItem(string groupName, int index)
+        {
+            var item = new RadioMenuFlyoutItem { Text = Names[index], GroupName = groupName };
+            item.Click += (_, _) => Apply(index);
+            return item;
+        }
     }
 }

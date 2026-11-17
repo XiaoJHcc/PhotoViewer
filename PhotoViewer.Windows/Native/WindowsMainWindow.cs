@@ -33,8 +33,8 @@ using Windows.UI;
 namespace PhotoViewer.Windows.Native;
 
 /// <summary>
-/// 原生主窗口:悬停显示的标题栏 + 四分区(文件栏 / 主图 / 控制栏)两向布局
-/// (契约 SHELL-01/02)。几何常量取自 <see cref="WindowsLayout"/>,方向切换只重排既有控件实例。
+/// 原生主窗口:悬停显示的标题栏 + 宽形态外壳(SHELL-01/02/11/12):主图视图铺满窗口,文件栏、分析栏与控制栏
+/// 按共享 <see cref="ShellPaneLayout"/> 分区浮在其上,栏位背景由主图交换链绘制;方向切换只重排既有控件实例。
 /// </summary>
 internal sealed partial class WindowsMainWindow : Window
 {
@@ -58,11 +58,12 @@ internal sealed partial class WindowsMainWindow : Window
     private WindowsRatingSourcesFlyout _ratingSources = null!;
 
     private readonly Grid _root;
-    private readonly Grid _rowHost;
-    private readonly Grid _colHost;
     private readonly Grid _filePane;
-    private readonly Border _filePaneFrame;
+    private readonly Border _fileDivider;
+    private readonly Border _toolHitArea;
+    private readonly Border _controlDivider;
     private readonly Grid _photoHost;
+    private readonly Grid _fitOverlay;
     private readonly Border _emptyHitArea;
     private readonly StackPanel _hintPanel;
     private readonly TextBlock _hintTitle;
@@ -98,6 +99,14 @@ internal sealed partial class WindowsMainWindow : Window
     private bool _sized;
     private bool _isFullScreen;
     private bool _isTitleBarPersistent;
+    private bool _layingOut;
+    private bool _shellLayoutPending;
+    private Rect _fitArea;
+    private double _fileBarRight;
+    private bool _toolBackgroundVisible;
+    private LayoutRect _fileBackdrop;
+    private LayoutRect _toolBackdrop;
+    private Rect? _titleBarBackdrop;
     private bool _windowIconApplied;
     private readonly IViewStateStore _viewState;
     private bool _preferencesLoaded;
@@ -218,20 +227,22 @@ internal sealed partial class WindowsMainWindow : Window
         };
         _highlightLayer = new Canvas { IsHitTestVisible = false };
         _highlightLayer.Children.Add(_detailHighlight);
+        // SHELL-11：导航图、提示块、药丸、提示条与空态命中层都相对适应区落位。
+        _fitOverlay = new Grid
+        {
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
+        };
+        _fitOverlay.Children.Add(_navigator);
+        _fitOverlay.Children.Add(_hintPanel);
+        _fitOverlay.Children.Add(_busyPill);
+        _fitOverlay.Children.Add(_statusToast);
+        _fitOverlay.Children.Add(_emptyHitArea);
+        // SHELL-11：主图视图恒铺满整个窗口，栏位浮在其上；照片在适应区内适应，放大后可越过栏缘。
         _photoHost = new Grid { Background = new SolidColorBrush(WindowsLayout.ViewerBackground) };
         _photoHost.Children.Add(_photo);
         _photoHost.Children.Add(_highlightLayer);
-        _photoHost.Children.Add(_navigator);
-        _photoHost.Children.Add(_hintPanel);
-        _photoHost.Children.Add(_busyPill);
-        _photoHost.Children.Add(_statusToast);
-        _photoHost.Children.Add(_emptyHitArea);
-        // 主图区不裁剪时,分析栏 hover 绿框在放大/平移后会画到相邻栏位上。
-        _photoHost.SizeChanged += (_, e) =>
-        {
-            _photoHost.Clip = new RectangleGeometry { Rect = new Rect(0, 0, e.NewSize.Width, e.NewSize.Height) };
-            UpdateStatusToastWidth();
-        };
+        _photoHost.Children.Add(_fitOverlay);
 
 #if PHOTOVIEWER_DINO
         _similarity = new WindowsSimilarityPanel(main, RateFile, ShowRatingSources);
@@ -245,15 +256,17 @@ internal sealed partial class WindowsMainWindow : Window
             });
 
         _filePane = BuildFilePane();
-        _filePaneFrame = new Border
+        _fileDivider = CreateDivider();
+        _controlDivider = CreateDivider();
+        // 工具区占位:栏背景由交换链内亚克力绘制,这里只用透明画刷接住指针,滚轮与点击不穿透到主图。
+        _toolHitArea = new Border
         {
-            Background = new SolidColorBrush(WindowsLayout.BarBackground),
-            BorderBrush = new SolidColorBrush(WindowsLayout.Divider),
-            Child = _filePane,
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
         };
-
-        _rowHost = new Grid();
-        _colHost = new Grid();
+        PlaceAbsolute(_analysis);
+        PlaceAbsolute(_controlBar);
         _contextMenu = BuildContextMenu();
         _titleBar = new WindowsTitleBar(BuildWindowTitle(), ToggleFullScreenWindow, MinimizeWindow, ToggleMaximizeWindow, Close);
 
@@ -267,8 +280,13 @@ internal sealed partial class WindowsMainWindow : Window
         };
         _ratingSources = new WindowsRatingSourcesFlyout(main, _root, () => WindowsWorkArea.VisibleBoundsIn(_root, this));
         _filterBar.PopupOpening += _ratingSources.Close;
-        _root.Children.Add(_rowHost);
-        _root.Children.Add(_colHost);
+        _root.Children.Add(_photoHost);
+        _root.Children.Add(_filePane);
+        _root.Children.Add(_fileDivider);
+        _root.Children.Add(_toolHitArea);
+        _root.Children.Add(_analysis);
+        _root.Children.Add(_controlBar);
+        _root.Children.Add(_controlDivider);
         _root.Children.Add(_titleBar.Root);
         Content = _root;
 
@@ -298,6 +316,9 @@ internal sealed partial class WindowsMainWindow : Window
         _session.Notice += OnSessionNotice;
         _photo.ViewportChanged += OnViewportChanged;
         _photo.RenderStateChanged += OnPhotoRenderStateChanged;
+        _controlBar.ContentChanged += RequestShellLayout;
+        _controlBar.MaterialShapesChanged += UpdateBackdropRegions;
+        _analysis.TileCountChanged += RequestShellLayout;
         AppWindow.Changed += OnAppWindowChanged;
 
         LoadUiPreferences();
@@ -370,6 +391,9 @@ internal sealed partial class WindowsMainWindow : Window
         _session.Notice -= OnSessionNotice;
         _photo.ViewportChanged -= OnViewportChanged;
         _photo.RenderStateChanged -= OnPhotoRenderStateChanged;
+        _controlBar.ContentChanged -= RequestShellLayout;
+        _controlBar.MaterialShapesChanged -= UpdateBackdropRegions;
+        _analysis.TileCountChanged -= RequestShellLayout;
         _statusTimer?.Stop();
         _filmstrip.Detach();
 #if PHOTOVIEWER_DINO
@@ -477,31 +501,80 @@ internal sealed partial class WindowsMainWindow : Window
     }
 
     /// <summary>
-    /// 构建文件栏:筛选条 + 胶片条(旧壳 FileView 三分区同构);AI 版另有相似聚类面板。
-    /// 上下布局时筛选条横跨两列;左右布局时筛选条只占 116 主列,相似面板在主列右侧。
-    /// 标准版不创建相似面板,列定义只剩主列,不占位也不留空槽(EDITION-02)。
+    /// 构建文件栏:筛选条 + 胶片条;AI 版另有相似聚类面板。子控件按 <see cref="LayoutShell"/> 算出的矩形绝对落位:
+    /// 行布局筛选条横跨整行、相似面板从胶片栏右端切出;列布局筛选条与胶片栏占 116 主列,相似面板接在主列右侧。
+    /// 标准版不创建相似面板,不占位也不留空槽(EDITION-02)。栏背景由交换链内亚克力绘制,这里只铺透明命中底。
     /// </summary>
     private Grid BuildFilePane()
     {
-        var pane = new Grid();
-        pane.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        pane.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        pane.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        Grid.SetRow(_filterBar, 0);
-        Grid.SetColumn(_filterBar, 0);
-        Grid.SetRow(_filmstrip, 1);
-        Grid.SetColumn(_filmstrip, 0);
+        var pane = new Grid
+        {
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
+        };
+        PlaceAbsolute(_filterBar);
+        PlaceAbsolute(_filmstrip);
         pane.Children.Add(_filterBar);
         pane.Children.Add(_filmstrip);
 #if PHOTOVIEWER_DINO
-        pane.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        Grid.SetColumnSpan(_filterBar, 2);
-        Grid.SetRow(_similarity, 1);
-        Grid.SetColumn(_similarity, 1);
+        PlaceAbsolute(_similarity);
         pane.Children.Add(_similarity);
 #endif
         return pane;
     }
+
+    /// <summary>栏位分隔线(SHELL-01/SHELL-12):1 点 <c>color.divider</c>,不参与命中。</summary>
+    /// <returns>分隔线元素。</returns>
+    private static Border CreateDivider() => new()
+    {
+        Background = new SolidColorBrush(WindowsLayout.Divider),
+        HorizontalAlignment = HorizontalAlignment.Left,
+        VerticalAlignment = VerticalAlignment.Top,
+        IsHitTestVisible = false,
+        Visibility = Visibility.Collapsed,
+    };
+
+    /// <summary>按左上角绝对落位的元素:位置由外边距给出,尺寸由显式宽高给出。</summary>
+    /// <param name="element">待落位的元素。</param>
+    private static void PlaceAbsolute(FrameworkElement element)
+    {
+        element.HorizontalAlignment = HorizontalAlignment.Left;
+        element.VerticalAlignment = VerticalAlignment.Top;
+    }
+
+    /// <summary>把元素落到给定矩形(父元素坐标)。</summary>
+    /// <param name="element">元素。</param>
+    /// <param name="x">左缘。</param>
+    /// <param name="y">上缘。</param>
+    /// <param name="width">宽。</param>
+    /// <param name="height">高。</param>
+    private static void Place(FrameworkElement element, double x, double y, double width, double height)
+    {
+        var margin = new Thickness(x, y, 0, 0);
+        if (element.Margin != margin)
+        {
+            element.Margin = margin;
+        }
+
+        width = Math.Max(0, width);
+        height = Math.Max(0, height);
+        if (element.Width != width)
+        {
+            element.Width = width;
+        }
+
+        if (element.Height != height)
+        {
+            element.Height = height;
+        }
+    }
+
+    /// <summary>把元素落到共享几何矩形。</summary>
+    /// <param name="element">元素。</param>
+    /// <param name="rect">目标矩形(父元素坐标)。</param>
+    private static void Place(FrameworkElement element, LayoutRect rect)
+        => Place(element, rect.X, rect.Y, rect.Width, rect.Height);
 
     /// <summary>
     /// 构建右键菜单(工具/设置窗口入口)。MENU-06:每项带语义前置图标,
@@ -785,13 +858,12 @@ internal sealed partial class WindowsMainWindow : Window
         UpdateTitleBarChrome();
     }
 
-    /// <summary>窗口尺寸变化:同步方向判定、相似面板宽度与标题栏跨度/拖动区。</summary>
+    /// <summary>窗口尺寸变化:同步方向判定后按新尺寸重排外壳(含相似面板宽度、标题栏跨度与拖动区)。</summary>
     private void OnRootSizeChanged(object sender, SizeChangedEventArgs e)
     {
         _ratingSources.Close();
         _main.UpdateScreenOrientation(e.NewSize.Width, e.NewSize.Height);
-        UpdateSimilarityWidth();
-        UpdateTitleBarChrome();
+        LayoutShell();
     }
 
     /// <summary>主图视图尺寸变化:重算标题栏与其重叠的背板区段。</summary>
@@ -809,80 +881,11 @@ internal sealed partial class WindowsMainWindow : Window
     /// <param name="args">布局尺寸变化参数</param>
     private void OnFilterBarSizeChanged(object sender, SizeChangedEventArgs args) => UpdateTitleBarChrome();
 
-    /// <summary>按当前方向重排三个分区。</summary>
+    /// <summary>换向:各栏位切换主轴方向后按新几何重排(SHELL-01:只重排,不重建视图、不重载照片)。</summary>
     private void ApplyLayout()
     {
         _ratingSources.Close();
         _isRowLayout = _main.IsRowLayout;
-
-        _rowHost.Children.Clear();
-        _colHost.Children.Clear();
-        _rowHost.RowDefinitions.Clear();
-        _rowHost.ColumnDefinitions.Clear();
-        _colHost.RowDefinitions.Clear();
-        _colHost.ColumnDefinitions.Clear();
-
-        if (_isRowLayout)
-        {
-            _rowHost.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            _rowHost.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-            _rowHost.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            _rowHost.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-            Grid.SetRow(_filePaneFrame, 0);
-            Grid.SetColumn(_filePaneFrame, 0);
-            Grid.SetRow(_photoHost, 1);
-            Grid.SetColumn(_photoHost, 0);
-            Grid.SetRow(_analysis, 2);
-            Grid.SetColumn(_analysis, 0);
-            Grid.SetRow(_controlBar, 3);
-            Grid.SetColumn(_controlBar, 0);
-
-            _rowHost.Children.Add(_filePaneFrame);
-            _rowHost.Children.Add(_photoHost);
-            _rowHost.Children.Add(_analysis);
-            _rowHost.Children.Add(_controlBar);
-            _filePane.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
-#if PHOTOVIEWER_DINO
-            Grid.SetColumnSpan(_filterBar, 2);
-#endif
-
-            // 文件栏底部一条分隔线,文件栏占内容宽度
-            _filePaneFrame.Width = double.NaN;
-            _filePaneFrame.BorderThickness = new Thickness(0, 0, 0, WindowsLayout.DividerThickness);
-            _rowHost.Visibility = Visibility.Visible;
-            _colHost.Visibility = Visibility.Collapsed;
-        }
-        else
-        {
-            _colHost.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            _colHost.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            _colHost.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            _colHost.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            Grid.SetColumn(_filePaneFrame, 0);
-            Grid.SetRow(_filePaneFrame, 0);
-            Grid.SetColumn(_photoHost, 1);
-            Grid.SetRow(_photoHost, 0);
-            Grid.SetColumn(_analysis, 2);
-            Grid.SetRow(_analysis, 0);
-            Grid.SetColumn(_controlBar, 3);
-            Grid.SetRow(_controlBar, 0);
-
-            _colHost.Children.Add(_filePaneFrame);
-            _colHost.Children.Add(_photoHost);
-            _colHost.Children.Add(_analysis);
-            _colHost.Children.Add(_controlBar);
-            _filePane.ColumnDefinitions[0].Width = new GridLength(WindowsLayout.RailWidth, GridUnitType.Pixel);
-            Grid.SetColumnSpan(_filterBar, 1);
-
-            // 左右布局:文件栏内容宽 116(+相似面板自动宽),右侧一条分隔线 —— 宽度交给内容计算
-            _filePaneFrame.Width = double.NaN;
-            _filePaneFrame.BorderThickness = new Thickness(0, 0, WindowsLayout.DividerThickness, 0);
-            _rowHost.Visibility = Visibility.Collapsed;
-            _colHost.Visibility = Visibility.Visible;
-        }
-
         _filmstrip.SetOrientation(_isRowLayout);
         _filterBar.SetOrientation(_isRowLayout);
         _controlBar.SetOrientation(_isRowLayout);
@@ -890,14 +893,13 @@ internal sealed partial class WindowsMainWindow : Window
         _similarity.SetOrientation(_isRowLayout);
 #endif
         _analysis.SetOrientation(_isRowLayout);
-        UpdateSimilarityWidth();
         // 构造期 ActualWidth/Height 还是 0;此时别更新方向,否则 Auto 布局会先按竖屏建一遍再切列布局。
         if (_root.ActualWidth > 0 && _root.ActualHeight > 0)
         {
             _main.UpdateScreenOrientation(_root.ActualWidth, _root.ActualHeight);
         }
 
-        UpdateTitleBarChrome();
+        LayoutShell();
     }
 
     /// <summary>栏位显隐(跨会话持久化 SHELL-04;分析栏仍为会话态)。</summary>
@@ -907,7 +909,7 @@ internal sealed partial class WindowsMainWindow : Window
         try
         {
             _ratingSources.Close();
-            _filePaneFrame.Visibility = _main.IsThumbnailViewVisible ? Visibility.Visible : Visibility.Collapsed;
+            _filePane.Visibility = _main.IsThumbnailViewVisible ? Visibility.Visible : Visibility.Collapsed;
             _controlBar.Visibility = _main.IsControlViewVisible ? Visibility.Visible : Visibility.Collapsed;
             _analysis.Visibility = _main.IsAnalysisViewVisible ? Visibility.Visible : Visibility.Collapsed;
 #if PHOTOVIEWER_DINO
@@ -921,14 +923,176 @@ internal sealed partial class WindowsMainWindow : Window
                 _filmstrip.CancelLocate();
             }
 
-            UpdateSimilarityWidth();
-            UpdateTitleBarChrome();
+            LayoutShell();
             SaveUiPreferences();
         }
         catch (Exception ex)
         {
             NativeStartupLog.Fail("apply visibility", ex);
         }
+    }
+
+    /// <summary>栏位内容尺寸变化(控制栏分组、分析栏瓦片数)后合并到下一轮重排,避免一轮内多次通知反复落位。</summary>
+    private void RequestShellLayout()
+    {
+        if (_shellLayoutPending || _closed)
+        {
+            return;
+        }
+
+        _shellLayoutPending = true;
+        UiDispatcher.Post(() =>
+        {
+            _shellLayoutPending = false;
+            LayoutShell();
+        }, UiPriority.Normal);
+    }
+
+    /// <summary>
+    /// 宽形态外壳排布(SHELL-01、SHELL-11、SHELL-12):分区取共享 <see cref="ShellPaneLayout.Partition"/>,
+    /// 主图视图恒铺满窗口、适应区为分区里的主图矩形;文件栏与工具区浮在主图上,
+    /// 背景由交换链内亚克力绘制(<see cref="UpdateBackdropRegions"/>),工具区只在朝主图一侧画一条分隔线。
+    /// 行布局窄宽度常驻标题栏(SHELL-02)按安全区顶边让出 32 点,文件栏整体下移、主图适应区随之让位。
+    /// </summary>
+    private void LayoutShell()
+    {
+        double width = _root.ActualWidth;
+        double height = _root.ActualHeight;
+        if (_closed || _layingOut || width <= 0 || height <= 0)
+        {
+            return;
+        }
+
+        _layingOut = true;
+        try
+        {
+            bool row = _main.IsRowLayout;
+            bool fileVisible = _main.IsThumbnailViewVisible;
+            bool controlVisible = _main.IsControlViewVisible;
+            bool analysisVisible = _main.IsAnalysisViewVisible;
+
+            // SHELL-02：筛选组与窗口按钮实际相交时改为文件栏上方常驻通栏；筛选几何只取共享计算,不等布局回读。
+            var rowFilter = _filterBar.ComputeFrames(true, width);
+            double filterRight = WindowsFilterBar.ShowsSimilarityToggle ? rowFilter.Toggle.MaxX : rowFilter.Control.MaxX;
+            bool persistent = TitleBarLayout.IsPersistent(row, fileVisible, _isFullScreen,
+                rowFilter.Control.X, filterRight, width - _titleBar.ButtonsWidth, width);
+            if (_isTitleBarPersistent != persistent)
+            {
+                _isTitleBarPersistent = persistent;
+                RefreshTitleBarVisibility();
+            }
+
+            var safe = new EdgeInsets(0, persistent ? WindowsLayout.TitleBarHeight : 0, 0, 0);
+            var filterFrames = row ? rowFilter : _filterBar.ComputeFrames(false, MainScreenLayout.FileBarContentWidth);
+            double filterMain = filterFrames.MainLength;
+
+            double similarityWidth = 0;
+#if PHOTOVIEWER_DINO
+            bool similarityOpen = fileVisible && _main.FileVM.IsSimilarityPanelOpen;
+            var similarityPanel = _main.FileVM.SimilarityPanel;
+            _similarity.SetAvailableWidth(width, similarityPanel.HasItems, similarityPanel.SimilarItems.Count);
+            similarityWidth = similarityOpen && !double.IsNaN(_similarity.Width) ? _similarity.Width : 0;
+#endif
+            double fileMain = fileVisible
+                ? MainScreenLayout.FileBarMainLength(row, filterMain, row ? 0 : similarityWidth)
+                : 0;
+
+            bool joined = controlVisible && analysisVisible;
+            _controlBar.SetJoined(joined);
+            _analysis.SetJoinedToControls(joined);
+            var document = _controlBar.MeasureDocument(row, row ? width : height, joined);
+            double controlMain = controlVisible
+                ? MainScreenLayout.ControlBarMainLength(row ? document.Height : document.Width)
+                : 0;
+            double analysisMain = row ? width : height;
+            double analysisCross = analysisVisible
+                ? ToolRegionGeometry.AnalysisWidth(
+                    AnalysisPanelGeometry.TileSize(analysisMain, Math.Max(1, _analysis.TileCount)), joined)
+                : 0;
+
+            var panes = ShellPaneLayout.Partition(row, width, height, safe, fileMain, controlMain, analysisCross);
+
+            // 文件栏:筛选条在内容区顶端,胶片带接在其下;列布局相似面板接在 116 主列右侧,行布局从胶片带右端切出。
+            var content = panes.FileContent;
+            double paneWidth = row ? content.Width : Math.Max(0, fileMain - MainScreenLayout.Divider - content.X);
+            Place(_filePane, content.X, content.Y, paneWidth, content.Height);
+            double filterWidth = row ? content.Width : MainScreenLayout.FileBarContentWidth;
+            Place(_filterBar, 0, 0, filterWidth, filterMain);
+            if (row)
+            {
+                Place(_filmstrip, 0, filterMain, Math.Max(0, content.Width - similarityWidth), MainScreenLayout.FilmstripBand);
+            }
+            else
+            {
+                Place(_filmstrip, 0, filterMain, MainScreenLayout.FileBarContentWidth, Math.Max(0, content.Height - filterMain));
+            }
+#if PHOTOVIEWER_DINO
+            if (similarityWidth > 0)
+            {
+                if (row)
+                {
+                    Place(_similarity, content.Width - similarityWidth, filterMain, similarityWidth, MainScreenLayout.FilmstripBand);
+                }
+                else
+                {
+                    Place(_similarity, MainScreenLayout.FileBarContentWidth, filterMain, similarityWidth,
+                        Math.Max(0, content.Height - filterMain));
+                }
+            }
+#endif
+            _fileDivider.Visibility = fileVisible ? Visibility.Visible : Visibility.Collapsed;
+            Place(_fileDivider, panes.FileDivider);
+            _fileBarRight = fileVisible && !row ? panes.FileDivider.MaxX : 0;
+            _fileBackdrop = fileVisible
+                ? (row
+                    ? new LayoutRect(0, 0, width, panes.FileDivider.MaxY)
+                    : new LayoutRect(0, 0, panes.FileDivider.MaxX, height))
+                : default;
+
+            // SHELL-12：有分析栏或实际显示 EXIF 时工具区铺连续材质并画唯一外边界;只剩评分与命令时透明、不画分隔线。
+            var toolRegion = panes.ControlBackground;
+            bool toolVisible = (analysisVisible || controlVisible) && toolRegion.Width > 0 && toolRegion.Height > 0;
+            _toolBackgroundVisible = toolVisible && (analysisVisible || controlVisible && _controlBar.ExifItemCount > 0);
+            _toolHitArea.Visibility = toolVisible ? Visibility.Visible : Visibility.Collapsed;
+            Place(_toolHitArea, toolRegion);
+            _toolBackdrop = _toolBackgroundVisible ? toolRegion : default;
+            _controlDivider.Visibility = _toolBackgroundVisible ? Visibility.Visible : Visibility.Collapsed;
+            if (row)
+            {
+                Place(_controlDivider, toolRegion.X, toolRegion.Y, toolRegion.Width, MainScreenLayout.Divider);
+            }
+            else
+            {
+                Place(_controlDivider, toolRegion.X, 0, MainScreenLayout.Divider, height);
+            }
+
+            if (analysisVisible)
+            {
+                Place(_analysis, panes.Analysis);
+            }
+
+            if (controlVisible)
+            {
+                Place(_controlBar, panes.ControlContent);
+            }
+
+            // SHELL-11：适应区 = 分区里的主图矩形;主图视图本身铺满窗口。
+            var photo = panes.Photo;
+            _fitArea = new Rect(photo.X, photo.Y, photo.Width, photo.Height);
+            _photo.SetFitInsets(new EdgeInsets(
+                Math.Max(0, photo.X), Math.Max(0, photo.Y),
+                Math.Max(0, width - photo.MaxX), Math.Max(0, height - photo.MaxY)));
+            Place(_fitOverlay, photo);
+            // 细节预览绿框只画在适应区内:栏位背景在交换链里,XAML 绿框越界会透出在栏位上。
+            _highlightLayer.Clip = new RectangleGeometry { Rect = _fitArea };
+            UpdateStatusToastWidth();
+        }
+        finally
+        {
+            _layingOut = false;
+        }
+
+        UpdateTitleBarChrome();
     }
 
     /// <summary>读取栏位显隐的平台偏好(SHELL-04);缺失时保留共享默认值。</summary>
@@ -959,18 +1123,6 @@ internal sealed partial class WindowsMainWindow : Window
         _viewState.SetBool(WindowsNativePreferences.ShowControlsKey, _main.IsControlViewVisible);
     }
 
-    /// <summary>按可用宽度落相似面板宽度(SIM-01/SIM-07):行布局取共享 RowWidth 并夹到一半。</summary>
-    private void UpdateSimilarityWidth()
-    {
-#if PHOTOVIEWER_DINO
-        var panel = _main.FileVM.SimilarityPanel;
-        _similarity.SetAvailableWidth(
-            Math.Max(0, _root.ActualWidth),
-            panel.HasItems,
-            panel.SimilarItems.Count);
-#endif
-    }
-
 #if PHOTOVIEWER_DINO
     /// <summary>相似面板内容变化时同步宽度(项数会改变行布局切出的宽度)。</summary>
     private void OnSimilarityPanelChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -979,8 +1131,7 @@ internal sealed partial class WindowsMainWindow : Window
             or nameof(SimilarityPanelViewModel.SimilarItems)
             or nameof(SimilarityPanelViewModel.ShowActionArea))
         {
-            UpdateSimilarityWidth();
-            UpdateTitleBarChrome();
+            RequestShellLayout();
         }
     }
 #endif
@@ -1246,8 +1397,9 @@ internal sealed partial class WindowsMainWindow : Window
     }
 
     /// <summary>
-    /// 标题栏跨度、背景与标题可用宽(SHELL-02):行布局在筛选组与窗口按钮相交时改为文件栏上方常驻通栏;
-    /// 其余行布局整宽无背景并挖空筛选控件,列布局与文件栏隐藏时铺亚克力。
+    /// 标题栏跨度、背景与标题可用宽(SHELL-02):常驻与否由 <see cref="LayoutShell"/> 按共享判定得出;
+    /// 行布局悬停形态整宽无背景并挖空筛选控件,列布局与文件栏隐藏时铺亚克力。
+    /// 主图视图铺满窗口,标题栏背景整段由主图交换链绘制(SwapChainPanel 取不到 AcrylicBrush 背板)。
     /// </summary>
     private void UpdateTitleBarChrome()
     {
@@ -1263,48 +1415,23 @@ internal sealed partial class WindowsMainWindow : Window
         }
 
         var fileBarVisible = _main.IsThumbnailViewVisible;
-        var filterBounds = fileBarVisible && _isRowLayout
-            ? _filterBar.GetInteractiveBounds(_root)
-            : default(Rect);
-        var persistent = TitleBarLayout.IsPersistent(_isRowLayout, fileBarVisible, _isFullScreen,
-            filterBounds.X, filterBounds.X + filterBounds.Width,
-            _titleBar.GetButtonsLeft(_root), _root.ActualWidth);
-        if (_isTitleBarPersistent != persistent)
-        {
-            _isTitleBarPersistent = persistent;
-            _rowHost.Margin = new Thickness(0, persistent ? WindowsLayout.TitleBarHeight : 0, 0, 0);
-            RefreshTitleBarVisibility();
-        }
-
-        var left = fileBarVisible && !_isRowLayout ? FilePaneRightEdge() : 0;
+        var persistent = _isTitleBarPersistent;
+        var left = fileBarVisible && !_isRowLayout ? _fileBarRight : 0;
         var width = Math.Max(0, _root.ActualWidth - left);
         var showBackground = TitleBarLayout.HasBackdrop(_isRowLayout, fileBarVisible, persistent);
-
-        // 标题栏与主图视图重叠的区段由主图渲染器在交换链内画同一份亚克力(SwapChainPanel 取不到
-        // AcrylicBrush 背板),XAML 背景只铺其余区段。常驻栏已让主图下移,不启用交换链背板。
-        Rect? photoBand = null;
-        if (!persistent && _titleBar.IsVisible && showBackground && _titleBar.HasBackdropRecipe)
-        {
-            var bar = new Rect(left, 0, width, Math.Min(WindowsLayout.TitleBarHeight, _root.ActualHeight));
-            if (TryGetPhotoBand(bar, out var bandInPhoto, out var bandInBar, out var edges, out var barOrigin))
-            {
-                _photo.SetTitleBarBackdrop(bandInPhoto, _titleBar.BackdropRecipe, edges, barOrigin);
-                photoBand = bandInBar;
-            }
-        }
-
-        if (photoBand == null)
-        {
-            _photo.SetTitleBarBackdrop(null, _titleBar.BackdropRecipe, default, default);
-        }
-
-        _titleBar.SetSpan(left, showBackground, photoBand, width);
+        var drawsBackdrop = _titleBar.IsVisible && showBackground && _titleBar.HasBackdropRecipe && width > 0;
+        _titleBarBackdrop = drawsBackdrop
+            ? new Rect(left, 0, width, Math.Min(WindowsLayout.TitleBarHeight, _root.ActualHeight))
+            : null;
+        _titleBar.SetSpan(left, showBackground,
+            drawsBackdrop ? new Rect(0, 0, width, WindowsLayout.TitleBarHeight) : null, width);
+        UpdateBackdropRegions();
 
         // 标题文字止于按钮组前(留出与前导间距同值的尾部间距);行布局悬停覆盖层再让出筛选条可点控件。
         var titleRightEdge = _titleBar.GetButtonsLeft(_root);
         if (TitleBarLayout.HasCutout(_isRowLayout, fileBarVisible, persistent))
         {
-            titleRightEdge = filterBounds.X;
+            titleRightEdge = _filterBar.GetInteractiveBounds(_root).X;
         }
 
         _titleBar.SetTitleMaxWidth(
@@ -1313,79 +1440,43 @@ internal sealed partial class WindowsMainWindow : Window
     }
 
     /// <summary>
-    /// 标题栏与主图视图的重叠区段:分别折算到主图视图坐标(给渲染器)与覆盖层坐标(给 XAML 背景分段),
-    /// 并给出区段两侧的邻接关系 —— 主图视图边不在窗口边上时外侧是 XAML 内容(按 FallbackColor 补),
-    /// 标题栏在该侧还继续时紧接一段 XAML 亚克力(两边在交界处渐变到同一个值)。
+    /// 交换链内亚克力区段(SHELL-02、SHELL-12):先文件栏(含分隔线)与工具区背景,只剩评分与命令时改为
+    /// 各控件自身的圆形/胶囊衬底;标题栏最后画,叠在其下区段之上。配方取标题栏主题画刷的运行时值。
     /// </summary>
-    /// <param name="bar">标题栏矩形(窗口内容坐标)</param>
-    /// <param name="bandInPhoto">重叠区段(主图视图坐标)</param>
-    /// <param name="bandInBar">重叠区段(覆盖层坐标)</param>
-    /// <param name="edges">区段两侧的邻接关系</param>
-    /// <param name="barOrigin">整条标题栏左上角(主图视图坐标,噪点平铺原点)</param>
-    /// <returns>有非空重叠时返回 true</returns>
-    private bool TryGetPhotoBand(Rect bar, out Rect bandInPhoto, out Rect bandInBar,
-        out TitleBarBackdropEdges edges, out Point barOrigin)
+    private void UpdateBackdropRegions()
     {
-        bandInPhoto = default;
-        bandInBar = default;
-        edges = default;
-        barOrigin = default;
-        if (_photo.ActualWidth <= 0 || _photo.ActualHeight <= 0)
+        if (_closed)
         {
-            return false;
+            return;
         }
 
-        Rect bounds;
-        try
+        var regions = new List<BackdropRegion>(8);
+        if (_fileBackdrop.Width > 0 && _fileBackdrop.Height > 0)
         {
-            bounds = _photo.TransformToVisual(_root)
-                .TransformBounds(new Rect(0, 0, _photo.ActualWidth, _photo.ActualHeight));
-        }
-        catch (Exception)
-        {
-            return false;
+            regions.Add(new BackdropRegion(
+                new Rect(_fileBackdrop.X, _fileBackdrop.Y, _fileBackdrop.Width, _fileBackdrop.Height), 0));
         }
 
-        var overlap = bar;
-        overlap.Intersect(bounds);
-        if (overlap.IsEmpty || overlap.Width <= 0.5 || overlap.Height <= 0.5)
+        if (_toolBackgroundVisible)
         {
-            return false;
+            regions.Add(new BackdropRegion(
+                new Rect(_toolBackdrop.X, _toolBackdrop.Y, _toolBackdrop.Width, _toolBackdrop.Height), 0));
+        }
+        else if (_main.IsControlViewVisible)
+        {
+            // SHELL-12：工具区透明时控件自身的材质保留,由交换链按控件外形画亚克力衬底。
+            foreach (var (bounds, radius) in _controlBar.GetMaterialShapes(_root))
+            {
+                regions.Add(new BackdropRegion(bounds, radius));
+            }
         }
 
-        bandInPhoto = new Rect(overlap.X - bounds.X, overlap.Y - bounds.Y, overlap.Width, overlap.Height);
-        bandInBar = new Rect(overlap.X - _titleBar.Left, overlap.Y, overlap.Width, overlap.Height);
-        barOrigin = new Point(bar.X - bounds.X, bar.Y - bounds.Y);
-        const double Slack = 0.5;
-        var photoLeftInside = bounds.X > Slack;
-        var photoRightInside = bounds.X + bounds.Width < _root.ActualWidth - Slack;
-        edges = new TitleBarBackdropEdges(
-            PadLeft: photoLeftInside,
-            PadRight: photoRightInside,
-            FadeLeft: photoLeftInside && bar.X < bounds.X - Slack,
-            FadeRight: photoRightInside && bar.X + bar.Width > bounds.X + bounds.Width + Slack);
-        return true;
-    }
-
-    /// <summary>列布局文件栏右缘(含相似面板扩宽与分隔线)在内容坐标内的位置。</summary>
-    /// <returns>右缘 DIP;文件栏未布局时为 0</returns>
-    private double FilePaneRightEdge()
-    {
-        if (_filePaneFrame.ActualWidth <= 0)
+        if (_titleBarBackdrop is { } band)
         {
-            return 0;
+            regions.Add(new BackdropRegion(band, 0));
         }
 
-        try
-        {
-            return _filePaneFrame.TransformToVisual(_root).TransformPoint(new Point(0, 0)).X
-                + _filePaneFrame.ActualWidth;
-        }
-        catch (Exception)
-        {
-            // 尚未进入可视树时退回零偏移:文件栏在主轴首位,ActualWidth 即右缘。
-            return _filePaneFrame.ActualWidth;
-        }
+        _photo.SetBackdropRegions(regions, _titleBar.BackdropRecipe);
     }
 
     /// <summary>
@@ -1727,10 +1818,10 @@ internal sealed partial class WindowsMainWindow : Window
         _statusTimer.Start();
     }
 
-    /// <summary>STATE-03：提示条宽取 min(500, 主图区可用宽),不超出观片区。</summary>
+    /// <summary>STATE-03：提示条宽取 min(500, 适应区宽),不超出观片区。</summary>
     private void UpdateStatusToastWidth()
     {
-        double available = _photoHost.ActualWidth;
+        double available = _fitArea.Width;
         _statusToast.MaxWidth = available > 0
             ? Math.Min(WindowsLayout.StatusToastMaxWidth, available)
             : WindowsLayout.StatusToastMaxWidth;

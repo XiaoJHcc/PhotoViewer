@@ -6,41 +6,13 @@ namespace PhotoViewer.Windows.Native;
 
 /// <summary>
 /// 原生壳几何与配色常量(唯一来源)。
-/// 数值优先引用共享几何(<see cref="MainScreenLayout"/>/<see cref="FilmstripGeometry"/>/
-/// <see cref="ControlBarLayout"/>/<see cref="SimilarityPanelGeometry"/>/<see cref="ExifTableGeometry"/>/
-/// <see cref="AnalysisPanelGeometry"/>)与 <see cref="DesignTokens"/>；Windows 专属口径(标题栏、设置/工具窗口)
+/// 数值优先引用共享几何(<see cref="FilmstripGeometry"/>/<see cref="SimilarityPanelGeometry"/>/
+/// <see cref="ExifTableGeometry"/>/<see cref="AnalysisPanelGeometry"/>)与 <see cref="DesignTokens"/>;
+/// 主屏分区、筛选与控制栏几何直接取 <see cref="ShellPaneLayout"/>、<see cref="WideFilterLayout"/>、<see cref="ToolbarFlowLayout"/>；Windows 专属口径(标题栏、设置/工具窗口)
 /// 仍留在这里。harness 与实现都从这里取值，避免断言与实现一起漂移。
 /// </summary>
 internal static class WindowsLayout
 {
-    // ===== 五分区 =====
-
-    /// <summary>左右布局文件栏内容宽(分隔线另计 1)。</summary>
-    public const double RailWidth = MainScreenLayout.FileBarContentWidth;
-
-    /// <summary>分区之间的分隔线厚度。</summary>
-    public const double DividerThickness = MainScreenLayout.Divider;
-
-    // ===== 筛选条 =====
-
-    /// <summary>下拉框占位宽。</summary>
-    public const double FilterItemWidth = MainScreenLayout.FilterControlWidth;
-
-    /// <summary>下拉框占位高。</summary>
-    public const double FilterItemHeight = MainScreenLayout.FilterControlHeight;
-
-    /// <summary>筛选控件间距。</summary>
-    public const double FilterSpacing = MainScreenLayout.FilterGap;
-
-    /// <summary>筛选条内边距(四周 10,与旧壳 <c>Margin="10"</c> 一致)。</summary>
-    public const double FilterMargin = MainScreenLayout.FilterMargin;
-
-    /// <summary>相似聚类 toggle 宽(与下拉同宽)。</summary>
-    public const double FilterToggleWidth = DesignTokens.FilterToggleWidth;
-
-    /// <summary>相似聚类 toggle 高(FILTER-01:27,不得借用 32 高的下拉)。</summary>
-    public const double FilterToggleHeight = MainScreenLayout.FilterToggleHeight;
-
     // ===== 胶片条 =====
 
     /// <summary>胶片条滚动区最小高度(FILM-04 带宽:卡片 144 + 顶 5 + 底 10)。</summary>
@@ -106,49 +78,10 @@ internal static class WindowsLayout
     /// <summary>纵向卡片步进(外框 + 上下占位;共享几何的卡片间距为 0)。</summary>
     public const double CardPitchVertical = FilmstripGeometry.CardHeight;
 
-    // ===== 控制栏 =====
+    // ===== 评分来源浮窗 =====
 
-    /// <summary>控制栏内边距。</summary>
-    public const double ControlBarPadding = ControlBarLayout.Padding;
-
-    /// <summary>控制栏分组间距(换行后的行距与组间距)。</summary>
-    public const double ControlBarSpacing = ControlBarLayout.GroupSpacing;
-
-    /// <summary>EXIF 信息块宽。</summary>
-    public const double ExifBlockWidth = DesignTokens.ToolbarExifBlockWidth;
-
-    /// <summary>EXIF 信息块高。</summary>
-    public const double ExifBlockHeight = DesignTokens.ToolbarExifBlockHeight;
-
-    /// <summary>EXIF 信息块主轴两端留白与块间距(旧壳 WebMarginConverter '0,4|4,0')。</summary>
-    public const double ExifBlockMargin = DesignTokens.ToolbarExifInset;
-
-    /// <summary>EXIF 块之间的额外间距(旧壳 StackPanel Spacing=4;与两侧余白叠加成 12)。</summary>
-    public const double ExifStackSpacing = DesignTokens.ToolbarExifSpacing;
-
-    /// <summary>EXIF 标签字号。</summary>
-    public const double ExifLabelFontSize = DesignTokens.ToolbarExifLabelFontSize;
-
-    /// <summary>EXIF 数值字号。</summary>
-    public const double ExifValueFontSize = DesignTokens.ToolbarExifValueFontSize;
-
-    /// <summary>评分按钮边长。</summary>
+    /// <summary>来源浮窗星排的评分按钮边长(RATING-04)。</summary>
     public const double RatingButtonSize = DesignTokens.ToolbarRatingButtonSize;
-
-    /// <summary>评分字形字号。</summary>
-    public const double RatingGlyphFontSize = DesignTokens.ToolbarRatingGlyphFontSize;
-
-    /// <summary>评分分组主轴两端留白(旧壳 WebMarginConverter '0,8|8,0',加在星条自身而非分组边框上)。</summary>
-    public const double RatingGroupMargin = DesignTokens.ToolbarRatingGroupInset;
-
-    /// <summary>命令按钮边长。</summary>
-    public const double CommandButtonSize = DesignTokens.ToolbarCommandButtonSize;
-
-    /// <summary>命令按钮字形字号。</summary>
-    public const double CommandGlyphFontSize = DesignTokens.ToolbarCommandGlyphFontSize;
-
-    /// <summary>命令按钮间距。</summary>
-    public const double CommandSpacing = DesignTokens.ToolbarCommandSpacing;
 
     // ===== 主图区提示 =====
 
@@ -430,40 +363,7 @@ internal static class WindowsLayout
     /// <summary>准星线条色。</summary>
     public static readonly Color AnalysisCrosshairStroke = Token(DesignTokens.ColorAnalysisCrosshair);
 
-    /// <summary>相似聚类开关字号(旧壳 ToggleButton FontSize=12)。</summary>
-    public const double SimilarityToggleFontSize = 12;
-
-    /// <summary>相似聚类开关未选中悬停底色(旧壳 #333)。</summary>
-    public static readonly Color SimilarityToggleHover = Token(DesignTokens.ColorFilterToggleHover);
-
-    /// <summary>相似聚类开关选中底色(旧壳 #1F3A5F)。</summary>
-    public static readonly Color SimilarityToggleCheckedBackground = Token(DesignTokens.ColorFilterToggleCheckedBackground);
-
-    /// <summary>相似聚类开关选中悬停底色(旧壳 #26477A)。</summary>
-    public static readonly Color SimilarityToggleCheckedHover = Color.FromArgb(0xFF, 0x26, 0x47, 0x7A);
-
-    /// <summary>相似聚类开关描边(旧壳 #555)。</summary>
-    public static readonly Color SimilarityToggleBorder = Token(DesignTokens.ColorFilterToggleBorder);
-
-    /// <summary>相似聚类开关选中描边(旧壳 #3A6FA8)。</summary>
-    public static readonly Color SimilarityToggleCheckedBorder = Token(DesignTokens.ColorFilterToggleCheckedBorder);
-
-    /// <summary>相似聚类开关文字色(旧壳 #AAA)。</summary>
-    public static readonly Color SimilarityToggleForeground = Token(DesignTokens.ColorFilterToggleForeground);
-
-    /// <summary>相似聚类开关悬停文字色。</summary>
-    public static readonly Color SimilarityToggleHoverForeground = Token(DesignTokens.ColorFilterToggleHoverForeground);
-
-    /// <summary>相似聚类开关选中文字色(旧壳 #AECBEE)。</summary>
-    public static readonly Color SimilarityToggleCheckedForeground = Token(DesignTokens.ColorFilterToggleCheckedForeground);
-
-    /// <summary>相似聚类开关选中悬停/按下文字色。</summary>
-    public static readonly Color SimilarityToggleCheckedHoverForeground = Token(DesignTokens.ColorFilterToggleCheckedHoverForeground);
-
     // ===== 配色 =====
-
-    /// <summary>栏位底色(胶片条/控制栏)。</summary>
-    public static readonly Color BarBackground = Token(DesignTokens.ColorBarBackground);
 
     /// <summary>分隔线与控件描边。</summary>
     public static readonly Color Divider = Token(DesignTokens.ColorDivider);
@@ -504,14 +404,8 @@ internal static class WindowsLayout
     /// <summary>命令按钮描边。</summary>
     public static readonly Color CommandButtonBorder = Token(DesignTokens.ColorToolbarCommandBorder);
 
-    /// <summary>命令按钮悬停底色。</summary>
-    public static readonly Color CommandButtonHoverBackground = Token(DesignTokens.ColorToolbarCommandHoverBackground);
-
     /// <summary>命令按钮悬停描边。</summary>
     public static readonly Color CommandButtonHoverBorder = Token(DesignTokens.ColorToolbarCommandHoverBorder);
-
-    /// <summary>命令按钮按下底色。</summary>
-    public static readonly Color CommandButtonPressedBackground = Token(DesignTokens.ColorToolbarCommandPressedBackground);
 
     /// <summary>评分按钮悬停底色。</summary>
     public static readonly Color RatingHoverBackground = Token(DesignTokens.ColorToolbarRatingHoverBackground);

@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Shapes;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
@@ -393,7 +394,7 @@ internal sealed class WindowsRatingSourcesFlyout : IDisposable
             double fontSize = rating == 0
                 ? DesignTokens.ToolbarRatingClearGlyphFontSize
                 : DesignTokens.ToolbarRatingGlyphFontSize;
-            var content = new TextBlock
+            var text = new TextBlock
             {
                 Text = glyph,
                 FontFamily = new FontFamily(WindowsIcons.FluentFontFamily),
@@ -403,18 +404,27 @@ internal sealed class WindowsRatingSourcesFlyout : IDisposable
                     : on ? DesignTokens.ColorStarOn : DesignTokens.ColorStarOff)),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
+                IsHitTestVisible = false,
+            };
+            // TOOLBAR-03：星排槽位与控件一致——常态透明，悬停/按下只在槽位内画内切正圆。
+            var halo = new Ellipse
+            {
+                Width = StarSize,
+                Height = StarSize,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                IsHitTestVisible = false,
             };
             var button = new Button
             {
                 Width = StarSize,
                 Height = StarSize,
                 Padding = new Thickness(0),
-                Background = new SolidColorBrush(global::Windows.UI.Color.FromArgb(0, 0, 0, 0)),
                 BorderThickness = new Thickness(0),
-                CornerRadius = new CornerRadius(DesignTokens.ToolbarCornerRadius),
-                Content = content,
+                CornerRadius = new CornerRadius(StarSize / 2),
+                Content = new Grid { Children = { halo, text } },
             };
-            WindowsControlStyles.ApplyTransparentSquareButton(button);
+            WindowsControlStyles.ApplyRatingSlot(button, halo);
             string label = rating == 0 ? "无星级" : $"{rating} 星";
             ToolTipService.SetToolTip(button, label);
             AutomationProperties.SetName(button, label);

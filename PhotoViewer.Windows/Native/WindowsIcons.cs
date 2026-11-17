@@ -76,8 +76,9 @@ internal static class WindowsIcons
         ["Previous"] = "\uE76B",
         ["Next"] = "\uE76C",
         ["Exchange"] = "\uE8AB",
-        // 缩放适应沿用旧壳的对外双对角箭头（BackToWindow），不用带方框的 FitPage。
-        ["Fit"] = "\uE73F",
+        // TOOLBAR-04：缩放适应用向外双对角箭头（与 macOS arrow.up.left.and.arrow.down.right 同语义），
+        // 不用带方框的 FitPage；BackToWindow（E73F）是向内箭头，与标题栏「退出全屏」同形，不能借用。
+        ["Fit"] = FullScreenGlyph,
         // 放大/缩小用纯加号/减号，不用放大镜（放大镜在 18 点尺寸下与“适应”难区分）。
         ["ZoomInPreset"] = "\uE710",
         ["ZoomOutPreset"] = "\uE738",

@@ -10,7 +10,13 @@ internal sealed partial class WindowsPhotoView
         Texture2D<float4> scene : register(t0);
         Texture3D<float4> colorLut : register(t1);
         SamplerState colorSampler : register(s0);
-        cbuffer OutputColor : register(b0) { float4 row0; float4 row1; float4 row2; float4 cube; float4 band; };
+        #define MaxBackdropRegions 32
+        cbuffer OutputColor : register(b0)
+        {
+            float4 row0; float4 row1; float4 row2; float4 cube; float4 backdropCount;
+            float4 backdropRect[MaxBackdropRegions];    // xy = 中心(物理像素), zw = 半宽高
+            float4 backdropRadius[MaxBackdropRegions];  // x = 圆角半径(物理像素)
+        };
         struct OutputVertex { float4 position : SV_Position; float2 uv : TEXCOORD0; };
         OutputVertex ColorVS(uint id : SV_VertexID)
         {
@@ -25,11 +31,23 @@ internal sealed partial class WindowsPhotoView
                           v.g <= 0.04045 ? v.g / 12.92 : pow(max(0, (v.g + 0.055) / 1.055), 2.4),
                           v.b <= 0.04045 ? v.b / 12.92 : pow(max(0, (v.b + 0.055) / 1.055), 2.4));
         }
+        // 交换链内的亚克力区段已是与 XAML 亚克力同一份编码,不再走显示器转换;圆角按与合成阶段同一套 SDF 判定。
+        bool BackdropCovers(float2 pixel)
+        {
+            [loop] for (int i = 0; i < (int)backdropCount.x; i++)
+            {
+                float2 extent = backdropRect[i].zw;
+                float radius = clamp(backdropRadius[i].x, 0.0, min(extent.x, extent.y));
+                float2 distance = abs(pixel - backdropRect[i].xy) - (extent - radius);
+                float outside = length(max(distance, 0.0)) + min(max(distance.x, distance.y), 0.0) - radius;
+                if (outside < 0.0) return true;
+            }
+            return false;
+        }
         float4 ColorPS(OutputVertex i) : SV_Target
         {
             float4 c = scene.SampleLevel(colorSampler, i.uv, 0);
-            bool inBand = all(i.position.xy >= band.xy) && all(i.position.xy < band.zw);
-            if (cube.w == 0 || inBand) return float4(c.rgb * cube.z, c.a);
+            if (cube.w == 0 || BackdropCovers(i.position.xy)) return float4(c.rgb * cube.z, c.a);
             float3 wide = float3(dot(row0.xyz, c.rgb), dot(row1.xyz, c.rgb), dot(row2.xyz, c.rgb));
             float3 encoded = pow(saturate(wide), 1.0 / 1.80078125);
             float3 device = colorLut.SampleLevel(colorSampler, encoded * cube.x + cube.y, 0).rgb;
@@ -46,7 +64,13 @@ internal sealed partial class WindowsPhotoView
     private IComObject<ID3D11Texture2D>? _outputScene;
     private IComObject<ID3D11ShaderResourceView>? _outputSceneView;
     private WindowsDisplayTransform? _outputTransform;
-    private readonly float[] _outputParameterData = new float[20];
+    /// <summary>输出转换里最多能排除多少个亚克力区段(与着色器 <c>MaxBackdropRegions</c> 一致)。</summary>
+    private const int OutputBackdropCapacity = 32;
+
+    /// <summary>
+    /// 输出转换常量:0–15 为矩阵与立方图参数,16 起为交换链内的亚克力区段(16 数量、20 起矩形、其后为圆角半径)。
+    /// </summary>
+    private readonly float[] _outputParameterData = new float[20 + (OutputBackdropCapacity * 8)];
     private (uint Width, uint Height) _outputSceneSize;
     private long _outputColorBytes;
 
@@ -121,7 +145,7 @@ internal sealed partial class WindowsPhotoView
         _outputPixel = _device.CreatePixelShader(D3D11Functions.D3DCompile(source, "display-color.hlsl", "ColorPS", "ps_5_0", 0));
         _outputParameters = _device.CreateBuffer(new D3D11_BUFFER_DESC
         {
-            ByteWidth = 80, Usage = D3D11_USAGE.D3D11_USAGE_DEFAULT,
+            ByteWidth = (uint)(_outputParameterData.Length * sizeof(float)), Usage = D3D11_USAGE.D3D11_USAGE_DEFAULT,
             BindFlags = (uint)D3D11_BIND_FLAG.D3D11_BIND_CONSTANT_BUFFER,
         }, null);
     }
@@ -152,14 +176,30 @@ internal sealed partial class WindowsPhotoView
         _outputParameterData[13] = 0.5f / size;
         _outputParameterData[14] = _outputTransform.SdrWhiteScale;
         _outputParameterData[15] = _outputLutView == null ? 0 : 1;
-        Array.Clear(_outputParameterData, 16, 4);
-        if (!_bandFailed && _titleBarBand is { } request)
+        Array.Clear(_outputParameterData, 16, _outputParameterData.Length - 16);
+        if (!_backdropFailed && _backdropRegions.Length > 0)
         {
+            // 区段矩形取与合成阶段同一套整像素边界:中心与半宽高都在像素中心坐标系里。
             double scale = PhysicalPixelsPerDip;
-            _outputParameterData[16] = (float)Math.Round(request.Band.X * scale);
-            _outputParameterData[17] = (float)Math.Round(request.Band.Y * scale);
-            _outputParameterData[18] = (float)Math.Round((request.Band.X + request.Band.Width) * scale);
-            _outputParameterData[19] = (float)Math.Round((request.Band.Y + request.Band.Height) * scale);
+            const int RectOffset = 20;
+            int radiusOffset = RectOffset + (OutputBackdropCapacity * 4);
+            int count = Math.Min(_backdropRegions.Length, OutputBackdropCapacity);
+            _outputParameterData[16] = count;
+            for (var index = 0; index < count; index++)
+            {
+                var region = _backdropRegions[index];
+                double left = Math.Round(region.Bounds.X * scale);
+                double top = Math.Round(region.Bounds.Y * scale);
+                double right = Math.Round((region.Bounds.X + region.Bounds.Width) * scale);
+                double bottom = Math.Round((region.Bounds.Y + region.Bounds.Height) * scale);
+                int offset = RectOffset + (index * 4);
+                _outputParameterData[offset] = (float)((left + right) / 2);
+                _outputParameterData[offset + 1] = (float)((top + bottom) / 2);
+                _outputParameterData[offset + 2] = (float)((right - left) / 2);
+                _outputParameterData[offset + 3] = (float)((bottom - top) / 2);
+                _outputParameterData[radiusOffset + (index * 4)] = (float)Math.Clamp(
+                    region.CornerRadius * scale, 0d, Math.Min(right - left, bottom - top) / 2);
+            }
         }
         fixed (float* pointer = _outputParameterData)
             _context.Object.UpdateSubresource(_outputParameters!.Object, 0, IntPtr.Zero, (IntPtr)pointer, 0, 0);

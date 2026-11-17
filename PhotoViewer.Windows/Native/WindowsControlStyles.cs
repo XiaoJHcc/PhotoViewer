@@ -1,32 +1,46 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Shapes;
 using Windows.UI;
 
 namespace PhotoViewer.Windows.Native;
 
 /// <summary>
-/// 主屏小型控件的统一状态外观（TOOLBAR-10）。
-/// 悬停/按下只改底色、描边与前景；禁用不改底色与描边，只把内容降到
-/// <see cref="WindowsLayout.DisabledContentAlpha"/>，避免 WinUI 默认模板的禁用灰底与悬停闪白。
+/// 主屏小型控件的状态外观。
+/// 命令圆按钮与星级控件胶囊走 WinUI 原生按钮材质与系统状态（TOOLBAR-10、SHELL-12），壳不再自绘底色与描边；
+/// 这里只保留仍由壳自绘的部分：透明方块按钮、动作按钮、内容禁用强调，
+/// 以及星级槽位的槽内状态层（TOOLBAR-03：常态与禁用透明，悬停/按下只画内切正圆）。
 /// </summary>
 internal static class WindowsControlStyles
 {
+    /// <summary>WinUI 悬停状态层（胶囊内分段的悬停底色）。</summary>
+    private const string HoverStateLayerKey = "SubtleFillColorSecondaryBrush";
+
+    /// <summary>WinUI 按下状态层。</summary>
+    private const string PressedStateLayerKey = "SubtleFillColorTertiaryBrush";
+
     private static readonly Color Transparent = Color.FromArgb(0, 0, 0, 0);
 
-    /// <summary>命令按钮：常态 #333/#555、悬停 #3D3D3D/#666、按下 #2A2A2A/#555。</summary>
-    /// <param name="button">命令按钮。</param>
-    public static void ApplyCommandButton(Button button) => ApplyButtonStates(
-        button,
-        WindowsLayout.CommandButtonBackground,
-        WindowsLayout.CommandButtonBorder,
-        WindowsLayout.CommandButtonHoverBackground,
-        WindowsLayout.CommandButtonHoverBorder,
-        WindowsLayout.CommandButtonPressedBackground,
-        WindowsLayout.CommandButtonBorder,
-        WindowsLayout.ExifValueForeground,
-        WindowsLayout.ExifValueForeground);
+    /// <summary>
+    /// 取 WinUI 主题画刷（深色主题随 <c>XamlControlsResources</c> 一并加载）。
+    /// 资源缺失时退回应用自有语义色，避免整条控制栏因一个主题键缺失而不可见。
+    /// </summary>
+    /// <param name="key">主题资源键。</param>
+    /// <param name="fallback">资源缺失时的回退语义色。</param>
+    /// <returns>主题画刷或回退画刷。</returns>
+    internal static Brush ThemeBrush(string key, Color fallback)
+    {
+        if (Application.Current is { } application
+            && application.Resources.TryGetValue(key, out var value)
+            && value is Brush brush)
+        {
+            return brush;
+        }
+
+        return new SolidColorBrush(fallback);
+    }
 
     /// <summary>透明底方形图标按钮（评分星）：悬停 #333、按下 #3A3A3A，常态与禁用无底色。</summary>
     /// <param name="button">评分按钮。</param>
@@ -55,38 +69,80 @@ internal static class WindowsControlStyles
         WindowsLayout.ExifValueForeground);
 
     /// <summary>
-    /// 相似聚类开关：四种勾选态 × 悬停/按下各自的前景与底色都显式给出，
-    /// 避免模板在悬停/按下时回落到系统主题色（文字发黑）或系统蓝底。
+    /// 星级槽位（TOOLBAR-03、RATING-07）：按钮自身在常态、悬停、按下与禁用下都透明且无描边，
+    /// 悬停与按下只由槽位内的内切正圆状态层表达，禁用与常态都不画状态层。
+    /// 不播放过渡动画，连续划过槽位时不闪。
     /// </summary>
-    /// <param name="toggle">相似聚类开关。</param>
-    public static void ApplySimilarityToggle(ToggleButton toggle)
+    /// <param name="button">槽位按钮。</param>
+    /// <param name="stateLayer">槽位内居中的正圆状态层（直径取槽位短边，不参与命中）。</param>
+    public static void ApplyRatingSlot(Button button, Ellipse stateLayer)
     {
-        SetBrush(toggle, "ToggleButtonBackground", Transparent);
-        SetBrush(toggle, "ToggleButtonBackgroundPointerOver", WindowsLayout.SimilarityToggleHover);
-        SetBrush(toggle, "ToggleButtonBackgroundPressed", WindowsLayout.CommandButtonPressedBackground);
-        SetBrush(toggle, "ToggleButtonBackgroundDisabled", Transparent);
-        SetBrush(toggle, "ToggleButtonBackgroundChecked", WindowsLayout.SimilarityToggleCheckedBackground);
-        SetBrush(toggle, "ToggleButtonBackgroundCheckedPointerOver", WindowsLayout.SimilarityToggleCheckedHover);
-        SetBrush(toggle, "ToggleButtonBackgroundCheckedPressed", WindowsLayout.SimilarityToggleCheckedHover);
-        SetBrush(toggle, "ToggleButtonBackgroundCheckedDisabled", WindowsLayout.SimilarityToggleCheckedBackground);
+        // 只设 Background 不够：WinUI 模板在悬停/按下/禁用时回到主题键，四态都要显式透明。
+        SetBrush(button, "ButtonBackground", Transparent);
+        SetBrush(button, "ButtonBackgroundPointerOver", Transparent);
+        SetBrush(button, "ButtonBackgroundPressed", Transparent);
+        SetBrush(button, "ButtonBackgroundDisabled", Transparent);
+        SetBrush(button, "ButtonBorderBrush", Transparent);
+        SetBrush(button, "ButtonBorderBrushPointerOver", Transparent);
+        SetBrush(button, "ButtonBorderBrushPressed", Transparent);
+        SetBrush(button, "ButtonBorderBrushDisabled", Transparent);
+        button.BorderThickness = new Thickness(0);
+        button.Padding = new Thickness(0);
 
-        SetBrush(toggle, "ToggleButtonBorderBrush", WindowsLayout.SimilarityToggleBorder);
-        SetBrush(toggle, "ToggleButtonBorderBrushPointerOver", WindowsLayout.CommandButtonHoverBorder);
-        SetBrush(toggle, "ToggleButtonBorderBrushPressed", WindowsLayout.SimilarityToggleBorder);
-        SetBrush(toggle, "ToggleButtonBorderBrushDisabled", WindowsLayout.SimilarityToggleBorder);
-        SetBrush(toggle, "ToggleButtonBorderBrushChecked", WindowsLayout.SimilarityToggleCheckedBorder);
-        SetBrush(toggle, "ToggleButtonBorderBrushCheckedPointerOver", WindowsLayout.SimilarityToggleCheckedBorder);
-        SetBrush(toggle, "ToggleButtonBorderBrushCheckedPressed", WindowsLayout.SimilarityToggleCheckedBorder);
-        SetBrush(toggle, "ToggleButtonBorderBrushCheckedDisabled", WindowsLayout.SimilarityToggleCheckedBorder);
+        var hover = ThemeBrush(HoverStateLayerKey, WindowsLayout.RatingHoverBackground);
+        var pressed = ThemeBrush(PressedStateLayerKey, WindowsLayout.RatingPressedBackground);
+        bool over = false;
+        bool down = false;
 
-        SetBrush(toggle, "ToggleButtonForeground", WindowsLayout.SimilarityToggleForeground);
-        SetBrush(toggle, "ToggleButtonForegroundPointerOver", WindowsLayout.SimilarityToggleHoverForeground);
-        SetBrush(toggle, "ToggleButtonForegroundPressed", WindowsLayout.SimilarityToggleHoverForeground);
-        SetBrush(toggle, "ToggleButtonForegroundDisabled", WindowsLayout.SimilarityToggleForeground);
-        SetBrush(toggle, "ToggleButtonForegroundChecked", WindowsLayout.SimilarityToggleCheckedForeground);
-        SetBrush(toggle, "ToggleButtonForegroundCheckedPointerOver", WindowsLayout.SimilarityToggleCheckedHoverForeground);
-        SetBrush(toggle, "ToggleButtonForegroundCheckedPressed", WindowsLayout.SimilarityToggleCheckedHoverForeground);
-        SetBrush(toggle, "ToggleButtonForegroundCheckedDisabled", WindowsLayout.SimilarityToggleCheckedForeground);
+        void Apply()
+        {
+            stateLayer.Fill = !button.IsEnabled ? null : down ? pressed : over ? hover : null;
+        }
+
+        // 槽位按钮的按压与移出都由原生控件与指针捕获驱动，这里只跟状态，不管手势语义。
+        button.AddHandler(UIElement.PointerEnteredEvent, new PointerEventHandler((_, _) =>
+        {
+            over = true;
+            Apply();
+        }), handledEventsToo: true);
+        button.AddHandler(UIElement.PointerExitedEvent, new PointerEventHandler((_, _) =>
+        {
+            over = false;
+            down = false;
+            Apply();
+        }), handledEventsToo: true);
+        button.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, _) =>
+        {
+            down = true;
+            Apply();
+        }), handledEventsToo: true);
+        button.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler((_, _) =>
+        {
+            down = false;
+            Apply();
+        }), handledEventsToo: true);
+        button.AddHandler(UIElement.PointerCaptureLostEvent, new PointerEventHandler((_, _) =>
+        {
+            down = false;
+            Apply();
+        }), handledEventsToo: true);
+        button.AddHandler(UIElement.PointerCanceledEvent, new PointerEventHandler((_, _) =>
+        {
+            over = false;
+            down = false;
+            Apply();
+        }), handledEventsToo: true);
+        button.IsEnabledChanged += (_, _) =>
+        {
+            if (!button.IsEnabled)
+            {
+                over = false;
+                down = false;
+            }
+
+            Apply();
+        };
+        Apply();
     }
 
     /// <summary>按可用状态调整控件内容：禁用只降内容不透明度，控件底色与几何不变。</summary>

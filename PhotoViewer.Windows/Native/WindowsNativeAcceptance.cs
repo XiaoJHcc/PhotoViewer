@@ -184,6 +184,8 @@ internal sealed partial class WindowsMainWindow
                 }
             }
 
+            await RunShellLayoutChecksAsync(checks);
+
             RequireSmoke(_session.Image != null, "resize/缩放循环后主图帧丢失");
             _photo.ToggleFit();
             await WaitForSmokeAsync(() => _session.Image != null && !_session.IsProxy, "100% Full 升级");
@@ -574,26 +576,25 @@ internal sealed partial class WindowsMainWindow
             await Task.Delay(80);
             RequireSmoke(_isRowLayout == false, "列布局未生效,背板检查需要列布局");
 
-            // 1) 隐藏态:主图区段关闭,取基准像素。
+            // 1) 隐藏态:标题栏区段不在交换链区段里,取基准像素。
             SimulateTitleBarPointerForAcceptance(false, WindowsLayout.TitleBarHotZoneHeight + 40);
             _root.UpdateLayout();
-            RequireSmoke(_photo.TitleBarBackdropBand == null, "标题栏隐藏时主图仍在画背板");
             var band = ExpectedPhotoBand();
             RequireSmoke(band.Width > 8 && band.Height > 8,
                 $"标题栏与主图没有重叠区段: band={band}, root={_root.ActualWidth}x{_root.ActualHeight}");
+            RequireSmoke(!HasBackdropRegion(band), "标题栏隐藏时主图仍在画标题栏背板");
             var sampleX = band.X + (band.Width / 2);
             var sampleY = band.Y + (band.Height / 2);
             RequireSmoke(_photo.TryReadViewportPixel(sampleX, sampleY, out var plain), "隐藏态背板取样失败");
 
-            // 2) 显示态:区段打开,同一点应变成亚克力(偏色仍带照片色相、更暗)。
+            // 2) 显示态:区段打开且最后绘制,同一点应变成亚克力(偏色仍带照片色相、更暗)。
             SimulateTitleBarPointerForAcceptance(true, 4);
             _root.UpdateLayout();
             RequireSmoke(_titleBar.IsVisible, "标题栏未进入显示态");
-            var applied = _photo.TitleBarBackdropBand;
-            RequireSmoke(applied is { } rect
-                && Math.Abs(rect.X - band.X) <= 1 && Math.Abs(rect.Y - band.Y) <= 1
-                && Math.Abs(rect.Width - band.Width) <= 1 && Math.Abs(rect.Height - band.Height) <= 1,
-                $"主图区段与标题栏重叠区不一致: {applied} vs {band}");
+            var regions = _photo.BackdropRegions;
+            RequireSmoke(regions.Count > 0 && SameRect(regions[regions.Count - 1].Bounds, band)
+                && regions[regions.Count - 1].CornerRadius == 0,
+                $"标题栏区段不是交换链最后一段或与标题栏不一致: [{string.Join("; ", regions)}] vs {band}");
             RequireSmoke(_photo.TryReadViewportPixel(sampleX, sampleY, out var banded), "显示态背板取样失败");
             var delta = Math.Max(Math.Abs(banded.R - plain.R), Math.Max(Math.Abs(banded.G - plain.G), Math.Abs(banded.B - plain.B)));
             RequireSmoke(delta > 0.02,
@@ -608,47 +609,13 @@ internal sealed partial class WindowsMainWindow
             RequireSmoke(bandedLuma < plainLuma,
                 $"背板没有压暗照片: plain={plainLuma:0.000} banded={bandedLuma:0.000}");
 
-            // 3) XAML 背景分段:不铺到主图区段上,且加上区段正好盖满整条标题栏。
+            // 3) 主图视图铺满窗口:整条标题栏都由交换链绘制,不再铺 XAML 亚克力分段;噪点取 WinUI 随包的同一张纹理。
             _backdropSummary = $" plain=({plain.R:0.000},{plain.G:0.000},{plain.B:0.000})"
                 + $" band=({banded.R:0.000},{banded.G:0.000},{banded.B:0.000}) chroma={chroma:0.000}"
-                + $" luma={plainLuma:0.000}->{bandedLuma:0.000}";
-            var barWidth = _root.ActualWidth - _titleBar.Left;
-            foreach (var segment in _titleBar.BackgroundSegments)
-            {
-                var inRoot = new Rect(segment.X + _titleBar.Left, segment.Y, segment.Width, segment.Height);
-                var overlap = inRoot;
-                overlap.Intersect(new Rect(band.X + PhotoOriginX(), band.Y + PhotoOriginY(), band.Width, band.Height));
-                RequireSmoke(overlap.IsEmpty || overlap.Width <= 0.5 || overlap.Height <= 0.5,
-                    $"XAML 亚克力铺到了主图区段上: segment={inRoot}, band={band}");
-            }
-
-            var xamlWidth = _titleBar.BackgroundSegments.Sum(segment => segment.Width);
-            RequireSmoke(Math.Abs(xamlWidth + band.Width - barWidth) <= 2,
-                $"XAML 分段与主图区段没有盖满标题栏: xaml={xamlWidth:0.0} band={band.Width:0.0} bar={barWidth:0.0}");
-
-            // 3b) 接缝:主图区段右侧紧接控制栏上的 XAML 亚克力段 —— 两侧都渐变到同一个接缝值,区段最右一列贴近它;
-            //     噪点取 WinUI 随包的同一张纹理。
-            RequireSmoke(_photo.HasTitleBarNoise, "主图区段没有载入 WinUI 亚克力噪点纹理");
-            var edges = _photo.TitleBarBackdropEdges;
-            var trailingXaml = _titleBar.BackgroundSegments.Any(segment => segment.X + _titleBar.Left > band.X + PhotoOriginX());
-            RequireSmoke(edges is { PadRight: true } && edges.Value.FadeRight == trailingXaml,
-                $"主图区段右侧邻接关系不符: edges={edges}, 右侧 XAML 段={trailingXaml}");
-            RequireSmoke(_titleBar.SeamVisibility.Trailing == trailingXaml,
-                $"XAML 亚克力段的接缝渐变与主图区段不对称: seam={_titleBar.SeamVisibility}, 右侧 XAML 段={trailingXaml}");
-            if (trailingXaml)
-            {
-                var seam = _titleBar.BackdropRecipe.SeamColor();
-                var edgeX = band.X + band.Width - (1.0 / _root.XamlRoot!.RasterizationScale);
-                RequireSmoke(_photo.TryReadViewportPixel(edgeX, sampleY, out var edgeLinear), "接缝列取样失败");
-                var edgeSrgb = (SrgbEncode(edgeLinear.R), SrgbEncode(edgeLinear.G), SrgbEncode(edgeLinear.B));
-                var seamDelta = Math.Max(Math.Abs(edgeSrgb.Item1 - seam.R),
-                    Math.Max(Math.Abs(edgeSrgb.Item2 - seam.G), Math.Abs(edgeSrgb.Item3 - seam.B)));
-                // 容差:噪点 2% 的单像素起伏 + 交界处最后一像素的渐变残量。
-                RequireSmoke(seamDelta < 0.03,
-                    $"主图区段贴接缝一列没有落到接缝值: edge=({edgeSrgb.Item1:0.000},{edgeSrgb.Item2:0.000},{edgeSrgb.Item3:0.000})"
-                    + $" seam=({seam.R:0.000},{seam.G:0.000},{seam.B:0.000})");
-                _backdropSummary += $" seamDelta={seamDelta:0.000}";
-            }
+                + $" luma={plainLuma:0.000}->{bandedLuma:0.000} regions={regions.Count}";
+            RequireSmoke(_titleBar.BackgroundSegments.Count == 0,
+                $"主图铺满窗口时标题栏仍铺了 XAML 亚克力分段: [{string.Join("; ", _titleBar.BackgroundSegments)}]");
+            RequireSmoke(_photo.HasBackdropNoise, "交换链区段没有载入 WinUI 亚克力噪点纹理");
 
             // 4) 导出带内区域截图供目视核对(回读是 D3D 调用,必须在 UI 线程)。
             SaveBandScreenshot(sampleX, sampleY, band.Width, band.Height);
@@ -656,7 +623,7 @@ internal sealed partial class WindowsMainWindow
             // 5) 再隐藏:带内像素必须回到未加背板的原始值。
             SimulateTitleBarPointerForAcceptance(false, WindowsLayout.TitleBarHotZoneHeight + 40);
             _root.UpdateLayout();
-            RequireSmoke(_photo.TitleBarBackdropBand == null, "再次隐藏后主图仍在画背板");
+            RequireSmoke(!HasBackdropRegion(band), "再次隐藏后主图仍在画标题栏背板");
             RequireSmoke(_photo.TryReadViewportPixel(sampleX, sampleY, out var restored), "恢复态背板取样失败");
             RequireSmoke(Math.Abs(restored.R - plain.R) < 0.002 && Math.Abs(restored.G - plain.G) < 0.002
                 && Math.Abs(restored.B - plain.B) < 0.002,
@@ -683,33 +650,27 @@ internal sealed partial class WindowsMainWindow
         return linear <= 0.0031308f ? linear * 12.92f : 1.055f * MathF.Pow(linear, 1f / 2.4f) - 0.055f;
     }
 
-    /// <summary>主图左上角在窗口内容坐标内的横向偏移。</summary>
-    /// <returns>偏移(DIP)。</returns>
-    private double PhotoOriginX() => PhotoBounds().X;
-
-    /// <summary>主图左上角在窗口内容坐标内的纵向偏移。</summary>
-    /// <returns>偏移(DIP)。</returns>
-    private double PhotoOriginY() => PhotoBounds().Y;
-
-    /// <summary>主图视图在窗口内容坐标内的边界。</summary>
-    /// <returns>边界矩形(DIP)。</returns>
-    private Rect PhotoBounds() => _photo.TransformToVisual(_root)
-        .TransformBounds(new Rect(0, 0, _photo.ActualWidth, _photo.ActualHeight));
-
-    /// <summary>标题栏与主图重叠区段(主图视图坐标),按布局独立算出,用于核对实现。</summary>
+    /// <summary>标题栏区段(主图视图坐标;主图视图铺满窗口,与窗口内容坐标相同),按布局独立算出。</summary>
     /// <returns>区段(DIP);无重叠时为空矩形。</returns>
     private Rect ExpectedPhotoBand()
     {
-        var bounds = PhotoBounds();
         var bar = new Rect(_titleBar.Left, 0, _root.ActualWidth - _titleBar.Left, WindowsLayout.TitleBarHeight);
-        bar.Intersect(bounds);
-        if (bar.IsEmpty)
-        {
-            return Rect.Empty;
-        }
-
-        return new Rect(bar.X - bounds.X, bar.Y - bounds.Y, bar.Width, bar.Height);
+        bar.Intersect(new Rect(0, 0, _photo.ActualWidth, _photo.ActualHeight));
+        return bar;
     }
+
+    /// <summary>交换链区段里是否有一段与给定矩形一致(1 DIP 容差)。</summary>
+    /// <param name="rect">期望矩形。</param>
+    /// <returns>存在时为 true。</returns>
+    private bool HasBackdropRegion(Rect rect) => _photo.BackdropRegions.Any(region => SameRect(region.Bounds, rect));
+
+    /// <summary>两矩形四边是否在 1 DIP 内一致。</summary>
+    /// <param name="a">矩形 a。</param>
+    /// <param name="b">矩形 b。</param>
+    /// <returns>一致时为 true。</returns>
+    private static bool SameRect(Rect a, Rect b)
+        => Math.Abs(a.X - b.X) <= 1 && Math.Abs(a.Y - b.Y) <= 1
+            && Math.Abs(a.Width - b.Width) <= 1 && Math.Abs(a.Height - b.Height) <= 1;
 
     /// <summary>把带内区域从后台缓冲导出为 PNG(目视核对亚克力)。</summary>
     /// <param name="xDip">区段中心横向位置(主图视图 DIP)。</param>
@@ -1778,7 +1739,7 @@ internal sealed partial class WindowsMainWindow
         _main.Settings.LayoutMode = LayoutMode.Col;
         await Task.Delay(200);
         _root.UpdateLayout();
-        RequireSmoke(_filterBar.Children.Count == 4, $"标准版筛选条不是四项: {_filterBar.Children.Count}");
+        RequireSmoke(FilterItemCount() == 4, $"标准版筛选条不是四项: {FilterItemCount()}");
         RequireSmoke(!WindowsFilterBar.ShowsSimilarityToggle, "标准版筛选条仍声明相似聚类开关");
         RequireSmoke(!_main.FileVM.IsSimilarityPanelOpen, "标准版仍然读取了相似面板展开态");
         _main.FileVM.FilterBar.IsSimilarityPanelOpen = true;
@@ -1790,7 +1751,7 @@ internal sealed partial class WindowsMainWindow
         await Task.Delay(150);
         _root.UpdateLayout();
         RequireSmoke(!_filterBar.Children.OfType<ToggleButton>().Any(), "标准版筛选条仍有 toggle 控件");
-        checks.Add("PASS standard filter bar: 4 actual items (sort/order/rating/count), no similarity toggle slot, stored expanded state ignored and not written");
+        checks.Add("PASS standard filter bar: 4 actual items (sort/order/rating + in-control count), no similarity toggle slot, stored expanded state ignored and not written");
 #endif
 
         await RunAnalysisDbPathCheckAsync(checks);
@@ -2856,9 +2817,13 @@ internal sealed partial class WindowsMainWindow
             $"控制栏 0 号槽位未换成警示三角: {_controlBar.RatingZeroGlyph}", 10);
         RequireSmoke(_controlBar.RatingZeroColor == WindowsLayout.StarConflict,
             $"警示三角颜色不是 color.star.conflict: {_controlBar.RatingZeroColor}");
-        RequireSmoke(_controlBar.RatingZeroButton.Width == WindowsLayout.RatingButtonSize
-            && _controlBar.RatingZeroButton.Height == WindowsLayout.RatingButtonSize,
-            "冲突三角改变了控制栏 0 号按钮几何");
+        // RATING-07：0 号槽位取共享星级控件几何(主轴 rating.control.slot × 交叉轴控件厚度),换三角不改几何与命中区。
+        var zero = _controlBar.RatingZeroButton;
+        double slotMain = _isRowLayout ? zero.ActualWidth : zero.ActualHeight;
+        double slotCross = _isRowLayout ? zero.ActualHeight : zero.ActualWidth;
+        RequireSmoke(Math.Abs(slotMain - RatingControlGeometry.Slot) < 0.5
+            && Math.Abs(slotCross - RatingControlGeometry.Thickness) < 0.5,
+            $"冲突三角改变了控制栏 0 号槽位几何: {zero.ActualWidth}x{zero.ActualHeight}");
 
         int originalRating = conflictFile.Rating;
         // 夹取断言以窗口完整位于工作区内为前提供；靠边用例会自行把窗口推出工作区，测完复位。
@@ -3028,7 +2993,7 @@ internal sealed partial class WindowsMainWindow
 
         await WaitForSmokeAsync(() => _controlBar.RatingGroupVisible, "恢复评分显隐后控制栏未刷新", 10);
 
-        // 真实快捷键子项变化必须经 Commands/InputBindings 影响位重建命令按钮与提示。
+        // 真实快捷键子项变化必须经 Commands/InputBindings 影响位刷新命令提示;同名命令按钮就地保留实例(TOOLBAR-07)。
         var next = _main.Settings.Hotkeys.First(item => item.Command == "Next" && item.IsDisplay);
         var originalBinding = next.PrimaryHotkey;
         var originalCommands = _controlBar.CommandButtons;
@@ -3039,8 +3004,8 @@ internal sealed partial class WindowsMainWindow
                 $"快捷键子项变化未刷新控制栏命令提示: {TooltipForCommand("Next")}", 10);
             var refreshed = _controlBar.CommandButtons;
             RequireSmoke(refreshed.Count == originalCommands.Count
-                && !ReferenceEquals(refreshed[0], originalCommands[0]),
-                "快捷键子项变化后命令按钮没有重建");
+                && refreshed.Select((button, index) => ReferenceEquals(button, originalCommands[index])).All(same => same),
+                "快捷键子项变化重建了命令按钮,未就地刷新提示");
         }
         finally
         {
@@ -3051,7 +3016,7 @@ internal sealed partial class WindowsMainWindow
         new ButtonAutomationPeer(_controlBar.RatingZeroButton).Invoke();
         await WaitForSmokeAsync(() => _ratingSources.IsOpen && _main.RatingSources.IsOpen,
             "稳定性检查后重开来源浮窗", 10);
-        checks.Add("PASS SETTINGS-05: two 2s memory-probe cycles plus explicit notifications for four derived cache/budget properties and an unregistered name keep the rating button identity, flyout anchor and open state; real ShowRating and hotkey-binding changes refresh through the shared impact channel");
+        checks.Add("PASS SETTINGS-05: two 2s memory-probe cycles plus explicit notifications for four derived cache/budget properties and an unregistered name keep the rating button identity, flyout anchor and open state; real ShowRating and hotkey-binding changes refresh through the shared impact channel (command buttons keep identity, tooltip refreshed in place)");
     }
 
     /// <summary>周期内存探测与派生文本会重发的设置属性名：共享分流必须判为无展示影响。</summary>
@@ -3158,16 +3123,18 @@ internal sealed partial class WindowsMainWindow
     {
         await Task.Delay(200);
         _root.UpdateLayout();
-        var combo = _filterBar.SortModeDropDown;
-        var itemsSource = combo.ItemsSource;
-        int selected = combo.SelectedIndex;
-        RequireSmoke(combo.Focus(FocusState.Programmatic), "排序方式下拉无法取得焦点");
+        var entry = _filterBar.SortEntry;
+        var menu = _filterBar.SortMenu;
+        var items = menu.Items.ToArray();
+        string CheckedState() => string.Concat(items.Select(item => item is RadioMenuFlyoutItem { IsChecked: true } ? '1' : '0'));
+        var selected = CheckedState();
+        RequireSmoke(entry.Focus(FocusState.Programmatic), "排序入口无法取得焦点");
         await Task.Delay(100);
-        combo.IsDropDownOpen = true;
-        await WaitForSmokeAsync(() => combo.IsDropDownOpen, "排序方式下拉未展开", 10);
+        menu.ShowAt(entry);
+        await WaitForSmokeAsync(() => menu.IsOpen, "排序菜单未展开", 10);
         try
         {
-            var notifications = await WaitForPeriodicSettingsNotificationsAsync(2, "筛选条下拉周期诊断");
+            var notifications = await WaitForPeriodicSettingsNotificationsAsync(2, "筛选菜单周期诊断");
             foreach (var diagnostic in DiagnosticSettingsProperties)
             {
                 NotifySettingsProperty(diagnostic);
@@ -3175,18 +3142,19 @@ internal sealed partial class WindowsMainWindow
 
             await Task.Delay(200);
             _root.UpdateLayout();
-            RequireSmoke(notifications >= 2, $"下拉展开期间只收到 {notifications} 次周期设置通知，未覆盖两个周期");
-            RequireSmoke(combo.IsDropDownOpen, "周期诊断关闭了筛选条下拉");
-            RequireSmoke(ReferenceEquals(combo.ItemsSource, itemsSource) && combo.SelectedIndex == selected,
-                "诊断通知重建了筛选条下拉内容或改变选中项");
+            RequireSmoke(notifications >= 2, $"菜单展开期间只收到 {notifications} 次周期设置通知，未覆盖两个周期");
+            RequireSmoke(menu.IsOpen, "周期诊断关闭了筛选菜单");
+            RequireSmoke(menu.Items.Count == items.Length && menu.Items.Select((item, index) => ReferenceEquals(item, items[index])).All(same => same)
+                && CheckedState() == selected,
+                "诊断通知重建了筛选菜单内容或改变选中项");
         }
         finally
         {
-            combo.IsDropDownOpen = false;
+            menu.Hide();
         }
 
-        await WaitForSmokeAsync(() => !combo.IsDropDownOpen, "排序方式下拉未收起", 10);
-        checks.Add("PASS SETTINGS-05 dropdown: real ComboBox stays open with unchanged items and selection across two 2s memory-probe cycles and explicit diagnostic notifications");
+        await WaitForSmokeAsync(() => !menu.IsOpen, "排序菜单未收起", 10);
+        checks.Add($"PASS SETTINGS-05 filter menu: real MenuFlyout ({_filterBar.Mode}) stays open with unchanged items and selection across two 2s memory-probe cycles and explicit diagnostic notifications");
     }
 
     private static byte[] RatingPacket(int rating) => Encoding.UTF8.GetBytes(
@@ -3409,10 +3377,10 @@ internal sealed partial class WindowsMainWindow
                 $"caption 拖动区压住窗口按钮: {region.X}+{region.Width} > {buttonLeftPx}");
         }
 
-        // 2) 跨度与背景。背板可能来自 XAML 分段,也可能来自主图交换链内画的那一段(SwapChainPanel 取不到
-        //    AcrylicBrush),两者加起来才是整条标题栏的亚克力。
+        // 2) 跨度与背景。主图视图铺满窗口,整条标题栏的亚克力由主图交换链绘制(SwapChainPanel 取不到 AcrylicBrush)。
         var fileBarVisible = _main.IsThumbnailViewVisible;
-        var hasBackdrop = _titleBar.IsBackgroundVisible || _photo.TitleBarBackdropBand is not null;
+        var titleBand = HasBackdropRegion(ExpectedPhotoBand());
+        var hasBackdrop = _titleBar.IsBackgroundVisible || titleBand;
         if (!fileBarVisible)
         {
             RequireSmoke(regions.Length == 1 && regions[0].X == 0 && regions[0].X + regions[0].Width == buttonLeftPx,
@@ -3422,7 +3390,7 @@ internal sealed partial class WindowsMainWindow
         }
         else if (!_isRowLayout)
         {
-            var fileRightPx = (int)Math.Round(_filePaneFrame.ActualWidth * scale);
+            var fileRightPx = (int)Math.Round((_fileDivider.Margin.Left + _fileDivider.Width) * scale);
             var barLeftPx = (int)Math.Round(_titleBar.Left * scale);
             RequireSmoke(Math.Abs(barLeftPx - fileRightPx) <= 1,
                 $"列布局标题栏未从文件栏右缘开始: {barLeftPx} vs 文件栏右缘 {fileRightPx}");
@@ -3439,12 +3407,13 @@ internal sealed partial class WindowsMainWindow
             {
                 RequireSmoke(cut.X + cut.Width > _titleBar.GetButtonsLeft(_root),
                     "常驻标题栏的触发条件不成立：筛选组与窗口按钮没有相交");
-                RequireSmoke(Math.Abs(_rowHost.Margin.Top - WindowsLayout.TitleBarHeight) < 0.01,
-                    $"窄宽度常驻栏未占用 32 点布局高度: {_rowHost.Margin.Top}");
+                RequireSmoke(Math.Abs(_filePane.Margin.Top - WindowsLayout.TitleBarHeight) < 0.01
+                    && _photo.FitInsets.Top >= WindowsLayout.TitleBarHeight + _filePane.Height,
+                    $"窄宽度常驻栏未占用 32 点布局高度: filePane={_filePane.Margin.Top} fitTop={_photo.FitInsets.Top}");
                 RequireSmoke(cut.Y >= WindowsLayout.TitleBarHeight,
                     $"筛选组未整体下移到常驻标题栏下方: {cut.Y}");
-                RequireSmoke(hasBackdrop && _photo.TitleBarBackdropBand == null,
-                    "窄宽度常驻栏未使用整通栏 XAML 亚克力，或错误启用了主图交换链背板");
+                RequireSmoke(titleBand && _titleBar.BackgroundSegments.Count == 0,
+                    "窄宽度常驻栏未由主图交换链铺整通栏亚克力");
                 RequireSmoke(regions.Length == 1 && regions[0].X == 0 && regions[0].X + regions[0].Width == buttonLeftPx,
                     "窄宽度常驻栏未提供窗口左缘到按钮组的完整拖动区");
                 var title = _titleBar.TitleElement;
@@ -3456,9 +3425,9 @@ internal sealed partial class WindowsMainWindow
             {
                 var cutLeft = (int)Math.Floor(cut.X * scale);
                 var cutRight = (int)Math.Ceiling((cut.X + cut.Width) * scale);
-                RequireSmoke(Math.Abs(_rowHost.Margin.Top) < 0.01,
-                    $"行布局悬停覆盖层不应占用布局高度: {_rowHost.Margin.Top}");
-                RequireSmoke(!_titleBar.IsBackgroundVisible && _photo.TitleBarBackdropBand == null,
+                RequireSmoke(Math.Abs(_filePane.Margin.Top) < 0.01,
+                    $"行布局悬停覆盖层不应占用布局高度: {_filePane.Margin.Top}");
+                RequireSmoke(!_titleBar.IsBackgroundVisible && !titleBand,
                     "行布局悬停标题栏不应有背景");
                 RequireSmoke(regions[0].X == 0, $"行布局拖动区未从窗口左缘开始: {regions[0].X}");
                 foreach (var region in regions)
