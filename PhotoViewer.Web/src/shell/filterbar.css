@@ -1,5 +1,7 @@
-/* 筛选入口（FILTER-07/08@web）：iPad 96 合体 / 手机横屏 88 合体 / 手机竖屏两个圆按钮。 */
+/* 筛选入口（FILTER-07/08@web）：宽形态一个玻璃胶囊内的三段（排序 / 方向 / 星级）或单按钮，
+   手机竖屏两个圆按钮、横屏「筛选 / 更多」88 合体。计数固定在控件内部底边。 */
 .pv-filter-layer {
+    --pv-filter-state-inset: 3px;
     position: absolute;
     inset: 0;
     pointer-events: none;
@@ -9,19 +11,20 @@
     pointer-events: auto;
 }
 
-.pv-filter-composite,
+.pv-filter-capsule,
 .pv-filter-entry,
 .pv-filter-more,
 .pv-filter-count,
-.pv-filter-toggle {
+.pv-filter-toggle,
+.pv-popup {
     position: absolute;
     box-sizing: border-box;
     font-family: inherit;
 }
 
-.pv-filter-composite {
+.pv-filter-capsule {
     border-radius: var(--pv-glass-radius);
-    background: var(--pv-glass-background);
+    background: var(--pv-button-material);
     backdrop-filter: var(--pv-material-blur);
     -webkit-backdrop-filter: var(--pv-material-blur);
     pointer-events: none;
@@ -33,7 +36,7 @@
     align-items: center;
     justify-content: center;
     margin: 0;
-    padding: 0;
+    padding: 0 0 var(--pv-filter-count-height);
     border: 0;
     border-radius: var(--pv-glass-radius);
     background: transparent;
@@ -43,50 +46,127 @@
     cursor: default;
     appearance: none;
     -webkit-appearance: none;
+    isolation: isolate;
 }
 
-/* 竖屏两个圆按钮没有合体容器，各自承担玻璃材质。 */
-.pv-filter-layer:not(.is-composite) .pv-filter-entry,
-.pv-filter-layer:not(.is-composite) .pv-filter-more {
-    background: var(--pv-glass-background);
+/* 手机竖屏两个圆按钮各自承担玻璃材质；横屏两段共用合体胶囊的材质。 */
+.pv-filter-layer.is-portrait .pv-filter-entry,
+.pv-filter-layer.is-portrait .pv-filter-more {
+    background: var(--pv-button-material);
     backdrop-filter: var(--pv-material-blur);
     -webkit-backdrop-filter: var(--pv-material-blur);
 }
 
-.pv-filter-entry:hover,
-.pv-filter-more:hover {
-    background: rgba(255, 255, 255, 0.08);
+.pv-filter-layer.is-portrait .pv-filter-entry:hover,
+.pv-filter-layer.is-portrait .pv-filter-more:hover,
+.pv-filter-layer.is-composite .pv-filter-entry:hover,
+.pv-filter-layer.is-composite .pv-filter-more:hover {
+    background-image: linear-gradient(var(--pv-color-menu-item-hover), var(--pv-color-menu-item-hover));
 }
 
-.pv-filter-entry:active,
-.pv-filter-more:active,
-.pv-filter-entry[aria-expanded="true"],
-.pv-filter-more[aria-expanded="true"] {
-    background: rgba(255, 255, 255, 0.14);
+.pv-filter-layer.is-portrait .pv-filter-entry:active,
+.pv-filter-layer.is-portrait .pv-filter-more:active,
+.pv-filter-layer.is-portrait .pv-filter-entry[aria-expanded="true"],
+.pv-filter-layer.is-portrait .pv-filter-more[aria-expanded="true"],
+.pv-filter-layer.is-composite .pv-filter-entry:active,
+.pv-filter-layer.is-composite .pv-filter-more:active,
+.pv-filter-layer.is-composite .pv-filter-entry[aria-expanded="true"],
+.pv-filter-layer.is-composite .pv-filter-more[aria-expanded="true"] {
+    background-image: linear-gradient(var(--pv-color-menu-item-pressed), var(--pv-color-menu-item-pressed));
 }
 
-.pv-filter-label {
+/* TOOLBAR-10：桌面单胶囊与三段段内的状态层是同心内缩的胶囊形，不改变占位与命中区。 */
+.pv-filter-entry.is-capsule::after,
+.pv-popup.is-segment::after {
+    content: "";
     position: absolute;
-    top: 6px;
-    left: 0;
-    right: 0;
+    inset: var(--pv-filter-state-inset);
+    border-radius: calc(var(--pv-glass-radius) - var(--pv-filter-state-inset));
+    background: transparent;
+    pointer-events: none;
+}
+
+.pv-filter-entry.is-capsule:hover::after,
+.pv-popup.is-segment:hover::after {
+    background: var(--pv-color-menu-item-hover);
+}
+
+.pv-filter-entry.is-capsule:active::after,
+.pv-filter-entry.is-capsule[aria-expanded="true"]::after,
+.pv-popup.is-segment:active::after,
+.pv-popup.is-segment[aria-expanded="true"]::after {
+    background: var(--pv-color-menu-item-pressed);
+}
+
+.pv-filter-label,
+.pv-popup-label {
+    position: relative;
+    z-index: 1;
+    max-width: 100%;
     overflow: hidden;
     white-space: nowrap;
-    text-align: center;
-    text-overflow: clip;
+    text-overflow: ellipsis;
+}
+
+.pv-filter-glyph {
+    position: relative;
+    z-index: 1;
+    display: none;
+    font-size: var(--pv-toolbar-command-glyph-fontSize);
+}
+
+.pv-filter-entry.is-icon .pv-filter-label {
+    display: none;
+}
+
+.pv-filter-entry.is-icon .pv-filter-glyph {
+    display: block;
+}
+
+.pv-filter-more .pv-filter-glyph {
+    display: block;
 }
 
 .pv-filter-count {
     display: flex;
-    align-items: flex-end;
+    align-items: center;
     justify-content: center;
     overflow: hidden;
     color: var(--pv-color-text-secondary);
     font-size: var(--pv-filter-count-fontSize);
     line-height: 1;
     white-space: nowrap;
-    text-overflow: ellipsis;
     pointer-events: none;
+}
+
+/* 桌面三段合体：各段显示当前选项，段间 1 点分隔线，文字在计数之上居中。 */
+.pv-popup {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+    padding: 0 var(--pv-dropdown-paddingLeft) var(--pv-filter-count-height);
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--pv-color-text-primary);
+    font-size: var(--pv-dropdown-fontSize);
+    line-height: 1;
+    text-align: center;
+    cursor: default;
+    appearance: none;
+    -webkit-appearance: none;
+    isolation: isolate;
+}
+
+.pv-popup + .pv-popup::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: var(--pv-filter-margin);
+    bottom: var(--pv-filter-margin);
+    width: 1px;
+    background: var(--pv-color-dropdown-border);
 }
 
 .pv-filter-toggle {
@@ -95,11 +175,11 @@
     justify-content: center;
     margin: 0;
     padding: 0 10px;
-    border: 1px solid var(--pv-color-filter-toggle-border);
+    border: 1px solid transparent;
     border-radius: var(--pv-glass-radius);
-    background: transparent;
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
+    background: var(--pv-button-material);
+    backdrop-filter: var(--pv-material-blur);
+    -webkit-backdrop-filter: var(--pv-material-blur);
     color: var(--pv-color-filter-toggle-foreground);
     font-size: 12px;
     line-height: 1;
@@ -127,53 +207,6 @@
 }
 
 .pv-filter-toggle-label {
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-}
-
-/* Mac 配置档：三段/单胶囊与独立开关按 desktop 令牌，不套 iPad 两段合体。 */
-.pv-filter-layer.is-mac .pv-filter-toggle {
-    border-radius: var(--pv-filter-toggle-cornerRadius);
-}
-
-.pv-filter-layer.is-mac .pv-filter-composite {
-    display: none;
-}
-
-/* mac 配置档三段/单胶囊：沿用自绘下拉外观，尺寸由布局与 dropdown 令牌决定。 */
-.pv-popup {
-    position: absolute;
-    box-sizing: border-box;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    margin: 0;
-    padding: 0 var(--pv-dropdown-chevron-rightInset) 0 var(--pv-dropdown-paddingLeft);
-    border: 1px solid var(--pv-color-dropdown-border);
-    border-radius: var(--pv-dropdown-cornerRadius);
-    background: var(--pv-color-dropdown-background);
-    color: var(--pv-color-text-primary);
-    font-size: var(--pv-dropdown-fontSize);
-    line-height: 1;
-    text-align: left;
-    cursor: default;
-    appearance: none;
-    -webkit-appearance: none;
-}
-
-.pv-popup:hover {
-    background: var(--pv-color-dropdown-background-hover);
-    border-color: var(--pv-color-dropdown-border-hover);
-}
-
-.pv-popup:active,
-.pv-popup[aria-expanded="true"] {
-    background: var(--pv-color-dropdown-background-pressed);
-}
-
-.pv-popup-label {
-    flex: 1 1 auto;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;

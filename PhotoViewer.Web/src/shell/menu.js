@@ -8,7 +8,7 @@
  *   options: { onSelect(id), onClose(), returnFocus: HTMLElement, label, style: "menu"|"dropdown", focusFirst }
  * 行为：夹在宿主内（MENU-03）；上下键移动、回车/空格选择、Esc/点外部关闭且不穿透（MENU-03、FILTER-08）；
  * 选择即关闭；同时只开一个；关闭后焦点回到 returnFocus。
- * 外观（旧壳 Avalonia Fluent 深色）：弹层 popup.*，菜单项 menu.*；下拉项 dropdown.*（当前项整行强调色、无勾号）。
+ * 外观（旧壳 Avalonia Fluent 深色）：弹层 popup.*，菜单项 menu.*；下拉项 dropdown.*（当前项在勾选列画勾）。
  */
 import { el } from "./dom.js";
 import { codepoint, icon } from "./icons.js";
@@ -34,8 +34,8 @@ export function createMenu({ host, t, onOpenChange = () => {} }) {
         close("replaced");
         const dropdown = options.style === "dropdown";
         const checkable = items.some((item) => item.type === "check" || item.type === "radio");
-        // MENU-03：菜单内有任一勾选项时所有项都让出勾选列 + 间距；下拉用整行选中色，不画勾号。
-        const hasCheckColumn = checkable && !dropdown;
+        // MENU-03 / FILTER-08：菜单内有任一勾选项时所有项都让出勾选列 + 间距，当前项在该列画勾。
+        const hasCheckColumn = checkable;
         const checkGlyph = codepoint(t("icon.check"));
         const shield = el("div", { class: "pv-menu-shield" });
         const list = el("div", {
@@ -78,7 +78,6 @@ export function createMenu({ host, t, onOpenChange = () => {} }) {
             row.append(
                 el("span", { class: "pv-menu-label" }, item.label),
                 el("span", { class: "pv-menu-shortcut" }, item.shortcut ?? ""));
-            if (dropdown && item.checked) row.classList.add("is-selected");
             if (item.enabled === false) row.classList.add("is-disabled");
             row.addEventListener("pointerenter", () => focusRow(rows.indexOf(row)));
             row.addEventListener("pointerdown", (event) => {

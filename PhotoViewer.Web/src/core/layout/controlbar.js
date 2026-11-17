@@ -27,16 +27,16 @@ export function compactRatingLength(t) {
     return t("rating.compact.minLength");
 }
 
-export function exifMainLength(kind, count, axis, t, profile = "web") {
+export function exifMainLength(kind, count, axis, t) {
     if (kind === "exif") {
-        if (axis === "vertical" && profile !== "mac") {
+        // TOOLBAR-05：竖排一律无衬底，只剩整项与项距，不占块内边距。
+        if (axis === "vertical") {
             const itemHeight = exifItemHeight(t);
             return count > 0 ? count * itemHeight + (count - 1) * t("toolbar.exif.item.spacing") : 0;
         }
         const padding = t("toolbar.exif.padding");
-        const itemMain = axis === "vertical" ? exifItemHeight(t) : exifItemWidth(t);
         return count > 0
-            ? padding * 2 + count * itemMain + (count - 1) * t("toolbar.exif.item.spacing")
+            ? padding * 2 + count * exifItemWidth(t) + (count - 1) * t("toolbar.exif.item.spacing")
             : 0;
     }
     if (kind === "rating") return ratingMainLength(t);
@@ -47,20 +47,20 @@ export function groupMainLength(kind, count, axis, t) {
     return exifMainLength(kind, count, axis, t);
 }
 
-function exifChildFrames(kind, count, axis, t, blockCross, profile = "web") {
+function exifChildFrames(kind, count, axis, t, blockCross) {
     const frames = [];
     const itemWidth = exifItemWidth(t);
     const itemHeight = exifItemHeight(t);
     const spacing = t("toolbar.exif.item.spacing");
+    // TOOLBAR-05：无衬底纵排保留 52 点透明宽度容器，与同列按钮和星级控件同轴。
     if (axis === "vertical") {
-        const padding = profile === "mac" ? t("toolbar.exif.padding") : 0;
         for (let index = 0; index < count; index += 1) {
             frames.push({
                 kind,
                 index,
-                x: padding,
-                y: padding + index * (itemHeight + spacing),
-                w: profile === "mac" ? itemWidth : blockCross,
+                x: 0,
+                y: index * (itemHeight + spacing),
+                w: itemWidth,
                 h: itemHeight,
             });
         }
@@ -141,20 +141,19 @@ export function computeControlBar(spec, t) {
         commandCount = 0,
         crossNear = t("toolbar.padding"),
         crossFar = t("toolbar.padding"),
-        profile = "web",
     } = spec;
     const padding = t("toolbar.padding");
     const spacing = t("toolbar.group.spacing");
     const available = mainSize - padding * 2;
-    const ratingCompact = profile !== "mac" && available < ratingMainLength(t);
+    // TOOLBAR-03：桌面端评分恒为展开态，空间不足由整组换行/换列或滚动吸收。
     const specs = [];
     if (exifCount > 0) specs.push({ kind: "exif", count: exifCount });
     if (showRating) {
         specs.push({
             kind: "rating",
             count: RATING_COUNT,
-            compact: ratingCompact,
-            length: ratingCompact ? compactRatingLength(t) : ratingMainLength(t),
+            compact: false,
+            length: ratingMainLength(t),
         });
     }
     if (commandCount > 0) specs.push({ kind: "command", count: commandCount });
@@ -162,10 +161,8 @@ export function computeControlBar(spec, t) {
     const lines = [];
     let current = null;
     for (const item of specs) {
-        const length = item.length ?? exifMainLength(item.kind, item.count, axis, t, profile);
-        const cross = item.kind === "exif" && axis === "vertical" && profile === "mac"
-            ? exifItemWidth(t) + t("toolbar.exif.padding") * 2
-            : glass(t);
+        const length = item.length ?? exifMainLength(item.kind, item.count, axis, t);
+        const cross = item.kind === "exif" && axis === "vertical" ? exifItemWidth(t) : glass(t);
         if (current && current.length + spacing + length > available) {
             lines.push(current);
             current = null;
@@ -186,9 +183,8 @@ export function computeControlBar(spec, t) {
         let cursor = line.mainStart;
         for (const item of line.groups) {
             const cross = item.cross ?? glass(t);
-            const childCross = axis === "vertical" ? cross : cross;
             const children = item.kind === "exif"
-                ? exifChildFrames(item.kind, item.count, axis, t, childCross, profile)
+                ? exifChildFrames(item.kind, item.count, axis, t, cross)
                 : item.kind === "rating"
                     ? ratingChildFrames(axis, t, { compact: item.compact, length: item.length })
                     : commandChildFrames(item.count, axis, t);
@@ -308,6 +304,9 @@ export function computePhoneControl(spec, t) {
     const itemHeight = exifItemHeight(t);
     const itemSpacing = t("toolbar.exif.item.spacing");
     const itemStep = itemHeight + itemSpacing;
+    // TOOLBAR-05：无衬底透明容器以按钮列中轴居中，宽取整项宽但不超出按钮加两侧边距。
+    const exifCross = Math.min(exifItemWidth(t), button + t("toolbar.padding") * 2);
+    const exifX = (button - exifCross) / 2;
     // TOOLBAR-02：仅显示评分时为评分保留紧凑最短长度；关闭评分时这份保留与对应组距一起释放。
     const reservedRating = showRating ? compactMin : 0;
     const baseGroups = 1 + (showRating ? 1 : 0);
@@ -330,7 +329,7 @@ export function computePhoneControl(spec, t) {
                 index,
                 x: 0,
                 y: index * itemStep,
-                w: button,
+                w: exifCross,
                 h: itemHeight,
             })),
         });
@@ -340,7 +339,7 @@ export function computePhoneControl(spec, t) {
     verticalStack(entries, height, t);
     for (const entry of entries) {
         if (entry.kind === "exif") {
-            slots.exif = { x: 0, y: entry.y, w: button, h: entry.h, items: entry.items };
+            slots.exif = { x: exifX, y: entry.y, w: exifCross, h: entry.h, items: entry.items };
         } else if (entry.kind === "rating") {
             slots.rating = {
                 x: 0,

@@ -289,10 +289,12 @@ export function createCard(ctx, { mode = "film", tier = "large" } = {}) {
 
         setText(name, card.displayName);
         root.dataset.key = card.key;
-        // FILM-05：完整文件名与时间走自绘悬停提示（data-tooltip），不再用浏览器原生 title。
-        root.dataset.tooltip = taken === undefined || taken === null
+        // FILM-05：完整文件名与时间走自绘悬停提示（data-tooltip），提示挂在文件名与时间两行。
+        const tooltip = taken === undefined || taken === null
             ? card.displayName
             : `${card.displayName}\n${formatTakenFull(taken, photo.tzOffset)}`;
+        name.dataset.tooltip = tooltip;
+        dateText.dataset.tooltip = tooltip;
         const ratingLabel = conflict ? "星级冲突" : RATING_LABELS[rating];
         const label = `${card.displayName}，${ratingLabel}`;
         if (root.getAttribute("aria-label") !== label) root.setAttribute("aria-label", label);

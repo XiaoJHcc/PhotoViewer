@@ -14,7 +14,7 @@
  * clickAnalysisBlank/locateDetail/extractAll/setHistogramSource/simulateMemoryWarning/setDpr/menuModel/notify/canOpen
  *   app.filmAnimating             胶片栏定位动画是否在播放（调试读数）
  */
-import { FileList } from "./filter.js";
+import { FileList, RATING_FILTERS, SORT_KEYS, SORT_ORDERS } from "./filter.js";
 import { displayStars, hasRatingConflict } from "./rating.js";
 import { Viewport, displaySize } from "./viewport.js";
 import { FilmScroller, FilmPositioner } from "./filmscroll.js";
@@ -1136,6 +1136,17 @@ class MainApp {
         this._pendingFilmLocate = kind === "reshow" ? "reshow" : "navigate";
     }
 
+    _filterSegmentWidths() {
+        // FILTER-07：段宽取该段全部选项中最宽的文字，切换选项不改变段宽；filter.control.width 为最窄段宽。
+        const fontSize = this._t("dropdown.fontSize");
+        const horizontalPadding = this._t("dropdown.paddingLeft") * 2;
+        const minimum = this._t("filter.control.width");
+        return [SORT_KEYS, SORT_ORDERS, RATING_FILTERS].map((options) => options.reduce(
+            (width, option) => Math.max(width,
+                Math.ceil(this._measureText(option.label ?? "", fontSize) + horizontalPadding)),
+            minimum));
+    }
+
     _scene() {
         const toolbar = this._buildToolbar();
         const similarity = this._similarity.snapshot();
@@ -1161,6 +1172,7 @@ class MainApp {
             similarityDockTexts,
             photoCount: this._fileList.count,
             countText: `共 ${this._fileList.count} 张`,
+            filterSegmentWidths: this._filterSegmentWidths(),
             exifCount: toolbar.exif.length,
             showRating: this._settings.showRating,
             commandCount: toolbar.commands.length,

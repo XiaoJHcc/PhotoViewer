@@ -99,15 +99,13 @@ if (formFilter !== "phone") {
         layoutMode: "row",
         safeArea: { top: 24, right: 0, bottom: 0, left: 0 },
     });
-    if (profile === "mac") {
-        exportLayout("Col-1200x850-segments28", {
-            width: 1200,
-            height: 850,
-            layoutMode: "col",
-            filterSegmentWidth: 28,
-        });
-        exportLayout("Row-360x800", { width: 360, height: 800, layoutMode: "row" });
-    }
+    exportLayout("Col-1200x850-segments28", {
+        width: 1200,
+        height: 850,
+        layoutMode: "col",
+        filterSegmentWidth: 28,
+    });
+    exportLayout("Row-360x800", { width: 360, height: 800, layoutMode: "row" });
 }
 
 if (formFilter !== "wide") {

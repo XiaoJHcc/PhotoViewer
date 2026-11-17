@@ -72,10 +72,10 @@ test("SHELL-10：安全区只归一方向；横屏忽略底部手势条，刘海
 test("SHELL-01：宽形态主图铺满窗口，适应区独立随分区收缩", () => {
     const col = layout();
     assert.deepEqual(col.panes.photoView, { x: 0, y: 0, w: 1200, h: 850 });
-    assert.deepEqual(col.panes.fitRect, { x: 117, y: 0, w: 1018, h: 850 });
+    assert.deepEqual(col.panes.fitRect, { x: 117, y: 0, w: 1010, h: 850 });
     assert.deepEqual(col.panes.filePane, { x: 0, y: 0, w: 116, h: 850 });
     assert.deepEqual(col.panes.fileDivider, { x: 116, y: 0, w: 1, h: 850 });
-    assert.deepEqual(col.panes.controlPane, { x: 1136, y: 0, w: 64, h: 850 });
+    assert.deepEqual(col.panes.controlPane, { x: 1128, y: 0, w: 72, h: 850 });
     assert.deepEqual(col.dividers.map((entry) => entry.kind), ["file", "tool"]);
 
     const noControl = layout({ showControlbar: false });
@@ -87,7 +87,7 @@ test("SHELL-01：宽形态主图铺满窗口，适应区独立随分区收缩", 
     assert.equal(noFile.panes.filePane.w, 0);
     assert.equal(noFile.filter, null);
     assert.equal(noFile.film, null);
-    assert.deepEqual(noFile.panes.fitRect, { x: 0, y: 0, w: 1135, h: 850 });
+    assert.deepEqual(noFile.panes.fitRect, { x: 0, y: 0, w: 1127, h: 850 });
 
     const row = layout({ layoutMode: "row" });
     assert.equal(row.panes.filePane.h, row.filterBandHeight + t("film.band.height"));
@@ -96,25 +96,34 @@ test("SHELL-01：宽形态主图铺满窗口，适应区独立随分区收缩", 
     assert.deepEqual(row.panes.fitRect, { x: 0, y: 224, w: 1200, h: 561 });
 });
 
-test("FILTER-07：iPad 96 合体两段各 48，列布局与卡片末端同缘，AI 开关独立", () => {
+test("FILTER-07：宽形态三段合体 / 单胶囊与 AI 开关，三段放不下回退单胶囊", () => {
     const col = layout().filter;
+    assert.equal(col.kind, "capsule");
+    assert.equal(col.leadingInset, t("filter.margin"));
     assert.deepEqual(col.composite, { x: 10, y: 10, w: 96, h: 44 });
-    assert.deepEqual(col.entry, { x: 10, y: 10, w: 48, h: 44 });
-    assert.deepEqual(col.more, { x: 58, y: 10, w: 48, h: 44 });
+    assert.deepEqual(col.entry, { x: 10, y: 10, w: 96, h: 44 });
+    assert.equal(col.more, null);
+    assert.deepEqual(col.controls, {});
     assert.deepEqual(col.toggle, { x: 10, y: 62, w: 96, h: 44 });
+    assert.deepEqual(col.count, { x: 10, y: 37, w: 96, h: t("filter.count.height") });
     assert.equal(col.bar.h, 116);
     assert.equal(layout().film.lead, 116);
     assert.deepEqual(layout().film.items[0], { x: 10, y: 116, w: 96, h: 144 });
 
     const row = layout({ layoutMode: "row" }).filter;
-    assert.deepEqual(row.entry, { x: 500, y: 10, w: 48, h: 44 });
-    assert.deepEqual(row.more, { x: 548, y: 10, w: 48, h: 44 });
-    assert.deepEqual(row.toggle, { x: 604, y: 10, w: 96, h: 44 });
+    assert.equal(row.kind, "segments");
+    assert.deepEqual(row.control, { x: 416, y: 10, w: 270, h: 44 });
+    assert.deepEqual(row.controls.sort, { x: 416, y: 10, w: 90, h: 44 });
+    assert.deepEqual(row.controls.order, { x: 506, y: 10, w: 90, h: 44 });
+    assert.deepEqual(row.controls.rating, { x: 596, y: 10, w: 90, h: 44 });
+    assert.deepEqual(row.toggle, { x: 694, y: 10, w: 90, h: 44 });
+    assert.deepEqual(row.count, { x: 596, y: 37, w: 90, h: t("filter.count.height") });
     assert.equal(row.bar.h, 64);
 
     const standard = layout({ showSimilarity: false, layoutMode: "row" });
     assert.equal(standard.filter.toggle, null);
-    assert.equal(standard.filter.composite.x, (1200 - 96) / 2);
+    assert.equal(standard.filter.control.x, (1200 - 270) / 2);
+    assert.equal(standard.filter.kind, "segments");
     assert.equal(standard.filter.bar.h, 64);
 });
 
@@ -125,15 +134,15 @@ test("TOOLBAR-02/03/05：EXIF 52×44、评分 224×44、命令 44，整组换行
     assert.equal(groupMainLength("command", 6, "horizontal", t), 6 * 44 + 5 * 8);
 
     const col = layout().control;
-    assert.deepEqual(col.document, { x: 0, y: 0, w: 64, h: 850 });
+    assert.deepEqual(col.document, { x: 0, y: 0, w: 72, h: 850 });
     assert.deepEqual(col.groups.map((group) => [group.kind, group.x, group.y, group.w, group.h]), [
-        ["exif", 10, 76, 44, 150],
-        ["rating", 10, 236, 44, 224],
-        ["command", 10, 470, 44, 304],
+        ["exif", 10, 76, 52, 150],
+        ["rating", 10, 236, 52, 224],
+        ["command", 10, 470, 52, 304],
     ]);
-    assert.deepEqual(col.groups[0].children[0], { kind: "exif", index: 0, x: 0, y: 0, w: 44, h: 36 });
-    assert.deepEqual(col.groups[1].children[0], { kind: "rating", index: 0, x: 0, y: 184, w: 44, h: 36 });
-    assert.deepEqual(col.groups[1].children[5], { kind: "rating", index: 5, x: 0, y: 4, w: 44, h: 36 });
+    assert.deepEqual(col.groups[0].children[0], { kind: "exif", index: 0, x: 0, y: 0, w: 52, h: 36 });
+    assert.deepEqual(col.groups[1].children[0], { kind: "rating", index: 0, x: 4, y: 184, w: 44, h: 36 });
+    assert.deepEqual(col.groups[1].children[5], { kind: "rating", index: 5, x: 4, y: 4, w: 44, h: 36 });
 
     const rowControl = layout({ layoutMode: "row" }).control;
     assert.deepEqual(rowControl.groups.map((group) => [group.kind, group.x, group.y, group.w, group.h]), [
@@ -177,10 +186,10 @@ test("SHELL-12：分析与控制相邻时工具区共用 8 点接缝，交叉轴
     const both = layout({ showAnalysis: true, analysisTileCount: 6 });
     assert.equal(both.analysis.cross, 131 + 10 + 8);
     assert.equal(both.analysis.tiles[0].x, 10);
-    assert.deepEqual(both.panes.analysisPane, { x: 997, y: 0, w: 149, h: 850 });
-    assert.deepEqual(both.panes.controlPane, { x: 1146, y: 0, w: 54, h: 850 });
-    assert.deepEqual(both.panes.toolRegion, { x: 997, y: 0, w: 203, h: 850 });
-    assert.deepEqual(both.panes.fitRect, { x: 117, y: 0, w: 879, h: 850 });
+    assert.deepEqual(both.panes.analysisPane, { x: 989, y: 0, w: 149, h: 850 });
+    assert.deepEqual(both.panes.controlPane, { x: 1138, y: 0, w: 62, h: 850 });
+    assert.deepEqual(both.panes.toolRegion, { x: 989, y: 0, w: 211, h: 850 });
+    assert.deepEqual(both.panes.fitRect, { x: 117, y: 0, w: 871, h: 850 });
     assert.deepEqual(both.dividers.map((entry) => entry.kind), ["file", "tool"]);
 
     const analysisOnly = layout({ showAnalysis: true, showControlbar: false });
@@ -189,7 +198,7 @@ test("SHELL-12：分析与控制相邻时工具区共用 8 点接缝，交叉轴
     assert.deepEqual(analysisOnly.panes.fitRect, { x: 117, y: 0, w: 931, h: 850 });
 
     const controlOnly = layout();
-    assert.equal(controlOnly.panes.toolRegion.w, 64);
+    assert.equal(controlOnly.panes.toolRegion.w, 72);
 });
 
 test("ANALYSIS-03：瓦片等边长公式与独立/相邻交叉轴", () => {
@@ -360,8 +369,12 @@ test("SHELL-09：手机横屏刘海侧列、88 合体、无衬底 EXIF 与镜像
     assert.deepEqual(landscape.panes.controlPane, { x: 790, y: 0, w: 54, h: 390 });
     assert.deepEqual(landscape.panes.fitRect, { x: 132, y: 0, w: 585, h: 390 });
     assert.equal(landscape.exif.variant, "bare");
-    assert.deepEqual(landscape.exif.frame, { x: 790, y: 10, w: 44, h: 150 });
-    assert.equal(landscape.control.slots.exif.w, 44);
+    assert.deepEqual(landscape.exif.frame, { x: 786, y: 10, w: 52, h: 150 });
+    assert.equal(landscape.control.slots.exif.w, t("toolbar.exif.item.width"));
+    assert.equal(landscape.exif.items[0].w, t("toolbar.exif.item.width"));
+    assert.equal(landscape.control.slots.exif.x + landscape.control.slots.exif.w / 2,
+        landscape.control.slots.fit.x + t("shell.glass.button.size") / 2, "横屏 EXIF 容器未与按钮列同轴");
+    assert.equal(landscape.panes.controlPane.w, t("shell.glass.button.size") + t("toolbar.padding"));
     const { children: landscapeChildren, ...landscapeSlot } = landscape.control.slots.rating;
     assert.deepEqual(landscapeSlot, {
         x: 790, y: 170, w: 44, h: 112, compact: true,
@@ -394,6 +407,9 @@ test("SHELL-09：手机横屏刘海侧列、88 合体、无衬底 EXIF 与镜像
     });
     assert.equal(mirroredChildren.length, 6);
     assert.deepEqual(mirrored.control.slots.fit, { x: 10, y: 292, w: 44, h: 44 });
+    assert.deepEqual(mirrored.exif.frame, { x: 6, y: 10, w: 52, h: 150 });
+    assert.equal(mirrored.exif.frame.x + mirrored.exif.frame.w / 2,
+        mirrored.control.slots.fit.x + t("shell.glass.button.size") / 2, "镜像后 EXIF 容器未与按钮列同轴");
     assert.deepEqual(mirrored.nodes["control.fit"], [10, 292, 44, 44]);
     assert.equal(mirrored.analysis.tiles[0].x, 8, "镜像后接缝未换到控制栏一侧");
     assert.equal(landscape.analysis.tiles[0].x, 10, "非镜像分析瓦片未留朝主图内边距");
@@ -539,15 +555,15 @@ test("SHELL-12：宽形态行布局文件栏背景从窗口顶边铺到内容末
     assert.deepEqual(row.panes.fitRect, { x: 0, y: 248, w: 1200, h: 537 });
 });
 
-test("TOOLBAR-03：宽评分组可用主轴不足 224 时用 88 紧凑外框，子节点不越出", () => {
-    const compact = computeControlBar({ axis: "horizontal", mainSize: 200, exifCount: 0, showRating: true, commandCount: 0 }, t);
-    const rating = compact.groups[0];
-    assert.equal(rating.w, 88);
+test("TOOLBAR-03：宽形态评分恒为 224 展开态，空间不足由溢出吸收", () => {
+    const narrow = computeControlBar({ axis: "horizontal", mainSize: 200, exifCount: 0, showRating: true, commandCount: 0 }, t);
+    const rating = narrow.groups[0];
+    assert.equal(rating.w, 224);
     assert.equal(rating.h, 44);
-    for (const child of rating.children) {
-        assert.ok(child.x >= 0 && child.x + child.w <= 88.0001, `紧凑子节点越出外框：${child.x}+${child.w}`);
-        assert.equal(child.h, 44);
-    }
+    assert.equal(rating.compact, false);
+    assert.equal(rating.children.length, 6);
+    assert.equal(narrow.overflow, true);
+
     const expanded = computeControlBar({ axis: "horizontal", mainSize: 1200, exifCount: 0, showRating: true, commandCount: 0 }, t);
     assert.equal(expanded.groups[0].w, 224);
     assert.deepEqual(expanded.groups[0].children[0], { kind: "rating", index: 0, x: 4, y: 0, w: 36, h: 44 });
@@ -555,14 +571,27 @@ test("TOOLBAR-03：宽评分组可用主轴不足 224 时用 88 紧凑外框，�
     assert.deepEqual(vertical.groups[0].children[0], { kind: "rating", index: 0, x: 0, y: 184, w: 44, h: 36 });
 });
 
-test("TOOLBAR-03：mac 配置档在窄窗口仍保持 224 展开评分", () => {
-    const result = computeControlBar({ axis: "horizontal", mainSize: 200, exifCount: 0, showRating: true, commandCount: 0, profile: "mac" }, t);
-    const rating = result.groups[0];
-    assert.equal(rating.w, 224);
-    assert.equal(rating.h, 44);
-    assert.equal(rating.compact, false);
-    assert.equal(rating.children.length, 6);
-    assert.equal(result.overflow, true);
+test("TOOLBAR-05：竖排 EXIF 无衬底 52 宽容器，横排为 44 高衬底块", () => {
+    const vertical = computeControlBar({ axis: "vertical", mainSize: 850, exifCount: 4, showRating: false, commandCount: 0 }, t);
+    assert.deepEqual(vertical.groups[0], {
+        kind: "exif",
+        index: 0,
+        length: 150,
+        cross: 52,
+        compact: false,
+        x: 10,
+        y: 350,
+        w: 52,
+        h: 150,
+        children: vertical.groups[0].children,
+    });
+    assert.deepEqual(vertical.groups[0].children[3], { kind: "exif", index: 3, x: 0, y: 114, w: 52, h: 36 });
+    assert.equal(vertical.document.w, 72);
+
+    const horizontal = computeControlBar({ axis: "horizontal", mainSize: 700, exifCount: 4, showRating: false, commandCount: 0 }, t);
+    assert.equal(horizontal.groups[0].h, 44);
+    assert.equal(horizontal.groups[0].children[0].h, 44);
+    assert.equal(horizontal.groups[0].children[0].x, t("toolbar.exif.padding"));
 });
 
 test("SHELL-08/10：竖屏适应区与底行使用左右安全区，底距压入 home indicator", () => {
@@ -587,7 +616,7 @@ test("SHELL-09：横屏关闭评分释放 rating 保留位，EXIF 整项裁剪�
         safeArea: { left: 59 }, showAnalysis: true, showRating: false,
     });
     assert.equal(noRating.control.slots.rating, undefined);
-    assert.deepEqual(noRating.control.slots.exif, { x: 790, y: 71, w: 44, h: 150, items: noRating.control.slots.exif.items });
+    assert.deepEqual(noRating.control.slots.exif, { x: 786, y: 71, w: 52, h: 150, items: noRating.control.slots.exif.items });
     assert.deepEqual(noRating.control.slots.fit, { x: 790, y: 231, w: 44, h: 44 });
     assert.deepEqual(noRating.control.slots.enhance, { x: 790, y: 275, w: 44, h: 44 });
 
@@ -638,7 +667,7 @@ test("SHELL-09：横屏关闭评分释放 rating 保留位，EXIF 整项裁剪�
     assert.equal(fit.y + fit.h, enhance.y, "缩放/增强两段之间出现组距");
 });
 
-test("FILTER-07/TOOLBAR-05@mac：mac 配置档使用 42 让位、96 胶囊与桌面 EXIF 衬底", () => {
+test("FILTER-07/TOOLBAR-05@mac：mac 配置档只在列布局首控件让位与窗口装饰上与默认档不同", () => {
     const col = layout({}, mac, "mac");
     assert.equal(col.filter.kind, "capsule");
     assert.equal(col.filter.leadingInset, mac("shell.filter.leadingInset"));
@@ -649,12 +678,12 @@ test("FILTER-07/TOOLBAR-05@mac：mac 配置档使用 42 让位、96 胶囊与桌
     assert.deepEqual(col.filter.toggle, { x: 10, y: 94, w: 96, h: 44 });
     assert.equal(col.filter.bar.h, 148);
     assert.equal(col.film.lead, 148);
-    assert.equal(col.exif.variant, "block");
-    assert.deepEqual(col.exif.frame, { x: 10, y: 70, w: 64, h: 162 });
-    assert.deepEqual(col.exif.origin, { x: 1116, y: 0 });
-    assert.deepEqual(col.nodes["exif.block"], [1126, 70, 64, 162]);
-    assert.deepEqual(col.exif.items[0], { kind: "exif", index: 0, x: 6, y: 6, w: 52, h: 36 });
-    assert.deepEqual(col.control.document, { x: 0, y: 0, w: 84, h: 850 });
+    assert.equal(col.exif.variant, "bare");
+    assert.deepEqual(col.exif.frame, { x: 10, y: 76, w: 52, h: 150 });
+    assert.deepEqual(col.exif.origin, { x: 1128, y: 0 });
+    assert.deepEqual(col.nodes["exif.block"], [1138, 76, 52, 150]);
+    assert.deepEqual(col.exif.items[0], { kind: "exif", index: 0, x: 0, y: 0, w: 52, h: 36 });
+    assert.deepEqual(col.control.document, { x: 0, y: 0, w: 72, h: 850 });
 
     const colSegments = layout({ filterSegmentWidth: 28 }, mac, "mac");
     assert.equal(colSegments.filter.kind, "segments");

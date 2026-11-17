@@ -51,13 +51,14 @@
 .pv-control-rating {
     position: absolute;
     box-sizing: border-box;
-    background: var(--pv-glass-background);
+    background: var(--pv-button-material);
     backdrop-filter: var(--pv-material-blur);
     -webkit-backdrop-filter: var(--pv-material-blur);
     border-radius: var(--pv-glass-radius);
 }
 
 .pv-rating-glyph {
+    position: relative;
     display: block;
     font-size: var(--pv-rating-control-glyph-fontSize);
 }
@@ -70,6 +71,7 @@
     font-size: var(--pv-rating-compact-glyph-fontSize);
 }
 
+/* TOOLBAR-03/TOOLBAR-10：评分槽常态与禁用透明；悬停/按下在槽位内画内切正圆。 */
 .pv-control-rating-button {
     position: absolute;
     display: flex;
@@ -81,14 +83,28 @@
     border-radius: 4px;
     background: transparent;
     cursor: default;
+    isolation: isolate;
 }
 
-.pv-control-rating-button:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.08);
+.pv-control-rating-button::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: var(--pv-rating-slot, var(--pv-rating-control-slot));
+    height: var(--pv-rating-slot, var(--pv-rating-control-slot));
+    border-radius: 50%;
+    background: transparent;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
 }
 
-.pv-control-rating-button:active:not(:disabled) {
-    background: rgba(255, 255, 255, 0.14);
+.pv-control-rating-button:hover:not(:disabled)::before {
+    background: var(--pv-color-menu-item-hover);
+}
+
+.pv-control-rating-button:active:not(:disabled)::before {
+    background: var(--pv-color-menu-item-pressed);
 }
 
 /* TOOLBAR-03/04：星与叉取 icon.* 字体字形；点亮用实心星、未点亮用描边星。 */
@@ -127,18 +143,25 @@
     display: none;
 }
 
-/* TOOLBAR-03：无照片时保留几何，只降强调。 */
+/* TOOLBAR-03：无照片时保留几何，只把内容降到禁用强调。 */
 .pv-control-rating-button:disabled {
     background: transparent;
 }
 
-.pv-control-rating-button:disabled.is-on,
+.pv-control-rating-button:disabled.is-on {
+    color: color-mix(in srgb, var(--pv-color-star-on) calc(var(--pv-color-toolbar-disabled-content-alpha) * 100%), transparent);
+}
+
 .pv-control-rating-button:disabled.is-off {
-    color: rgba(128, 128, 128, 0.45);
+    color: color-mix(in srgb, var(--pv-color-star-off) calc(var(--pv-color-toolbar-disabled-content-alpha) * 100%), transparent);
 }
 
 .pv-control-rating-button:disabled.is-clear {
-    color: rgba(102, 102, 102, 0.5);
+    color: color-mix(in srgb, var(--pv-color-star-clear) calc(var(--pv-color-toolbar-disabled-content-alpha) * 100%), transparent);
+}
+
+.pv-control-rating-button:disabled.is-conflict {
+    color: color-mix(in srgb, var(--pv-color-star-conflict) calc(var(--pv-color-toolbar-disabled-content-alpha) * 100%), transparent);
 }
 
 .pv-control-command-button {
@@ -149,8 +172,8 @@
     justify-content: center;
     margin: 0;
     padding: 0;
-    background: var(--pv-color-toolbar-command-background);
-    border: 1px solid var(--pv-color-toolbar-command-border);
+    background: var(--pv-button-material);
+    border: 1px solid transparent;
     border-radius: var(--pv-glass-radius);
     backdrop-filter: var(--pv-material-blur);
     -webkit-backdrop-filter: var(--pv-material-blur);
@@ -158,24 +181,19 @@
     cursor: default;
 }
 
+/* TOOLBAR-10：常态只有按钮材质，指针进入才出现描边，按下只换底色。 */
 .pv-control-command-button:hover:not(:disabled) {
-    background: #3d3d3d;
+    background: var(--pv-color-toolbar-command-hover-background);
+    border-color: var(--pv-color-toolbar-command-hover-border);
 }
 
 .pv-control-command-button:active:not(:disabled) {
-    background: #292929;
-}
-
-/* TOOLBAR-12：开关型命令用按下态表达，状态始终来自 app。 */
-.pv-control-command-button[aria-pressed="true"] {
-    background: rgba(10, 132, 255, 0.22);
-    border-color: rgba(10, 132, 255, 0.7);
+    background: var(--pv-color-toolbar-command-pressed-background);
+    border-color: var(--pv-color-toolbar-command-hover-border);
 }
 
 .pv-control-command-button:disabled {
-    background: #2b2b2b;
-    border-color: rgba(255, 255, 255, 0.12);
-    color: rgba(255, 255, 255, 0.3);
+    color: color-mix(in srgb, var(--pv-color-text-primary) calc(var(--pv-color-toolbar-disabled-content-alpha) * 100%), transparent);
 }
 
 .pv-command-icon {
@@ -224,7 +242,7 @@
 .pv-control-capsule {
     position: absolute;
     box-sizing: border-box;
-    background: var(--pv-glass-background);
+    background: var(--pv-button-material);
     backdrop-filter: var(--pv-material-blur);
     -webkit-backdrop-filter: var(--pv-material-blur);
     border-radius: var(--pv-glass-radius);
@@ -241,25 +259,20 @@
 }
 
 .pv-control-capsule .pv-control-command-button.is-capsule-segment:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--pv-color-menu-item-hover);
 }
 
 .pv-control-capsule .pv-control-command-button.is-capsule-segment:active:not(:disabled) {
-    background: rgba(255, 255, 255, 0.14);
+    background: var(--pv-color-menu-item-pressed);
 }
 
 .pv-control-capsule .pv-control-command-button.is-capsule-segment:disabled {
     background: transparent;
     border: 0;
-    color: rgba(255, 255, 255, 0.3);
+    color: color-mix(in srgb, var(--pv-color-text-primary) calc(var(--pv-color-toolbar-disabled-content-alpha) * 100%), transparent);
 }
 
 .pv-control-capsule .pv-control-command-button.is-capsule-segment:focus-visible {
     outline: 2px solid var(--pv-accent);
     outline-offset: -2px;
-}
-
-.pv-control-capsule .pv-control-command-button.is-capsule-segment[aria-pressed="true"] {
-    background: rgba(10, 132, 255, 0.22);
-    border: 0;
 }

@@ -17,6 +17,12 @@
     touch-action: manipulation;
 }
 
+/* ANALYSIS-04：悬停/键盘激活的细节瓦片用 1 点高亮描边表达唯一活动目标，圆角与瓦片一致。 */
+.pv-analysis-tile.is-detail:hover,
+.pv-analysis-tile.is-detail[aria-pressed="true"] {
+    border-color: var(--pv-color-analysis-highlight);
+}
+
 .pv-analysis-canvas {
     position: absolute;
     left: 0;

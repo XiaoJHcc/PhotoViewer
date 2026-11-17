@@ -178,12 +178,37 @@ export function mountControlBar(host, ctx) {
         ratingButtons.push(createRatingButton(value));
     }
 
+    function placeRatingChild(button, child) {
+        place(button, child);
+        // TOOLBAR-10：悬停/按下的内切正圆直径取槽位短边，紧凑槽也不越出。
+        button.style.setProperty("--pv-rating-slot", `${Math.min(child.w, child.h)}px`);
+    }
+
+    function ratingFrame(group, axis) {
+        // TOOLBAR-02：分组在交叉轴被拉到该列最大长度，评分胶囊自身仍是 44 见方并居中。
+        const size = t("shell.glass.button.size");
+        const first = group.children[0];
+        if (axis === "vertical" && group.w > size) {
+            return { frame: { x: group.x + (first?.x ?? 0), y: group.y, w: size, h: group.h }, offset: first?.x ?? 0 };
+        }
+        if (axis === "horizontal" && group.h > size) {
+            return { frame: { x: group.x, y: group.y + (first?.y ?? 0), w: group.w, h: size }, offset: first?.y ?? 0 };
+        }
+        return { frame: group, offset: 0 };
+    }
+
     function updateRating(container, group, rating, axis) {
         container.classList.toggle("is-compact", Boolean(group.compact));
         const order = visualOrder(group, axis);
+        const { frame, offset } = ratingFrame(group, axis);
+        place(container, frame);
         for (const child of order) {
             const button = ratingButtons[child.index];
-            if (button) place(button, child);
+            if (!button) continue;
+            const local = axis === "vertical"
+                ? { ...child, x: child.x - offset }
+                : { ...child, y: child.y - offset };
+            placeRatingChild(button, local);
         }
         reorder(container, order.map((child) => ratingButtons[child.index]).filter(Boolean));
         for (let value = 0; value < RATING_COUNT; value += 1) {
@@ -250,7 +275,7 @@ export function mountControlBar(host, ctx) {
             const button = ratingButtons[child.index];
             if (button) {
                 button.hidden = false;
-                place(button, child);
+                placeRatingChild(button, child);
             }
         }
         reorder(group, order.map((child) => ratingButtons[child.index]).filter(Boolean));
@@ -347,10 +372,12 @@ export function mountControlBar(host, ctx) {
             if (group.kind === "exif") continue;
             const node = ensureGroup(group.kind);
             node.hidden = false;
-            place(node, group);
             seen.add(group.kind);
             if (group.kind === "rating") updateRating(node, group, state.toolbar.rating, layout.axis);
-            else updateCommands(node, group, state.toolbar.commands, layout.axis);
+            else {
+                place(node, group);
+                updateCommands(node, group, state.toolbar.commands, layout.axis);
+            }
         }
         for (const [kind, node] of groups) {
             if (!seen.has(kind)) node.hidden = true;

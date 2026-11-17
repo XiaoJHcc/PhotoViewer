@@ -438,6 +438,7 @@ export function mountAnalysis(host, ctx) {
         const node = { kind, root, canvas, badge, placeholder, ctx: canvas.getContext("2d"), sig: null, geom: null };
         if (interactive) {
             const detail = DETAIL_KINDS.has(kind);
+            root.classList.toggle("is-detail", detail);
             root.addEventListener("click", (event) => {
                 if (!current) return;
                 event.stopPropagation();

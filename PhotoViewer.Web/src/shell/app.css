@@ -8,6 +8,7 @@
     --pv-glass-background: color-mix(in srgb, var(--pv-color-bar-background) 68%, transparent);
     --pv-material-blur: blur(var(--pv-shell-titlebar-backdrop-blurAmount));
     --pv-glass-radius: calc(var(--pv-shell-glass-button-size) / 2);
+    --pv-button-material: var(--pv-color-toolbar-command-background);
     --pv-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
     --pv-accent: #0A84FF;
     font-family: var(--pv-font);
@@ -289,7 +290,7 @@ html, body {
     background: var(--pv-color-menu-separator);
 }
 
-/* FILTER-08：下拉项高 = 行高 + 上 5 下 7；当前项整行强调色，无勾号 */
+/* FILTER-08：下拉项高 = 行高 + 上 5 下 7；当前项在勾选列画勾，悬停同菜单项 */
 .pv-menu.is-dropdown {
     font-size: var(--pv-dropdown-fontSize);
 }
@@ -298,14 +299,6 @@ html, body {
     height: auto;
     padding: 5px var(--pv-dropdown-item-paddingX) 7px;
     line-height: 19px;
-}
-
-.pv-menu.is-dropdown .pv-menu-item.is-selected {
-    background: var(--pv-color-dropdown-item-selected);
-}
-
-.pv-menu.is-dropdown .pv-menu-item.is-selected.is-focused {
-    background: var(--pv-color-dropdown-item-selected-hover);
 }
 
 .pv-menu-header {

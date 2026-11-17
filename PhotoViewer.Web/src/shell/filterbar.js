@@ -1,4 +1,5 @@
 import { el, place, setText, touches } from "./dom.js";
+import { icon } from "./icons.js";
 import { SORT_KEYS, SORT_ORDERS, RATING_FILTERS } from "../core/filter.js";
 
 const MENU_GROUPS = [
@@ -32,18 +33,19 @@ function mainMenuItems(app) {
 export function mountFilterBar(host, ctx) {
     const { app, menu, t } = ctx;
 
-    const segmentButtons = t.profile === "mac" ? MENU_GROUPS.map((group) => {
+    const segmentButtons = MENU_GROUPS.map((group) => {
         const text = el("span", { class: "pv-popup-label" });
         const button = el("button", {
-            class: "pv-popup",
+            class: "pv-popup is-segment",
             type: "button",
             "aria-haspopup": "menu",
             "aria-expanded": "false",
             "aria-label": group.label,
         }, text);
+        button.dataset.group = group.kind;
         button.addEventListener("click", () => openSegmentMenu(group, button));
         return { group, button, text };
-    }) : [];
+    });
 
     const entry = el("button", {
         class: "pv-filter-entry",
@@ -51,15 +53,15 @@ export function mountFilterBar(host, ctx) {
         "aria-haspopup": "menu",
         "aria-expanded": "false",
         "aria-label": "筛选",
-    }, el("span", { class: "pv-filter-label" }, "筛选"));
+    }, icon(t, "icon.filter", "pv-filter-glyph"), el("span", { class: "pv-filter-label" }, "筛选"));
     const more = el("button", {
         class: "pv-filter-more",
         type: "button",
         "aria-haspopup": "menu",
         "aria-expanded": "false",
         "aria-label": "更多",
-    }, el("span", { class: "pv-filter-label" }, "更多"));
-    const composite = el("div", { class: "pv-filter-composite" });
+    }, icon(t, "icon.more", "pv-filter-glyph"));
+    const capsule = el("div", { class: "pv-filter-capsule" });
     const count = el("div", { class: "pv-filter-count", "aria-hidden": "true" });
 
     const toggle = app.capabilities.similarity
@@ -78,8 +80,7 @@ export function mountFilterBar(host, ctx) {
         });
     }
 
-    host.classList.toggle("is-mac", t.profile === "mac");
-    host.append(composite, entry, more, count, ...segmentButtons.map((item) => item.button));
+    host.append(capsule, entry, more, ...segmentButtons.map((item) => item.button), count);
     if (toggle) host.append(toggle);
 
     entry.addEventListener("click", () => openFilterMenu(entry));
@@ -91,9 +92,10 @@ export function mountFilterBar(host, ctx) {
     });
     more.addEventListener("click", () => openMoreMenu(more));
 
-    function ensureParent(mode) {
-        // 合体只是视觉容器；两个分段始终是筛选层的直接子节点，避免坐标叠加。
-        composite.hidden = mode !== "composite";
+    function collapse() {
+        entry.setAttribute("aria-expanded", "false");
+        more.setAttribute("aria-expanded", "false");
+        for (const item of segmentButtons) item.button.setAttribute("aria-expanded", "false");
     }
 
     function openSegmentMenu(group, button) {
@@ -102,7 +104,6 @@ export function mountFilterBar(host, ctx) {
         if (!filter?.controls?.[group.kind]) return;
         app.setDropdownOpen(true);
         button.setAttribute("aria-expanded", "true");
-        button.setAttribute("aria-label", `${group.label}：${group.options.find((option) => option.value === group.valueOf(state))?.label ?? ""}`);
         menu.open(menuItemsFor(state, group), { rect: filter.controls[group.kind] }, {
             style: "dropdown",
             label: group.label,
@@ -111,7 +112,7 @@ export function mountFilterBar(host, ctx) {
                 applyChoice(group.kind, id);
             },
             onClose: () => {
-                button.setAttribute("aria-expanded", "false");
+                collapse();
                 app.setDropdownOpen(false);
             },
         });
@@ -137,8 +138,7 @@ export function mountFilterBar(host, ctx) {
                 if (kind) applyChoice(kind, id);
             },
             onClose: () => {
-                entry.setAttribute("aria-expanded", "false");
-                more.setAttribute("aria-expanded", "false");
+                collapse();
                 app.setDropdownOpen(false);
             },
         });
@@ -154,8 +154,7 @@ export function mountFilterBar(host, ctx) {
             returnFocus: button,
             onSelect: (id) => app.runMenu(id),
             onClose: () => {
-                entry.setAttribute("aria-expanded", "false");
-                more.setAttribute("aria-expanded", "false");
+                collapse();
                 app.setDropdownOpen(false);
             },
         });
@@ -171,15 +170,18 @@ export function mountFilterBar(host, ctx) {
     function placeControls(state) {
         const layout = state.layout;
         const filter = layout.filter;
-        const phoneLandscape = layout.form === "phone" && layout.orientation === "landscape";
-        const phonePortrait = layout.form === "phone" && layout.orientation === "portrait";
-        const segments = filter?.kind === "segments";
-        const capsule = filter?.kind === "capsule";
+        const phone = layout.form === "phone";
         const portrait = filter?.kind === "portrait";
-        const compositeMode = !phonePortrait && !segments && !capsule;
-        ensureParent(compositeMode ? "composite" : "separate");
-        host.classList.toggle("is-composite", compositeMode);
-        if (!filter || (!filter.entry && !filter.toggle && !segments)) {
+        const composite = filter?.kind === "composite";
+        const segments = filter?.kind === "segments";
+        const capsuleMode = filter?.kind === "capsule";
+
+        host.classList.toggle("is-desktop", !phone);
+        host.classList.toggle("is-portrait", Boolean(portrait));
+        host.classList.toggle("is-composite", Boolean(composite));
+
+        if (!filter) {
+            capsule.hidden = true;
             entry.hidden = true;
             more.hidden = true;
             count.hidden = true;
@@ -187,29 +189,29 @@ export function mountFilterBar(host, ctx) {
             if (toggle) toggle.hidden = true;
             return;
         }
-        entry.hidden = !(compositeMode || capsule || portrait);
-        more.hidden = !(compositeMode || portrait);
-        count.hidden = segments ? false : !(compositeMode || portrait);
+
+        const hasCapsule = Boolean(filter.composite) && !portrait;
+        capsule.hidden = !hasCapsule;
+        if (hasCapsule) place(capsule, filter.composite);
+        count.hidden = false;
+        place(count, filter.count);
+
         for (const item of segmentButtons) {
             item.button.hidden = !segments;
             if (segments) place(item.button, filter.controls[item.group.kind]);
         }
-        if (compositeMode || capsule) {
-            place(entry, filter.entry);
-            place(more, filter.more);
-            place(composite, filter.composite ?? filter.entry);
-            place(count, filter.count);
-        } else if (portrait) {
-            place(entry, filter.entry);
-            place(more, filter.more);
-            place(count, filter.count);
-        } else if (segments) {
-            if (filter.composite) place(composite, filter.composite);
-            place(count, filter.count);
-        }
+
+        // FILTER-07：宽形态单胶囊与手机入口的差异只在字形/文字与自身材质，命中区同为一个控件。
+        entry.hidden = !(capsuleMode || composite || portrait);
+        entry.classList.toggle("is-icon", phone);
+        entry.classList.toggle("is-capsule", capsuleMode);
+        if (!entry.hidden) place(entry, filter.entry);
+        more.hidden = !(composite || portrait);
+        if (!more.hidden) place(more, filter.more);
+
         if (toggle) {
             toggle.hidden = !filter.toggle;
-            place(toggle, filter.toggle);
+            if (filter.toggle) place(toggle, filter.toggle);
         }
     }
 
@@ -222,6 +224,7 @@ export function mountFilterBar(host, ctx) {
         for (const item of segmentButtons) {
             const label = item.group.options.find((option) => option.value === item.group.valueOf(state))?.label ?? "";
             setText(item.text, label);
+            item.button.setAttribute("aria-label", `${item.group.label}：${label}`);
         }
     }
 
@@ -230,7 +233,6 @@ export function mountFilterBar(host, ctx) {
             if (touches(regions, "layout", "list", "settings", "similarity", "panes", "window")) {
                 placeControls(state);
                 setText(count, state.countText);
-                entry.setAttribute("aria-label", `筛选，${state.countText}`);
                 renderSegmentLabels(state);
                 renderToggle();
             }

@@ -2,9 +2,11 @@
 
 浏览器里的第五个壳（平台代号 `web`）：按 `Design/` 实现主屏业务行为与首屏静态几何，照片为程序化合成数据。它同时是三样东西：免下载的在线试用、设计规则的可执行基准（规则变更可先在这里验证再分发四端）、各平台几何比对的基准来源。材质只使用浏览器公开能力（CSS `backdrop-filter` 与半透明底色），不复刻系统玻璃融合或光学效果。设置窗口与工具窗口不做（`SCOPE-01@web`）。计划与缺口台账见 [Plans/web-shell-plan-1.md](../Plans/web-shell-plan-1.md)、[Plans/web-shell-gaps.md](../Plans/web-shell-gaps.md)。
 
-## 唯一依据：Design/
+## 依据：Design/ 与 macOS 外观参照
 
-**硬规则**：本壳只依据 `Design/`（`spec/`、`tokens.json`、`README.md`、`platforms.md` 中的 `@web` 条目）实现，**不读取** `PhotoViewer/`、`PhotoViewer.*/`（本目录除外）、`Design/baseline/`、`release/`、`artifacts/` 下的源码与验收常量，也不照搬其他平台的写法。规则缺失、含糊或无法实现时，按最合理的理解实现，同时在缺口台账追加一条（分类写 `待审`），不得去其他平台的代码里找答案。这样本壳与 Mac 的每一处差异都能定位到"文档没写清"或"某端没照文档做"。
+**硬规则**：几何与行为只依据 `Design/`（`spec/`、`tokens.json`、`README.md`、`platforms.md` 中的 `@web` 条目）实现，不从其他平台源码、`Design/baseline/`、`release/`、`artifacts/` 里抄常量或几何公式。规则缺失、含糊或无法实现时，按最合理的理解实现，同时在缺口台账追加一条（分类写 `待审`），不得去其他平台的代码里找答案。这样本壳与各端的每一处几何或行为差异都能定位到"文档没写清"或"某端没照文档做"。
+
+**外观参照**：宽形态主屏控件的形状、材质层次与状态出现方式以 macOS 原生壳为参照（[Design/README.md](../Design/README.md) 外观对标链、TOOLBAR-10），可以读取 `PhotoViewer.Mac/` 的控件选型与 Mac 截图来确认系统控件的形态；颜色与尺寸仍取令牌，不按截图取色拟合。手机形态保留 iOS 口径。本壳是 Windows 界面迁移的基准。
 
 ## 运行与测试
 
@@ -16,7 +18,7 @@ node --test "tests/**/*.test.js" # 纯逻辑单测（零依赖）
 
 VS Code Tasks：**Serve Web**、**Test Web**。ES module 在 `file://` 下会被浏览器拦截，必须经本地服务打开。令牌产物 `src/tokens.g.js` 由 `python3 Tools/generate-design-tokens.py` 生成，不得手改。
 
-页面参数：`?demo` 打开窗口外演示面板（尺寸、布局模式、安全区注入、设置、故障注入、状态读数、几何导出）；`?check=<模块|all>` 运行页内行为与静态几何检查并输出按设计 ID 的报告；`?platform=mac` 切到 mac 配置档（只为几何比对：列布局 42 让位、行布局 44 高三段自然宽/单胶囊、列布局 96 胶囊、桌面 EXIF 双向衬底与交通灯让位等 `@mac` 差异）；`?check=mac` 只跑 mac 配置档检查；`?edition=standard|ai` 选择构建变体（缺省 `ai`）；`?empty` 以空态启动；`?folder=<id>` 指定首个文件夹。开发期可用 `?width=<px>&height=<px>&layout=auto|row|col|phone&safe=<top,right,bottom,left>&film=0&control=0&analysis=1` 直接落到指定视口、形态与栏位；这些参数只写会话 override，不写持久设置。安全区参数是显式几何输入，不代表浏览器具备额外探测能力。
+页面参数：`?demo` 打开窗口外演示面板（尺寸、布局模式、安全区注入、设置、故障注入、状态读数、几何导出）；`?check=<模块|all>` 运行页内行为与静态几何检查并输出按设计 ID 的报告；`?platform=mac` 切到 mac 配置档，只保留浏览器没有的窗口装饰几何（列布局首控件 42 让位、标题栏让位与拖动区导出），其余渲染与几何和默认档一致；`?check=mac` 只跑 mac 配置档检查；`?edition=standard|ai` 选择构建变体（缺省 `ai`）；`?empty` 以空态启动；`?folder=<id>` 指定首个文件夹。开发期可用 `?width=<px>&height=<px>&layout=auto|row|col|phone&safe=<top,right,bottom,left>&film=0&control=0&analysis=1` 直接落到指定视口、形态与栏位；这些参数只写会话 override，不写持久设置。安全区参数是显式几何输入，不代表浏览器具备额外探测能力。
 
 `?edition` 只用于参考壳的 EDITION 差分验收，不是产品内版本切换：`standard` 不创建相似聚类入口与面板、筛选条按四项居中、分析栏只有 4/5 张瓦片（无 PCA/Cosine），设置模型保留不可见的 DINO/相似参数，只启用独立的「即时计算 CV」；`ai` 保持完整入口与六/七瓦片。两个版本都不显示升级、缺模型或版本说明文案。
 
@@ -49,9 +51,9 @@ src/
     layout/             # 分区与各区几何（只依据 spec + tokens 推导）
       form.js           # SHELL-07/10：宽/手机竖/手机横判定与安全区归一
       partition.js      # 宽形态行/列与手机竖/横分区、适应区、材质与分隔线
-      filterbar.js      # FILTER-07@web 96/88 合体、手机竖圆按钮、AI 独立开关
+      filterbar.js      # FILTER-04/07@web 宽形态三段/单胶囊、手机竖屏两图标按钮与横屏 88 合体、AI 开关
       film.js / card.js # 两档胶片卡片与列表文档；位置/滚动业务仍取 filmscroll.js
-      controlbar.js     # EXIF→评分→命令、44 按钮、mac 评分恒 224、移动端评分 224/88、手机固定槽位
+      controlbar.js     # EXIF→评分→命令、44 按钮、评分恒 224 展开态、竖排 EXIF 无衬底 52、手机固定槽位
       analysis.js       # 瓦片等边长与独立/工具区相邻交叉轴
       similarity.js     # 相似面板让位（大档卡片）
       ratingpopover.js  # 星级来源浮窗

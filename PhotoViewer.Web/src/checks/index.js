@@ -7,6 +7,8 @@
  */
 
 import { displayStars, hasRatingConflict, ratingSources, ratingWriteBlockReason, representativeRating } from "../core/rating.js";
+import { createTokens } from "../core/tokens.js";
+import { computeLayout, approximateTextWidth } from "../core/layout/index.js";
 
 const MODULES = ["film", "filter", "rating", "menu", "input", "image", "toolbar", "state", "analysis", "similarity", "edition", "open", "shell", "mac"];
 
@@ -45,10 +47,58 @@ function parseColor(value) {
             a: alpha,
         };
     }
+    // color-mix 的计算值在 Chromium 里是 color(srgb r g b / a)，分量是 0–1。
+    const srgb = /^color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*(?:\/\s*([\d.]+))?\)$/.exec(source);
+    if (srgb) {
+        return {
+            r: Math.round(parseFloat(srgb[1]) * 255),
+            g: Math.round(parseFloat(srgb[2]) * 255),
+            b: Math.round(parseFloat(srgb[3]) * 255),
+            a: srgb[4] === undefined ? 1 : parseFloat(srgb[4]),
+        };
+    }
     const match = /rgba?\(([^)]+)\)/.exec(source);
     if (!match) return null;
     const parts = match[1].split(/[,/\s]+/).filter(Boolean).map(Number);
     return { r: parts[0], g: parts[1], b: parts[2], a: parts[3] ?? 1 };
+}
+
+function cssRule(fragment) {
+    for (const sheet of document.styleSheets) {
+        let rules = null;
+        try {
+            rules = sheet.cssRules;
+        } catch {
+            continue;
+        }
+        for (const rule of rules) {
+            if (rule.selectorText && rule.selectorText.includes(fragment)) return rule;
+        }
+    }
+    return null;
+}
+
+// 把产品样式里的 :hover / :active 换成临时 class，读一次真实计算值后立即撤掉（仅检查使用）。
+function computedState(node, fragment, { pseudo = null, state = ":hover" } = {}) {
+    const rule = cssRule(fragment);
+    if (!rule) return null;
+    const marker = "pv-check-forced-state";
+    const selector = rule.selectorText.replaceAll(state, `.${marker}`);
+    const style = document.createElement("style");
+    style.textContent = `${selector} { ${rule.style.cssText} }`;
+    document.head.append(style);
+    node.classList.add(marker);
+    const target = pseudo ? getComputedStyle(node, pseudo) : getComputedStyle(node);
+    const snapshot = {
+        backgroundColor: target.backgroundColor,
+        borderTopColor: getComputedStyle(node).borderTopColor,
+        width: target.width,
+        height: target.height,
+        borderRadius: target.borderTopLeftRadius,
+    };
+    node.classList.remove(marker);
+    style.remove();
+    return snapshot;
 }
 
 function colorMatches(actual, expected) {
@@ -397,33 +447,61 @@ const CHECKS = [
     },
     {
         id: "FILTER-01",
-        title: "iPad 筛选/更多 96 合体、计数在入口内、AI 开关独立且标准版无空槽",
+        title: "宽形态三段合体 / 单胶囊、计数在控件内、AI 开关独立且标准版无空槽",
         async run(shell, h) {
             const { app } = shell;
             const t = (name) => shell.t(name);
-            const filter = app.state.layout.filter;
-            h.assert(filter.composite !== null, "宽形态缺少筛选/更多合体");
-            h.assert(filter.composite.w === t("film.card.width"), `合体宽 ${filter.composite.w}`);
-            h.assert(filter.entry.w === t("film.card.width") / 2 && filter.more.w === t("film.card.width") / 2,
-                "合体两段不是各 48");
-            h.assert(filter.entry.h === t("shell.glass.button.size") && filter.more.h === t("shell.glass.button.size"),
-                "合体高度不是 44");
-            h.assert(filter.count.x >= filter.composite.x && filter.count.x + filter.count.w <= filter.composite.x + filter.composite.w,
-                "计数没有收在筛选合体内部");
-            h.assert(filter.count.x >= filter.entry.x, "计数不在筛选段一侧");
-            h.assert(document.querySelector(".pv-popup") === null, "仍存在三段旧下拉");
+            const button = t("shell.glass.button.size");
+
+            app.updateSettings({ layoutMode: "row" });
+            await h.tick(120);
+            const row = app.state.layout.filter;
+            h.assert(row.kind === "segments", `行布局未使用三段合体：${row.kind}`);
+            h.assert(row.control.h === button, `三段合体高 ${row.control.h}`);
+            h.assert(row.control.w === 3 * t("filter.control.width"),
+                `三段合体自然宽 ${row.control.w} ≠ ${3 * t("filter.control.width")}`);
+            for (const name of ["sort", "order", "rating"]) {
+                h.assert(row.controls[name].w >= t("filter.control.width"), `${name} 段宽 ${row.controls[name].w}`);
+            }
+            const segments = h.domAll(".pv-popup.is-segment");
+            h.assert(segments.length === 3 && segments.every((node) => !node.hidden), "行布局没有三段可见入口");
+            h.assert(h.dom(".pv-filter-entry").hidden, "三段模式下仍显示单胶囊按钮");
+            h.assert(Math.abs(h.dom(".pv-filter-capsule").getBoundingClientRect().width - row.control.w) <= 1,
+                "玻璃胶囊宽与三段组合宽不一致");
+            h.assert(row.count.x >= row.control.x && row.count.x + row.count.w <= row.control.x + row.control.w,
+                "计数没有收在筛选控件内部");
+            const countRect = h.dom(".pv-filter-count").getBoundingClientRect();
+            const capsuleRect = h.dom(".pv-filter-capsule").getBoundingClientRect();
+            h.assert(Math.abs(countRect.bottom - capsuleRect.bottom) <= 1, "计数未贴在胶囊内部底边");
+            h.assert(getComputedStyle(h.dom(".pv-filter-count")).fontSize === `${t("filter.count.fontSize")}px`,
+                "计数未取 filter.count.fontSize");
             h.assert(h.dom(".pv-filter-count").textContent === `共 ${app.state.count} 张`, "计数文本不一致");
-            h.assert(getComputedStyle(h.dom(".pv-filter-count")).overflow === "hidden", "计数未按入口外框裁切");
+
             const toggle = document.querySelector(".pv-filter-toggle");
             if (app.capabilities.similarity) {
                 h.assert(toggle !== null, "AI 版缺少相似聚类开关");
                 h.assert(toggle.getAttribute("role") === "switch", "相似聚类开关缺少 switch 语义");
-                h.assert(filter.toggle && filter.toggle.w === t("film.card.width") && filter.toggle.h === 44,
-                    "相似聚类开关不是独立 96×44");
+                h.assert(row.toggle && row.toggle.w === t("filter.toggle.width") && row.toggle.h === button,
+                    "相似聚类开关不是独立 90×44");
             } else {
                 h.assert(toggle === null, "标准版仍创建相似聚类开关");
-                h.assert(filter.toggle === null, "标准版仍留相似开关几何");
+                h.assert(row.toggle === null, "标准版仍留相似开关几何");
             }
+
+            app.updateSettings({ layoutMode: "col" });
+            await h.tick(120);
+            const col = app.state.layout.filter;
+            h.assert(col.kind === "capsule", `96 宽列布局未回退单胶囊：${col.kind}`);
+            h.assert(col.composite.w === t("film.card.width"), `列胶囊宽 ${col.composite.w}`);
+            h.assert(col.entry !== null && col.entry.w === t("film.card.width"), "单胶囊入口宽不是 96");
+            h.assert(h.domAll(".pv-popup.is-segment").every((node) => node.hidden), "单胶囊下三段仍可见");
+            h.assert(!h.dom(".pv-filter-entry").hidden, "单胶囊入口未显示");
+            const colCount = h.dom(".pv-filter-count").getBoundingClientRect();
+            const colCapsule = h.dom(".pv-filter-capsule").getBoundingClientRect();
+            h.assert(colCount.left >= colCapsule.left - 0.5 && colCount.right <= colCapsule.right + 0.5,
+                "列布局计数越出胶囊");
+            app.updateSettings({ layoutMode: "auto" });
+            await h.tick(80);
         },
     },
     {
@@ -462,7 +540,7 @@ const CHECKS = [
     },
     {
         id: "FILTER-06",
-        title: "相似聚类开关为独立玻璃药丸，常态/勾选取新令牌颜色",
+        title: "相似聚类开关与筛选胶囊同一按钮材质，勾选态取既有令牌",
         async run(shell, h) {
             const { app } = shell;
             const t = (name) => shell.t(name);
@@ -474,19 +552,22 @@ const CHECKS = [
             }
             const toggle = h.dom(".pv-filter-toggle");
             const style = () => getComputedStyle(toggle);
-            const uncheckedBackground = style().backgroundColor;
-            const uncheckedColor = style().color;
-            h.assert(uncheckedBackground === "rgba(0, 0, 0, 0)", `未勾选底色 ${uncheckedBackground}`);
-            h.assert(style().borderTopWidth === "1px", `未勾选描边宽 ${style().borderTopWidth}`);
-            h.assert(colorMatches(style().borderTopColor, t("color.filter.toggle.border")), `未勾选描边 ${style().borderTopColor}`);
+            h.assert(style().backgroundColor !== "rgba(0, 0, 0, 0)", "未勾选底色没有按钮材质");
+            h.assert(style().borderTopWidth === "1px" && colorMatches(style().borderTopColor, "#00000000"),
+                `未勾选常态仍画描边：${style().borderTopColor}`);
+            h.assert(style().backdropFilter !== "none", "相似开关缺少玻璃材质");
+            h.assert(style().borderTopLeftRadius === `${t("shell.glass.button.size") / 2}px`,
+                `相似开关圆角 ${style().borderTopLeftRadius}`);
             h.assert(toggle.getAttribute("aria-checked") === String(Boolean(app.settings.similarityPanelExpanded)), "勾选态与设置不一致");
             h.click(toggle);
             await h.tick(80);
             h.assert(app.settings.similarityPanelExpanded === true, "点击未勾选相似聚类");
-            h.assert(style().backgroundColor !== uncheckedBackground, "勾选态底色未变化");
             h.assert(colorMatches(style().backgroundColor, t("color.filter.toggle.checked.background")),
                 `勾选态底色 ${style().backgroundColor}`);
-            h.assert(style().color !== uncheckedColor, "勾选态文字色未变化");
+            h.assert(colorMatches(style().color, t("color.filter.toggle.checked.foreground")),
+                `勾选态文字色 ${style().color}`);
+            h.assert(colorMatches(style().borderTopColor, t("color.filter.toggle.checked.border")),
+                `勾选态描边 ${style().borderTopColor}`);
             h.assert(toggle.getAttribute("aria-checked") === "true", "勾选态未更新为 true");
             h.click(toggle);
             await h.tick(80);
@@ -495,24 +576,42 @@ const CHECKS = [
     },
     {
         id: "FILTER-08",
-        title: "筛选入口玻璃外观与三分组弹层：贴入口下方居中、当前项整行强调",
+        title: "筛选胶囊 / 三段外观与弹层：按钮材质、胶囊形状态层、贴入口下方居中、当前项画勾",
         async run(shell, h) {
             const { app } = shell;
             const t = (name) => shell.t(name);
+            const capsule = h.dom(".pv-filter-capsule");
+            const capsuleStyle = getComputedStyle(capsule);
+            h.assert(capsuleStyle.backdropFilter !== "none", "筛选胶囊缺少 backdrop-filter");
+            h.assert(capsuleStyle.borderTopLeftRadius === `${t("shell.glass.button.size") / 2}px`,
+                `筛选胶囊圆角 ${capsuleStyle.borderTopLeftRadius}`);
             const entry = h.dom(".pv-filter-entry");
-            const entryStyle = getComputedStyle(entry);
-            h.assert(entryStyle.backgroundColor === "rgba(0, 0, 0, 0)", "合体分段自身重复铺底");
-            h.assert(getComputedStyle(h.dom(".pv-filter-composite")).backdropFilter !== "none", "筛选合体缺少 backdrop-filter");
+            h.assert(getComputedStyle(entry).backgroundColor === "rgba(0, 0, 0, 0)", "单胶囊按钮重复铺底");
+            h.assert(getComputedStyle(entry).borderTopWidth === "0px", "单胶囊按钮常态画描边");
+            h.assert(colorMatches(capsuleStyle.backgroundColor, t("color.toolbar.command.background")),
+                `筛选胶囊材质 ${capsuleStyle.backgroundColor} 与命令按钮不同`);
+            const entryRect = entry.getBoundingClientRect();
+            const entryState = getComputedStyle(entry, "::after");
+            const stateInset = parseFloat(entryState.top);
+            h.assert(Math.abs(parseFloat(entryState.borderTopLeftRadius) - (t("shell.glass.button.size") / 2 - stateInset)) <= 0.5
+                && Math.abs(entryRect.height - 2 * stateInset - 2 * parseFloat(entryState.borderTopLeftRadius)) <= 0.5,
+                `单胶囊状态层不是同心胶囊形：圆角 ${entryState.borderTopLeftRadius}、内缩 ${entryState.top}`);
+            const entryHover = computedState(entry, ".pv-filter-entry.is-capsule:hover", { pseudo: "::after" });
+            const entryPressed = computedState(entry, ".pv-filter-entry.is-capsule:active", { pseudo: "::after", state: ":active" });
+            h.assert(entryHover !== null && colorMatches(entryHover.backgroundColor, t("color.menu.item.hover")),
+                `单胶囊悬停 ${entryHover?.backgroundColor}`);
+            h.assert(entryPressed !== null && colorMatches(entryPressed.backgroundColor, t("color.menu.item.pressed")),
+                `单胶囊按下 ${entryPressed?.backgroundColor}`);
 
             await h.openFilter();
             const rect = entry.getBoundingClientRect();
-            const menu = h.menu();
-            const menuRect = menu.getBoundingClientRect();
+            let menu = h.menu();
+            let menuRect = menu.getBoundingClientRect();
             const menuStyle = getComputedStyle(menu);
             const hostRect = h.dom(".pv-window").getBoundingClientRect();
-            const expectedLeft = Math.min(Math.max(4, rect.left + rect.width / 2 - menuRect.width / 2), hostRect.width - menuRect.width - 4);
+            let expectedLeft = Math.min(Math.max(4, rect.left + rect.width / 2 - menuRect.width / 2), hostRect.width - menuRect.width - 4);
             h.assert(Math.abs(menuRect.left - expectedLeft) <= 1,
-                `弹层未以筛选段水平居中并夹在窗口内：${menuRect.left} ≠ ${expectedLeft}`);
+                `弹层未以单胶囊水平居中并夹在窗口内：${menuRect.left} ≠ ${expectedLeft}`);
             h.assert(menuRect.top >= rect.bottom - 1, `弹层覆盖入口：top ${menuRect.top} < 入口底 ${rect.bottom}`);
             h.assert(menuRect.top - rect.bottom <= 1, `弹层未贴在入口正下方：间隙 ${menuRect.top - rect.bottom}`);
             h.assert(menuRect.width >= rect.width - 0.5, `弹层最小宽不足：${menuRect.width} < ${rect.width}`);
@@ -521,24 +620,60 @@ const CHECKS = [
             h.assert(menuStyle.boxShadow === "none", `弹层仍有阴影：${menuStyle.boxShadow}`);
             h.assert(menuStyle.borderTopLeftRadius === `${t("popup.cornerRadius")}px`, `弹层圆角 ${menuStyle.borderTopLeftRadius}`);
 
-            const selected = h.domAll(".pv-menu .pv-menu-item").find((node) => node.classList.contains("is-selected"));
-            h.assert(selected !== null, "当前项未整行强调");
-            h.assert(menu.querySelector(".pv-menu-mark") === null, "下拉仍画勾号");
+            const items = h.domAll(".pv-menu .pv-menu-item");
+            const selected = items.find((node) => node.getAttribute("aria-checked") === "true");
+            h.assert(selected !== undefined, "下拉没有当前项");
             h.assert(menuStyle.fontSize === `${t("dropdown.fontSize")}px`, `下拉字号 ${menuStyle.fontSize}`);
             const itemStyle = getComputedStyle(selected);
             h.assert(itemStyle.paddingLeft === `${t("dropdown.item.paddingX")}px`, "下拉项左内边距不符");
-            const selectedToken = selected.classList.contains("is-focused")
-                ? "color.dropdown.item.selected.hover"
-                : "color.dropdown.item.selected";
-            h.assert(colorMatches(itemStyle.backgroundColor, t(selectedToken)),
-                `当前项底色 ${itemStyle.backgroundColor}`);
-            h.assert(entryStyle.borderTopLeftRadius === `${t("shell.glass.button.size") / 2}px`,
-                `筛选段圆角 ${entryStyle.borderTopLeftRadius}`);
+            const checkGlyph = String.fromCodePoint(parseInt(t("icon.check").slice(2), 16));
+            for (const item of items) {
+                const mark = item.querySelector(".pv-menu-mark");
+                const checked = item.getAttribute("aria-checked") === "true";
+                h.assert(mark !== null, `下拉项「${item.textContent}」未让出勾选列`);
+                h.assert(mark.textContent === (checked ? checkGlyph : ""), `下拉项「${item.textContent}」勾号与选中态不符`);
+                const expected = item.classList.contains("is-focused") ? t("color.menu.item.hover") : "#00000000";
+                h.assert(colorMatches(getComputedStyle(item).backgroundColor, expected),
+                    `下拉项「${item.textContent}」底色 ${getComputedStyle(item).backgroundColor}，当前项不得整行强调`);
+            }
 
             h.key("Escape");
             await h.tick(40);
             h.assert(h.menu() === null, "Esc 未关闭筛选菜单");
             h.assert(app.state.sortKey === "name", "Esc 改变了排序");
+
+            app.updateSettings({ layoutMode: "row" });
+            await h.tick(120);
+            const row = app.state.layout.filter;
+            h.assert(row.kind === "segments", "行布局没有三段合体");
+            const sortButton = h.dom('.pv-popup.is-segment[data-group="sort"]');
+            const sortRect = sortButton.getBoundingClientRect();
+            h.assert(Math.abs(sortRect.width - row.controls.sort.w) <= 1 && Math.abs(sortRect.height - 44) <= 1,
+                `排序段 DOM ${sortRect.width}×${sortRect.height}`);
+            h.assert(getComputedStyle(sortButton).backgroundColor === "rgba(0, 0, 0, 0)", "排序段自带底色");
+            h.assert(getComputedStyle(sortButton, "::before").content === "none", "首段不应有段间分隔线");
+            const orderButton = h.dom('.pv-popup.is-segment[data-group="order"]');
+            const orderDivider = getComputedStyle(orderButton, "::before");
+            h.assert(orderDivider.width === "1px" && colorMatches(orderDivider.backgroundColor, t("color.dropdown.border")),
+                `段间分隔线 ${orderDivider.width}/${orderDivider.backgroundColor}`);
+            h.assert(colorMatches(getComputedStyle(orderButton).color, t("color.text.primary")), "段文字色不是主文字色");
+
+            h.click(orderButton);
+            await h.tick(40);
+            menu = h.menu();
+            h.assert(menu !== null, "点击排序方向段未弹出菜单");
+            h.deepEqual(h.domAll(".pv-menu .pv-menu-item").map((node) => node.dataset.group), ["order", "order"],
+                "段菜单不是单组单选");
+            const orderRect = orderButton.getBoundingClientRect();
+            const orderMenuRect = menu.getBoundingClientRect();
+            expectedLeft = Math.min(Math.max(4, orderRect.left + orderRect.width / 2 - orderMenuRect.width / 2),
+                hostRect.width - orderMenuRect.width - 4);
+            h.assert(Math.abs(orderMenuRect.left - expectedLeft) <= 1, "段菜单未以该段水平居中");
+            h.assert(orderMenuRect.top >= orderRect.bottom - 1, "段菜单覆盖入口");
+            h.key("Escape");
+            await h.tick(40);
+            app.updateSettings({ layoutMode: "auto" });
+            await h.tick(80);
         },
     },
     {
@@ -1252,6 +1387,77 @@ const CHECKS = [
         },
     },
     {
+        id: "TOOLBAR-10",
+        title: "命令常态无描边、悬停出描边；评分槽内切正圆且禁用只降内容",
+        async run(shell, h) {
+            const { app } = shell;
+            const t = (name) => shell.t(name);
+            const command = h.dom('.pv-control-command-button[data-command="Next"]');
+            const commandStyle = getComputedStyle(command);
+            h.assert(colorMatches(commandStyle.backgroundColor, t("color.toolbar.command.background")),
+                `命令常态底色 ${commandStyle.backgroundColor}`);
+            h.assert(commandStyle.borderTopWidth === "1px" && colorMatches(commandStyle.borderTopColor, "#00000000"),
+                `命令常态仍画描边 ${commandStyle.borderTopColor}`);
+
+            const hover = computedState(command, ".pv-control-command-button:hover");
+            const pressed = computedState(command, ".pv-control-command-button:active", { state: ":active" });
+            h.assert(hover !== null && pressed !== null, "缺少命令按钮悬停/按下状态");
+            h.assert(colorMatches(hover.borderTopColor, t("color.toolbar.command.hover.border")),
+                `悬停描边 ${hover.borderTopColor}`);
+            h.assert(colorMatches(hover.backgroundColor, t("color.toolbar.command.hover.background")),
+                `悬停底色 ${hover.backgroundColor}`);
+            h.assert(colorMatches(pressed.backgroundColor, t("color.toolbar.command.pressed.background")),
+                `按下底色 ${pressed.backgroundColor}`);
+            h.assert(cssRule(".pv-control-command-button[aria-pressed") === null, "命令按钮仍按 aria-pressed 强调底色");
+
+            const rating = h.dom(".pv-control-rating");
+            const ratingRect = rating.getBoundingClientRect();
+            h.assert(!rating.classList.contains("is-compact"), "宽形态评分出现紧凑态");
+            h.assert(Math.round(ratingRect.height) === 224 && Math.round(ratingRect.width) === 44,
+                `宽形态评分胶囊 ${ratingRect.width}×${ratingRect.height}`);
+            const star = h.dom('.pv-control-rating-button[data-rating="3"]');
+            const starRect = star.getBoundingClientRect();
+            const slot = Math.min(starRect.width, starRect.height);
+            h.assert(getComputedStyle(star).backgroundColor === "rgba(0, 0, 0, 0)", "评分槽常态有底色");
+            h.assert(star.style.getPropertyValue("--pv-rating-slot") === `${slot}px`,
+                `评分槽内切圆直径 ${star.style.getPropertyValue("--pv-rating-slot")} ≠ 槽位短边 ${slot}`);
+            const circle = getComputedStyle(star, "::before");
+            h.assert(circle.width === `${slot}px` && circle.height === `${slot}px`, `内切圆尺寸 ${circle.width}×${circle.height}`);
+            h.assert(circle.borderTopLeftRadius === "50%", `内切圆不是正圆：${circle.borderTopLeftRadius}`);
+            const ratingHover = computedState(star, ".pv-control-rating-button:hover", { pseudo: "::before" });
+            const ratingPressed = computedState(star, ".pv-control-rating-button:active", { pseudo: "::before", state: ":active" });
+            h.assert(ratingHover !== null && ratingPressed !== null, "缺少评分槽悬停/按下状态");
+            h.assert(colorMatches(getComputedStyle(rating).backgroundColor, commandStyle.backgroundColor),
+                `星级胶囊材质 ${getComputedStyle(rating).backgroundColor} ≠ 命令按钮 ${commandStyle.backgroundColor}`);
+            h.assert(colorMatches(ratingHover.backgroundColor, t("color.menu.item.hover")),
+                `评分悬停 ${ratingHover.backgroundColor}`);
+            h.assert(colorMatches(ratingPressed.backgroundColor, t("color.menu.item.pressed")),
+                `评分按下 ${ratingPressed.backgroundColor}`);
+            h.assert(ratingHover.width === `${slot}px` && ratingHover.height === `${slot}px`,
+                `悬停正圆越出槽位：${ratingHover.width}×${ratingHover.height}`);
+
+            const exif = app.state.layout.exif;
+            h.assert(exif.variant === "bare", `竖排 EXIF 变体 ${exif.variant}`);
+            h.assert(exif.frame.w === t("toolbar.exif.item.width"), `竖排 EXIF 容器宽 ${exif.frame.w}`);
+            const exifBlock = h.dom(".pv-control-exif-block");
+            h.assert(exifBlock.classList.contains("is-bare"), "竖排 EXIF 未使用无衬底变体");
+            h.assert(getComputedStyle(exifBlock).backgroundColor === "rgba(0, 0, 0, 0)", "竖排 EXIF 仍有衬底色");
+
+            app.openFolder("empty");
+            await h.tick(120);
+            const disabled = h.dom('.pv-control-command-button[data-command="Next"]');
+            const disabledColor = parseColor(getComputedStyle(disabled).color);
+            h.assert(disabled.disabled && disabledColor && Math.abs(disabledColor.a - t("color.toolbar.disabled.content.alpha")) <= 0.01,
+                `命令禁用内容 alpha ${disabledColor?.a}`);
+            h.assert(colorMatches(getComputedStyle(disabled).backgroundColor, t("color.toolbar.command.background")),
+                "命令禁用换了底色");
+            const disabledStar = h.dom('.pv-control-rating-button[data-rating="3"]');
+            const starColor = parseColor(getComputedStyle(disabledStar).color);
+            h.assert(disabledStar.disabled && starColor && Math.abs(starColor.a - t("color.toolbar.disabled.content.alpha")) <= 0.01,
+                `评分禁用内容 alpha ${starColor?.a}`);
+        },
+    },
+    {
         id: "STATE-01",
         title: "缓存命中切图保留前一张，未命中即清图并延迟提示",
         async run(shell, h) {
@@ -1454,6 +1660,11 @@ const CHECKS = [
             };
             const centerPoint = point(center);
             const focusPoint = point(focus);
+            h.assert(center.classList.contains("is-detail") && focus.classList.contains("is-detail"),
+                "细节瓦片缺少 is-detail 标记");
+            const detailHover = computedState(center, ".pv-analysis-tile.is-detail:hover");
+            h.assert(detailHover !== null && colorMatches(detailHover.borderTopColor, shell.t("color.analysis.highlight")),
+                `细节瓦片悬停描边 ${detailHover?.borderTopColor}`);
             h.assert(center.getAttribute("aria-pressed") === "false", "细节瓦片未暴露初始未激活状态");
 
             h.pointer(center, "pointerdown", centerPoint.x, centerPoint.y, { pointerType: "touch", pointerId: 41 });
@@ -2109,7 +2320,17 @@ const CHECKS = [
             h.assert(layout.nav.visible === true, "横屏上下张缺失");
             h.assert(layout.panes.analysisPane.w > 0 && layout.panes.controlPane.w > 0, "分析/控制列缺失");
             h.assert(layout.control.slots.exif && layout.control.slots.rating, "横屏控制列缺少 EXIF 或评分槽");
-            h.assert(layout.control.slots.exif.w === t("shell.glass.button.size"), "无衬底 EXIF 容器宽不是 44");
+            h.assert(layout.control.slots.exif.w === t("toolbar.exif.item.width"), "无衬底 EXIF 容器宽不是 52");
+            h.assert(Math.abs(layout.control.slots.exif.x + layout.control.slots.exif.w / 2
+                - (layout.control.slots.fit.x + t("shell.glass.button.size") / 2)) <= 0.01,
+            "无衬底 EXIF 容器未与按钮列同轴");
+            h.assert(layout.panes.controlPane.w === t("shell.glass.button.size") + t("toolbar.padding"),
+                `横屏控制列宽 ${layout.panes.controlPane.w}`);
+            const exifRect = h.dom(".pv-control-exif-block").getBoundingClientRect();
+            const fitRect = h.dom('.pv-control-command-button[data-command="Fit"]').getBoundingClientRect();
+            h.assert(Math.abs(exifRect.width - t("toolbar.exif.item.width")) <= 1, `横屏 EXIF DOM 宽 ${exifRect.width}`);
+            h.assert(Math.abs((exifRect.left + exifRect.width / 2) - (fitRect.left + fitRect.width / 2)) <= 1,
+                "横屏 EXIF DOM 未与按钮同轴");
             const landNav = h.dom(".pv-control-capsule.is-nav");
             const landUtility = h.dom(".pv-control-capsule.is-utility");
             const landNavRect = landNav.getBoundingClientRect();
@@ -2419,7 +2640,7 @@ const CHECKS = [
     },
     {
         id: "FILTER-07@mac",
-        title: "mac 配置档：列 96 胶囊/行三段 44 高、42 让位与桌面 EXIF 衬底",
+        title: "mac 配置档：列布局 42 让位、行三段 / 列单胶囊，其余与默认档一致",
         async run(shell, h) {
             const { app } = shell;
             if (shell.t.profile !== "mac") return;
@@ -2435,10 +2656,9 @@ const CHECKS = [
             h.assert(col.filter.toggle.w === 96 && col.filter.toggle.h === 44,
                 `mac 列 AI 开关 ${col.filter.toggle.w}×${col.filter.toggle.h}`);
             h.assert(col.filter.bar.h === 148, `mac 列筛选带高 ${col.filter.bar.h}`);
-            h.assert(col.exif.variant === "block", "mac 列布局 EXIF 不是衬底块");
-            h.assert(col.exif.frame.w === t("toolbar.exif.item.width") + 2 * t("toolbar.exif.padding"),
-                `mac 纵向 EXIF 块宽 ${col.exif.frame.w}`);
-            h.assert(col.control.paneCross === t("toolbar.exif.item.width") + 2 * t("toolbar.exif.padding") + 2 * t("toolbar.padding"),
+            h.assert(col.exif.variant === "bare", "mac 列布局 EXIF 仍有衬底");
+            h.assert(col.exif.frame.w === t("toolbar.exif.item.width"), `mac 纵向 EXIF 容器宽 ${col.exif.frame.w}`);
+            h.assert(col.control.paneCross === t("toolbar.exif.item.width") + 2 * t("toolbar.padding"),
                 `mac 控制列宽 ${col.control.paneCross}`);
             const windowRect = h.dom(".pv-window").getBoundingClientRect();
             const capsule = h.dom(".pv-filter-entry");
@@ -2446,7 +2666,8 @@ const CHECKS = [
             h.assert(!capsule.hidden && Math.round(capsuleRect.width) === 96 && Math.round(capsuleRect.height) === 44,
                 `mac 列胶囊 DOM ${capsuleRect.width}×${capsuleRect.height}`);
             const exifBlock = h.dom(".pv-control-exif-block");
-            h.assert(exifBlock.classList.contains("is-block"), "mac EXIF 未使用衬底块");
+            h.assert(exifBlock.classList.contains("is-bare") && !exifBlock.classList.contains("is-block"),
+                "mac EXIF 未使用无衬底变体");
 
             app.setLayoutModeOverride("row");
             await h.tick(120);
@@ -2455,7 +2676,7 @@ const CHECKS = [
             h.assert(rowLayout.filter.bar.h === 64, `mac 行筛选带高 ${rowLayout.filter.bar.h}`);
             h.assert(rowLayout.film.scroll.y === 64, `mac 行胶片带 y ${rowLayout.film.scroll.y}`);
             h.assert(rowLayout.filter.toggle.h === 44, "mac 行 AI 开关不是 44 高");
-            const sort = h.domAll(".pv-popup")[0];
+            const sort = h.domAll(".pv-popup.is-segment")[0];
             const sortRect = sort.getBoundingClientRect();
             h.assert(Math.round(sortRect.width) === 90 && Math.round(sortRect.height) === 44,
                 `mac 排序控件 DOM ${sortRect.width}×${sortRect.height}`);
@@ -2468,7 +2689,65 @@ const CHECKS = [
             const fallback = h.dom(".pv-filter-entry");
             h.assert(!fallback.hidden && Math.round(fallback.getBoundingClientRect().width) === 96,
                 `mac 行单胶囊 DOM ${fallback.getBoundingClientRect().width}`);
-            h.assert(h.domAll(".pv-popup").every((node) => node.hidden), "mac 单胶囊下三段仍可见");
+            h.assert(h.domAll(".pv-popup.is-segment").every((node) => node.hidden), "mac 单胶囊下三段仍可见");
+        },
+    },
+    {
+        id: "SHELL-02@mac",
+        title: "默认档与 mac 档的几何差异只在窗口装饰相关节点",
+        async run(shell, h) {
+            if (shell.t.profile !== "mac") return;
+            const t = (name) => shell.t(name);
+            const web = createTokens("web");
+            const macTokens = createTokens("mac");
+            const scene = {
+                width: 1200,
+                height: 850,
+                safeArea: { top: 0, right: 0, bottom: 0, left: 0 },
+                showFilmbar: true,
+                showControlbar: true,
+                showAnalysis: false,
+                showSimilarity: true,
+                similarityExpanded: false,
+                similarityItemCount: 0,
+                photoCount: 12,
+                countText: "共 12 张",
+                filterSegmentWidths: [90, 90, 90],
+                exifCount: 4,
+                showRating: true,
+                commandCount: 6,
+                analysisTileCount: 6,
+                hasPhoto: true,
+            };
+            const webLayout = (layoutMode) => computeLayout({ ...scene, layoutMode },
+                { t: web, profile: "web", measureText: approximateTextWidth });
+            const macLayout = (layoutMode) => computeLayout({ ...scene, layoutMode },
+                { t: macTokens, profile: "mac", measureText: approximateTextWidth });
+
+            const row = webLayout("row");
+            const macRow = macLayout("row");
+            h.deepEqual(Object.keys(macRow.nodes).sort(), Object.keys(row.nodes).sort(), "行布局节点集合不同");
+            const rowDiff = Object.keys(row.nodes).filter((name) => JSON.stringify(row.nodes[name]) !== JSON.stringify(macRow.nodes[name]));
+            h.deepEqual(rowDiff, [], "行布局在窗口装饰之外出现几何差异");
+            h.assert(row.overlays.dragzone === null && macRow.overlays.dragzone !== null, "行布局缺少 mac 拖动区导出");
+
+            const col = webLayout("col");
+            const macCol = macLayout("col");
+            const decoration = /^(filter\.|filmstrip|card|exif\.)/;
+            const colDiff = Object.keys({ ...col.nodes, ...macCol.nodes })
+                .filter((name) => JSON.stringify(col.nodes[name]) !== JSON.stringify(macCol.nodes[name]))
+                .filter((name) => !decoration.test(name));
+            h.deepEqual(colDiff, [], "列布局在筛选让位与窗口装饰之外出现几何差异");
+            h.deepEqual(macCol.nodes["root.fitRect"], col.nodes["root.fitRect"], "mac 档改变了主图适应区");
+            h.deepEqual(macCol.nodes["root.controlPane"], col.nodes["root.controlPane"], "mac 档改变了控制栏列宽");
+            h.deepEqual(macCol.control.groups, col.control.groups, "mac 档改变了控制栏分组几何");
+            h.deepEqual(macCol.exif.frame, col.exif.frame, "mac 档改变了 EXIF 几何");
+            h.assert(col.filter.leadingInset === t("filter.margin"), "默认档列布局未从外边距起排");
+            h.assert(macCol.filter.leadingInset === t("shell.filter.leadingInset"), "mac 列布局未取 42 让位");
+            h.assert(macCol.filter.leadingInset - col.filter.leadingInset
+                === t("shell.filter.leadingInset") - t("filter.margin"), "让位差值不是标题栏高");
+            h.assert(col.overlays.dragzone === null && macCol.overlays.dragzone?.height === t("shell.titlebar.height"),
+                "mac 列布局拖动区未取标题栏高");
         },
     },
     {
@@ -3370,8 +3649,9 @@ function createHelpers(shell) {
         assert(menu() !== null, "右键未弹出主图菜单");
     }
 
-    async function openFilter() {
-        click(dom(".pv-filter-entry"));
+    async function openFilter(group) {
+        const segment = group ? document.querySelector(`.pv-popup.is-segment[data-group="${group}"]`) : null;
+        click(segment && !segment.hidden ? segment : dom(".pv-filter-entry"));
         await tick(20);
         assert(menu() !== null, "点击筛选入口未弹出菜单");
     }

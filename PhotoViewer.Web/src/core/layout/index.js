@@ -105,7 +105,6 @@ export function computeLayout(scene, { t, profile = "web", measureText = approxi
             commandCount,
             crossNear,
             crossFar,
-            profile,
         }, t)
         : null;
 
@@ -225,7 +224,7 @@ export function computeLayout(scene, { t, profile = "web", measureText = approxi
     const exif = computeExif({
         form: form.form, orientation: phoneOrientation, mode: form.mode,
         panes, filter, control, exifCount, exifWanted,
-        wideAxis, crossNear, crossFar, profile, t,
+        wideAxis, t,
     });
 
     const similarityPanel = similarityExpanded && similarity.visible !== false && showFilmbar
@@ -491,7 +490,7 @@ function computePhoneSlots(spec, t) {
 }
 
 function computeExif(spec, t) {
-    const { form, orientation, mode, panes, filter, control, exifCount, exifWanted, wideAxis, crossNear, profile, t: token } = spec;
+    const { form, orientation, mode, panes, filter, control, exifCount, exifWanted, wideAxis, t: token } = spec;
     if (!exifWanted || exifCount <= 0) return { visible: false, variant: null, items: [] };
     const button = token("shell.glass.button.size");
     const padding = token("toolbar.exif.padding");
@@ -529,7 +528,7 @@ function computeExif(spec, t) {
             host: "control",
             origin: { x: 0, y: 0 },
             variant: "bare",
-            frame: { x: slot.x, y: slot.y, w: button, h: slot.h },
+            frame: { x: slot.x, y: slot.y, w: slot.w, h: slot.h },
             items: slot.items.map((item) => ({ ...item })),
         };
     }
@@ -542,7 +541,7 @@ function computeExif(spec, t) {
             visible: true,
             host: "control",
             origin: { x: origin.x, y: origin.y },
-            variant: profile === "mac" ? "block" : "bare",
+            variant: "bare",
             frame: { x: group.x, y: group.y, w: group.w, h: group.h },
             items: group.children.map((child) => ({ ...child })),
         };

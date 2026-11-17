@@ -804,10 +804,10 @@ test("EDITION-02：标准版行布局按四项重新整组居中", () => {
     const filter = app.state.layout.filter;
     assert.equal(filter.axis, "row");
     assert.equal(filter.toggle, null);
-    const groupWidth = t("film.card.width");
-    assert.equal(filter.composite.w, groupWidth);
-    assert.equal(filter.entry.w, groupWidth / 2);
-    assert.equal(filter.more.w, groupWidth / 2);
+    assert.equal(filter.kind, "segments");
+    assert.equal(filter.control.w, 3 * t("filter.control.width"));
+    assert.equal(filter.control.x, (1200 - filter.control.w) / 2);
+    assert.equal(filter.controls.sort.w, t("filter.control.width"));
     assert.equal(filter.bar.h, t("shell.glass.button.size") + 2 * t("filter.margin"));
 });
 
