@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Reactive.Concurrency;
 using System.Text;
 using PhotoViewer.Core;
@@ -25,17 +24,15 @@ internal static class RefreshRegressionChecks
         var b = new ImageFile(new LocalFileRef(bPath));
         a.UpdateCachedRating(5);
         b.UpdateCachedRating(5);
-        var groups = PhotoGroupMap.Build([a, b], false,
-            [new PhotoFormatRule("jpg", "JPG", [".jpg"])]);
+        PhotoGroupMap.Build([a, b], false, [new PhotoFormatRule("jpg", "JPG", [".jpg"])]);
         using var main = new MainViewModel();
-        var method = typeof(MainViewModel).GetMethod("RefreshRatingsFromDiskAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
         var dispatcher = new DelayedDispatcher();
         UiDispatcher.Initialize(dispatcher);
         try
         {
-            var first = (Task)method.Invoke(main, [groups.GroupFor(a)!])!;
+            var first = main.SetRatingWithResultAsync(a, 1);
             await dispatcher.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            await (Task)method.Invoke(main, [groups.GroupFor(b)!])!;
+            await main.SetRatingWithResultAsync(b, 2);
             dispatcher.Release.TrySetResult();
             await first;
             c.Equal("另一照片刷新不作废本照片结果", 1, a.Rating);
@@ -50,11 +47,12 @@ internal static class RefreshRegressionChecks
         a.RatingSidecarIndex = RatingSidecarIndex.Empty;
         var sidecarPath = Path.ChangeExtension(aPath, ".xmp");
         await File.WriteAllBytesAsync(sidecarPath, Packet(4));
-        await (Task)method.Invoke(main, [groups.GroupFor(a)!])!;
+        await main.SetRatingWithResultAsync(a, 1);
         c.Equal("评分回读发现旧索引之外的 sidecar", 2, a.RatingSources.Count);
-        c.True("新增 sidecar 冲突按磁盘呈现", a.HasRatingConflict);
+        c.True("新发现的 sidecar 参与统一写入", !a.HasRatingConflict
+            && a.RatingSources.Any(source => source.Source == XmpRatingSource.Sidecar && source.Value == 1));
         File.Delete(sidecarPath);
-        await (Task)method.Invoke(main, [groups.GroupFor(a)!])!;
+        await main.SetRatingWithResultAsync(a, 1);
         c.Equal("评分回读不复活已删除 sidecar", 1, a.RatingSources.Count);
 
         var badPath = Path.Combine(directory, "unsupported.jpg");

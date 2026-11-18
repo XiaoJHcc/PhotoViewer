@@ -1147,25 +1147,19 @@ internal static class RatingChecks
 
         var image = new ImageFile(new LocalFileRef(path));
         image.UpdateCachedRating(5);
-        var group = PhotoGroupMap.Build([image], false, Rules(("jpg", "JPG", ".jpg"))).GroupFor(image)!;
+        PhotoGroupMap.Build([image], false, Rules(("jpg", "JPG", ".jpg")));
 
         using var main = new MainViewModel();
-        var method = typeof(MainViewModel).GetMethod(
-            "RefreshRatingsFromDiskAsync",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("找不到 RefreshRatingsFromDiskAsync");
 
         var dispatcher = new DelayedFirstDispatcher();
         UiDispatcher.Initialize(dispatcher);
         try
         {
-            var oldRefresh = (Task)method.Invoke(main, [group])!;
+            var oldRefresh = main.SetRatingWithResultAsync(image, 1);
             await dispatcher.WaitForDelayAsync();
             c.True("旧刷新快照尚未应用", image.Rating == 5);
 
-            await XmpRatingStoreFactory.Create(new LocalFileRef(path)).WriteAsync(2, safeMode: true);
-            var newRefresh = (Task)method.Invoke(main, [group])!;
-            await newRefresh;
+            await main.SetRatingWithResultAsync(image, 2);
             c.Equal("新刷新把内存更新为磁盘 2", 2, image.Rating);
 
             await oldRefresh;

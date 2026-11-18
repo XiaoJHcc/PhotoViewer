@@ -63,6 +63,8 @@ public sealed record RatingWriteResult(
     IReadOnlyList<RatingFileOutcome> Files,
     string? FailureReason = null)
 {
+    internal IReadOnlyDictionary<StorageItemId, IReadOnlyList<RatingSourceState>>? VerifiedSources { get; init; }
+
     public bool IsApplied => Outcome is RatingWriteOutcome.Applied or RatingWriteOutcome.NoChange;
 
     public bool AnyFileModified => Files.SelectMany(file => file.Sources).Any(source => source.Written);
@@ -161,7 +163,7 @@ public sealed class RatingService
 
             // sidecar 索引只服务列表读取；写入必须逐个文件核查当前磁盘，避免混合/陈旧索引漏写。
             _ = sidecarIndex;
-            return await ApplyAsync(group, rating, safeMode, gate, sequence, cancellationToken)
+            return await Task.Run(() => ApplyAsync(group, rating, safeMode, gate, sequence, cancellationToken))
                 .ConfigureAwait(false);
         }
         finally
@@ -182,7 +184,7 @@ public sealed class RatingService
         List<RatingWriteSource> sources;
         try
         {
-            sources = await CollectSourcesAsync(group, cancellationToken).ConfigureAwait(false);
+            (sources, _) = await CollectSourcesAsync(group, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -314,9 +316,10 @@ public sealed class RatingService
 
         // 全组成功前必须重读每个来源（含同值 NoChange）并重新发现来源集合：
         // 预检后新增/消失的 sidecar、写入期间被外部改动的同值来源都不允许以 Applied/NoChange 收尾。
+        RatingVerification? verification = null;
         if (failureReason is null)
         {
-            var verification = await VerifyAsync(group, rating, preparations).ConfigureAwait(false);
+            verification = await VerifyAsync(group, rating, preparations).ConfigureAwait(false);
             if (verification.Problems.Count > 0)
             {
                 failureReason = string.Join("；", verification.Problems);
@@ -333,7 +336,7 @@ public sealed class RatingService
                 group.Id,
                 rating,
                 allNoChange ? RatingWriteOutcome.NoChange : RatingWriteOutcome.Applied,
-                outcomes);
+                outcomes) { VerifiedSources = verification!.VerifiedSources };
         }
 
         // 安全模式：逆序补偿已拿到回执的来源；关闭时保留已写来源的磁盘真值，不假装整组一致。
@@ -388,9 +391,10 @@ public sealed class RatingService
         RatingWriteSource? failed = null;
 
         List<RatingWriteSource> current;
+        Dictionary<StorageItemId, List<RatingWriteSource>> owners;
         try
         {
-            current = await CollectSourcesAsync(group, CancellationToken.None).ConfigureAwait(false);
+            (current, owners) = await CollectSourcesAsync(group, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
@@ -417,6 +421,7 @@ public sealed class RatingService
             failed ??= source;
         }
 
+        var confirmed = new Dictionary<string, RatingSourceState>(StringComparer.Ordinal);
         foreach (var (source, preparation) in preparations)
         {
             // 已消失的来源在上面的集合差异里报告过，不再重复读。
@@ -463,9 +468,17 @@ public sealed class RatingService
                 problems.Add($"{source.DisplayName} 当前为 {Describe(actual)}，期望 {DescribeTarget(rating)}");
                 failed ??= source;
             }
+            else
+            {
+                var live = currentByKey[SourceKey(source)];
+                confirmed.Add(SourceKey(source), new RatingSourceState(live.Kind, live.Target, actual));
+            }
         }
 
-        return new RatingVerification(problems, failed);
+        var verifiedSources = problems.Count == 0 ? owners.ToDictionary(
+            item => item.Key,
+            item => (IReadOnlyList<RatingSourceState>)item.Value.Select(source => confirmed[SourceKey(source)]).ToArray()) : null;
+        return new RatingVerification(problems, failed, verifiedSources);
     }
 
     private static bool RevisionChanged(StorageRevision? expected, StorageRevision? current)
@@ -492,47 +505,45 @@ public sealed class RatingService
     private static string DescribeTarget(int rating) =>
         rating == -1 ? "Rating -1（拒绝）" : $"Rating {rating}";
 
-    private async Task<List<RatingWriteSource>> CollectSourcesAsync(
-        PhotoGroup group,
-        CancellationToken cancellationToken)
+    private async Task<(List<RatingWriteSource> Sources, Dictionary<StorageItemId, List<RatingWriteSource>> Owners)>
+        CollectSourcesAsync(PhotoGroup group, CancellationToken cancellationToken)
     {
         var sources = new List<RatingWriteSource>(group.Files.Count + 1);
-        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var owners = new Dictionary<StorageItemId, List<RatingWriteSource>>();
+        var sidecars = new Dictionary<StorageItemId, RatingWriteSource>();
+        var lookups = new Dictionary<(StorageItemId Parent, string Name), IFileRef?>();
         var ordered = OrderFiles(group);
 
-        // 顺序只用于确定性与补偿：代表文件内嵌 → 其余文件内嵌 → 每个实际存在的 sidecar。
         foreach (var image in ordered)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (seen.Add("E|" + image.File.StorageId.Value))
-            {
-                sources.Add(new RatingWriteSource(
-                    image,
-                    image.File,
-                    XmpRatingSource.Embedded,
-                    _embeddedStoreFactory(image.File)));
-            }
+            var source = new RatingWriteSource(image, image.File, XmpRatingSource.Embedded,
+                _embeddedStoreFactory(image.File));
+            sources.Add(source);
+            owners.Add(image.File.StorageId, [source]);
         }
 
         foreach (var image in ordered)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            // 写入必须逐个文件核查当前磁盘：不采用文件对象上的索引，避免混合/陈旧索引漏掉新 sidecar。
-            var sidecar = await RatingSourceReader
-                .ResolveSidecarAsync(image.File, sidecarIndex: null, cancellationToken)
-                .ConfigureAwait(false);
+            var parent = await image.File.GetParentAsync(cancellationToken).ConfigureAwait(false);
+            if (parent is null) continue;
+            var key = (parent.StorageId, XmpRatingReader.SidecarName(image.File.Name));
+            if (!lookups.TryGetValue(key, out var sidecar))
+            {
+                sidecar = await parent.FindFileAsync(key.Item2, cancellationToken).ConfigureAwait(false);
+                lookups.Add(key, sidecar);
+            }
             if (sidecar is null) continue;
-            if (seen.Add("S|" + sidecar.StorageId.Value))
+            if (!sidecars.TryGetValue(sidecar.StorageId, out var source))
             {
-                sources.Add(new RatingWriteSource(
-                    image,
-                    sidecar,
-                    XmpRatingSource.Sidecar,
-                    _sidecarStoreFactory(sidecar)));
+                source = new RatingWriteSource(image, sidecar, XmpRatingSource.Sidecar, _sidecarStoreFactory(sidecar));
+                sidecars.Add(sidecar.StorageId, source);
+                sources.Add(source);
             }
+            owners[image.File.StorageId].Add(source);
         }
 
-        return sources;
+        return (sources, owners);
     }
 
     private static List<RatingFileOutcome> BuildOutcomes(
@@ -729,7 +740,8 @@ public sealed class RatingService
     /// <summary>写入后整组校验的结果：<see cref="Problems"/> 非空即不能按成功收尾。</summary>
     private sealed record RatingVerification(
         IReadOnlyList<string> Problems,
-        RatingWriteSource? FailedSource);
+        RatingWriteSource? FailedSource,
+        IReadOnlyDictionary<StorageItemId, IReadOnlyList<RatingSourceState>>? VerifiedSources = null);
 
     private sealed class GroupGate
     {

@@ -63,6 +63,9 @@ internal static partial class AndroidNativeChecks
                 case "background":
                     await RunBackgroundPrefetchChecksAsync();
                     break;
+                case "rating-perf":
+                    await RunRatingPerfChecksAsync();
+                    break;
                 case "edition":
                     await RunEditionChecksAsync();
                     break;

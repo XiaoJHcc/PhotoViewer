@@ -414,36 +414,32 @@ public class MainViewModel : ViewModelBase, IDisposable
         LastRatingWriteError = null;
         LastRatingWriteOutcome = null;
         var persisted = false;
+        PhotoGroup? group = null;
+        long sequence = 0;
         try
         {
-            var group = GetRatingGroup(file);
-            var safeMode = Settings.SafeSetRating;
-            var sidecarIndex = group.Files
-                .Select(item => item.RatingSidecarIndex)
-                .FirstOrDefault(item => item != null);
-            var result = await Task.Run(
-                () => Rating.SetRatingAsync(group, rating, safeMode, sidecarIndex));
-            LastRatingWriteOutcome = result.Outcome;
-            if (result.Outcome is RatingWriteOutcome.Superseded or RatingWriteOutcome.Canceled)
+            group = GetRatingGroup(file);
+            lock (_ratingRefreshLock)
             {
-                // 即使没有物理修改也按磁盘真值刷新，避免内存与外部状态长期分叉。
-                await RefreshRatingsFromDiskAsync(group);
-                return result.Outcome;
+                if (_disposed) return null;
+                sequence = ++_ratingRefreshSequence;
+                foreach (var member in group.Files) _ratingRefreshVersions[member.File.StorageId] = sequence;
             }
+            var result = await Rating.SetRatingAsync(group, rating, Settings.SafeSetRating);
+            LastRatingWriteOutcome = result.Outcome;
+            if (result.Outcome is RatingWriteOutcome.Superseded) return result.Outcome;
 
             if (result.IsApplied)
             {
                 persisted = true;
-                // 成功后按磁盘真值逐文件重读全部来源（共享 sidecar 会回填到每个文件，
-                // 内嵌 Conflict/多来源状态也不会被单份 canonical 的 After 抹掉）。
-                await RefreshRatingsFromDiskAsync(group);
-                _ = SyncRatingToDatabaseAsync(group.Representative, rating);
+                if (await PublishRatingsAsync(group, sequence, result.VerifiedSources!))
+                    _ = SyncRatingToDatabaseAsync(group.Representative, rating);
                 return result.Outcome;
             }
 
             LastRatingWriteError = result.FailureReason;
-            // 所有非 Applied 结果都按磁盘真值重读，不只 Partial。
-            await RefreshRatingsFromDiskAsync(group);
+            await RefreshRatingsFromDiskAsync(group, sequence);
+            if (result.Outcome is RatingWriteOutcome.Canceled) return result.Outcome;
             var failure = new RatingWriteFailure(
                 file,
                 rating,
@@ -475,60 +471,60 @@ public class MainViewModel : ViewModelBase, IDisposable
         }
         finally
         {
+            if (group is not null && sequence != 0)
+            {
+                lock (_ratingRefreshLock)
+                {
+                    foreach (var member in group.Files)
+                        if (_ratingRefreshVersions.TryGetValue(member.File.StorageId, out var current) && current == sequence)
+                            _ratingRefreshVersions.Remove(member.File.StorageId);
+                }
+            }
             Console.WriteLine($"[Rating] === END SetRating({file.Name}): Total {ratingSw.ElapsedMilliseconds}ms ===");
         }
     }
 
-    private async Task RefreshRatingsFromDiskAsync(PhotoGroup group)
+    private async Task RefreshRatingsFromDiskAsync(PhotoGroup group, long sequence)
     {
-        long sequence;
-        lock (_ratingRefreshLock)
+        var readings = await Task.Run(async () =>
         {
-            if (_disposed) return;
-            sequence = ++_ratingRefreshSequence;
-            foreach (var file in group.Files) _ratingRefreshVersions[file.File.StorageId] = sequence;
-        }
+            var values = new Dictionary<StorageItemId, IReadOnlyList<RatingSourceState>>();
+            foreach (var file in group.Files)
+            {
+                var (_, sources) = await RatingSourceReader.ReadAsync(
+                    file.File, sidecarIndex: null).ConfigureAwait(false);
+                values.Add(file.File.StorageId, sources);
+            }
+            return values;
+        });
+        await PublishRatingsAsync(group, sequence, readings);
+    }
 
-        try
-        {
-            var readings = await Task.Run(async () =>
-            {
-                var values = new List<(ImageFile File, IReadOnlyList<RatingSourceState> Sources)>();
-                foreach (var file in group.Files)
-                {
-                    var (_, sources) = await RatingSourceReader.ReadAsync(
-                        file.File, sidecarIndex: null).ConfigureAwait(false);
-                    values.Add((file, sources));
-                }
-                return values;
-            });
-            await UiDispatcher.InvokeAsync(() =>
-            {
-                if (_disposed) return;
-                var changed = false;
-                foreach (var (file, sources) in readings)
-                {
-                    lock (_ratingRefreshLock)
-                    {
-                        if (!_ratingRefreshVersions.TryGetValue(file.File.StorageId, out var current) || current != sequence)
-                            continue;
-                        file.RatingSidecarIndex = null;
-                        file.ApplyRatingSources(sources);
-                        changed = true;
-                    }
-                }
-                if (changed) RefreshRatingDependentState();
-            });
-        }
-        finally
+    private async Task<bool> PublishRatingsAsync(PhotoGroup group, long sequence,
+        IReadOnlyDictionary<StorageItemId, IReadOnlyList<RatingSourceState>> readings)
+    {
+        var published = false;
+        await UiDispatcher.InvokeAsync(() =>
         {
             lock (_ratingRefreshLock)
             {
+                if (_disposed || group.Files.Any(file =>
+                        !_ratingRefreshVersions.TryGetValue(file.File.StorageId, out var current) || current != sequence))
+                    return;
+
+                // Subscribers compute conflict from the whole group, so notify only after all members are staged.
                 foreach (var file in group.Files)
-                    if (_ratingRefreshVersions.TryGetValue(file.File.StorageId, out var current) && current == sequence)
-                        _ratingRefreshVersions.Remove(file.File.StorageId);
+                {
+                    file.RatingSidecarIndex = null;
+                    file.ApplyRatingSourcesSilently(readings[file.File.StorageId]);
+                }
+                published = true;
             }
-        }
+
+            foreach (var file in group.Files) file.NotifyRatingSourcesChanged();
+            RefreshRatingDependentState();
+        });
+        return published;
     }
 
     private void RefreshRatingDependentState()

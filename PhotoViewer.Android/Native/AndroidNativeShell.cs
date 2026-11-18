@@ -125,6 +125,8 @@ public static class AndroidNativeShell
             AndroidSettingsStorage.UseIsolatedProfile("stress");
         else if (intent?.GetStringExtra("pv-check") is "zoom" or "input" or "perf" or "background")
             AndroidSettingsStorage.UseIsolatedProfile("input-checks");
+        else if (string.Equals(intent?.GetStringExtra("pv-check"), "rating-perf", StringComparison.OrdinalIgnoreCase))
+            AndroidSettingsStorage.UseIsolatedProfile("rating-perf");
         InitializePlatform(activity);
 
         // 内存上限探针（验收）：只读系统退出原因，或接管界面做逐步分配；都不建主界面。

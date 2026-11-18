@@ -61,7 +61,7 @@
 3. **来源枚举**：`RatingService` 列出组的全部实际来源——每个文件的内嵌 XMP 位置各一个（无包记为缺失）、每个实际存在的 `<stem>.xmp` 各一个。不存在 sidecar 时不创建，存在时必须参与写入；来源之间没有读取或写入优先级，代表文件内嵌 Rating 只作为列表、控制栏与数字筛选的显示口径（RATING-01）。
 4. **预检**：逐来源由 `ContainerRatingStore` 按容器结构取 canonical XMP（JPEG APP1、HEIF `mime`/`iloc`、TIFF IFD0 tag 700、WebP `XMP ` chunk、sidecar 本体；容器适配器只做只读定位，PNG 写入不支持），包内区间由 `XmpRatingSpanLocator` 生成；无 canonical 包时不生成插入计划，按 `Unsupported` 处理；有包但缺 Rating 时，仅在结构唯一且空白足够时生成包内插入计划。核对区间最小、与容器其它数据不重叠/不共享、长度策略（等长 / Rating 附近局部空白吸收；远端 padding 移位、受控追加、整文件替换不支持）、容器记账字段、真实随机读写能力与安全模式字节/修订比对。禁止正则或全文搜索定位；任一来源无法证明非目标数据安全即 `Unsupported`，整组在首次修改前失败（RATING-02）。
 5. **写入**：固定顺序代表内嵌 → 其余文件内嵌（按格式优先级）→ 实际存在的 sidecar；每写入后回读 `xap:Rating` 做语义校验并核对记账字段与区间外字节。`NoChange` 同样以逐来源实读确认。写后确认覆盖全部来源与本次预检的来源集合（sidecar 未增删、内嵌包位置未被替换），集合变化不按整组成功报告。任一失败时，安全模式按逆序用回执补偿已写来源；安全模式关闭则停止后续写入。结果 `Applied` / `NoChange` / `Superseded` / `RolledBack` / `Partial` / `Canceled`；`Applied`（全部来源写入并校验）与 `NoChange`（全部来源本来已是目标值、未做物理写入）都算成功（`IsApplied`）；`Partial` 明示补偿未全部成功、来源可能不一致，**不承诺跨文件断电原子**。取消只在首次物理修改前生效。
-6. **刷新**：`Applied` 与 `NoChange` 都把值回填缓存并刷新筛选（`FolderViewModel.RefreshFilters`）；`Partial` 逐来源重读磁盘真实状态，按 RATING-01 的冲突口径显示；失败发 `RatingWriteFailed`，星级保持原值并走 STATE-03 提示，已有冲突指示与来源浮窗保留（RATING-04）。
+6. **刷新**：`Applied` 与 `NoChange` 直接使用事务最终校验得到的来源快照（共享 sidecar 回填到各成员），不再重开照片做第二次读取。先更新整组评分字段，再发通知和重算筛选，避免观察者把中间态误判为冲突；旧请求不能覆盖后发请求。同组排队时被取代的请求不另发起读取；失败仍重读磁盘真值，并发 `RatingWriteFailed`，按实际冲突状态和 STATE-03 提示收尾（RATING-04）。
 7. **数据库副本**：仅在 `Applied` 或 `NoChange` 后用代表文件指纹 `PhotoDatabase.UpdateRatingAsync(fp, rating)`。产品行为仍以文件为准，数据库评分只是给训练流水线取快照；指纹未入库时静默跳过，不主动占位。训练侧按实际选用文件的内部 Rating 取快照，不是有效 1–5 时不落值（RATING-05）。
 
 ### 5.4 AI 特征提取与持久化（DINO/CV 索引）

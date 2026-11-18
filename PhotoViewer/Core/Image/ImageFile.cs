@@ -493,11 +493,21 @@ public class ImageFile : ReactiveObject
     /// </summary>
     public void ApplyRatingSources(IReadOnlyList<RatingSourceState> sources)
     {
+        ApplyRatingSourcesSilently(sources);
+        NotifyRatingSourcesChanged();
+    }
+
+    internal void ApplyRatingSourcesSilently(IReadOnlyList<RatingSourceState> sources)
+    {
         ArgumentNullException.ThrowIfNull(sources);
         Interlocked.Increment(ref _metadataVersion);
         var embedded = sources.FirstOrDefault(source => source.Source == XmpRatingSource.Embedded)?.Snapshot
             ?? XmpRatingSnapshot.Missing(XmpRatingSource.Embedded);
         ApplyRatingCore(embedded, sources);
+    }
+
+    internal void NotifyRatingSourcesChanged()
+    {
         this.RaisePropertyChanged(nameof(Rating));
         this.RaisePropertyChanged(nameof(RatingState));
         this.RaisePropertyChanged(nameof(RatingSources));

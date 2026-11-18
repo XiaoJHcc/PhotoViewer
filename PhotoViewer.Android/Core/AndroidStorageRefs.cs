@@ -912,6 +912,10 @@ public sealed class AndroidFolderRef : IFolderRef
     public async Task<IFileRef?> FindFileAsync(string name, CancellationToken cancellationToken = default)
     {
         AndroidStorageSupport.ValidateChildName(name);
+        if (_localPath == null)
+            return await Task.Run(() => FindDocumentFile(name, cancellationToken), cancellationToken)
+                .ConfigureAwait(false);
+
         await foreach (var item in GetItemsAsync(cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -919,6 +923,38 @@ public sealed class AndroidFolderRef : IFolderRef
                 return file;
         }
         return null;
+    }
+
+    private IFileRef? FindDocumentFile(string name, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var cursor = _resolver.Query(BuildChildrenUri(), AndroidStorageSupport.ProjectionColumns,
+                null, null, null) ?? throw new StorageException(StorageError.IoError, $"无法枚举 {Name}");
+            int nameColumn = cursor.GetColumnIndex(DocumentsContract.Document.ColumnDisplayName);
+            while (cursor.MoveToNext())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string? displayName = nameColumn < 0 || cursor.IsNull(nameColumn) ? null : cursor.GetString(nameColumn);
+                if (displayName != null && !string.Equals(displayName, name, StringComparison.Ordinal)) continue;
+
+                string? documentId = AndroidStorageSupport.ReadString(cursor, DocumentsContract.Document.ColumnDocumentId);
+                if (string.IsNullOrEmpty(documentId)) continue;
+                if (displayName == null && !string.Equals(AndroidStorageSupport.NameFromDocumentId(documentId),
+                        name, StringComparison.Ordinal)) continue;
+
+                var metadata = AndroidStorageSupport.ReadMetadata(cursor);
+                if (string.Equals(metadata.MimeType, DocumentsContract.Document.MimeTypeDir, StringComparison.Ordinal))
+                    continue;
+                var documentUri = BuildDocumentUri(documentId);
+                if (documentUri != null) return new AndroidFileRef(_resolver, documentUri, _treeUri, metadata, true);
+            }
+            return null;
+        }
+        catch (Exception exception) when (exception is not StorageException and not OperationCanceledException)
+        {
+            throw AndroidStorageSupport.Wrap(exception, $"查找 {name}");
+        }
     }
 
     /// <summary>在本目录新建文件；MIME 按扩展名选择（.xmp → application/xml）。</summary>
