@@ -1,7 +1,6 @@
 using CoreGraphics;
 using PhotoViewer.Core.Design;
 using PhotoViewer.ViewModels.Main;
-using PhotoViewer.ViewModels.Main.File;
 using UIKit;
 
 namespace PhotoViewer.iOS.Native;
@@ -21,8 +20,8 @@ internal sealed class iOSFilterControl : UIView
 
     private readonly MainViewModel _main;
     private readonly iOSGlassButtonGroup _group;
-    private readonly UIButton _filter;
-    private readonly UIButton _more;
+    private readonly iOSMenuButton _filter;
+    private readonly iOSMenuButton _more;
     private readonly UIButton? _similarity;
     private MobileFilterFrames _frames;
     private bool? _toggleOpen;
@@ -32,7 +31,7 @@ internal sealed class iOSFilterControl : UIView
     internal iOSGlassButtonGroup CombinedGroup => _group;
 
     /// <summary>筛选段按钮（弹出三分组筛选菜单）。</summary>
-    internal UIButton FilterButton => _filter;
+    internal iOSMenuButton FilterButton => _filter;
 
     /// <summary>更多段按钮（主图菜单，内容由宿主提供）。</summary>
     internal UIButton MoreButton => _more;
@@ -53,11 +52,11 @@ internal sealed class iOSFilterControl : UIView
         _main = main;
         BackgroundColor = UIColor.Clear;
         _group = new iOSGlassButtonGroup { SegmentLength = MobileFilterLayout.SegmentWidth };
-        _filter = _group.Add("line.3.horizontal.decrease", "筛选", null);
-        _filter.ShowsMenuAsPrimaryAction = true;
+        _filter = _group.AddMenu("line.3.horizontal.decrease", "筛选");
+        iOSFilterMenu.Attach(_filter, _main.FileVM.FilterBar);
         _filter.AccessibilityHint = "下拉选择排序、方向与星级筛选";
-        _more = _group.Add("ellipsis", "更多", null);
-        _more.ShowsMenuAsPrimaryAction = true;
+        _more = _group.AddMenu("ellipsis", "更多");
+        iOSMenuButton.Pair(_filter, _more);
         AddSubview(_group);
 
 #if PHOTOVIEWER_DINO
@@ -88,15 +87,11 @@ internal sealed class iOSFilterControl : UIView
     internal void SetMoreMenu(UIMenu menu) => _more.Menu = menu;
 
     /// <summary>
-    /// 同步共享筛选状态到原生控件：筛选段菜单按稳定标识更新模型侧的勾选态（<see cref="UIAction.State"/>），
-    /// 读屏值取当前星级筛选，相似聚类开关同步外观。
-    /// 展开菜单的可见选择、滚动与焦点由独立交互验收核对。
+    /// 更新入口的读屏值与相似聚类开关。
     /// </summary>
     internal void Refresh()
     {
-        var filter = _main.FileVM.FilterBar;
-        iOSFilterMenu.UpdateVisibleMenu(_filter, filter, Refresh);
-        _filter.AccessibilityValue = filter.RatingFilters.FirstOrDefault(option => option.Key == filter.SelectedRatingFilter)?.DisplayName ?? "";
+        iOSFilterMenu.Refresh(_filter, _main.FileVM.FilterBar);
         RefreshToggle();
     }
 

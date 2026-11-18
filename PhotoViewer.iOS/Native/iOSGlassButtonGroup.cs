@@ -63,6 +63,16 @@ internal sealed class iOSGlassButtonGroup : UIVisualEffectView
         return button;
     }
 
+    internal iOSMenuButton AddMenu(string symbolName, string label)
+    {
+        var button = new iOSMenuButton();
+        iOSGlassButtons.Configure(button, UIButtonConfiguration.PlainButtonConfiguration, symbolName, label);
+        ContentView.AddSubview(button);
+        _buttons.Add(button);
+        SetNeedsLayout();
+        return button;
+    }
+
     public override void LayoutSubviews()
     {
         base.LayoutSubviews();
@@ -124,6 +134,22 @@ internal static class iOSGlassButtons
         if (action != null) button.TouchUpInside += (_, _) => action();
         EnableHighlight(button);
         return button;
+    }
+
+    internal static iOSMenuButton RoundMenu(string symbolName, string label)
+    {
+        var button = new iOSMenuButton();
+        Configure(button, UIButtonConfiguration.GlassButtonConfiguration, symbolName, label);
+        return button;
+    }
+
+    internal static void Configure(UIButton button, UIButtonConfiguration configuration, string symbolName, string label)
+    {
+        configuration.Image = iOSSymbols.Symbol(symbolName, DesignTokens.ToolbarCommandGlyphFontSize);
+        configuration.BaseForegroundColor = UIColor.Label;
+        button.Configuration = configuration;
+        button.AccessibilityLabel = label;
+        EnableHighlight(button);
     }
 
     /// <summary>合体按钮的一段：系统无底色按钮，连续胶囊背景由所在的单一玻璃容器承担。</summary>

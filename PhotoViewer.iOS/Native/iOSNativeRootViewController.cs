@@ -72,11 +72,11 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private readonly iOSFilterControl _filterBar;
     private readonly iOSFilmstripView _filmstrip;
     private readonly iOSAnalysisPanel _analysisPane;
-    private UIButton _phoneFilter = null!;
-    private UIButton _phoneMore = null!;
+    private iOSMenuButton _phoneFilter = null!;
+    private iOSMenuButton _phoneMore = null!;
     private iOSGlassButtonGroup _phoneFilterMore = null!;
-    private UIButton _phoneFilterSegment = null!;
-    private UIButton _phoneMoreSegment = null!;
+    private iOSMenuButton _phoneFilterSegment = null!;
+    private iOSMenuButton _phoneMoreSegment = null!;
     private iOSGlassButtonGroup _phoneNavigation = null!;
     private iOSGlassButtonGroup _phoneFitEnhance = null!;
     private UIButton _phoneEnhanceSegment = null!;
@@ -252,11 +252,11 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <summary>主屏舞台（产品运行时等于根视图；分屏演练时被限宽）。</summary>
     internal UIView Stage => _stage;
     /// <summary>手机竖屏筛选圆按钮。</summary>
-    internal UIButton PhoneFilterButton => _phoneFilter;
+    internal iOSMenuButton PhoneFilterButton => _phoneFilter;
     /// <summary>手机竖屏更多圆按钮。</summary>
     internal UIButton PhoneMoreButton => _phoneMore;
     /// <summary>手机横屏合体的筛选段。</summary>
-    internal UIButton PhoneFilterSegment => _phoneFilterSegment;
+    internal iOSMenuButton PhoneFilterSegment => _phoneFilterSegment;
     /// <summary>手机横屏合体的更多段。</summary>
     internal UIButton PhoneMoreSegment => _phoneMoreSegment;
     /// <summary>手机横屏筛选/更多合体。</summary>
@@ -1351,17 +1351,17 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <param name="host">主屏舞台。</param>
     private void BuildPhoneControls(UIView host)
     {
-        _phoneFilter = iOSGlassButtons.Round("line.3.horizontal.decrease", "筛选", null);
-        _phoneFilter.ShowsMenuAsPrimaryAction = true;
-        _phoneMore = iOSGlassButtons.Round("ellipsis", "更多", null);
-        _phoneMore.ShowsMenuAsPrimaryAction = true;
+        _phoneFilter = iOSGlassButtons.RoundMenu("line.3.horizontal.decrease", "筛选");
+        iOSFilterMenu.Attach(_phoneFilter, _main.FileVM.FilterBar);
+        _phoneMore = iOSGlassButtons.RoundMenu("ellipsis", "更多");
+        iOSMenuButton.Pair(_phoneFilter, _phoneMore);
         _phoneMore.Menu = BuildMoreMenu();
 
         _phoneFilterMore = new iOSGlassButtonGroup();
-        _phoneFilterSegment = _phoneFilterMore.Add("line.3.horizontal.decrease", "筛选", null);
-        _phoneFilterSegment.ShowsMenuAsPrimaryAction = true;
-        _phoneMoreSegment = _phoneFilterMore.Add("ellipsis", "更多", null);
-        _phoneMoreSegment.ShowsMenuAsPrimaryAction = true;
+        _phoneFilterSegment = _phoneFilterMore.AddMenu("line.3.horizontal.decrease", "筛选");
+        iOSFilterMenu.Attach(_phoneFilterSegment, _main.FileVM.FilterBar);
+        _phoneMoreSegment = _phoneFilterMore.AddMenu("ellipsis", "更多");
+        iOSMenuButton.Pair(_phoneFilterSegment, _phoneMoreSegment);
         _phoneMoreSegment.Menu = BuildMoreMenu();
 
         _phoneNavigation = new iOSGlassButtonGroup();
@@ -1393,13 +1393,13 @@ internal sealed class iOSNativeRootViewController : UIViewController
         UpdatePhoneEnhanceState();
     }
 
-    /// <summary>同步系统筛选菜单的模型状态；展开菜单的可见勾选刷新仍待解决。</summary>
+    /// <summary>同步手机筛选入口的读屏值。</summary>
     private void RefreshPhoneMenus()
     {
         if (!_phoneControlsBuilt) return;
         var filter = _main.FileVM.FilterBar;
-        iOSFilterMenu.UpdateVisibleMenu(_phoneFilter, filter, RefreshPhoneMenus);
-        iOSFilterMenu.UpdateVisibleMenu(_phoneFilterSegment, filter, RefreshPhoneMenus);
+        iOSFilterMenu.Refresh(_phoneFilter, filter);
+        iOSFilterMenu.Refresh(_phoneFilterSegment, filter);
     }
 
     /// <summary>把控制栏当前的 EXIF 显示项同步到手机形态的 EXIF 块（项数不变只改文本）。</summary>

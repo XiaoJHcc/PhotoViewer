@@ -1620,8 +1620,8 @@ internal static class RatingChecks
         c.True("Invalid 代表视为冲突", invalidGroup.HasRatingConflict);
         c.Equal("Invalid 代表不命中无星级", 0,
             PhotoListProjection.Project([invalidFile], settings, "None").Items.Count);
-        c.Equal("Invalid 代表不命中一星以上", 0,
-            PhotoListProjection.Project([invalidFile], settings, "Gt1").Items.Count);
+        c.Equal("Invalid 代表不命中一星", 0,
+            PhotoListProjection.Project([invalidFile], settings, "Eq1").Items.Count);
         c.Equal("Invalid 代表命中星级冲突", invalidFile,
             PhotoListProjection.Project([invalidFile], settings, "Conflict").Items.SingleOrDefault());
 

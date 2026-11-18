@@ -32,18 +32,24 @@ internal static class iOSFilterMenuCheck
         var lines = new List<string>();
         var filter = main.FileVM.FilterBar;
         var entrySort = filter.SortMode;
+        var entryOrder = filter.SortOrder;
+        var entryRatings = filter.SelectedRatingFilters;
         try
         {
             await VerifyIdentifiersAsync(filter, lines);
             await VerifySortSelectionAsync(root, filter, lines);
+            await VerifyOrderAndRatingsAsync(root, filter, lines);
             await VerifyStructureDetectionAsync(root, filter, lines);
             return lines;
         }
         finally
         {
-            await UiDispatcher.InvokeAsync(() => filter.SortMode = entrySort);
-            await WaitAsync(() => filter.SortMode == entrySort, "排序方式还原");
-            lines.Add("PASS 筛选菜单回归收尾：排序方式回到进入本项检查时的值");
+            await UiDispatcher.InvokeAsync(() =>
+            {
+                filter.SortMode = entrySort;
+                filter.SortOrder = entryOrder;
+                filter.SelectedRatingFilters = entryRatings;
+            });
         }
     }
 
@@ -52,7 +58,7 @@ internal static class iOSFilterMenuCheck
     /// <param name="lines">报告行。</param>
     private static async Task VerifyIdentifiersAsync(FilterBarViewModel filter, List<string> lines)
     {
-        var built = await UiDispatcher.InvokeAsync(() => iOSFilterMenu.Build(filter, () => { }));
+        var built = await UiDispatcher.InvokeAsync(() => iOSFilterMenu.Build(filter));
         var (identifiers, groups, allGroups) = await UiDispatcher.InvokeAsync(() =>
         {
             var menu = built.Menu;
@@ -89,12 +95,12 @@ internal static class iOSFilterMenuCheck
 
         var filterButton = root.FilterBar.FilterButton;
         await UiDispatcher.InvokeAsync(() => filter.SortMode = target);
-        await WaitAsync(() => ActionById(filterButton.Menu, targetIdentifier)?.State == UIMenuElementState.On,
+        await WaitAsync(() => ActionById(filterButton.MenuSnapshot, targetIdentifier)?.State == UIMenuElementState.On,
             $"筛选段模型勾选「{target}」更新");
 
         var snapshot = await UiDispatcher.InvokeAsync(() =>
         {
-            var menu = filterButton.Menu!;
+            var menu = filterButton.MenuSnapshot!;
             return (Actions: Actions(menu).ToArray(),
                 Selected: ActionById(menu, targetIdentifier)?.State ?? UIMenuElementState.Off,
                 OthersOff: Actions(menu)
@@ -107,9 +113,39 @@ internal static class iOSFilterMenuCheck
         lines.Add($"PASS 筛选段模型状态：选中「{target}」后 {snapshot.Actions.Length} 个选项的标识与单选状态正确");
 
         foreach (var (button, label) in new[] { (root.PhoneFilterButton, "筛选圆按钮"), (root.PhoneFilterSegment, "合体筛选段") })
-            await WaitAsync(() => ActionById(button.Menu, targetIdentifier)?.State == UIMenuElementState.On,
+            await WaitAsync(() => ActionById(button.MenuSnapshot, targetIdentifier)?.State == UIMenuElementState.On,
                 $"{label}模型选择「{target}」更新");
         lines.Add("PASS 手机筛选入口模型状态：筛选选择已同步");
+    }
+
+    private static async Task VerifyOrderAndRatingsAsync(iOSNativeRootViewController root, FilterBarViewModel filter, List<string> lines)
+    {
+        var handlers = await UiDispatcher.InvokeAsync(() => iOSFilterMenu.Build(filter).Handlers);
+        var order = filter.SortOrder == SortOrder.Ascending ? SortOrder.Descending : SortOrder.Ascending;
+        var buttons = new[] { root.FilterBar.FilterButton, root.PhoneFilterButton, root.PhoneFilterSegment };
+
+        bool HasSelection(iOSMenuButton button, string prefix, params string[] ids)
+            => Actions(button.MenuSnapshot)
+                .Where(action => action.State == UIMenuElementState.On && action.Identifier?.StartsWith(prefix, StringComparison.Ordinal) == true)
+                .Select(action => action.Identifier!).ToHashSet(StringComparer.Ordinal).SetEquals(ids);
+
+        await UiDispatcher.InvokeAsync(handlers[$"{OrderPrefix}{order}"]);
+        await WaitAsync(() => filter.SortOrder == order && buttons.All(button => HasSelection(button, OrderPrefix, $"{OrderPrefix}{order}")),
+            "排序方向写回，三个入口保持单选");
+
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            handlers["rating:All"]();
+            handlers["rating:None"]();
+            handlers["rating:Eq5"]();
+        });
+        await WaitAsync(() => filter.SelectedRatingFilters.SetEquals(["None", "Eq5"])
+            && buttons.All(button => HasSelection(button, RatingPrefix, "rating:None", "rating:Eq5")), "星级多选写回");
+        await UiDispatcher.InvokeAsync(handlers["rating:None"]);
+        await WaitAsync(() => buttons.All(button => HasSelection(button, RatingPrefix, "rating:Eq5")), "取消其中一个条件");
+        await UiDispatcher.InvokeAsync(handlers["rating:All"]);
+        await WaitAsync(() => !filter.IsRatingFilterActive && buttons.All(button => HasSelection(button, RatingPrefix, "rating:All")), "清空星级条件");
+        lines.Add("PASS FILTER-08：排序方向单选、星级多选、取消及清空，同步到三个入口的菜单模型");
     }
 
     /// <summary>核对结构检测：选项集合变化要求重建一次，还原后恢复就地勾选。</summary>
@@ -118,7 +154,7 @@ internal static class iOSFilterMenuCheck
     /// <param name="lines">报告行。</param>
     private static async Task VerifyStructureDetectionAsync(iOSNativeRootViewController root, FilterBarViewModel filter, List<string> lines)
     {
-        var menu = await UiDispatcher.InvokeAsync(() => root.FilterBar.FilterButton.Menu
+        var menu = await UiDispatcher.InvokeAsync(() => root.FilterBar.FilterButton.MenuSnapshot
             ?? throw new InvalidOperationException("筛选段没有菜单"));
         var probe = new RatingFilterOption { DisplayName = "验收临时项", Key = "CheckTemporary" };
         bool needsRebuild;

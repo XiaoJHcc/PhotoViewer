@@ -230,7 +230,7 @@ internal static class iOSNativeEditionCheck
         if (Math.Abs((double)frames.Control.Width - MobileFilterLayout.GroupWidth) > 1)
             throw new InvalidOperationException(
                 $"合体胶囊宽 {frames.Control.Width:0.##} ≠ {MobileFilterLayout.GroupWidth:0.##}（2 × 48）");
-        if (bar.FilterButton.Menu is not { } filterMenu)
+        if (bar.FilterButton.MenuSnapshot is not { } filterMenu)
             throw new InvalidOperationException("筛选段没有菜单");
         if (filterMenu.Children.Length != 3)
             throw new InvalidOperationException($"筛选段菜单不是三个内联分组：{filterMenu.Children.Length}");
@@ -267,7 +267,7 @@ internal static class iOSNativeEditionCheck
         var more = portrait ? root.PhoneMoreButton : root.PhoneMoreSegment;
         if (filter.Hidden || more.Hidden)
             throw new InvalidOperationException($"手机形态筛选/更多入口隐藏：筛选={filter.Hidden}，更多={more.Hidden}");
-        if (filter.Menu is not { Children.Length: 3 })
+        if (filter.MenuSnapshot is not { Children.Length: 3 })
             throw new InvalidOperationException("手机筛选入口菜单不是三个内联分组");
         if (more.Menu is not { Children.Length: 1 } menu || menu.Children[0] is not UIDeferredMenuElement)
             throw new InvalidOperationException("手机更多入口菜单不是与宽形态同源的主图菜单");

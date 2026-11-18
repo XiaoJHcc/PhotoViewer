@@ -30,14 +30,14 @@ public static class PhotoListProjection
     /// </summary>
     /// <param name="allFiles">全部文件（<see cref="FolderViewModel.AllFiles"/> 的快照）。</param>
     /// <param name="settings">设置来源：文件格式列表、同名合并开关。</param>
-    /// <param name="ratingKey">星级筛选键（与筛选条一致，如 "All" / "Eq3" / "Gt2" / "Rejected" / "Conflict"）。</param>
+    /// <param name="ratingKeys">已选星级条件键；空或 null 即「全部」，多项按并集命中。</param>
     /// <param name="sortMode">排序方式。</param>
     /// <param name="sortOrder">排序方向。</param>
     /// <param name="retainedFile">即使被星级筛选排除也暂时保留的文件（评分后保持滚动位置）。</param>
     public static PhotoListProjectionResult Project(
         IReadOnlyList<ImageFile> allFiles,
         SettingsViewModel settings,
-        string ratingKey = AllRatings,
+        IReadOnlyCollection<string>? ratingKeys = null,
         SortMode sortMode = SortMode.Name,
         SortOrder sortOrder = SortOrder.Ascending,
         ImageFile? retainedFile = null)
@@ -51,11 +51,26 @@ public static class PhotoListProjection
             BuildFormatRules(settings));
 
         var items = groups.Representatives
-            .Where(file => ReferenceEquals(file, retainedFile) || MatchesRating(file, ratingKey))
+            .Where(file => ReferenceEquals(file, retainedFile) || MatchesAnyRating(file, ratingKeys))
             .ToList();
 
         return new PhotoListProjectionResult(groups, SortItems(items, sortMode, sortOrder));
     }
+
+    public static PhotoListProjectionResult Project(
+        IReadOnlyList<ImageFile> allFiles,
+        SettingsViewModel settings,
+        string ratingKey,
+        SortMode sortMode = SortMode.Name,
+        SortOrder sortOrder = SortOrder.Ascending,
+        ImageFile? retainedFile = null)
+        => Project(
+            allFiles,
+            settings,
+            ratingKey == AllRatings ? Array.Empty<string>() : [ratingKey],
+            sortMode,
+            sortOrder,
+            retainedFile);
 
     /// <summary>
     /// 按筛选条口径排序（FILTER-02：名称固定用序数忽略大小写）。
@@ -85,11 +100,14 @@ public static class PhotoListProjection
         return sorted.ToList();
     }
 
+    private static bool MatchesAnyRating(ImageFile file, IReadOnlyCollection<string>? ratingKeys)
+        => ratingKeys is not { Count: > 0 } || ratingKeys.Any(key => MatchesRating(file, key));
+
     private static bool MatchesRating(ImageFile file, string ratingKey)
     {
         var rating = file.Rating;
         var state = file.RatingState;
-        // 数字与“以上”只按代表文件的内嵌值命中；代表为 Invalid/Unreadable/Conflict 时不命中任何数字档。
+        // 数字档只按代表文件的内嵌值命中；代表为 Invalid/Unreadable/Conflict 时不命中任何数字档。
         // 冲突是独立维度：数字命中不消除冲突，冲突也不改写数字结果。
         return ratingKey switch
         {
@@ -100,10 +118,6 @@ public static class PhotoListProjection
             "Eq3" => HasNumericValue(state) && rating == 3,
             "Eq4" => HasNumericValue(state) && rating == 4,
             "Eq5" => HasNumericValue(state) && rating == 5,
-            "Gt1" => HasNumericValue(state) && rating >= 1,
-            "Gt2" => HasNumericValue(state) && rating >= 2,
-            "Gt3" => HasNumericValue(state) && rating >= 3,
-            "Gt4" => HasNumericValue(state) && rating >= 4,
             "Conflict" => file.HasRatingConflict,
             _ => true
         };

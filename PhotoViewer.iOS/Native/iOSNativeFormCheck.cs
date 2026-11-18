@@ -1686,7 +1686,7 @@ internal static class iOSNativeFormCheck
                 $"{scope} 筛选/更多未常驻：Filter={Rect(slots.Filter)}，More={Rect(slots.More)}");
         var filterOwner = group ? root.PhoneFilterSegment : root.PhoneFilterButton;
         var moreOwner = group ? root.PhoneMoreSegment : root.PhoneMoreButton;
-        if (filterOwner.Menu == null || !filterOwner.ShowsMenuAsPrimaryAction)
+        if (filterOwner.MenuSnapshot == null || !filterOwner.ShowsMenuAsPrimaryAction)
             throw new InvalidOperationException($"{scope} 筛选入口未接回系统菜单");
         if (moreOwner.Menu == null) throw new InvalidOperationException($"{scope} 更多入口没有菜单");
         if (!portrait)
@@ -1992,9 +1992,9 @@ internal static class iOSNativeFormCheck
         }
         else
         {
-            if (root.PhoneFilterButton.Menu == null)
+            if (root.PhoneFilterButton.MenuSnapshot == null)
                 throw new InvalidOperationException($"{scope} 手机筛选圆按钮没有菜单");
-            if (root.PhoneFilterSegment.Menu == null)
+            if (root.PhoneFilterSegment.MenuSnapshot == null)
                 throw new InvalidOperationException($"{scope} 手机合体筛选段没有菜单");
             if (!root.PhoneFilterButton.ShowsMenuAsPrimaryAction || !root.PhoneFilterSegment.ShowsMenuAsPrimaryAction
                 || !root.PhoneMoreButton.ShowsMenuAsPrimaryAction || !root.PhoneMoreSegment.ShowsMenuAsPrimaryAction)
@@ -2010,33 +2010,40 @@ internal static class iOSNativeFormCheck
     }
 
     /// <summary>
-    /// 筛选菜单结构：三个内联单选分组（排序方式 / 方向 / 星级筛选），每组至少一个选项，
-    /// 实际呈现保持系统菜单；此处只核对结构，不判定展开菜单的可见勾选刷新。
+    /// 筛选菜单结构：三个内联分组（排序方式并列大按钮 / 图标多选星级条件 / 图标单选方向），
+    /// 每组至少一个选项；实际呈现保持系统菜单，此处只核对结构。
     /// </summary>
     /// <param name="button">带菜单的筛选入口。</param>
     /// <param name="scope">报告范围名。</param>
-    private static void VerifyFilterMenu(UIButton button, string scope)
+    private static void VerifyFilterMenu(iOSMenuButton button, string scope)
     {
         if (!button.ShowsMenuAsPrimaryAction)
             throw new InvalidOperationException($"{scope} 筛选按钮未使用系统菜单主操作");
-        var menu = button.Menu ?? throw new InvalidOperationException($"{scope} 筛选按钮没有菜单");
+        var menu = button.MenuSnapshot ?? throw new InvalidOperationException($"{scope} 筛选按钮没有菜单");
         if (menu.Children.Length != 3)
             throw new InvalidOperationException($"{scope} 筛选菜单应为三个内联分组，实际 {menu.Children.Length}");
-        foreach (var child in menu.Children)
+        var groups = menu.Children.OfType<UIMenu>().ToArray();
+        if (groups.Length != 3)
+            throw new InvalidOperationException($"{scope} 筛选菜单分组不是三个 UIMenu");
+        for (int index = 0; index < groups.Length; index++)
         {
-            if (child is not UIMenu sub)
-                throw new InvalidOperationException($"{scope} 筛选分组不是 UIMenu");
-            if ((sub.Options & (UIMenuOptions.DisplayInline | UIMenuOptions.SingleSelection))
-                != (UIMenuOptions.DisplayInline | UIMenuOptions.SingleSelection))
-                throw new InvalidOperationException($"{scope} 筛选分组缺少 DisplayInline/SingleSelection：{sub.Options}");
+            var sub = groups[index];
+            bool singleSelection = (sub.Options & UIMenuOptions.SingleSelection) != 0;
+            bool expectedSingleSelection = index != 1;
+            if ((sub.Options & UIMenuOptions.DisplayInline) == 0 || singleSelection != expectedSingleSelection)
+                throw new InvalidOperationException($"{scope} 筛选分组 {index} 的单选配置不符：{sub.Options}");
             if (sub.Children.Length == 0)
                 throw new InvalidOperationException($"{scope} 筛选分组为空");
+            if (index == 0 && sub.PreferredElementSize != UIMenuElementSize.Medium)
+                throw new InvalidOperationException($"{scope} 排序方式分组未使用并列大按钮尺寸：{sub.PreferredElementSize}");
             foreach (var element in sub.Children)
             {
                 if (element is not UIAction action)
                     throw new InvalidOperationException($"{scope} 筛选项不是 UIAction");
                 if ((action.Attributes & UIMenuElementAttributes.KeepsMenuPresented) == 0)
                     throw new InvalidOperationException($"{scope} 筛选项「{action.Title}」未保持菜单展开");
+                if (action.Image == null)
+                    throw new InvalidOperationException($"{scope} 筛选项「{action.Title}」缺少系统图标");
             }
         }
     }
@@ -2051,7 +2058,7 @@ internal static class iOSNativeFormCheck
         var original = filter.SortMode;
         var target = filter.SortModes.Select(option => (SortMode)option.Value).FirstOrDefault(value => value != original);
         if (target == original) throw new InvalidOperationException("筛选菜单只有一个排序选项，无法核对写回");
-        var result = iOSFilterMenu.Build(filter, () => { });
+        var result = iOSFilterMenu.Build(filter);
         if (!result.Handlers.TryGetValue($"sort:{target}", out var handler))
             throw new InvalidOperationException($"筛选菜单缺少 sort:{target} 的处理器");
         await UiDispatcher.InvokeAsync(handler);
@@ -2059,7 +2066,7 @@ internal static class iOSNativeFormCheck
         string title = filter.SortModes.First(option => (SortMode)option.Value == target).DisplayName;
         await WaitAsync(() =>
         {
-            var menu = root.PhoneFilterSegment.Menu;
+            var menu = root.PhoneFilterSegment.MenuSnapshot;
             return menu != null && SortAction(menu, title) is { State: UIMenuElementState.On };
         }, $"按钮菜单「{title}」转为勾选");
         lines.Add($"PASS 筛选菜单模型：sort:{target} 写回共享状态，菜单 action「{title}」为勾选；不代表展开菜单的屏上刷新");

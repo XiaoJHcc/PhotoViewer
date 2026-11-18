@@ -959,7 +959,7 @@ public class FolderViewModel : ReactiveObject, IDisposable
         return PhotoListProjection.Project(
             files,
             Main.Settings,
-            filter.SelectedRatingFilter,
+            filter.SelectedRatingFilters,
             filter.SortMode,
             filter.SortOrder);
     }

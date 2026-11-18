@@ -82,8 +82,8 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
 - **RATING-07**：共享 `PhotoViewer.Shared/RatingControlGeometry.cs`（形态判定、格子映射、紧凑星簇、方向表与落位）、`RatingGesture.cs`（一次手势至多一次提交的状态机）、`RatingPopupLayout.cs`（弹窗步长与条目排版）；宽形态控制栏的分组尺寸与换行取 `ToolbarFlowLayout.cs`。
   - **RATING-07@android**：`AndroidRatingControl` 保持冻结主屏几何，展开态逐格原生涟漪并用 `RatingGesture` 预览、松手提交；紧凑态整胶囊打开弹窗。非冲突时入口延续同一触摸，按共享取消带预览，不落盘，松手提交；冲突条目只接受明确点选。弹窗星级按钮优先使用 Android 建议的 48dp 命中尺寸，空间不足按可用主轴等分；竖排入口的普通弹窗保留竖排星列。反馈由系统状态层和触感承担，不模拟玻璃融合、羽化和按压缩放。
   - **RATING-07@ios**：控件 `PhotoViewer.iOS/Native/iOSRatingControl.cs`（两种形态都是交互式 `UIGlassEffect` 胶囊，展开态星排与紧凑星簇 `iOSRatingCluster.cs` 都放在胶囊 `ContentView` 里随按压缩放；紧凑星簇自绘时用上层字形的实心轮廓以 `DestinationOut` 分圈擦除下层，形成半透明羽化的叠压）与星排 `iOSRatingRow.cs`，手势用零时长 `UILongPressGestureRecognizer`（`CancelsTouchesInView = false`，在控制栏滚动容器里拖星不触发滚动），逐格 `UIHoverStyle` 系统正圆高亮，读屏 `Adjustable`；触感由每个星排实例各自持有选择生成器并在该星排复用，提交用系统按发起视图给出的轻冲击生成器。弹窗 `iOSRatingPopup.cs` 是根视图上的 `UIGlassEffect` 面板加全窗透明拦截层，不用 `UIPopoverPresentationController`：系统浮窗展示期间无法把起手触摸延续到弹窗星排。弹窗材质视图的 alpha 恒为 1（改 alpha 会让系统材质失效），出入场以 `Effect` 属性过渡配合内容视图淡入表达；减少动态效果时不缩放，只保留淡入淡出。
-- **RATING-05**：数字/以上筛选投影在 `PhotoViewer/ViewModels/Main/File/PhotoListProjection.cs` 的 `MatchesRating`，筛选项在 `PhotoViewer/ViewModels/Main/File/FilterBarViewModel.cs`；训练快照由独立仓 `Training/DatasetBuilder`（`FingerprintGrouper`）只读取实际选用的文件，sidecar 与伴侣不参与取 max，文件内部不是有效 1–5 时不落值。
-- Web 参考壳没有真实文件写入；冲突指示、来源浮窗与 13 项筛选由 `?check=all` 校验界面语义（合成数据）。
+- **RATING-05**：星级筛选投影在 `PhotoViewer/ViewModels/Main/File/PhotoListProjection.cs` 的 `MatchesRating`，筛选项在 `PhotoViewer/ViewModels/Main/File/FilterBarViewModel.cs`；训练快照由独立仓 `Training/DatasetBuilder`（`FingerprintGrouper`）只读取实际选用的文件，sidecar 与伴侣不参与取 max，文件内部不是有效 1–5 时不落值。
+- Web 参考壳没有真实文件写入；冲突指示、来源浮窗与筛选由 `?check=all` 校验界面语义（合成数据）。
 
 ## shell
 
@@ -133,7 +133,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
   - Windows：`PhotoViewer.Windows/Native/WindowsFilterBar.cs` 的 `WindowsFilterBar`：按共享 `WideFilterLayout` 排布三段或单胶囊；胶囊衬底取原生按钮材质（`ControlFillColorDefaultBrush` + `ControlElevationBorderBrush`），段为透明 Subtle 按钮、状态层按同心圆角内缩 3 点，段间 1 点 `DividerStrokeColorDefaultBrush`；各段经 `Button.Flyout` 打开原生 `MenuFlyout`（`RadioMenuFlyoutItem`），单胶囊为三个无标题单选分组；AI 版开关为默认样式 `ToggleButton`（44 高、半圆端）。
   - Android：`PhotoViewer.Android/Native/AndroidFilterBar.cs` 的 `AndroidFilterBar`（宽形态按共享 `MobileFilterLayout` 的「筛选 / 更多」96 合体，手机形态为 44 圆按钮或 88 合体；入口与合体为 `AndroidPhoneChrome.cs` 的 Material 按钮与胶囊容器，`ShowMenu` 沿用自绘 `PopupWindow`）。
   - **FILTER-01@android**：宽形态与 iPad 同为「筛选 / 更多」96 合体（两段各 48、高 44），AI 版开关为可勾选 Material 按钮，列布局 96×44、行布局取文字自然宽；手机竖屏为 44 圆入口，横屏为 88×44 合体，刘海在右时两段按槽位镜像。入口图标取 `icon.filter` / `icon.more`。开关未选中文字取 `color.text.primary`（与其他 Material 按钮一致），选中态取 `color.filter.toggle.checked.*`。计数业务状态保留，内部呈现由 FILTER-04 专项处理。
-- **FILTER-02、FILTER-03、FILTER-05、FILTER-10**：共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs`（筛选、排序、当前项映射）；筛选项定义在 `PhotoViewer/ViewModels/Main/File/FilterBarViewModel.cs`，星级投影在 `PhotoViewer/ViewModels/Main/File/PhotoListProjection.cs` 的 `MatchesRating`。13 项取值与已拒绝/冲突口径见 [rating](#rating)（RATING-01）与 [spec/filter.md](spec/filter.md)（FILTER-03）。
+- **FILTER-02、FILTER-03、FILTER-05、FILTER-10**：共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs`（筛选、排序、当前项映射）；筛选项定义在 `PhotoViewer/ViewModels/Main/File/FilterBarViewModel.cs`，星级投影在 `PhotoViewer/ViewModels/Main/File/PhotoListProjection.cs` 的 `MatchesRating`。9 项取值、并集多选与已拒绝/冲突口径见 [rating](#rating)（RATING-01）与 [spec/filter.md](spec/filter.md)（FILTER-03）。
 - **FILTER-04**：Windows 计数在筛选控件内部底边（三段时位于星级段下方，单胶囊在「筛选」下方），由 `WindowsFilterBar.RefreshCount` 绑定共享计数；macOS 计数保留在原生筛选控件内部，Web 计数在筛选控件内部底边（三段时位于星级段下方），内部样式均待专项复核；iOS 与 Android 的计数内部呈现待专项。各端筛选结果与计数业务状态仍由共享列表投影维护。
 - **FILTER-06、FILTER-09**：开关状态 `PhotoViewer/ViewModels/Settings/SettingsViewModel.cs` 的 `SimilarityPanelExpanded`（经 `IViewStateStore` 跨会话保留，不进入设置文档）；可见性 `SimilarityPanelViewModel.IsPanelVisible`。
 - **FILTER-07**：移动端（iOS、Android）宽形态取共享 `PhotoViewer.Shared/MobileFilterLayout.cs`（筛选 / 更多与大档卡片同宽（96）、两段各 48；行布局整组含 AI 版开关按自然宽居中；列布局合体与 AI 版开关都靠主图侧的内容末端锚点，锚点与列宽取共享 `FilmSideGeometry`，开关 96 与卡片列同缘、隔 8 点）；macOS 与 Windows 宽形态取共享 `WideFilterLayout`（三合体或单胶囊），Web 按 `FILTER-07@web` 实现同一桌面形态。筛选菜单与计数仍按 FILTER-08、FILTER-04 待专项处理。
@@ -141,7 +141,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
   - **FILTER-07@android**：宽形态逐项取 `MobileFilterLayout.Compute`；列布局首控件顶部让位取该列位置的系统栏遮挡加一份 `filter.margin`，整组自然宽超出安全内容区时才由滚动宿主横向承载。手机入口直接取 `PhoneScreenLayout` 的竖横屏槽位，横屏合体常驻并随刘海侧镜像。
 - **FILTER-08**：菜单交互。macOS/iOS 用系统菜单；Windows 原生 `MenuFlyout`；Android 自绘菜单（行高约 40）。
   - **FILTER-08@win**：单胶囊菜单用原生 `MenuFlyout`，点选即应用并由系统收起，不保持展开（WinUI 菜单项点击恒关闭弹层）；只就地更新勾选与段标签，无关通知不关闭已展开的菜单。
-  - **FILTER-08@ios**：保持 `UIButton` + `UIMenu` 原生菜单，三个 `DisplayInline | SingleSelection` 无标题分组以业务键标识选项，`KeepsMenuPresented` 支持连续选择；更新走 `UIContextMenuInteraction.UpdateVisibleMenu` 提供的可变副本，屏上选择、滚动与焦点独立验收。
+  - **FILTER-08@ios**：使用 `UIButton` 的上下文菜单配置与 `UIMenu`。三个内联分组以业务键标识选项：中尺寸并列排序项、图标多选星级条件、图标单选方向。打开时读取共享状态，点选后通过 `UpdateVisibleMenu` 把最新状态提交给当前菜单，`KeepsMenuPresented` 支持连续选择。「筛选」与「更多」互斥，旧菜单退场完毕后另一入口才可展示。平台差异：在已滚动的菜单中切换星级多选项时，系统可能将刚点选的行移到可见区域中央；系统相册也可观察到同类行为。规范目标仍是勾选更新后保持原滚动位置；iOS 保留系统原生菜单。
   - **FILTER-08@android**：入口为 Material 按钮；筛选段沿用自绘 `PopupWindow` 的三分组单选菜单，更多段弹主图菜单（宽形态不含 EXIF 项，与手机「更多」同源）；菜单新设计不由静态外框验收推定完成。
 - **FILTER-07@web / FILTER-08@web**：宽形态按桌面三段合体：同一按钮材质胶囊内三段，段宽按当前选项文字实测，行布局整组在安全内容区居中、AI 版开关隔 8 紧随，列布局总宽等于卡片列宽（96）、放不下时回退同胶囊内单个「筛选」按钮；三段各开单组单选菜单，单胶囊开三分组菜单。`platform=mac` 配置档只多出列布局 42 让位与标题栏拖动区几何。手机形态沿用 iOS 口径：竖屏筛选与更多两枚 44 圆按钮、横屏 88 合体，入口用 `icon.filter` / `icon.more`。浏览器无原生下拉弹层，菜单按 FILTER-08 自绘外观并与 MENU-03 共用同一自绘弹层组件。
 

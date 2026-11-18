@@ -281,7 +281,7 @@ public class ThumbnailListViewModel : ReactiveObject
         var projection = PhotoListProjection.Project(
             _folder.AllFiles,
             _main.Settings,
-            _filter.SelectedRatingFilter,
+            _filter.SelectedRatingFilters,
             _filter.SortMode,
             _filter.SortOrder,
             _retainedFile);

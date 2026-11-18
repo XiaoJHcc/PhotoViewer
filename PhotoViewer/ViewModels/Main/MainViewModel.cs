@@ -530,7 +530,7 @@ public class MainViewModel : ViewModelBase, IDisposable
     private void RefreshRatingDependentState()
     {
         ControlVM.RaisePropertyChanged(nameof(ControlVM.CurrentExifData));
-        if (FileVM.FilterBar.SelectedRatingFilter != "All")
+        if (FileVM.FilterBar.IsRatingFilterActive)
             FileVM.ThumbnailList.RefreshFilters(retainFile: CurrentFile);
     }
 

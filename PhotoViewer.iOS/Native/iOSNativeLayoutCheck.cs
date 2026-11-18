@@ -670,7 +670,7 @@ internal static class iOSNativeLayoutCheck
         if (bar.FilterButton.Hidden || bar.MoreButton.Hidden)
             throw new InvalidOperationException(
                 $"{scope} 筛选 / 更多段可见性不符：筛选隐藏={bar.FilterButton.Hidden}，更多隐藏={bar.MoreButton.Hidden}");
-        if (bar.FilterButton.Menu == null)
+        if (bar.FilterButton.MenuSnapshot == null)
             throw new InvalidOperationException($"{scope} 筛选段没有菜单");
         if (!bar.FilterButton.ShowsMenuAsPrimaryAction || !bar.MoreButton.ShowsMenuAsPrimaryAction)
             throw new InvalidOperationException($"{scope} 筛选 / 更多主操作接线不符");
