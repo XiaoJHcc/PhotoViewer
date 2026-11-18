@@ -161,7 +161,7 @@ public sealed class AndroidNativeActivity : AppCompatActivity
         public override void HandleOnBackPressed()
         {
             if (Native.AndroidNativeShell.DismissPhotoMenu()) return;
-            if (Native.AndroidNativeShell.DismissRatingSources()) return;
+            if (Native.AndroidNativeShell.DismissRatingPopup()) return;
             if (Native.AndroidNativeShell.DismissFilterDropdown()) return;
             if (Native.AndroidNativeSettingsPresenter.HandleBack()) return;
             if (Native.AndroidToolsPresenter.HandleBack()) return;

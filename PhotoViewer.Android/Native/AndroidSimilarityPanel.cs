@@ -53,8 +53,8 @@ internal sealed class AndroidSimilarityPanel : LinearLayout
     /// <summary>列表态停靠区错误标签是否可见（验收用）。</summary>
     internal bool DockErrorVisibleForChecks => _footerError.Visibility == ViewStates.Visible;
 
-    /// <summary>冲突三角点击：打开该卡片的来源浮窗（定位与收起由主屏统一负责，RATING-04）。</summary>
-    internal Action<ImageFile, AndroidThumbnailCard>? ShowRatingSources { get; set; }
+    /// <summary>卡片星级弹窗入口：冲突三角与长按都打开同一个星级弹窗（定位与收起由主屏统一负责）。</summary>
+    internal ICardRatingPopupHost? PopupHost { get; set; }
 
     /// <summary>构建面板视图树并订阅共享 VM。</summary>
     /// <param name="context">宿主上下文。</param>
@@ -334,7 +334,7 @@ internal sealed class AndroidSimilarityPanel : LinearLayout
                 selected => _owner._panel.SelectItemCommand(item),
                 (selected, rating) => { if (_owner._main.CurrentFile != null) _ = _owner._main.SetRatingAsync(selected, rating); },
                 secondLineText: $"{item.Score * 100:0}%", secondLineProgress: progress, selectByDisplayedImage: true,
-                showSources: selected => _owner.ShowRatingSources?.Invoke(selected, cardHolder.Card));
+                popupHost: _owner.PopupHost);
             _owner._main.FileVM.ThumbnailList.QueueThumbnailLoad(item.File, true);
         }
     }

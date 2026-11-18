@@ -34,7 +34,7 @@ namespace PhotoViewer.Android.Native;
 /// 横屏刘海侧列/分析/控制列）。主图视图在所有形态下铺满窗口，照片落在
 /// <see cref="PhotoViewport.SetFitInsets"/> 给出的适应区内，放大后可越过栏缘。
 /// </summary>
-internal sealed class AndroidNativeRootView : FrameLayout
+internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
 {
     private readonly MainViewModel _main;
     private readonly PhotoLoadSession _session;
@@ -55,7 +55,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
 #if PHOTOVIEWER_DINO
     private readonly AndroidSimilarityPanel _similarityPane;
 #endif
-    private readonly AndroidRatingSourcesPopup _ratingSourcesPopup;
+    private readonly AndroidRatingPopup _ratingPopup;
     private readonly DetailFrameView _detailHighlight;
     private LayoutRect _detailRect;
     private bool _detailVisible;
@@ -152,8 +152,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
     /// <summary>相似聚类面板（验收读取可见性/列表）。</summary>
     internal AndroidSimilarityPanel SimilarityPane => _similarityPane;
 #endif
-    /// <summary>星级来源浮窗（验收读取方向/锚点/条目）。</summary>
-    internal AndroidRatingSourcesPopup RatingSourcesPopup => _ratingSourcesPopup;
+    /// <summary>星级弹窗（验收读取方向/锚点/条目）。</summary>
+    internal AndroidRatingPopup RatingPopup => _ratingPopup;
     /// <summary>活动细节绿框视图。</summary>
     internal View DetailHighlightView => _detailHighlight;
     /// <summary>主图细节绿框当前是否可见（验收读取活动目标联动）。</summary>
@@ -219,14 +219,15 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _filmstrip = new AndroidFilmstripView(activity, main);
         AddView(_filmstrip);
         _filmstrip.RateRequested += OnRateRequested;
-        _filmstrip.SourcesRequested += OnCardSourcesRequested;
+        _filmstrip.PopupHost = this;
         _controlBar = new AndroidControlBar(activity, main);
         _controlBar.Wire(Execute, rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); },
-            ShowExifTools, OpenRatingSourcesFromControlBar);
+            ShowExifTools, OpenRatingPopupFromControlBar);
         _controlScrollHost = new AndroidControlBarScrollHost(activity, _controlBar);
         AddView(_controlScrollHost);
-        _ratingSourcesPopup = new AndroidRatingSourcesPopup(this, main);
-        _filterBar.DropdownOpening += CloseRatingSources;
+        _ratingPopup = new AndroidRatingPopup(this, main, () => _windowInsets.DeriveSafe(_main.IsScreenLandscape));
+        _controlBar.RatingControl.Popup = _ratingPopup;
+        _filterBar.DropdownOpening += CloseRatingPopup;
 
         _analysisHost = new AndroidAnalysisHost(main, session);
         _analysisPresenter = new AnalysisPresenter(_analysisHost);
@@ -238,7 +239,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
         AddView(_analysisPane);
 #if PHOTOVIEWER_DINO
         _similarityPane = new AndroidSimilarityPanel(activity, main);
-        _similarityPane.ShowRatingSources = (_, card) => OpenRatingSourcesForCard(card);
+        _similarityPane.PopupHost = this;
         _similarityPane.Visibility = ViewStates.Gone;
         AddView(_similarityPane);
 #endif
@@ -271,7 +272,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
         AddView(_phoneFitEnhance);
         _phoneRating = new AndroidRatingControl(activity);
         _phoneRating.RateRequested += rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); };
-        _phoneRating.ConflictRequested += OpenRatingSourcesFromPhone;
+        _phoneRating.PopupRequested += OpenRatingPopupFromPhone;
+        _phoneRating.Popup = _ratingPopup;
         _phoneRating.Visibility = ViewStates.Gone;
         AddView(_phoneRating);
         _phoneExif = new AndroidExifBlock(activity);
@@ -515,7 +517,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
             {
                 // 形态切换只重排：收起临时浮层，主图/列表/缩放保持。
                 _filterBar.DismissDropdown();
-                CloseRatingSources();
+                CloseRatingPopup();
                 _phoneMoreButton.Visibility = ViewStates.Gone;
             }
             if (_form == ScreenForm.Wide) LayoutWide(widthDp, heightDp, density);
@@ -1070,7 +1072,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
     {
         if (Context is not Activity activity) return;
         DismissPhotoMenu();
-        CloseRatingSources();
+        CloseRatingPopup();
         _photoMenuItems.Clear();
         var photoLocation = new int[2];
         _photo.GetLocationOnScreen(photoLocation);
@@ -1234,7 +1236,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
     /// <summary>Activity 恢复（SAF 返回）后恢复栏位内容与主图：选择器期间可能丢失一帧/一次重建。</summary>
     internal void RefreshAfterResume()
     {
-        CloseRatingSources();
+        CloseRatingPopup();
         RefreshControlBarHard();
         _filterBar.Refresh();
         UpdateHint();
@@ -1246,63 +1248,73 @@ internal sealed class AndroidNativeRootView : FrameLayout
     /// <returns>关闭了返回 true。</returns>
     internal bool DismissFilterDropdown() => _filterBar.DismissDropdown();
 
-    /// <summary>关闭星级来源浮窗（返回键优先消费，RATING-04）。</summary>
-    /// <returns>关闭了浮窗返回 true。</returns>
-    internal bool DismissRatingSources()
+    /// <summary>关闭星级弹窗（返回键优先消费，RATING-04）。</summary>
+    /// <returns>关闭了弹窗返回 true。</returns>
+    internal bool DismissRatingPopup()
     {
-        if (!_ratingSourcesPopup.IsOpen) return false;
-        _ratingSourcesPopup.Close();
+        if (!_ratingPopup.IsOpen) return false;
+        _ratingPopup.Close();
         return true;
     }
 
-    /// <summary>卡片冲突三角点击：以该卡片 0 号槽位的真实矩形为锚点，不写值、不切图。</summary>
+    /// <summary>
+    /// 控制栏星级控件：紧凑态起手即由控件请求打开弹窗（展开态只有冲突三角走这里），
+    /// 展开方向由形态、行列与刘海侧决定，锚点取控件真实屏幕矩形。
+    /// </summary>
+    private void OpenRatingPopupFromControlBar()
+        => OpenRatingPopup(_main.CurrentFile, RatingPopupAnchor.Control, _controlBar.RatingControl);
+
+    /// <summary>手机形态星级控件的弹窗入口（锚点同为控件真实屏幕矩形）。</summary>
+    private void OpenRatingPopupFromPhone()
+        => OpenRatingPopup(_main.CurrentFile, RatingPopupAnchor.Control, _phoneRating);
+
+    private void OpenRatingPopup(ImageFile? file, RatingPopupAnchor anchorKind, AndroidRatingControl? control)
+    {
+        if (file == null || control == null) return;
+        var direction = RatingControlGeometry.PopupDirection(_form, _main.IsRowLayout, _notchOnLeft, anchorKind);
+        _ratingPopup.Show(file, anchorKind, direction, control.Horizontal, control, () => _main.Settings.ShowRating && ReferenceEquals(_main.CurrentFile, file));
+    }
+
+    /// <summary>卡片冲突三角：打开同一个弹窗，照片有冲突时自动为来源条目形态。</summary>
     /// <param name="card">被点的卡片。</param>
-    private void OnCardSourcesRequested(AndroidThumbnailCard card) => OpenRatingSourcesForCard(card);
+    void ICardRatingPopupHost.OpenCardRatingPopup(AndroidThumbnailCard card) => OpenRatingPopupForCard(card);
 
-    private void OpenRatingSourcesForCard(AndroidThumbnailCard card)
+    /// <summary>卡片长按：起手打开弹窗并把同一次触摸交给它继续跟踪。</summary>
+    /// <param name="card">发起长按的卡片。</param>
+    /// <param name="e">卡片收到的触摸事件。</param>
+    /// <param name="phase">手势阶段。</param>
+    void ICardRatingPopupHost.TrackCardRatingPopup(AndroidThumbnailCard card, MotionEvent e, CardRatingPopupPhase phase)
     {
-        if (card.BoundFile is not { } file || !file.HasRatingConflict) return;
-        _ratingSourcesPopup.Show(file, RatingSourcesAnchorKind.Card, true, () => CardStarSlotScreenRect(card));
+        switch (phase)
+        {
+            case CardRatingPopupPhase.Began:
+                OpenRatingPopupForCard(card);
+                _ratingPopup.BeginExternal(card, e);
+                break;
+            case CardRatingPopupPhase.Moved:
+                _ratingPopup.MoveExternal(card, e);
+                break;
+            case CardRatingPopupPhase.Ended:
+                _ratingPopup.EndExternal(card, e);
+                break;
+            case CardRatingPopupPhase.Cancelled:
+                _ratingPopup.CancelExternal(card, e);
+                break;
+        }
     }
 
-    /// <summary>控制栏冲突三角点击：以评分组 0 号按钮的屏幕矩形为锚点（横排向上、竖排向左）。</summary>
-    private void OpenRatingSourcesFromControlBar()
+    private void OpenRatingPopupForCard(AndroidThumbnailCard card)
     {
-        if (_main.CurrentFile is not { } file || !file.HasRatingConflict) return;
-        _ratingSourcesPopup.Show(file, RatingSourcesAnchorKind.Control, _controlBar.IsHorizontal,
-            () => _controlBar.TryGetRatingSlotScreenRect(0, out var rect) ? rect : null);
+        if (card.BoundFile is not { } file) return;
+        var direction = RatingControlGeometry.PopupDirection(_form, _main.IsRowLayout, _notchOnLeft,
+            RatingPopupAnchor.Card);
+        _ratingPopup.Show(file, RatingPopupAnchor.Card, direction, true, card, () => _main.Settings.ShowRating && ReferenceEquals(card.BoundFile, file));
     }
 
-    /// <summary>手机星级控件的冲突三角：以控件 0 号槽位的屏幕矩形为锚点。</summary>
-    private void OpenRatingSourcesFromPhone()
+    /// <summary>收起星级弹窗（切图、栏位隐藏、菜单/下拉/设置工具打开、列表替换等入口统一调用）。</summary>
+    private void CloseRatingPopup()
     {
-        if (_main.CurrentFile is not { } file || !file.HasRatingConflict) return;
-        _ratingSourcesPopup.Show(file, RatingSourcesAnchorKind.Control, _phoneRating.Horizontal,
-            () =>
-            {
-                var slot = _phoneRating.SlotRectPx(0);
-                var location = new int[2];
-                _phoneRating.GetLocationOnScreen(location);
-                return new Rect(location[0] + slot.Left, location[1] + slot.Top,
-                    location[0] + slot.Right, location[1] + slot.Bottom);
-            });
-    }
-
-    /// <summary>卡片 0 号槽位的屏幕矩形；卡片未挂载、不可见或星级被关闭时返回 null（入口已移除）。</summary>
-    private Rect? CardStarSlotScreenRect(AndroidThumbnailCard card)
-    {
-        if (!card.IsAttachedToWindow || !card.IsShown || !_main.Settings.ShowRating) return null;
-        if (card.StarSlotRectPx(0) is not { } slot) return null;
-        var location = new int[2];
-        card.GetLocationOnScreen(location);
-        return new Rect(location[0] + slot.Left, location[1] + slot.Top,
-            location[0] + slot.Right, location[1] + slot.Bottom);
-    }
-
-    /// <summary>收起来源浮窗（切图、栏位隐藏、菜单/下拉/设置工具打开、列表替换等入口统一调用）。</summary>
-    private void CloseRatingSources()
-    {
-        if (_ratingSourcesPopup.IsOpen) _ratingSourcesPopup.Close();
+        if (_ratingPopup.IsOpen) _ratingPopup.Close();
     }
 
     /// <summary>关闭主图长按菜单（返回键优先消费）。</summary>
@@ -1315,17 +1327,17 @@ internal sealed class AndroidNativeRootView : FrameLayout
         return true;
     }
 
-    /// <summary>打开/前置原生工具页（RATING-04：先收起来源浮窗）。</summary>
+    /// <summary>打开/前置原生工具页（RATING-04：先收起星级弹窗）。</summary>
     internal void ShowTools()
     {
-        CloseRatingSources();
+        CloseRatingPopup();
         _main.OpenToolsWindow();
     }
 
     /// <summary>控制栏 EXIF 整组入口：同一工具页内明确进入 EXIF 详情（TOOLBAR-06）。</summary>
     internal void ShowExifTools()
     {
-        CloseRatingSources();
+        CloseRatingPopup();
         _main.OpenExifToolsWindow();
     }
 
@@ -1418,7 +1430,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
                 _observedFile = _main.CurrentFile;
                 if (_observedFile != null) _observedFile.PropertyChanged += OnCurrentFileChanged;
                 // RATING-04：浮窗属于上一张照片的临时视图，切图即关闭。
-                CloseRatingSources();
+                CloseRatingPopup();
                 _analysisPane.ClearDetail();
                 _filmstrip.CancelScrollUpToNow();
                 _controlBar.MarkDirty();
@@ -1431,17 +1443,17 @@ internal sealed class AndroidNativeRootView : FrameLayout
             case nameof(MainViewModel.IsScreenLandscape):
                 // 旋转后筛选条锚点整体失效，下拉不能跟着旧坐标留在屏幕上。
                 _filterBar.DismissDropdown();
-                CloseRatingSources();
+                CloseRatingPopup();
                 RequestLayout();
                 break;
             case nameof(MainViewModel.IsThumbnailViewVisible):
                 AndroidShellPreferences.SaveShowFilm(_main.IsThumbnailViewVisible);
-                if (!_main.IsThumbnailViewVisible) CloseRatingSources();
+                if (!_main.IsThumbnailViewVisible) CloseRatingPopup();
                 RequestLayout();
                 break;
             case nameof(MainViewModel.IsControlViewVisible):
                 AndroidShellPreferences.SaveShowControls(_main.IsControlViewVisible);
-                if (!_main.IsControlViewVisible) CloseRatingSources();
+                if (!_main.IsControlViewVisible) CloseRatingPopup();
                 RequestLayout();
                 break;
             case nameof(MainViewModel.IsExifViewVisible):
@@ -1494,7 +1506,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
         }
         if ((impact & SettingsChangeImpact.Rating) != 0)
         {
-            // RATING-04：入口几何/显隐变化由卡片自身重绘，不据此收起来源浮窗。
+            // RATING-04：入口几何/显隐变化由卡片自身重绘，不据此收起星级弹窗。
             _filmstrip.RefreshCardStates();
             _phoneRating.SetState(_main.CurrentFile?.Rating ?? 0, _main.CurrentFile?.HasRatingConflict == true,
                 _main.CurrentFile != null);
@@ -1567,7 +1579,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
     {
         if (args.PropertyName != nameof(ThumbnailListViewModel.FilteredFiles)) return;
         // RATING-04：列表替换会重新绑定卡片，静态锚点不再指向同一张照片。
-        CloseRatingSources();
+        CloseRatingPopup();
         _filmstrip.ReloadData();
         _filterBar.Refresh();
         RefreshControlBarHard();
@@ -1601,7 +1613,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
         {
             // RATING-04：相似列表重排/替换后锚点卡片不再指向原项。
             if (args.PropertyName is nameof(SimilarityPanelViewModel.SimilarItems) or nameof(SimilarityPanelViewModel.HasItems))
-                CloseRatingSources();
+                CloseRatingPopup();
             RequestLayout();
         }
     }
@@ -1895,13 +1907,13 @@ internal sealed class AndroidNativeRootView : FrameLayout
             _main.OpenFailed -= OnOpenFailed;
             if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
             _filmstrip.RateRequested -= OnRateRequested;
-            _filmstrip.SourcesRequested -= OnCardSourcesRequested;
-            _filterBar.DropdownOpening -= CloseRatingSources;
+            _filmstrip.PopupHost = null;
+            _filterBar.DropdownOpening -= CloseRatingPopup;
             _filterScrollHost.ScrollChanged -= OnFilterScrollChanged;
 #if PHOTOVIEWER_DINO
-            _similarityPane.ShowRatingSources = null;
+            _similarityPane.PopupHost = null;
 #endif
-            _ratingSourcesPopup.Dispose();
+            _ratingPopup.Dispose();
             _analysisPane.TileCountChanged -= RequestLayout;
             _analysisPane.DetailChanged -= UpdateDetailHighlight;
             _analysisPresenter.Dispose();

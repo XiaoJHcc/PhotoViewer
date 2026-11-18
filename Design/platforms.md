@@ -60,9 +60,9 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
   - macOS：`PhotoViewer.Mac/Native/MacThumbnailItem.cs` 的 `MacThumbnailItem`（`NSCollectionViewItem`；`InitializeView` 落几何、星级、徽标）。
   - iOS：`PhotoViewer.iOS/Native/iOSThumbnailCard.cs` 的 `iOSThumbnailCard`（两档几何取共享 `PhotoViewer.Shared/FilmCardGeometry.cs`；宽形态固定大档，手机形态由根控制器按胶片栏主轴长度选档）。
   - Windows：`PhotoViewer.Windows/Native/WindowsThumbnailCard.cs`（`_name` 文件名、`_secondLine` 第二行与相似度条），`WindowsLayout` 转接共享 `FilmstripGeometry` 与 `film.*` / `color.*` 令牌。
-  - Android：`PhotoViewer.Android/Native/AndroidThumbnailCard.cs` 的 `OnDraw`（圆角缩略图、第二行）与 `ShowCardMenu`（卡片菜单）。
+  - Android：`PhotoViewer.Android/Native/AndroidThumbnailCard.cs` 的 `OnDraw`（圆角缩略图、第二行）与 `ShowCardMenu`（卡片菜单）。。
   - **FILM-05@ios**：大档星排是纯显示视图，另挂只收间接指针（`AllowedTouchTypes = IndirectPointer`）且只在星排矩形内接收的点按识别器，手指落在星排上由整卡选择按钮接管；长按（`motion.rating.longPress`）与辅助点按（`ButtonMaskRequired = Secondary`）打开星级弹窗，长按可不抬手滑到弹窗星排提交（与紧凑态共用 `iOSRatingPopup.BeginExternal` 转发路径）。卡片不再挂 `UIContextMenuInteraction`。
-  - **FILM-05@android**：两档静态卡片复用 `FilmCardGeometry` 与 `film.card.small.*`，小档没有逐星命中。大档点星与卡片长按继续沿用既有业务；触摸/指针分流与星级弹窗的实现状态见 status.md。
+  - **FILM-05@android**：两档复用 `FilmCardGeometry`，小档没有逐星命中。大档普通星槽仅鼠标点按写回，触屏点星行只选卡；警示三角只打开弹窗。长按与辅助点按共用星级弹窗，不切图、不抬升卡片。
 - **FILM-06**：评分与筛选连续性由共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs`（评分回填、暂留与筛选刷新）与各端评分写回路径承担；写回作用于组的全部实际来源（RATING-01/03），来源冲突的指示与浮窗见 [rating](#rating)（RATING-04）；写回失败一律走 [state](#state) 的 4 s 非模态提示条（macOS `PhotoViewer.Mac/Native/MacStatusToast.cs`、iOS `PhotoViewer.iOS/Native/iOSStatusToast.cs`）。
 - **追溯**：旧壳定位/动画的冻结几何与截图见 `Design/baseline/avalonia/`（旧视图源码只存在于 tag `avalonia-final` 之前的历史）；现行触发与定位逻辑在共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs`、`PhotoViewer/ViewModels/Main/ControlViewModel.cs`、`PhotoViewer/ViewModels/Main/FolderViewModel.cs`；iPad 侧在 `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs`、`PhotoViewer.iOS/Native/iOSPhotoView.cs`、`PhotoViewer.iOS/Native/iOSFilmstripView.cs`。
 
@@ -77,9 +77,10 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
   - **RATING-04@ios**：不再有独立来源浮窗，冲突来源以星级弹窗的来源条目显示（RATING-07@ios）；条目排版取共享 `PhotoViewer.Shared/RatingPopupLayout.cs`，状态与整组写入仍由 `RatingSourcesViewModel` 提供；名称、时间与状态宽取字体实测加设计内边距（`popup.ratingSources.*`），不另加经验边距。
   - **RATING-04@mac / @ios**：警示三角取 SF Symbols `exclamationmark.triangle.fill`，语义同 `icon.warning`。
   - **RATING-04@win**：警示三角取 Segoe Fluent Icons Warning `E7BA`。来源浮窗 `PhotoViewer.Windows/Native/WindowsRatingSourcesFlyout.cs`：原生 `Flyout` 继承默认 Presenter 样式，与右键菜单一样以窗口化弹层承载 `DesktopAcrylicBackdrop` 与透明背景（约束在根内容内时系统材质只剩半透明），外部点击与 Esc 由原生关闭，不自绘箭头或底色。窗口化弹层会按显示器工作区自行夹取或翻转，因此共享算出的位置先夹入「窗口安全区 ∩ 所在显示器工作区」的可见交集（容不下时退回窗口安全区）再交 `ShowAt`，避免主窗口部分越出工作区时发生二次翻转。定位所用外形尺寸须按当前 DPI 对内容及四侧原生边框分别做物理像素取整，再换回 DIP；不能把未取整的边框厚度直接加到内容上，否则贴工作区边缘时一像素溢出也会触发整块翻转。星排复用控制栏按钮规格与 `WindowsControlStyles`。
-  - **RATING-04@android**：`PopupWindow` + 自绘内容视图（`PhotoViewer.Android/Native/AndroidRatingSourcesPopup.cs`），警示三角直接用 `icon.warning`；内容宽外另加 1dp 自绘描边，底板、描边与圆角取 `color.popup.background`、`color.popup.border`、`popup.ratingSources.cornerRadius`。卡片锚点为该卡片 0 号槽位的真实屏幕矩形（绘制、命中与锚点共用同一星级行几何），浮窗夹在宿主根视图内；每帧核对锚点、宿主矩形与目标冲突态。返回键顺序为长按菜单 → 来源浮窗 → 筛选下拉 → 设置/工具，外部点击/返回键收起后同步共享 `IsOpen`；读屏经 `ExploreByTouchHelper` 暴露每格星级。
+  - **RATING-04@android**：`PhotoViewer.Android/Native/AndroidRatingPopup.cs` 以同一个焦点型 `PopupWindow` 承载普通评分和冲突来源；使用原生 `ScrollView`、`TextView`、`MaterialButton` 与 `MaterialShapeDrawable`，仅圆角、底色、星色、间距与条目结构按设计令牌，不画额外描边、箭头或模拟玻璃。复用 `RatingPopupLayout`，按实际字号扩展行带，超高可滚；锚定整卡或胶囊，按 `PopupDirection`、`PlacePopup` 与实际安全区落位。外部点按、返回或 Esc 收起并同步共享状态；入口隐藏、移动或换绑即关闭。
   - **RATING-04@web**：自绘组件 `PhotoViewer.Web/src/shell/ratingsources.js`，警示三角用 `icon.warning`；写入走 `core/app.js` 的整组路径。
 - **RATING-07**：共享 `PhotoViewer.Shared/RatingControlGeometry.cs`（形态判定、格子映射、紧凑星簇、方向表与落位）、`RatingGesture.cs`（一次手势至多一次提交的状态机）、`RatingPopupLayout.cs`（弹窗步长与条目排版）；宽形态控制栏的分组尺寸与换行取 `ToolbarFlowLayout.cs`。
+  - **RATING-07@android**：`AndroidRatingControl` 保持冻结主屏几何，展开态逐格原生涟漪并用 `RatingGesture` 预览、松手提交；紧凑态整胶囊打开弹窗。非冲突时入口延续同一触摸，按共享取消带预览，不落盘，松手提交；冲突条目只接受明确点选。弹窗星级按钮优先使用 Android 建议的 48dp 命中尺寸，空间不足按可用主轴等分；竖排入口的普通弹窗保留竖排星列。反馈由系统状态层和触感承担，不模拟玻璃融合、羽化和按压缩放。
   - **RATING-07@ios**：控件 `PhotoViewer.iOS/Native/iOSRatingControl.cs`（两种形态都是交互式 `UIGlassEffect` 胶囊，展开态星排与紧凑星簇 `iOSRatingCluster.cs` 都放在胶囊 `ContentView` 里随按压缩放；紧凑星簇自绘时用上层字形的实心轮廓以 `DestinationOut` 分圈擦除下层，形成半透明羽化的叠压）与星排 `iOSRatingRow.cs`，手势用零时长 `UILongPressGestureRecognizer`（`CancelsTouchesInView = false`，在控制栏滚动容器里拖星不触发滚动），逐格 `UIHoverStyle` 系统正圆高亮，读屏 `Adjustable`；触感由每个星排实例各自持有选择生成器并在该星排复用，提交用系统按发起视图给出的轻冲击生成器。弹窗 `iOSRatingPopup.cs` 是根视图上的 `UIGlassEffect` 面板加全窗透明拦截层，不用 `UIPopoverPresentationController`：系统浮窗展示期间无法把起手触摸延续到弹窗星排。弹窗材质视图的 alpha 恒为 1（改 alpha 会让系统材质失效），出入场以 `Effect` 属性过渡配合内容视图淡入表达；减少动态效果时不缩放，只保留淡入淡出。
 - **RATING-05**：数字/以上筛选投影在 `PhotoViewer/ViewModels/Main/File/PhotoListProjection.cs` 的 `MatchesRating`，筛选项在 `PhotoViewer/ViewModels/Main/File/FilterBarViewModel.cs`；训练快照由独立仓 `Training/DatasetBuilder`（`FingerprintGrouper`）只读取实际选用的文件，sidecar 与伴侣不参与取 max，文件内部不是有效 1–5 时不落值。
 - Web 参考壳没有真实文件写入；冲突指示、来源浮窗与 13 项筛选由 `?check=all` 校验界面语义（合成数据）。
@@ -245,8 +246,8 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
 - **MENU-03、MENU-04**：弹出与收回。macOS/iOS/Windows 用系统菜单；Android 自绘并夹取到屏幕内（`ShowPhotoMenu`）。
   - **MENU-03@android**：自绘弹层，定位与夹取自实现。
   - **MENU-04@ios**：卡片星级弹窗不抬升卡片、不移动列表布局。
-- **MENU-05**：卡片入口。卡片菜单按修订后的 MENU-05 退役，改为长按/辅助点按打开星级弹窗（RATING-07）；iOS 已改为卡片长按与辅助点按打开星级弹窗（FILM-05@ios）；Android 仍为 `AndroidThumbnailCard.ShowCardMenu`，桌面用 tooltip + 星级按钮。
-  - **MENU-05@android**：现有卡片菜单的标题与时间拆成两行原生外观；完整拍摄时间格式四端共用 `ShotTimeText.Format`（`PhotoViewer/Core/Platform/PhotoHintText.cs`），该格式沿用为星级弹窗条目。
+- **MENU-05**：卡片入口。卡片菜单按修订后的 MENU-05 退役，改为长按/辅助点按打开星级弹窗（RATING-07）；iOS 与 Android 都已改为卡片长按与辅助点按打开星级弹窗（FILM-05@ios、FILM-05@android），桌面用 tooltip + 星级按钮。
+  - **MENU-05@android**：卡片长按不再有 `PopupMenu`，改为打开星级弹窗并把同一次触摸转发给弹窗星排；完整文件名与拍摄时间由弹窗条目的文件名/时间行承担，拍摄时间取 `ShotTimeText.FormatShortShotTime`（`PhotoViewer/Core/Platform/PhotoHintText.cs`），不使用桌面悬停提示的完整格式。
 - **MENU-06**：主图菜单与 macOS 系统菜单栏均有前置图标。
   - **MENU-06@mac / @ios**：使用 SF Symbols，共用 `PhotoViewer.Apple/AppleSymbolNames.cs` 的 `Menu` 映射；Mac 独有「打开文件…」用 `doc`、应用菜单「退出 PhotoViewer」用 `power`，系统菜单栏与右键菜单一样显示图标。
   - **MENU-06@win**：`WindowsIcons` 提供同语义 Segoe Fluent 字形，普通项与勾选项都保留图标和原生勾选态。
@@ -273,7 +274,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
 - **INPUT-09**：预设/比例缩放入口同 IMAGE-04（各端 `ZoomPreset`）。
 - **INPUT-10**：无照片时按钮禁用不隐藏、打开类命令始终可用；入口由各端控制栏与空态命中层实现。
 - **INPUT-11**：Android `OnBackPressedCallback` 先关设置/工具 sheet 与菜单。
-- **INPUT-12**：触屏等价入口。卡片评分按修订后的 FILM-05 由长按星级弹窗补足（RATING-07），iOS 已接卡片长按星级弹窗，Android 仍走卡片菜单（`AndroidThumbnailCard.ShowCardMenu`）；焦点顺序无专项实现。
+- **INPUT-12**：触屏通过卡片长按打开星级弹窗（RATING-07），iOS 与 Android 均使用同一入口处理卡片评分。
 - **INPUT-01@web**：浏览器保留 Ctrl/⌘+N，「打开文件」主绑定不可用，次绑定 Ctrl+O 与空态点击、菜单为等价入口。
 - **INPUT-04@web**：`WheelEvent` 没有精确/离散标志：`deltaMode` 为行/页，或像素模式下 `wheelDeltaY` 为 120 的整数倍且增量足够大时视为离散，其余为精确；Chromium/Safari 把触控板捏合投递为 ctrl+wheel，未按下物理 Ctrl 时按捏合处理。
 

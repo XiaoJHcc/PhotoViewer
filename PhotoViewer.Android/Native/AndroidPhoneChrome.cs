@@ -60,11 +60,11 @@ internal sealed class AndroidGlyphDrawable : Drawable
     /// <param name="glyph">uicons 字形。</param>
     /// <param name="solid">是否取实心图标字体（评分快捷命令的星底）。</param>
     /// <param name="digit">叠在字形中心的数字（评分快捷命令 1–5；null 表示不叠）。</param>
-    public AndroidGlyphDrawable(Context context, string glyph, bool solid, string? digit)
+    public AndroidGlyphDrawable(Context context, string glyph, bool solid, string? digit, int? sizePx = null)
     {
         _glyph = glyph;
         _digit = string.IsNullOrEmpty(digit) ? null : digit;
-        _size = Math.Max(1, (int)Math.Ceiling(AndroidUiTheme.Sp(context, DesignTokens.ToolbarCommandGlyphFontSize)));
+        _size = sizePx ?? Math.Max(1, (int)Math.Ceiling(AndroidUiTheme.Sp(context, DesignTokens.ToolbarCommandGlyphFontSize)));
         _glyphPaint = AndroidUiTheme.Paint(Color.White);
         _glyphPaint.TextSize = _size;
         var typeface = solid ? AndroidUiTheme.IconSolidTypeface(context) : AndroidUiTheme.IconTypeface(context);
@@ -130,8 +130,9 @@ internal sealed class AndroidGlyphDrawable : Drawable
     {
         var bounds = Bounds;
         if (string.IsNullOrEmpty(_glyph) || bounds.Width() <= 0 || bounds.Height() <= 0) return;
-        int alpha = TintAlpha();
-        _glyphPaint.Color = Color.White;
+        int color = _tint?.GetColorForState(GetState(), Color.White) ?? Color.White.ToArgb();
+        int alpha = Color.GetAlphaComponent(color) * _alpha / 255;
+        _glyphPaint.Color = new Color(color);
         _glyphPaint.Alpha = alpha;
         AndroidUiTheme.DrawGlyphCentered(canvas, _glyph, _glyphPaint, bounds.ExactCenterX(), bounds.ExactCenterY());
         if (_digitPaint == null || _digit == null) return;
@@ -139,12 +140,6 @@ internal sealed class AndroidGlyphDrawable : Drawable
         AndroidUiTheme.DrawGlyphCentered(canvas, _digit, _digitPaint, bounds.ExactCenterX(), bounds.ExactCenterY());
     }
 
-    /// <summary>当前状态色的 alpha 与外部透明度合成。</summary>
-    private int TintAlpha()
-    {
-        int color = _tint?.GetColorForState(GetState(), Color.White) ?? Color.White.ToArgb();
-        return Color.GetAlphaComponent(color) * _alpha / 255;
-    }
 }
 
 /// <summary>
@@ -387,8 +382,9 @@ internal sealed class AndroidGlassCombo : MaterialCardView
 /// <summary>
 /// 星级控件（RATING-07）：Material <see cref="MaterialCardView"/> 胶囊外层承载材质与状态层，
 /// 槽位、字形与命中全部取共享 <see cref="RatingControlGeometry"/>；展开态六格可点，
-/// 紧凑态按共享星簇静态绘制。展开态逐格悬停/按下在槽位内画内切正圆，胶囊外轮廓不变；
-/// 读屏经 <see cref="ExploreByTouchHelper"/> 暴露六格与 0–5 的可调节范围。
+/// 紧凑态按共享星簇绘制并作为星级弹窗入口（起手即打开，手势由 <see cref="Popup"/> 继续跟踪）。
+/// 展开态逐格悬停/按下在槽位内画内切正圆，胶囊外轮廓不变；
+/// 读屏经 <see cref="ExploreByTouchHelper"/> 暴露槽位、0–5 的可调节范围与增减动作。
 /// </summary>
 internal sealed class AndroidRatingControl : MaterialCardView
 {
@@ -405,12 +401,18 @@ internal sealed class AndroidRatingControl : MaterialCardView
     private bool _enabled = true;
     private int _hoverSlot = -1;
     private int _pressedSlot = -1;
+    private bool _forwarding;
+    private bool _capsuleHovered;
+    private RatingGesture? _ratingGesture;
 
-    /// <summary>星级写回入口（0–5；冲突时 0 号由宿主决定是否改走来源浮窗）。</summary>
+    /// <summary>星级写回入口（0–5；冲突时 0 号不写值，改由宿主打开弹窗）。</summary>
     internal event Action<int>? RateRequested;
 
-    /// <summary>冲突三角点击（0 号槽位，不写值）。</summary>
-    internal event Action? ConflictRequested;
+    /// <summary>打开星级弹窗（紧凑态起手、展开态冲突三角与读屏激活）。</summary>
+    internal event Action? PopupRequested;
+
+    /// <summary>宿主注入的星级弹窗：紧凑态把同一次触摸转发给它（展开态不参与）。</summary>
+    internal AndroidRatingPopup? Popup { get; set; }
 
     /// <summary>胶囊是否横排（竖屏底行为 true，横屏控制栏为 false）。</summary>
     internal bool Horizontal { get; set; } = true;
@@ -578,6 +580,15 @@ internal sealed class AndroidRatingControl : MaterialCardView
             for (int value = 0; value < RatingControlGeometry.SlotCount; value++)
                 DrawSlotStateLayer(canvas, value, density);
         }
+        if (form == RatingControlForm.Compact && _capsuleHovered)
+        {
+            // 紧凑态整胶囊高亮：与按钮/槽位同一份状态层色板（Material 悬停不透明度）。
+            using var hover = AndroidUiTheme.Paint(new Color(_stateLayer.GetColorForState(
+                [global::Android.Resource.Attribute.StateHovered], AndroidUiTheme.TextPrimary)));
+            var rect = new RectF((float)(control.X * density), (float)(control.Y * density),
+                (float)(control.MaxX * density), (float)(control.MaxY * density));
+            canvas.DrawRoundRect(rect, Math.Min(rect.Width(), rect.Height()) / 2, Math.Min(rect.Width(), rect.Height()) / 2, hover);
+        }
         if (form == RatingControlForm.Expanded)
         {
             for (int value = 0; value < RatingControlGeometry.SlotCount; value++)
@@ -661,7 +672,7 @@ internal sealed class AndroidRatingControl : MaterialCardView
             AndroidUiTheme.DrawGlyphCentered(canvas, AndroidUiTheme.IconGlyph(DesignTokens.IconClear), _starClear, x, y);
             return;
         }
-        bool active = value <= _rating;
+        bool active = value <= (_ratingGesture?.Preview ?? _rating);
         var paint = active ? _starActive : _starInactive;
         paint.TextSize = AndroidUiTheme.Sp(Context!, glyphSize);
         paint.Alpha = alpha;
@@ -669,63 +680,106 @@ internal sealed class AndroidRatingControl : MaterialCardView
             active ? DesignTokens.IconStarFilled : DesignTokens.IconStar), paint, x, y);
     }
 
-    /// <summary>展开态按下记录槽位，点按写回评分；紧凑态为静态星簇。</summary>
+    /// <summary>
+    /// 展开态按下记录槽位、抬手按槽位写回（冲突三角只打开弹窗）；
+    /// 紧凑态起手即打开星级弹窗并把同一次触摸的移动/抬手/取消转发给它。
+    /// </summary>
     /// <param name="e">触摸事件。</param>
     /// <returns>是否消费。</returns>
     public override bool OnTouchEvent(MotionEvent? e)
     {
         if (e == null) return false;
+        if (Form == RatingControlForm.Compact)
+        {
+            TrackCompact(e);
+            return true;
+        }
+        double density = AndroidUiTheme.Density(Context!);
+        var (control, length, crossLength) = ResolveControl();
+        double main = Horizontal ? e.GetX() / density - control.X : e.GetY() / density - control.Y;
+        double cross = Horizontal ? e.GetY() / density - control.Y : e.GetX() / density - control.X;
+        int value = RatingControlGeometry.ValueAt(main, length, Horizontal, RatingControlGeometry.Slot);
+        bool inBand = RatingControlGeometry.InBand(cross, 0, crossLength);
         switch (e.ActionMasked)
         {
             case MotionEventActions.Down:
-                _pressedSlot = _enabled ? SlotAt(e.GetX(), e.GetY()) : -1;
-                Invalidate();
-                return true;
-            case MotionEventActions.Move:
-                if (_pressedSlot >= 0)
-                {
-                    int slot = SlotAt(e.GetX(), e.GetY());
-                    if (slot != _pressedSlot)
-                    {
-                        _pressedSlot = slot;
-                        Invalidate();
-                    }
-                }
-                return true;
+                if (!_enabled) return true;
+                Parent?.RequestDisallowInterceptTouchEvent(true);
+                _ratingGesture = new(Math.Max(0, _rating), forceCommit: _conflict, zeroOpensPopup: _conflict);
+                _ratingGesture.Begin(main, cross, value);
+                _pressedSlot = value;
+                break;
+            case MotionEventActions.Move when _ratingGesture is { } moving:
+                if (moving.Move(main, cross, value, inBand) && moving.Preview.HasValue)
+                    PerformHapticFeedback(OperatingSystem.IsAndroidVersionAtLeast(34)
+                        ? FeedbackConstants.SegmentTick : FeedbackConstants.ClockTick);
+                _pressedSlot = moving.Preview ?? -1;
+                break;
+            case MotionEventActions.Up when _ratingGesture is { } ending:
+                var result = ending.End(main, cross, value, inBand);
+                _ratingGesture = null;
+                _pressedSlot = -1;
+                if (!_enabled) break;
+                if (result.Outcome == RatingGestureOutcome.OpenPopup) PopupRequested?.Invoke();
+                else if (result.Outcome == RatingGestureOutcome.Commit) RateRequested?.Invoke(result.Value);
+                break;
             case MotionEventActions.Cancel:
+            case MotionEventActions.PointerDown:
+                _ratingGesture = null;
                 _pressedSlot = -1;
+                break;
+        }
+        Invalidate();
+        return true;
+    }
+
+    /// <summary>
+    /// 紧凑胶囊的手指跟踪：起手打开弹窗并把落点交给弹窗星排，之后的移动与抬手原样转发；
+    /// 弹窗未打开（无当前照片）或为冲突来源条目时不转发，整套手势仍由本控件消费。
+    /// </summary>
+    /// <param name="e">触摸事件。</param>
+    private void TrackCompact(MotionEvent e)
+    {
+        switch (e.ActionMasked)
+        {
+            case MotionEventActions.Down:
+                _forwarding = false;
+                _pressedSlot = -1;
+                if (!_enabled) return;
+                // 起手即属于弹窗预览：禁止持有滚动/翻页的祖先在拖动中抢走这次触摸。
+                Parent?.RequestDisallowInterceptTouchEvent(true);
+                PopupRequested?.Invoke();
+                if (Popup is { IsOpen: true } popup && popup.BeginExternal(this, e)) _forwarding = true;
                 Invalidate();
-                return true;
+                return;
+            case MotionEventActions.Move:
+                if (_forwarding) Popup?.MoveExternal(this, e);
+                return;
             case MotionEventActions.Up:
-                _pressedSlot = -1;
-                Invalidate();
-                if (!_enabled || Form != RatingControlForm.Expanded) return true;
-                float density = (float)AndroidUiTheme.Density(Context!);
-                var (control, rowLength, _) = ResolveControl();
-                double localMain = (Horizontal ? e.GetX() : e.GetY()) / density - (Horizontal ? control.X : control.Y);
-                int value = RatingControlGeometry.ValueAt(localMain, rowLength, Horizontal, RatingControlGeometry.Slot);
-                if (value == 0 && _conflict) ConflictRequested?.Invoke();
-                else RateRequested?.Invoke(value);
-                return true;
-            default:
-                return true;
+                if (_forwarding) Popup?.EndExternal(this, e);
+                _forwarding = false;
+                return;
+            case MotionEventActions.Cancel:
+            case MotionEventActions.PointerDown:
+                if (_forwarding) Popup?.CancelExternal(this, e);
+                _forwarding = false;
+                return;
         }
     }
 
-    /// <summary>真实鼠标/触控板悬停：记录命中的槽位，位置变化才重绘。</summary>
+    /// <summary>真实鼠标/触控板悬停：展开态记录命中的槽位，紧凑态整胶囊高亮；位置变化才重绘。</summary>
     /// <param name="e">悬停事件。</param>
     /// <returns>是否消费。</returns>
     public override bool OnHoverEvent(MotionEvent? e)
     {
         if (e == null) return false;
-        int slot = e.ActionMasked == MotionEventActions.HoverExit || !_enabled
-            ? -1
-            : SlotAt(e.GetX(), e.GetY());
-        if (slot != _hoverSlot)
-        {
-            _hoverSlot = slot;
-            Invalidate();
-        }
+        bool exited = e.ActionMasked == MotionEventActions.HoverExit || !_enabled;
+        bool capsule = !exited && Form == RatingControlForm.Compact;
+        int slot = exited || capsule ? -1 : SlotAt(e.GetX(), e.GetY());
+        if (slot == _hoverSlot && capsule == _capsuleHovered) return true;
+        _hoverSlot = slot;
+        _capsuleHovered = capsule;
+        Invalidate();
         return true;
     }
 
@@ -758,13 +812,19 @@ internal sealed class AndroidRatingControl : MaterialCardView
         /// <param name="owner">星级控件。</param>
         public RatingAccessibilityHelper(AndroidRatingControl owner) : base(owner) => _owner = owner;
 
-        /// <summary>按本地像素坐标找槽位。</summary>
-        protected override int GetVirtualViewAt(float x, float y) => _owner.SlotAt(x, y);
+        /// <summary>按本地像素坐标找槽位（紧凑态整胶囊算一个节点）。</summary>
+        protected override int GetVirtualViewAt(float x, float y)
+            => _owner.Form == RatingControlForm.Compact ? (_owner._enabled ? 0 : -1) : _owner.SlotAt(x, y);
 
-        /// <summary>展开态列出六格；紧凑态不提供逐格节点。</summary>
+        /// <summary>展开态列出六格；紧凑态只暴露一个代表整胶囊的可激活节点。</summary>
         protected override void GetVisibleVirtualViews(IList<Java.Lang.Integer>? virtualViewIds)
         {
-            if (virtualViewIds == null || _owner.Form != RatingControlForm.Expanded) return;
+            if (virtualViewIds == null) return;
+            if (_owner.Form == RatingControlForm.Compact)
+            {
+                virtualViewIds.Add(Java.Lang.Integer.ValueOf(0));
+                return;
+            }
             for (int value = 0; value < RatingControlGeometry.SlotCount; value++)
                 virtualViewIds.Add(Java.Lang.Integer.ValueOf(value));
         }
@@ -777,6 +837,29 @@ internal sealed class AndroidRatingControl : MaterialCardView
             {
                 node.ContentDescription = "";
                 node.SetBoundsInScreen(new Rect());
+                return;
+            }
+            if (_owner.Form == RatingControlForm.Compact)
+            {
+                node.ContentDescription = _owner.ContentDescription;
+                node.ClassName = "android.widget.Button";
+                node.Focusable = true;
+                node.Enabled = _owner._enabled;
+                node.Clickable = _owner._enabled;
+                node.VisibleToUser = true;
+                if (_owner._enabled)
+                {
+                    node.AddAction((int)global::Android.Views.Accessibility.Action.Click);
+                    node.AddAction((int)global::Android.Views.Accessibility.Action.ScrollForward);
+                    node.AddAction((int)global::Android.Views.Accessibility.Action.ScrollBackward);
+                }
+                node.RangeInfo = AccessibilityNodeInfoCompat.RangeInfoCompat.Obtain(
+                    AccessibilityNodeInfoCompat.RangeInfoCompat.RangeTypeInt, 0, 5,
+                    Math.Clamp(_owner._rating, 0, 5));
+                var location = new int[2];
+                _owner.GetLocationOnScreen(location);
+                node.SetBoundsInScreen(new Rect(location[0], location[1],
+                    location[0] + _owner.Width, location[1] + _owner.Height));
                 return;
             }
             node.ContentDescription = virtualViewId == 0
@@ -797,13 +880,16 @@ internal sealed class AndroidRatingControl : MaterialCardView
             node.RangeInfo = AccessibilityNodeInfoCompat.RangeInfoCompat.Obtain(
                 AccessibilityNodeInfoCompat.RangeInfoCompat.RangeTypeInt, 0, 5, Math.Clamp(_owner._rating, 0, 5));
             var rect = _owner.SlotRectPx(virtualViewId);
-            var location = new int[2];
-            _owner.GetLocationOnScreen(location);
-            node.SetBoundsInScreen(new Rect(location[0] + rect.Left, location[1] + rect.Top,
-                location[0] + rect.Right, location[1] + rect.Bottom));
+            var slotLocation = new int[2];
+            _owner.GetLocationOnScreen(slotLocation);
+            node.SetBoundsInScreen(new Rect(slotLocation[0] + rect.Left, slotLocation[1] + rect.Top,
+                slotLocation[0] + rect.Right, slotLocation[1] + rect.Bottom));
         }
 
-        /// <summary>读屏点按与增减：与触摸同一写入入口，增减动作按 0–5 夹取。</summary>
+        /// <summary>
+        /// 读屏点按与增减：增减直接写回相邻星级；点按在紧凑态与冲突时打开星级弹窗，
+        /// 展开态非冲突时写回该格（与触摸同一入口）。
+        /// </summary>
         protected override bool OnPerformActionForVirtualView(int virtualViewId, int action, Bundle? arguments)
         {
             if (!_owner._enabled) return false;
@@ -818,8 +904,12 @@ internal sealed class AndroidRatingControl : MaterialCardView
                 return true;
             }
             if (action != (int)global::Android.Views.Accessibility.Action.Click) return false;
-            if (virtualViewId == 0 && _owner._conflict) _owner.ConflictRequested?.Invoke();
-            else _owner.RateRequested?.Invoke(virtualViewId);
+            if (_owner.Form == RatingControlForm.Compact || (virtualViewId == 0 && _owner._conflict))
+            {
+                _owner.PopupRequested?.Invoke();
+                return true;
+            }
+            _owner.RateRequested?.Invoke(virtualViewId);
             return true;
         }
     }

@@ -21,6 +21,7 @@ using PhotoViewer.Core.Memory;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.Core.Storage;
+using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
 using AndroidUri = Android.Net.Uri;
@@ -50,6 +51,8 @@ internal static partial class AndroidNativeChecks
         await RunStepAsync("RATING-04 写入", CheckRatingSourcesWriteAsync);
         await RunStepAsync("RATING-04 控制栏", CheckRatingControlBarAsync);
         await RunStepAsync("RATING-04 失败保留", CheckRatingSourcesFailureAsync);
+        await RunStepAsync("RATING-07 卡片长按", CheckRatingPopupCardAsync);
+        await RunStepAsync("RATING-07 紧凑起手", CheckRatingPopupCompactAsync);
         await RunStepAsync("IMAGE-03", CheckFullFailureAsync);
         await RunStepAsync("STATE-02/OPEN-03", CheckOpenFailureAsync);
         await RunStepAsync("STATE-03", CheckRatingFailureAsync);
@@ -184,8 +187,8 @@ internal static partial class AndroidNativeChecks
     }
 
     /// <summary>
-    /// RATING-04：组级冲突时卡片与控制栏 0 号槽位显示红色警示三角；点卡片三角打开来源浮窗
-    /// （不写值、不切主图），浮窗按真实锚点向下展开并列出两个来源的名称、标签与状态。
+    /// RATING-04：组级冲突时卡片与控制栏 0 号槽位显示红色警示三角；点卡片三角打开星级弹窗的
+    /// 来源条目形态（不写值、不切主图），按真实卡片矩形展开并列出两个来源的名称、标签与状态。
     /// </summary>
     private static async Task CheckRatingConflictAsync()
     {
@@ -231,23 +234,19 @@ internal static partial class AndroidNativeChecks
             $"card={card?.ShowsRatingConflict} control={root.ControlBar.RatingConflictForChecks} "
             + $"sources={file.RatingSources.Count} rating={file.Rating}");
 
-        if (card == null || !main.IsRowLayout)
+        if (card == null)
         {
-            Check("RATING-04 卡片三角打开来源浮窗", false, "行布局冲突卡片不可用");
+            Check("RATING-04 卡片打开来源条目", false, "冲突卡片不可用");
             return;
         }
 
-        var popup = root.RatingSourcesPopup;
+        var popup = root.RatingPopup;
         try
         {
             byte[] embeddedBefore = File.ReadAllBytes(path);
             byte[] sidecarBefore = File.ReadAllBytes(sidecarPath);
-            var slot = card.StarSlotRectPx(0) ?? throw new InvalidOperationException("卡片 0 号槽位不可用");
-            var location = new int[2];
-            card.GetLocationOnScreen(location);
-            var expectedAnchor = new Rect(location[0] + slot.Left, location[1] + slot.Top,
-                location[0] + slot.Right, location[1] + slot.Bottom);
-            TapLocal(card, slot.CenterX(), slot.CenterY());
+            var expectedAnchor = card.ScreenRect ?? throw new InvalidOperationException("卡片入口矩形不可用");
+            await OpenConflictCardAsync(card);
             await WaitAsync(() => popup.IsOpen && main.RatingSources.IsOpen, "卡片三角打开浮窗", 5000);
             await Task.Delay(250);
             bool stillOpen = popup.IsOpen && main.RatingSources.IsOpen;
@@ -255,16 +254,22 @@ internal static partial class AndroidNativeChecks
             var items = main.RatingSources.Items;
             bool twoSources = items.Count == 2
                 && items[0].Name == "conflict.jpg" && items[0].Kind == "JPG" && items[0].Status == "2 星"
-                && items[1].Name == "conflict.xmp" && items[1].Kind == "XMP" && items[1].Status == "4 星";
+                && items[1].Name == "conflict.xmp" && items[1].Kind == "XMP" && items[1].Status == "4 星"
+                && popup.ModeForChecks == RatingPopupMode.Sources;
             // 打开浮窗不写评分、不切图：主图身份与两个来源的磁盘字节都必须原样保留。
             bool unchanged = ReferenceEquals(main.CurrentFile, file) && file.Rating == 2
                 && File.ReadAllBytes(path).SequenceEqual(embeddedBefore)
                 && File.ReadAllBytes(sidecarPath).SequenceEqual(sidecarBefore);
             bool anchored = SameRect(popup.AnchorRectForChecks, expectedAnchor);
-            bool sized = popup.WidthPxForChecks == (int)Math.Round(AndroidRatingSourcesPopup.WindowWidthDp * density)
+            // 面板宽由共享排版给出：最宽条目（六格星排 + 条目内边距）加两侧面板内边距。
+            double expectedWidthDp = RatingPopupLayout.EntryWidth(popup.PitchDpForChecks)
+                + 2 * RatingPopupLayout.Padding;
+            bool sized = popup.ModeForChecks == RatingPopupMode.Sources
+                && popup.WidthPxForChecks == (int)Math.Round(expectedWidthDp * density)
                 && popup.HeightPxForChecks > 0;
-            Check("RATING-04 卡片三角打开来源浮窗",
-                twoSources && unchanged && anchored && sized && stillOpen && popup.DirectionForChecks == "down",
+            Check("RATING-04 卡片三角打开来源条目",
+                twoSources && unchanged && anchored && sized && stillOpen && popup.DirectionForChecks == DirectionText(
+                    RatingControlGeometry.PopupDirection(root.Form, main.IsRowLayout, root.NotchOnLeft, RatingPopupAnchor.Card)),
                 $"open={stillOpen} sources={items.Count} [{string.Join(" / ", items.Select(item => $"{item.Name}:{item.Kind}:{item.Status}"))}] "
                 + $"current={main.CurrentFile?.Name} rating={file.Rating} anchor={popup.AnchorRectForChecks} "
                 + $"expectedAnchor={expectedAnchor} width={popup.WidthPxForChecks} height={popup.HeightPxForChecks} "
@@ -289,15 +294,13 @@ internal static partial class AndroidNativeChecks
         await WaitAsync(() => main.CurrentFile?.HasRatingConflict == true, "冲突素材上屏", 25000);
         await WaitForListSettledAsync(main);
         var file = main.CurrentFile!;
-        var popup = root.RatingSourcesPopup;
+        var popup = root.RatingPopup;
         try
         {
             int index = main.FileVM.ThumbnailList.FilteredFiles.IndexOf(file);
             var card = index >= 0 ? root.Filmstrip.CardAt(index) : null;
-            if (card?.StarSlotRectPx(0) is not { } cardSlot)
-                throw new InvalidOperationException("行布局冲突卡片不可用");
-            TapLocal(card, cardSlot.CenterX(), cardSlot.CenterY());
-            await WaitAsync(() => popup.IsOpen, "来源浮窗打开", 5000);
+            await OpenConflictCardAsync(card ?? throw new InvalidOperationException("冲突卡片不可用"));
+            await WaitAsync(() => popup.IsOpen, "星级弹窗打开", 5000);
             await Task.Delay(250);
             if (!popup.IsOpen) throw new InvalidOperationException("浮窗打开后立即被关闭");
             int entryIndex = Math.Max(0, main.RatingSources.Items.Count - 1);
@@ -325,7 +328,7 @@ internal static partial class AndroidNativeChecks
     }
 
     /// <summary>
-    /// RATING-04：控制栏评分组 0 号按钮打开的是当前照片组的来源浮窗，横排控制栏向上展开；
+    /// RATING-04：控制栏评分组 0 号按钮打开的是当前照片组的星级弹窗（来源条目形态），横排控制栏向上展开；
     /// 打开本身不写值、不切图。
     /// </summary>
     private static async Task CheckRatingControlBarAsync()
@@ -337,13 +340,13 @@ internal static partial class AndroidNativeChecks
         await WaitAsync(() => main.CurrentFile?.HasRatingConflict == true, "冲突素材上屏", 25000);
         await WaitForListSettledAsync(main);
         var file = main.CurrentFile!;
-        var popup = root.RatingSourcesPopup;
+        var popup = root.RatingPopup;
         try
         {
-            var node = await WaitForRatingNodeAsync(root, 0);
-            double density = AndroidUiTheme.Density(root.Context!);
-            TapLocal(root.ControlBar, (float)((node.X + node.Width / 2) * density),
-                (float)((node.Y + node.Height / 2) * density));
+            var rating = root.Form == ScreenForm.Wide ? root.ControlBar.RatingControl : root.PhoneRating;
+            await WaitAsync(() => rating.IsShown && rating.Width > 0, "评分控件排布", 5000);
+            var slot = rating.SlotRectPx(0);
+            TapLocal(rating, slot.CenterX(), slot.CenterY());
             await WaitAsync(() => popup.IsOpen && main.RatingSources.IsOpen, "控制栏三角打开浮窗", 5000);
             await Task.Delay(250);
             bool stillOpen = popup.IsOpen && main.RatingSources.IsOpen;
@@ -351,7 +354,8 @@ internal static partial class AndroidNativeChecks
             Check("RATING-04 控制栏三角打开浮窗",
                 stillOpen && items.Count == 2 && items[0].Name == "conflict.jpg"
                 && ReferenceEquals(main.CurrentFile, file) && file.Rating == 2
-                && popup.DirectionForChecks == "up",
+                && popup.DirectionForChecks == DirectionText(RatingControlGeometry.PopupDirection(
+                    root.Form, main.IsRowLayout, root.NotchOnLeft, RatingPopupAnchor.Control)),
                 $"open={stillOpen} sources={items.Count} current={main.CurrentFile?.Name} rating={file.Rating} "
                 + $"direction={popup.DirectionForChecks} anchor={popup.AnchorRectForChecks}");
         }
@@ -372,7 +376,7 @@ internal static partial class AndroidNativeChecks
         SetFileReadOnly(path, true);
         SetFileReadOnly(sidecarPath, true);
         SetDirectoryReadOnly(folder, true);
-        var popup = root.RatingSourcesPopup;
+        var popup = root.RatingPopup;
         try
         {
             await main.FolderVM.OpenFolderAsync(new AndroidFolderRef(folder));
@@ -381,10 +385,8 @@ internal static partial class AndroidNativeChecks
             var file = main.CurrentFile!;
             root.ResetStatusForChecks();
             var card = root.Filmstrip.CardAt(main.FileVM.ThumbnailList.FilteredFiles.IndexOf(file));
-            if (card?.StarSlotRectPx(0) is not { } cardSlot)
-                throw new InvalidOperationException("只读冲突卡片不可用");
-            TapLocal(card, cardSlot.CenterX(), cardSlot.CenterY());
-            await WaitAsync(() => popup.IsOpen, "只读来源浮窗打开", 5000);
+            await OpenConflictCardAsync(card ?? throw new InvalidOperationException("只读冲突卡片不可用"));
+            await WaitAsync(() => popup.IsOpen, "只读素材星级弹窗打开", 5000);
             await Task.Delay(250);
             if (!popup.IsOpen) throw new InvalidOperationException("浮窗打开后立即被关闭");
             var target = popup.SlotRectPx(0, 4);
@@ -443,6 +445,21 @@ internal static partial class AndroidNativeChecks
         WriteCheckJpeg(path, 640, 480, rating: embedded);
         File.WriteAllBytes(sidecarPath, BuildXmpPacket(sidecar));
         return (folder, path, sidecarPath);
+    }
+
+    private static async Task OpenConflictCardAsync(AndroidThumbnailCard card)
+    {
+        if (card.Tier == FilmCardTier.Large && card.StarSlotRectPx(0) is { } slot)
+        {
+            TapLocal(card, slot.CenterX(), slot.CenterY());
+            return;
+        }
+        long now = SystemClock.UptimeMillis();
+        using var down = MotionEvent.Obtain(now, now, MotionEventActions.Down, card.Width / 2f, card.Height / 2f, 0);
+        card.DispatchTouchEvent(down);
+        await WaitAsync(() => _root!.RatingPopup.IsOpen, "小档卡片长按打开来源条目", 5000);
+        using var up = MotionEvent.Obtain(now, SystemClock.UptimeMillis(), MotionEventActions.Up, card.Width / 2f, card.Height / 2f, 0);
+        card.DispatchTouchEvent(up);
     }
 
     /// <summary>在视图本地坐标点按（验收用，与真实触摸同一条消费路径）。</summary>

@@ -47,15 +47,28 @@ public static class PhotoHintText
         => touch ? ("点击打开文件夹", "/", "长按更多功能") : ("点击打开文件", "/", "拖拽照片到此处");
 }
 
-/// <summary>FILM-05/MENU-05 拍摄时间格式：桌面悬停提示与触屏卡片菜单标题共用。</summary>
+/// <summary>拍摄时间格式：悬停提示用完整格式（FILM-05），星级弹窗时间行用短格式（RATING-04）。</summary>
 public static class ShotTimeText
 {
     /// <summary>完整拍摄时间格式（含时区偏移）。</summary>
     public const string Format = "yyyy-MM-dd HH:mm:ss zzz";
+
+    /// <summary>短拍摄时间格式（月日时分，不含年份与时区）。</summary>
+    public const string ShortFormat = "MM-dd HH:mm";
 
     /// <summary>按 <see cref="Format"/> 格式化；没有拍摄时间时返回 null。</summary>
     /// <param name="photoDate">拍摄时间。</param>
     /// <returns>格式化文本；null 输入返回 null。</returns>
     public static string? FormatShotTime(DateTimeOffset? photoDate)
         => photoDate?.ToString(Format, CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// 按 <see cref="ShortFormat"/> 格式化星级弹窗的时间行（RATING-04）。
+    /// 取照片自身偏移对应的当地钟面时间，不做时区转换；固定 InvariantCulture，
+    /// 不随系统区域的日历（如佛历、回历）或时间分隔符改变。
+    /// </summary>
+    /// <param name="photoDate">拍摄时间。</param>
+    /// <returns>格式化文本；null 输入返回 null。</returns>
+    public static string? FormatShortShotTime(DateTimeOffset? photoDate)
+        => photoDate?.ToString(ShortFormat, CultureInfo.InvariantCulture);
 }

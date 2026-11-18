@@ -32,7 +32,7 @@ internal sealed class AndroidControlBar : FrameLayout
     private Action<string>? _execute;
     private Action<int>? _rate;
     private Action? _openTools;
-    private Action? _openRatingSources;
+    private Action? _openRatingPopup;
     private bool _horizontal = true;
     private double _availableMain;
     private bool _joinedToAnalysis;
@@ -101,7 +101,7 @@ internal sealed class AndroidControlBar : FrameLayout
 
     /// <summary>
     /// 评分分组某一槽位的屏幕矩形（px）；分组不存在或尚未排布返回 false。
-    /// RATING-04 以这里返回的真实 0 号格子矩形作为来源浮窗锚点。
+    /// 验收用它核对 0 号槽位（清零叉/冲突三角）的真实落位，产品路径不读取。
     /// </summary>
     /// <param name="index">槽位索引（0 为清零叉/冲突三角）。</param>
     /// <param name="rect">屏幕矩形（px）。</param>
@@ -161,23 +161,23 @@ internal sealed class AndroidControlBar : FrameLayout
         AddView(_exifView);
         _ratingView = new AndroidRatingControl(context);
         _ratingView.RateRequested += rating => _rate?.Invoke(rating);
-        _ratingView.ConflictRequested += () => _openRatingSources?.Invoke();
+        _ratingView.PopupRequested += () => _openRatingPopup?.Invoke();
         _ratingView.Visibility = ViewStates.Gone;
         AddView(_ratingView);
         SetClipChildren(true);
     }
 
-    /// <summary>命令执行入口与评分入口；EXIF 块点击打开工具页，冲突三角打开来源浮窗。</summary>
+    /// <summary>命令执行入口与评分入口；EXIF 块点击打开工具页，星级弹窗入口见 <paramref name="openRatingPopup"/>。</summary>
     /// <param name="execute">执行共享命令。</param>
     /// <param name="rate">评分写回。</param>
     /// <param name="openTools">EXIF 块点击。</param>
-    /// <param name="openRatingSources">冲突三角点击（RATING-04）。</param>
-    internal void Wire(Action<string> execute, Action<int> rate, Action? openTools, Action? openRatingSources)
+    /// <param name="openRatingPopup">打开星级弹窗（紧凑态起手与冲突三角，RATING-04 / RATING-07）。</param>
+    internal void Wire(Action<string> execute, Action<int> rate, Action? openTools, Action? openRatingPopup)
     {
         _execute = execute;
         _rate = rate;
         _openTools = openTools;
-        _openRatingSources = openRatingSources;
+        _openRatingPopup = openRatingPopup;
     }
 
     /// <summary>与相邻分析栏共边时省略交叉轴前导内边距（SHELL-12）。</summary>
@@ -396,7 +396,7 @@ internal sealed class AndroidControlBar : FrameLayout
                     }
                     break;
                 }
-                // RATING-07 紧凑态：五颗星（冲突时另加三角）按 CompactOffset 静态排布，不新增弹窗；
+                // RATING-07 紧凑态：五颗星（冲突时另加三角）按 CompactOffset 排布，点按/起手打开星级弹窗；
                 // 每个可读节点仍是胶囊内的真实矩形，非冲突 0 号不占位。
                 bool conflict = group.Children.Count > 0 && group.Children[0].Conflict;
                 double glyph = RatingControlGeometry.CompactGlyph;

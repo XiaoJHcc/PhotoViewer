@@ -17,10 +17,44 @@ using PhotoViewer.ViewModels.Main;
 
 namespace PhotoViewer.Android.Native;
 
+/// <summary>卡片长按的手势阶段：起手同时打开星级弹窗，并把同一次触摸继续交给它跟踪。</summary>
+internal enum CardRatingPopupPhase
+{
+    /// <summary>长按起手：打开弹窗并在弹窗星排上起手。</summary>
+    Began,
+
+    /// <summary>按住移动：按弹窗星排投影预览。</summary>
+    Moved,
+
+    /// <summary>抬手：提交一次或保持弹窗。</summary>
+    Ended,
+
+    /// <summary>系统打断或越出取消区：清预览、不写回。</summary>
+    Cancelled,
+}
+
+/// <summary>
+/// 卡片星级弹窗入口（FILM-05、RATING-04）：冲突三角只需打开弹窗，卡片长按还要把后续触摸一并转发，
+/// 卡片自身不持有弹窗也不做评分菜单。
+/// </summary>
+internal interface ICardRatingPopupHost
+{
+    /// <summary>打开该卡片的星级弹窗（照片有组级冲突时自动为来源条目形态）。</summary>
+    /// <param name="card">被点的卡片。</param>
+    void OpenCardRatingPopup(AndroidThumbnailCard card);
+
+    /// <summary>把卡片上的长按手势阶段转发给星级弹窗。</summary>
+    /// <param name="card">发起长按的卡片。</param>
+    /// <param name="e">卡片收到的触摸事件。</param>
+    /// <param name="phase">手势阶段。</param>
+    void TrackCardRatingPopup(AndroidThumbnailCard card, MotionEvent e, CardRatingPopupPhase phase);
+}
+
 /// <summary>
 /// 胶片栏卡片（A3，[FILM-05]）：96×144 外框、90×138 占位区、80 方形照片区、文件名、拍摄时间、
 /// 6 个星级、抖动徽标、当前项蓝框与 Full 缓存细边；整卡自绘，尺寸与 iOS 原生壳同口径。
-/// 星级命中优先于整卡选择（点星不切图）；组级冲突时 0 号换警示三角，点击只打开来源浮窗（RATING-04）。
+/// 星级命中优先于整卡选择（点星不切图）；组级冲突时 0 号换警示三角，点击只打开星级弹窗（RATING-04）。
+/// 长按同样打开星级弹窗（卡片没有独立评分菜单），不切图、不改变布局。
 /// </summary>
 internal sealed class AndroidThumbnailCard : View
 {
@@ -47,7 +81,7 @@ internal sealed class AndroidThumbnailCard : View
     private DecodedImage? _thumbnailSource;
     private Action<ImageFile>? _select;
     private Action<ImageFile, int>? _rate;
-    private Action<ImageFile>? _showSources;
+    private ICardRatingPopupHost? _popupHost;
     private bool _showRating = true;
     private FilmCardTier _tier = FilmCardTier.Large;
     private readonly Paint _smallNamePaint;
@@ -57,7 +91,8 @@ internal sealed class AndroidThumbnailCard : View
     private string? _secondLineText;
     private double? _secondLineProgress;
     private bool _selectByDisplayedImage;
-    private bool _longPressConsumed;
+    private bool _popupGestureActive;
+    private ImageFile? _touchFile;
     private bool _disposed;
 
     /// <summary>当前绑定的业务身份（验收核对复用不错位）。</summary>
@@ -136,9 +171,13 @@ internal sealed class AndroidThumbnailCard : View
         if (AndroidUiTheme.IconSolidTypeface(context) is { } smallSolid) _smallStarPaint.SetTypeface(smallSolid);
         _smallConflictPaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardSmallBadgeFontSize, AndroidUiTheme.StarConflict);
         if (AndroidUiTheme.IconTypeface(context) is { } smallIcon) _smallConflictPaint.SetTypeface(smallIcon);
-        _gestures = new GestureDetector(context, new CardGestureListener(this));
+        var listener = new CardGestureListener(this);
+        _gestures = new GestureDetector(context, listener);
         Focusable = true;
         Clickable = true;
+        LongClickable = true;
+        LongClick += (_, _) => { if (_file != null) _popupHost?.OpenCardRatingPopup(this); };
+        _gestures.SetContextClickListener(listener);
         Click += (_, _) => { if (_file != null) _select?.Invoke(_file); };
         _accessibility = new CardExploreByTouchHelper(this);
         ViewCompat.SetAccessibilityDelegate(this, _accessibility);
@@ -154,21 +193,21 @@ internal sealed class AndroidThumbnailCard : View
     /// <param name="secondLineText">第二行文字；null 显示拍摄时间。</param>
     /// <param name="secondLineProgress">第二行进度条占比；null 不显示。</param>
     /// <param name="selectByDisplayedImage">选中态取 <see cref="ImageFile.IsCurrentImage"/>（相似聚类）。</param>
-    /// <param name="showSources">冲突三角点击：打开该照片的来源浮窗。</param>
+    /// <param name="popupHost">星级弹窗入口：冲突三角与长按都用它打开同一个弹窗。</param>
     internal void Bind(ImageFile file, bool showRating, Action<ImageFile> select, Action<ImageFile, int> rate,
         string? secondLineText = null, double? secondLineProgress = null, bool selectByDisplayedImage = false,
-        Action<ImageFile>? showSources = null)
+        ICardRatingPopupHost? popupHost = null)
     {
         if (_file != null) _file.PropertyChanged -= OnFileChanged;
         _file = file;
         _select = select;
         _rate = rate;
-        _showSources = showSources;
+        _popupHost = popupHost;
         _showRating = showRating;
         _secondLineText = secondLineText;
         _secondLineProgress = secondLineProgress;
         _selectByDisplayedImage = selectByDisplayedImage;
-        _longPressConsumed = false;
+        _popupGestureActive = false;
         _thumbnail = null;
         _thumbnailSource = null;
         file.PropertyChanged += OnFileChanged;
@@ -183,7 +222,8 @@ internal sealed class AndroidThumbnailCard : View
         _file = null;
         _select = null;
         _rate = null;
-        _showSources = null;
+        _popupHost = null;
+        _popupGestureActive = false;
         _thumbnail = null;
         _thumbnailSource = null;
         ContentDescription = null;
@@ -293,7 +333,7 @@ internal sealed class AndroidThumbnailCard : View
         }
         else
         {
-            string date = _secondLineText ?? _file.PhotoDate?.ToString("MM-dd HH:mm") ?? "";
+            string date = _secondLineText ?? ShotTimeText.FormatShortShotTime(_file.PhotoDate) ?? "";
             AndroidUiTheme.DrawCentered(canvas, date, _datePaint, (float)(48 * d), (float)(115 * d), (float)(80 * d));
         }
 
@@ -477,25 +517,49 @@ internal sealed class AndroidThumbnailCard : View
         finally { image.Release(); }
     }
 
-    /// <summary>触摸：单击命中星级或整卡，长按弹评分菜单。</summary>
+    /// <summary>
+    /// 触摸：单击命中星级或整卡；长按打开星级弹窗，此后同一次触摸的移动/抬手/取消都转发给弹窗，
+    /// 不再切图、不再命中星级。
+    /// </summary>
     /// <param name="e">事件。</param>
     /// <returns>消费。</returns>
     public override bool OnTouchEvent(MotionEvent? e)
     {
         if (e == null || _file == null) return false;
-        if (e.ActionMasked == MotionEventActions.Down) _longPressConsumed = false;
-        _gestures.OnTouchEvent(e);
-        if (e.ActionMasked == MotionEventActions.Cancel) return true;
-        if (e.ActionMasked == MotionEventActions.Up)
+        if (e.ActionMasked == MotionEventActions.Down)
         {
-            // MENU-05：长按只弹菜单，抬手不再被点选或星级命中消费。
-            if (_longPressConsumed)
+            _popupGestureActive = false;
+            _touchFile = _file;
+        }
+        if (_popupGestureActive)
+        {
+            switch (e.ActionMasked)
             {
-                _longPressConsumed = false;
+                case MotionEventActions.Move:
+                    _popupHost?.TrackCardRatingPopup(this, e, CardRatingPopupPhase.Moved);
+                    return true;
+                case MotionEventActions.Up:
+                    _popupGestureActive = false;
+                    _popupHost?.TrackCardRatingPopup(this, e, CardRatingPopupPhase.Ended);
+                    return true;
+                case MotionEventActions.Cancel:
+                    _popupGestureActive = false;
+                    _popupHost?.TrackCardRatingPopup(this, e, CardRatingPopupPhase.Cancelled);
+                    return true;
+                default:
+                    return true;
+            }
+        }
+        _gestures.OnTouchEvent(e);
+        if (e.ActionMasked == MotionEventActions.Up && ReferenceEquals(_touchFile, _file))
+        {
+            int slot = SlotAtPx(e.GetX(), e.GetY());
+            if (slot == 0 && _file.HasRatingConflict)
+            {
+                ActivateSlot(slot);
                 return true;
             }
-            int slot = SlotAtPx(e.GetX(), e.GetY());
-            if (slot >= 0)
+            if (e.GetToolType(0) == MotionEventToolType.Mouse && slot >= 0)
             {
                 ActivateSlot(slot);
                 return true;
@@ -504,6 +568,9 @@ internal sealed class AndroidThumbnailCard : View
         }
         return true;
     }
+
+    public override bool OnGenericMotionEvent(MotionEvent? e)
+        => (e != null && _gestures.OnGenericMotionEvent(e)) || base.OnGenericMotionEvent(e);
 
     /// <summary>
     /// 触点命中的星级槽位（含列布局的水平居中偏移）；未命中返回 -1。
@@ -529,7 +596,7 @@ internal sealed class AndroidThumbnailCard : View
     }
 
     /// <summary>
-    /// 槽位动作：普通槽位写回评分；冲突时的 0 号只打开来源浮窗，不写值、不切图（RATING-04）。
+    /// 槽位动作：普通槽位写回评分；冲突时的 0 号只打开星级弹窗的来源条目，不写值、不切图（RATING-04）。
     /// 触摸与读屏虚拟动作共用本入口。
     /// </summary>
     /// <param name="rating">0–5。</param>
@@ -539,37 +606,23 @@ internal sealed class AndroidThumbnailCard : View
         if (_file == null || !_showRating || rating < 0 || rating > 5) return false;
         if (rating == 0 && _file.HasRatingConflict)
         {
-            _showSources?.Invoke(_file);
+            _popupHost?.OpenCardRatingPopup(this);
             return true;
         }
         _rate?.Invoke(_file, rating);
         return true;
     }
 
-    /// <summary>长按弹卡片菜单（完整文件名 + 评分 0–5）。</summary>
-    internal void ShowCardMenu()
+    /// <summary>卡片外框在屏幕上的矩形（星级弹窗的真实入口）。</summary>
+    internal Rect? ScreenRect
     {
-        if (_file == null) return;
-        var menu = new PopupMenu(Context!, this);
-        var menuItems = menu.Menu!;
-        // MENU-05：标题一行承载完整文件名与拍摄时间，标题行不可点击。
-        var title = menuItems.Add(0, 0, 0, _file.DisplayName)!;
-        title.SetEnabled(false);
-        var time = menuItems.Add(0, 1, 1,
-            ShotTimeText.FormatShotTime(_file.PhotoDate) ?? "")!;
-        time.SetEnabled(false);
-        for (int rating = 0; rating <= 5; rating++)
+        get
         {
-            var item = menuItems.Add(0, 2 + rating, 2 + rating, rating == 0 ? "无星级" : $"{rating} 星")!;
-            item.SetCheckable(true);
-            item.SetChecked(_file.Rating == rating);
+            if (!IsAttachedToWindow || !IsShown || Width < 1 || Height < 1) return null;
+            var location = new int[2];
+            GetLocationOnScreen(location);
+            return new Rect(location[0], location[1], location[0] + Width, location[1] + Height);
         }
-        menu.MenuItemClick += (_, args) =>
-        {
-            int id = args.Item?.ItemId ?? -1;
-            if (id >= 2) _rate?.Invoke(_file, id - 2);
-        };
-        menu.Show();
     }
 
     /// <summary>释放订阅。</summary>
@@ -586,7 +639,7 @@ internal sealed class AndroidThumbnailCard : View
 
     /// <summary>
     /// 卡片槽位的读屏节点（RATING-04）：0 号冲突时名称为「星级冲突」，点按走与触摸相同的
-    /// <see cref="ActivateSlot"/>，因此读屏也能打开来源浮窗而不写值。
+    /// <see cref="ActivateSlot"/>，因此读屏也能打开星级弹窗而不写值。
     /// </summary>
     private sealed class CardExploreByTouchHelper : ExploreByTouchHelper
     {
@@ -661,14 +714,30 @@ internal sealed class AndroidThumbnailCard : View
         /// <summary>单击：由卡片的触摸命中逻辑处理（这里只消费事件，避免系统再合成点击）。</summary>
         /// <param name="e">事件。</param>
         /// <returns>消费。</returns>
+        public override bool OnDown(MotionEvent? e) => true;
+
         public override bool OnSingleTapUp(MotionEvent? e) => true;
 
-        /// <summary>长按：弹评分菜单，并让本次抬手不再触发点选或改星（MENU-05）。</summary>
-        /// <param name="e">事件。</param>
+        public override bool OnContextClick(MotionEvent? e)
+        {
+            if (_owner._file == null || _owner._popupHost == null) return false;
+            _owner._popupHost.OpenCardRatingPopup(_owner);
+            return true;
+        }
+
+        /// <summary>
+        /// 长按：打开星级弹窗并把这次触摸继续交给它（卡片没有独立评分菜单）。
+        /// 星级被关闭时没有入口，仍吃掉这次长按，不让抬手变成点选。
+        /// </summary>
+        /// <param name="e">长按确认时的触摸事件。</param>
         public override void OnLongPress(MotionEvent? e)
         {
-            _owner._longPressConsumed = true;
-            _owner.ShowCardMenu();
+            if (e == null || _owner._file == null || !ReferenceEquals(_owner._file, _owner._touchFile)) return;
+            _owner._popupGestureActive = true;
+            if (!_owner._showRating) return;
+            // 长按已起手弹窗预览：胶片栏不再把随后的拖动当作滚动。
+            _owner.Parent?.RequestDisallowInterceptTouchEvent(true);
+            _owner._popupHost?.TrackCardRatingPopup(_owner, e, CardRatingPopupPhase.Began);
         }
     }
 }

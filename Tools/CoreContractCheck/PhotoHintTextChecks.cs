@@ -1,9 +1,10 @@
+using System.Globalization;
 using PhotoViewer.Core.Platform;
 
 namespace CoreContractCheck;
 
 /// <summary>
-/// STATE-01/02、IMAGE-10、FILM-05/MENU-05：主图区提示文案与拍摄时间格式的四端共同契约。
+/// STATE-01/02、IMAGE-10、FILM-05、RATING-04：主图区提示文案与拍摄时间格式的四端共同契约。
 /// </summary>
 internal static class PhotoHintTextChecks
 {
@@ -44,5 +45,31 @@ internal static class PhotoHintTextChecks
         c.Equal("完整拍摄时间含时区偏移", "2026-11-06 09:05:07 +08:00", ShotTimeText.FormatShotTime(date));
         c.Equal("无拍摄时间返回 null", null, ShotTimeText.FormatShotTime(null));
         c.Equal("格式常量与契约一致", "yyyy-MM-dd HH:mm:ss zzz", ShotTimeText.Format);
+
+        c.Section("星级弹窗短拍摄时间");
+        c.Equal("短格式是月日时分", "11-06 09:05",
+            ShotTimeText.FormatShortShotTime(new DateTimeOffset(2026, 11, 6, 9, 5, 7, TimeSpan.FromHours(8))));
+        // 偏移取 -11:00：转成 UTC（04-26 02:47）或本机 +08:00（04-26 10:47）都会跨日，
+        // 只有直接取照片自身偏移的钟面时间才得到 04-25 15:47。
+        var shortDate = new DateTimeOffset(2026, 4, 25, 15, 47, 0, TimeSpan.FromHours(-11));
+        c.Equal("跨日偏移不做时区转换", "04-25 15:47", ShotTimeText.FormatShortShotTime(shortDate));
+        c.Equal("短格式无拍摄时间返回 null", null, ShotTimeText.FormatShortShotTime(null));
+        c.Equal("短格式常量与契约一致", "MM-dd HH:mm", ShotTimeText.ShortFormat);
+        // ar-SA 的候选日历含回历（月/日与公历不同），再把时间分隔符换成「.」：
+        // 若格式化跟随当前区域，期望值就不可能仍是 04-25 15:47。
+        var foreignCulture = (CultureInfo)CultureInfo.GetCultureInfo("ar-SA").Clone();
+        foreignCulture.DateTimeFormat.Calendar = new UmAlQuraCalendar();
+        foreignCulture.DateTimeFormat.TimeSeparator = ".";
+        var originalCulture = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = foreignCulture;
+            c.Equal("其他日历与时间分隔符下短格式不变", "04-25 15:47",
+                ShotTimeText.FormatShortShotTime(shortDate));
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = originalCulture;
+        }
     }
 }

@@ -396,7 +396,7 @@ internal sealed class iOSRatingPopup : IDisposable
         var items = Mode == RatingPopupMode.Sources ? _main.RatingSources.Items : [];
         bool sources = Mode == RatingPopupMode.Sources && items.Count > 0;
         if (Mode == RatingPopupMode.Sources && !sources) Mode = RatingPopupMode.Single;
-        string? time = sources ? null : file.PhotoDate?.ToString("MM-dd HH:mm");
+        string? time = sources ? null : ShotTimeText.FormatShortShotTime(file.PhotoDate);
         // 来源条目恒为横排星排，只有非冲突单条目才随竖排控件改成竖排星列。
         bool horizontal = sources || _horizontalRow;
         double availableMain = horizontal ? bounds.Width : bounds.Height;
