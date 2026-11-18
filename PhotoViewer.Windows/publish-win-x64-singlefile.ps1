@@ -193,7 +193,34 @@ if (-not $dotnetPath) {
 }
 
 Write-Host "[发布] 使用 dotnet: $dotnetPath"
-$pythonPath = (Get-Command python -ErrorAction Stop).Source
+
+function Test-PythonExecutable {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or
+        -not (Test-Path -LiteralPath $Path -PathType Leaf) -or
+        $Path -match '(?i)[\\/]WindowsApps[\\/]') {
+        return $false
+    }
+
+    $null = & $Path -c 'import sys; sys.stdout.write(sys.executable)' 2>$null
+    return $LASTEXITCODE -eq 0
+}
+
+function Resolve-PythonExecutable {
+    foreach ($commandName in @('python3', 'python', 'py')) {
+        $commands = @(Get-Command $commandName -CommandType Application -All -ErrorAction SilentlyContinue)
+        foreach ($command in $commands) {
+            $candidate = $command.Source
+            if (Test-PythonExecutable -Path $candidate) {
+                return $candidate
+            }
+        }
+    }
+    throw 'Windows 包扫描需要可用的 Python（python3、python 或 py）；已排除 WindowsApps 的 Microsoft Store 空壳别名。'
+}
+
+$pythonPath = Resolve-PythonExecutable
 $scanner = Join-Path $repoRoot 'Tools\check-windows-package.py'
 $editions = if ($Edition -eq 'both') { @('standard', 'ai') } else { @($Edition) }
 $runId = [guid]::NewGuid().ToString('N')

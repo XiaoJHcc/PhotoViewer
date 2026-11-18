@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Windows 版 Android APK 发布脚本，等价于 publish-android-apk.sh。
 
@@ -39,6 +39,35 @@ $packageDirectory = Join-Path $repoRoot 'release\packages'
 $localDirectory = Join-Path $repoRoot 'artifacts\scratch\android-local-publish'
 $reportDirectory = Join-Path $repoRoot 'artifacts\acceptance\android-editions'
 $scanner = Join-Path $repoRoot 'Tools\check-android-package.py'
+
+function Test-PythonExecutable {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or
+        -not (Test-Path -LiteralPath $Path -PathType Leaf) -or
+        $Path -match '(?i)[\\/]WindowsApps[\\/]') {
+        return $false
+    }
+
+    $null = & $Path -c 'import sys; sys.stdout.write(sys.executable)' 2>$null
+    return $LASTEXITCODE -eq 0
+}
+
+function Resolve-PythonExecutable {
+    foreach ($commandName in @('python3', 'python', 'py')) {
+        $commands = @(Get-Command $commandName -CommandType Application -All -ErrorAction SilentlyContinue)
+        foreach ($command in $commands) {
+            $candidate = $command.Source
+            if (Test-PythonExecutable -Path $candidate) {
+                return $candidate
+            }
+        }
+    }
+    throw 'Android 包扫描需要可用的 Python（python3、python 或 py）；已排除 WindowsApps 的 Microsoft Store 空壳别名。'
+}
+
+$pythonPath = Resolve-PythonExecutable
+
 # edition → 包名/显示名/分发前缀/DINO 能力全部来自根 Directory.Build.props，脚本不另写产品判断。
 function Get-EditionIdentity {
     param([string]$Edition)
@@ -70,14 +99,6 @@ if (-not (Test-Path $androidProject)) {
 
 if (-not (Test-Path $scanner)) {
     throw "缺少包扫描工具：$scanner"
-}
-
-$pythonPath = (Get-Command python3 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1)
-if (-not $pythonPath) {
-    $pythonPath = (Get-Command python -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1)
-}
-if (-not $pythonPath) {
-    throw 'Android 包扫描需要 python3（或 python）。'
 }
 
 if ([string]::IsNullOrWhiteSpace($AndroidSdkDirectory)) {
@@ -120,7 +141,9 @@ else {
 $sdkConfig = Get-Content $globalJson -Raw | ConvertFrom-Json
 $requiredSdkVersion = $sdkConfig.sdk.version
 $sdkRollForward = if ($sdkConfig.sdk.rollForward) { $sdkConfig.sdk.rollForward } else { 'latestMinor' }
-$appVersion = ([xml](Get-Content $directoryBuildProps -Raw)).Project.PropertyGroup.AppVersion
+$propsXml = [xml](Get-Content $directoryBuildProps -Raw -Encoding UTF8)
+$appVersionNode = $propsXml.SelectSingleNode('/Project/PropertyGroup/AppVersion')
+$appVersion = if ($null -ne $appVersionNode) { $appVersionNode.InnerText.Trim() } else { '' }
 
 if ([string]::IsNullOrWhiteSpace($appVersion)) {
     throw '未能从 Directory.Build.props 读取 AppVersion。'
