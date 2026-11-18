@@ -72,6 +72,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private readonly iOSFilterControl _filterBar;
     private readonly iOSFilmstripView _filmstrip;
     private readonly iOSAnalysisPanel _analysisPane;
+    private iOSGlassButtonGroup _phoneFilterGlass = null!;
     private iOSMenuButton _phoneFilter = null!;
     private iOSMenuButton _phoneMore = null!;
     private iOSGlassButtonGroup _phoneFilterMore = null!;
@@ -253,6 +254,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     internal UIView Stage => _stage;
     /// <summary>手机竖屏筛选圆按钮。</summary>
     internal iOSMenuButton PhoneFilterButton => _phoneFilter;
+    internal iOSGlassButtonGroup PhoneFilterGlass => _phoneFilterGlass;
     /// <summary>手机竖屏更多圆按钮。</summary>
     internal UIButton PhoneMoreButton => _phoneMore;
     /// <summary>手机横屏合体的筛选段。</summary>
@@ -1121,9 +1123,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
 
         // 竖屏使用独立圆按钮；横屏保持同一末端锚点上的两段合体，不随列表显隐迁移。
         bool filterMoreGroup = !portrait && Has(slots.FilterMoreGroup);
-        _phoneFilter.Hidden = filterMoreGroup || !Has(slots.Filter);
+        _phoneFilterGlass.Hidden = filterMoreGroup || !Has(slots.Filter);
         _phoneMore.Hidden = filterMoreGroup || !Has(slots.More);
-        iOSViewGeometry.SetRectIfNeeded(_phoneFilter, ToFrame(slots.Filter));
+        iOSViewGeometry.SetRectIfNeeded(_phoneFilterGlass, ToFrame(slots.Filter));
+        if (!_phoneFilterGlass.Hidden) _phoneFilterGlass.LayoutIfNeeded();
         iOSViewGeometry.SetRectIfNeeded(_phoneMore, ToFrame(slots.More));
         _phoneFilterSegment.Hidden = !filterMoreGroup;
         _phoneMoreSegment.Hidden = !filterMoreGroup;
@@ -1164,7 +1167,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _phoneBottomBar.Hidden = true;
         _phoneLeadingBar.Hidden = true;
         _toolBackground.Hidden = true;
-        _phoneFilter.Hidden = true;
+        _phoneFilterGlass.Hidden = true;
         _phoneMore.Hidden = true;
         _phoneFilterMore.Hidden = true;
         _phoneNavigation.Hidden = true;
@@ -1351,7 +1354,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <param name="host">主屏舞台。</param>
     private void BuildPhoneControls(UIView host)
     {
-        _phoneFilter = iOSGlassButtons.RoundMenu("line.3.horizontal.decrease", "筛选");
+        _phoneFilterGlass = new iOSGlassButtonGroup { SegmentLength = DesignTokens.ShellGlassButtonSize };
+        _phoneFilter = _phoneFilterGlass.AddMenu("line.3.horizontal.decrease", "筛选", centersDismissalPreview: true);
         iOSFilterMenu.Attach(_phoneFilter, _main.FileVM.FilterBar);
         _phoneMore = iOSGlassButtons.RoundMenu("ellipsis", "更多");
         iOSMenuButton.Pair(_phoneFilter, _phoneMore);
@@ -1379,7 +1383,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         // 全部玻璃控件放进同一个玻璃容器：同一取样区域渲染，按压放大时与相邻玻璃按系统液态效果融合。
         // EXIF 块是模糊材质，不进玻璃容器。
         _phoneGlass = new iOSGlassContainer(DesignTokens.ShellGlassContainerSpacing);
-        foreach (var view in new UIView[] { _phoneFilter, _phoneMore, _phoneFilterMore, _phoneNavigation, _phoneFitEnhance, _phoneRating })
+        foreach (var view in new UIView[] { _phoneFilterGlass, _phoneMore, _phoneFilterMore, _phoneNavigation, _phoneFitEnhance, _phoneRating })
         {
             view.Hidden = true;
             _phoneGlass.ContentView.AddSubview(view);

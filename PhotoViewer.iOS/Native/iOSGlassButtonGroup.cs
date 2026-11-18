@@ -63,9 +63,9 @@ internal sealed class iOSGlassButtonGroup : UIVisualEffectView
         return button;
     }
 
-    internal iOSMenuButton AddMenu(string symbolName, string label)
+    internal iOSMenuButton AddMenu(string symbolName, string label, bool centersDismissalPreview = false)
     {
-        var button = new iOSMenuButton();
+        var button = new iOSMenuButton { UsesSharedGlass = true, CentersDismissalPreview = centersDismissalPreview };
         iOSGlassButtons.Configure(button, UIButtonConfiguration.PlainButtonConfiguration, symbolName, label);
         ContentView.AddSubview(button);
         _buttons.Add(button);

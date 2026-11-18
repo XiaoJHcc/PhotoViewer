@@ -57,6 +57,16 @@ internal static class iOSFilterMenu
         button.AccessibilityValue = string.Join("、", filter.RatingFilters
             .Where(option => filter.IsRatingFilterSelected(option.Key))
             .Select(option => option.DisplayName));
+        if (button is iOSMenuButton menuButton)
+        {
+            var selected = filter.RatingFilters
+                .Where(option => option.Key != PhotoListProjection.AllRatings && filter.IsRatingFilterSelected(option.Key))
+                .ToArray();
+            string symbol = selected.Length == 1
+                ? AppleSymbolNames.Filter.ForRatingFilter(selected[0].Key)
+                : AppleSymbolNames.Filter.Entry;
+            menuButton.SetGlassState(selected.Length > 0, symbol);
+        }
     }
 
     internal static bool ApplySelection(UIMenu menu, FilterBarViewModel filter)

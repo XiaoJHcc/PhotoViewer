@@ -604,7 +604,7 @@ internal static class iOSNativeFormCheck
         bool group = !portrait && Has(slots.FilterMoreGroup);
         var entries = new (string Name, LayoutRect Slot, UIView View)[]
         {
-            ("Filter", slots.Filter, group ? root.PhoneFilterSegment : root.PhoneFilterButton),
+            ("Filter", slots.Filter, group ? root.PhoneFilterSegment : root.PhoneFilterGlass),
             ("More", slots.More, group ? root.PhoneMoreSegment : root.PhoneMoreButton),
             ("FilterMoreGroup", slots.FilterMoreGroup, root.PhoneFilterMoreGroup),
             ("Exif", slots.Exif, root.PhoneExifBlock),
@@ -632,7 +632,7 @@ internal static class iOSNativeFormCheck
         // 合体模式下两个独立圆按钮隐藏、合体组与两段都可见；竖屏只有圆按钮。
         if (group)
         {
-            if (!root.PhoneFilterButton.Hidden || !root.PhoneMoreButton.Hidden)
+            if (!root.PhoneFilterGlass.Hidden || !root.PhoneMoreButton.Hidden)
                 throw new InvalidOperationException($"{scope} 横屏合体模式下仍显示独立筛选/更多圆按钮");
             if (root.PhoneFilterMoreGroup.Hidden || root.PhoneFilterSegment.Hidden || root.PhoneMoreSegment.Hidden)
                 throw new InvalidOperationException($"{scope} 横屏合体组或两段被隐藏（胶片栏开关不应拆分入口组）");
@@ -641,8 +641,11 @@ internal static class iOSNativeFormCheck
         {
             if (!root.PhoneFilterMoreGroup.Hidden || !root.PhoneFilterSegment.Hidden || !root.PhoneMoreSegment.Hidden)
                 throw new InvalidOperationException($"{scope} 合体按钮隐藏时其容器或段仍可见");
-            if (root.PhoneFilterButton.Hidden || root.PhoneMoreButton.Hidden)
-                throw new InvalidOperationException($"{scope} 筛选/更多未常驻：筛选隐藏={root.PhoneFilterButton.Hidden}，更多隐藏={root.PhoneMoreButton.Hidden}");
+            if (root.PhoneFilterGlass.Hidden || root.PhoneFilterButton.Hidden || root.PhoneMoreButton.Hidden)
+                throw new InvalidOperationException($"{scope} 筛选/更多未常驻");
+            if (!ReferenceEquals(root.PhoneFilterButton.Superview, root.PhoneFilterGlass.ContentView)
+                || FrameInStage(root, root.PhoneFilterButton) != FrameInStage(root, root.PhoneFilterGlass))
+                throw new InvalidOperationException($"{scope} 筛选圆按钮未覆盖外层玻璃槽位");
         }
 
         // 分析栏、控制栏与手机右栏共用同一个工具区宿主：背景几何恒为共享槽位的分析/控制并集，不随显隐变化。

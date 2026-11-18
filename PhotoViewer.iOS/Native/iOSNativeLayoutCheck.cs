@@ -219,7 +219,7 @@ internal static class iOSNativeLayoutCheck
         if (root.Filmstrip.Tier != tier)
             throw new InvalidOperationException($"手机形态胶片条档位 {root.Filmstrip.Tier} ≠ 共享选档 {tier}");
 
-        RequireSlot(root.PhoneFilterButton, slots.Filter, "筛选");
+        RequireSlot(root.PhoneFilterGlass, slots.Filter, "筛选");
         RequireSlot(root.PhoneMoreButton, slots.More, "更多");
         RequireSlot(root.PhoneFilterMoreGroup, slots.FilterMoreGroup, "筛选/更多合体");
         RequireSlot(root.PhoneNavigationGroup, slots.Navigation, "上下张");
