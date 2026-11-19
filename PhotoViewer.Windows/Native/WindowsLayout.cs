@@ -401,6 +401,9 @@ internal static class WindowsLayout
     /// <summary>命令按钮底色。</summary>
     public static readonly Color CommandButtonBackground = Token(DesignTokens.ColorToolbarCommandBackground);
 
+    public static readonly Color MainButtonFill = Token(
+        DesignTokens.ColorToolbarButtonTint, DesignTokens.ShellGlassButtonTintOpacityWindows);
+
     /// <summary>命令按钮描边。</summary>
     public static readonly Color CommandButtonBorder = Token(DesignTokens.ColorToolbarCommandBorder);
 

@@ -101,7 +101,7 @@
 
 ## TOOLBAR-10 视觉与反馈 · 应当
 
-- 以 iOS 27 系列原生玻璃按钮在栏上的常态底色为颜色参照，在纯黑、50% 灰、纯白衬底上按 SHELL-12 的采样与折中口径比较；iOS 直接使用系统材质，不设叠加 alpha。macOS 的原生玻璃染白；Web 保留背景模糊并叠白，Android 用 Material 按钮底色叠白。先定栏底，再只调平台对应的 `shell.glass.button.tint.opacity`，颜色固定为 `color.toolbar.button.tint`（纯白）：主屏圆按钮、合体胶囊、星级胶囊与相似聚类开关共用这一值。Windows 保留现有原生材质，开关选中、激活及其他状态反馈仍按平台实现。
+- 以 iOS 27 系列原生玻璃按钮在栏上的常态底色为颜色参照，在纯黑、50% 灰、纯白衬底上按 SHELL-12 的采样与折中口径比较；iOS 直接使用系统材质，不设叠加 alpha。macOS 的原生玻璃染白；Web 保留背景模糊并叠白，Android 用 Material 按钮底色叠白。先定栏底，再只调平台对应的 `shell.glass.button.tint.opacity`，颜色固定为 `color.toolbar.button.tint`（纯白）：主屏圆按钮、合体胶囊、星级胶囊与相似聚类开关共用这一值。Windows 只替换主屏控件的常态填充，不改变原生亚克力背衬、描边或悬停、按下、禁用、焦点与开关选中样式。
 - 圆按钮与合体按钮按 SHELL-12 用平台原生按钮材质与系统状态外观。Web 的桌面宽形态继续参照 macOS 的按钮形状、材质层次与状态反馈，颜色按本条单独校准。本条的自绘底色、描边与圆角只约束自绘部分。EXIF 块是深色半透明圆角矩形（圆角 `toolbar.exif.cornerRadius`），有平台深色模糊材质时取该材质，没有时取 `color.toolbar.block.background`（#222222）；星级控件的胶囊按 RATING-07 取平台原生按钮材质，自绘平台与命令圆按钮取同一按钮材质；自绘命令圆按钮常态只绘制按钮材质，不画描边；圆角 `toolbar.cornerRadius`（6）只由控件自身一层裁切产生，不叠卡中卡双层圆角，也不把自绘圆角与系统按钮 bezel 或系统描边裁切叠加成二次裁角。
 - 评分星形字号 `toolbar.rating.glyph.fontSize`（16），0 号清零叉 `toolbar.rating.clearGlyph.fontSize`（12），冲突警示三角 `icon.warning` 取 `toolbar.rating.glyph.fontSize`（16）并占同一 0 号槽位（`color.star.conflict`）；星形不因槽位小而缩小到不可辨，换成三角不改变槽位几何与命中区。
 - 每个小控件有常态、悬停、按下、禁用、焦点五态。任何状态切换都不得引起布局抖动、残留旧态或裁切内容：不改尺寸与占位、不缩放、不绘制到父容器之外；焦点用可见焦点环或描边表达，本身不被裁切。

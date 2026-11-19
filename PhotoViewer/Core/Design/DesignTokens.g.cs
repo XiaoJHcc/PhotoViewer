@@ -611,6 +611,8 @@ public static class DesignTokens
     public const double SettingsAndroidSheetPeekRatio = 0.5;
     /// <summary>shell.analysis.divider.thickness（pt） ANALYSIS-01：分析栏朝主图一侧的分隔线厚度。</summary>
     public const double ShellAnalysisDividerThickness = 1.0;
+    /// <summary>shell.bar.acrylic.luminosityOpacityMax（ratio） SHELL-12：Windows 主窗口交换链应用内亚克力的亮度层不透明度上限。使用主题原值和上限中较低者；不改变色调、噪点、回退或模糊。</summary>
+    public const double ShellBarAcrylicLuminosityOpacityMax = 0.8;
     /// <summary>shell.bar.blur.radius（pt） SHELL-12：窗口内栏位背景模糊半径。</summary>
     public const double ShellBarBlurRadius = 30.0;
     /// <summary>shell.bar.blur.radius@macos（pt）：macos 平台差异值（见 Design/platforms.md）。</summary>
@@ -635,6 +637,8 @@ public static class DesignTokens
     public const double ShellGlassButtonTintOpacityAndroid = 0.135;
     /// <summary>shell.glass.button.tint.opacity@macos（ratio）：macos 平台差异值（见 Design/platforms.md）。</summary>
     public const double ShellGlassButtonTintOpacityMac = 0.195;
+    /// <summary>shell.glass.button.tint.opacity@windows（ratio）：windows 平台差异值（见 Design/platforms.md）。</summary>
+    public const double ShellGlassButtonTintOpacityWindows = 0.122;
     /// <summary>shell.glass.container.spacing（pt） SHELL-12：相邻玻璃控件开始液态融合的距离（系统玻璃容器的融合距离）；取值与按钮组间距相同，静止时各自独立，按压放大时与相邻玻璃相连。</summary>
     public const double ShellGlassContainerSpacing = 8.0;
     /// <summary>shell.glass.group.gap（pt） SHELL-08：相邻按钮组（筛选、星级、缩放适应等）之间的间距。</summary>

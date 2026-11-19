@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using PhotoViewer.Core.Design;
 using Windows.Foundation;
 using Windows.UI;
 
@@ -535,8 +536,8 @@ internal sealed class WindowsTitleBar
     }
 
     /// <summary>
-    /// 从 WinUI 亚克力主题画刷读出配方(TintColor / TintOpacity / TintLuminosityOpacity / FallbackColor)。
-    /// 亮度层缺失时不猜数值,改用 FallbackColor 纯色带并记一条诊断。
+    /// 从 WinUI 亚克力主题画刷读出配方(TintColor / TintOpacity / TintLuminosityOpacity / FallbackColor),
+    /// 仅限制亮度层不透明度(SHELL-12)。亮度层缺失时仍用 FallbackColor 纯色带。
     /// </summary>
     /// <param name="brush">主题画刷;不是 <see cref="AcrylicBrush"/> 时返回默认配方。</param>
     /// <returns>配方。</returns>
@@ -552,16 +553,19 @@ internal sealed class WindowsTitleBar
         var fallback = brush.FallbackColor;
         double? luminosity = brush.TintLuminosityOpacity;
         var hasLuminosity = luminosity is { } value && !double.IsNaN(value);
+        var effectiveLuminosity = hasLuminosity
+            ? (float)Math.Clamp(luminosity!.Value, 0, DesignTokens.ShellBarAcrylicLuminosityOpacityMax)
+            : -1f;
         NativeStartupLog.Write($"title bar backdrop: 配方 tint=#{tint.R:X2}{tint.G:X2}{tint.B:X2}"
             + $" tintOpacity={brush.TintOpacity:0.###}"
-            + $" luminosityOpacity={(hasLuminosity ? luminosity!.Value.ToString("0.###") : "未设置")}"
+            + $" luminosityOpacity={(hasLuminosity ? $"{luminosity!.Value:0.###}->{effectiveLuminosity:0.###}" : "未设置")}"
             + $" fallback=#{fallback.R:X2}{fallback.G:X2}{fallback.B:X2}"
             + (hasLuminosity ? "" : ",缺亮度层,主图区段改用 FallbackColor 纯色带"));
         // 与 AcrylicBrush.GetEffectiveTintColor 同口径:设置了亮度层时色调层不透明度 = TintColor.A × TintOpacity。
         return new AcrylicBackdropRecipe(
             (tint.R / 255f, tint.G / 255f, tint.B / 255f),
             (float)Math.Clamp(tint.A / 255.0 * brush.TintOpacity, 0, 1),
-            hasLuminosity ? (float)Math.Clamp(luminosity!.Value, 0, 1) : -1f,
+            effectiveLuminosity,
             (LinearChannel(fallback.R), LinearChannel(fallback.G), LinearChannel(fallback.B)));
     }
 

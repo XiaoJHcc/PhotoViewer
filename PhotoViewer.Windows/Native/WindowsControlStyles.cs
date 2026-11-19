@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
@@ -9,8 +10,8 @@ namespace PhotoViewer.Windows.Native;
 
 /// <summary>
 /// 主屏小型控件的状态外观。
-/// 命令圆按钮与星级控件胶囊走 WinUI 原生按钮材质与系统状态（TOOLBAR-10、SHELL-12），壳不再自绘底色与描边；
-/// 这里只保留仍由壳自绘的部分：透明方块按钮、动作按钮、内容禁用强调，
+/// 主屏按钮仅校准常态填充，保留 WinUI 描边与系统状态（TOOLBAR-10、SHELL-12）；
+/// 另承载透明方块按钮、动作按钮、内容禁用强调，
 /// 以及星级槽位的槽内状态层（TOOLBAR-03：常态与禁用透明，悬停/按下只画内切正圆）。
 /// </summary>
 internal static class WindowsControlStyles
@@ -40,6 +41,13 @@ internal static class WindowsControlStyles
         }
 
         return new SolidColorBrush(fallback);
+    }
+
+    internal static void ApplyMainButtonFill(ButtonBase button)
+    {
+        var fill = new SolidColorBrush(WindowsLayout.MainButtonFill);
+        button.Resources[button is ToggleButton ? "ToggleButtonBackground" : "ButtonBackground"] = fill;
+        button.Background = fill;
     }
 
     /// <summary>透明底方形图标按钮（评分星）：悬停 #333、按下 #3A3A3A，常态与禁用无底色。</summary>

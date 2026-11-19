@@ -299,6 +299,7 @@ const tokens = Object.freeze({
     "settings.android.sheet.heightRatio": 0.85,
     "settings.android.sheet.peekRatio": 0.5,
     "shell.analysis.divider.thickness": 1,
+    "shell.bar.acrylic.luminosityOpacityMax": 0.8,
     "shell.bar.blur.radius": 30,
     "shell.bar.overlay.opacity": 0.8,
     "shell.divider.thickness": 1,
@@ -397,6 +398,7 @@ export const platformTokens = Object.freeze({
     }),
     "windows": Object.freeze({
         "analysis.tile.innerCornerRadius": 0,
+        "shell.glass.button.tint.opacity": 0.122,
         "tools.window.default.height": 720,
         "tools.window.default.width": 960,
         "tools.window.min.height": 560,

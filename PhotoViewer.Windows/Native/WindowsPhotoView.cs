@@ -40,7 +40,7 @@ internal interface ISwapChainPanelNativeWinUI
 
 /// <summary>
 /// 交换链内亚克力的配方:WinUI <c>AcrylicBrush</c> 的运行时取值(<c>TintColor</c> / <c>TintOpacity</c> /
-/// <c>TintLuminosityOpacity</c> / <c>FallbackColor</c>),栏位背景、标题栏与浮动按钮衬底共用同一份,换色不改渲染代码。
+/// <c>TintLuminosityOpacity</c> / <c>FallbackColor</c>),亮度层不透明度受设计令牌限制,栏位背景、标题栏与浮动按钮衬底共用同一份。
 /// </summary>
 internal readonly struct AcrylicBackdropRecipe
 {

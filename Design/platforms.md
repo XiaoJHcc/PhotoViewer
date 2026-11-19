@@ -97,7 +97,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
 - **SHELL-02**：悬停标题栏、行布局窄宽度常驻栏与拖动区。常驻回退（筛选挖空与窗口控制器区间相交）、挖空与背景的判定在共享 `PhotoViewer.Shared/TitleBarLayout.cs`，各端只提供筛选可点控件与窗口控制器的实际水平范围。
   - macOS：`PhotoViewer.Mac/Native/MacMainWindow.cs` 窗口 `FullSizeContentView` + 隐藏系统标题文字，交通灯保持系统位置；顶边监视器驱动 `SetTitlebarVisible`，`Layout` 按 Zoom 按钮右缘与筛选组左缘判定是否回退，常驻时给共享分区结果统一加 32 点纵向偏移并排布全宽 `DragZone` / `TitlebarBackdrop`（`NSVisualEffectView`，`Titlebar` 材质、窗口内混合、命中透传）与标题标签（`titleBarFont`，按 Zoom 按钮右缘与中线定位）；`HandleTitlebarDoubleClick` 按 `AppleActionOnDoubleClick` 分派。
   - Windows：`PhotoViewer.Windows/Native/WindowsTitleBar.cs`（标题文字、`AcrylicInAppFillColorDefaultBrush` 背景、四个 46×32 自绘窗口按钮与状态字形）+ `WindowsMainWindow.cs` 的 `ConfigureTitleBar`（`SetBorderAndTitleBar(true, false)`）、`RefreshTitleBarVisibility`（内容区与非客户区指针事件、拖动循环）、`UpdateTitleBarChrome`/`BuildCaptionRects`（筛选组与按钮相交判定、行宿主顶部让位、跨度、背景、筛选挖空与 `InputNonClientPointerSource` caption 登记）。隐藏或全屏时登记一条零面积 caption：清空区域会让 WinAppSDK 退回整幅宽默认拖动带。动态标题同时写 `Window.Title` 与标题栏文字。`icon.ico` 随普通输出复制并随单文件解包，激活后由 `AppWindow.SetIcon` 设置为真实窗口图标，供任务栏悬停浮窗读取。
-  - **SHELL-02@win**：自绘最大化按钮不提供系统贴靠布局浮层。材质为 WinUI 应用内亚克力主题画刷 `AcrylicInAppFillColorDefaultBrush`（深色）；窗口按钮悬停/按下底色取 `SubtleFillColorSecondaryBrush` / `SubtleFillColorTertiaryBrush`，Segoe Fluent 字形：最大化 `E922` ↔ 还原 `E923`、全屏 `E740` ↔ 退出全屏 `E73F`、最小化 `E921`、关闭 `E8BB`。WinUI 3 的 `SwapChainPanel` 不支持 `AcrylicBrush` 背板取样（XAML 亚克力在主图上只剩 `FallbackColor` 纯色），而主图视图铺满窗口，所以标题栏背景（含窄宽度常驻栏）整段由 `WindowsPhotoView.SetBackdropRegions` 在交换链内按同一配方绘制：高斯模糊（标准差 `shell.titlebar.backdrop.blurAmount`）→ 亮度混合 → 颜色混合（参数取该画刷运行时的 `TintColor` / `TintOpacity` / `TintLuminosityOpacity`，均在 sRGB 编码值上）→ WinUI 随包噪点纹理 2%；标题栏区段排在栏位区段之后最后绘制，XAML 不再铺亚克力分段。
+  - **SHELL-02@win**：自绘最大化按钮不提供系统贴靠布局浮层。材质为 WinUI 应用内亚克力主题画刷 `AcrylicInAppFillColorDefaultBrush`（深色）；窗口按钮悬停/按下底色取 `SubtleFillColorSecondaryBrush` / `SubtleFillColorTertiaryBrush`，Segoe Fluent 字形：最大化 `E922` ↔ 还原 `E923`、全屏 `E740` ↔ 退出全屏 `E73F`、最小化 `E921`、关闭 `E8BB`。WinUI 3 的 `SwapChainPanel` 不支持 `AcrylicBrush` 背板取样（XAML 亚克力在主图上只剩 `FallbackColor` 纯色），而主图视图铺满窗口，所以标题栏背景（含窄宽度常驻栏）整段由 `WindowsPhotoView.SetBackdropRegions` 在交换链内按同一配方绘制：高斯模糊（标准差 `shell.titlebar.backdrop.blurAmount`）→ 亮度混合 → 颜色混合（参数取该画刷运行时的 `TintColor` / `TintOpacity` / `TintLuminosityOpacity`，仅亮度层受 SHELL-12@win 的上限约束，均在 sRGB 编码值上）→ WinUI 随包噪点纹理 2%；标题栏区段排在栏位区段之后最后绘制，XAML 不再铺亚克力分段。
   - **SHELL-02@mac**：材质为 `NSVisualEffectView`（`Titlebar` 材质、窗口内混合、深色外观），标题文字 `titleBarFont`。
   - iOS：根控制器隐藏状态栏（`PrefersStatusBarHidden`），窗口级入口由主图长按菜单承担。
   - Android：`Theme.PhotoViewer.Native` 固定深色、edge-to-edge + insets，无标题栏双击语义；横屏资源主题从启动画面起隐藏状态栏，`AndroidSystemBars` 在 Bootstrap 与原生 Activity 中按方向隐藏/恢复，根视图继续按真实 insets 排布。
@@ -120,12 +120,12 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
 - **SHELL-07@web**：参考壳不读取 User-Agent 或推断设备类型。自动模式把 CSS 视口宽 `<600` 作为 iPad 紧凑分屏的横向紧凑映射，`>=600` 为常规；不模拟垂直紧凑。显式行/列仍为宽形态，手机模式用于规范检验。除该视口映射外，形态与方向仍按 SHELL-07 的同一判定表。
 - **SHELL-10@web**：系统安全区只取浏览器公开的 `env(safe-area-inset-*)`；没有逐元素带圆角适应或窗口控件探针，也不伪造这些输入。横屏刘海侧由左右安全区较大的一侧决定，相等时按左侧；演示与检查所需的其他带值只能作为显式几何输入注入，不代表浏览器探测能力。
 - **SHELL-12@mac**：文件栏与连续工具区由 AppKit `NSView.backgroundFilters` 窗口内高斯背景模糊（`shell.bar.blur.radius@macos`）与 `color.bar.overlay@macos` × `shell.bar.overlay.opacity@macos` 的独立深灰色层承载；EXIF 底部横排使用无标题深色 `NSBox` 原生分组，右侧竖排使用透明无衬底容器，块内边距只取共享几何，不复刻 iOS 光学效果。按钮的 `NSGlassEffectView` 按 `shell.glass.button.tint.opacity@macos` 染白；macOS 26 的原生按钮玻璃没有按压交互与融合，悬停描边、按下与焦点由玻璃内容区里的原生 `NSButton` 承担。
-- **SHELL-12@win**：主图视图铺满窗口，文件栏（含分隔线）与连续工具区的背景是 WinUI 应用内亚克力（`AcrylicInAppFillColorDefaultBrush` 的运行时配方），因 `SwapChainPanel` 不能被 XAML 亚克力取样，由主图交换链按区段绘制（`WindowsPhotoView.SetBackdropRegions`），栏位 XAML 只铺透明命中底；工具区只在有分析栏或实际 EXIF 时出背景并在朝主图一侧画一条 `color.divider`，只剩评分与命令时透明，星级胶囊与命令圆按钮各自得到圆角亚克力衬底（WinUI 原生控件放在亚克力上时的材质层次，替代 macOS 玻璃），其上仍是原生按钮材质与状态。不做玻璃融合与按压缩放（无原生对应）。
+- **SHELL-12@win**：主图视图铺满窗口，文件栏（含分隔线）与连续工具区使用与标题栏同源的 WinUI 应用内亚克力（`AcrylicInAppFillColorDefaultBrush` 的运行时配方），仅把亮度层不透明度限制在 `shell.bar.acrylic.luminosityOpacityMax` 以内。因 `SwapChainPanel` 不能被 XAML 亚克力取样，由主图交换链按区段绘制（`WindowsPhotoView.SetBackdropRegions`），栏位 XAML 只铺透明命中底；工具区只在有分析栏或实际 EXIF 时出背景并在朝主图一侧画一条 `color.divider`，只剩评分与命令时透明，星级胶囊与命令圆按钮各自得到圆角亚克力衬底（WinUI 原生控件放在亚克力上时的材质层次，替代 macOS 玻璃），其上铺 TOOLBAR-10@win 的按钮填充，保留原生状态。不做玻璃融合与按压缩放（无原生对应）。
 - **SHELL-10@android**：系统安全区读取公开 `WindowInsets` 与 `DisplayCutout`；圆角避让读取 `RoundedCorner` 半径，先只按安全区排出贴角元素，再按元素外形（44 高胶囊与圆按钮取半径 22 的半圆端）在其实际位置求端头圆恰好内切屏幕圆弧时的避让线（`AndroidWindowInsets.CornerInset`），横屏刘海侧列取入口合体离刘海侧窗口缘的实际距离、控制列取一份工具区内边距；读不到时为零，不按设备型号拟合。
 - **SHELL-12@android**：Views + Material 3 承载按钮、形状与状态层：圆按钮、合体分段与命令都是 `MaterialButton`，取主题属性 `pvGlassButtonStyle` 指向的图标按钮样式 `Widget.PhotoViewer.GlassButton`（inset、最小尺寸与内边距清零），uicons 字形是图标槽里的自绘 Drawable、按墨迹居中；合体是胶囊容器内的透明分段、不画分隔线，按钮与星级胶囊同取 TOOLBAR-10 的半透明白色色层（`shell.glass.button.tint.opacity@android`），悬停 / 按下 / 焦点与星级逐格悬停 / 按下（槽内内切正圆的原生 `RippleDrawable`）共用状态层 `pv_glass_state_layer`（主文字色按 Material 3 状态层不透明度）。当前 `SurfaceView` 主图没有公开的应用内背衬模糊方案，栏底只绘制 `color.bar.overlay@android` × `shell.bar.overlay.opacity@android` 的深灰色层，不采用截屏、PixelCopy 或离屏拷贝模拟模糊；竖屏保留系统状态栏，顶行不得覆盖状态栏图标。
 - **SHELL-12@web**：栏位与按钮分别用 CSS 原生 `backdrop-filter` 与半透明色层（栏底深灰、按钮纯白，取 Web 令牌；mac 配置档仍只切换几何），筛选胶囊、相似聚类开关、评分胶囊与命令圆按钮共用同一按钮材质；浏览器没有原生玻璃共享取样、融合或滚动边缘材质，不模拟这些光学效果。几何、背景出现条件与唯一外边界仍按 SHELL-12。
 
-**SHELL-12 校准锚点**：栏底与栏上按钮的当前参数及观测读数。参数取 `color.bar.overlay` × `shell.bar.overlay.opacity`（栏底）与 `color.toolbar.button.tint` × `shell.glass.button.tint.opacity`（栏上按钮）；读数按纯黑 `#000000` / 50% 灰 `#808080` / 纯白 `#FFFFFF` 三种满窗衬底的次序，每通道 sRGB 8 位。
+**SHELL-12 校准锚点**：栏底与栏上按钮的当前参数及观测读数。使用独立色层的平台，参数取 `color.bar.overlay` × `shell.bar.overlay.opacity`（栏底）与 `color.toolbar.button.tint` × `shell.glass.button.tint.opacity`（栏上按钮）；读数按纯黑 `#000000` / 50% 灰 `#808080` / 纯白 `#FFFFFF` 三种满窗衬底的次序，每通道 sRGB 8 位。
 
 | 平台 | 参数（栏底色 × 不透明度 ＋ 按钮白层） | 实测栏底 | 实测筛选胶囊 |
 |---|---|---|---|
@@ -133,11 +133,11 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
 | macOS | `#2B2B2B` × 0.80 ＋ 白 0.195 | `#212121` / `#3C3C3C` / `#565656` | `#464646` / `#505050` / `#636363` |
 | Web | `#292929` × 0.80 ＋ 白 0.135 | `#1F1F1F` / `#3A3A3A` / `#565656` | `#3F3F3F` / `#565656` / `#6D6D6D` |
 | Android | 同 Web；栏底无背景模糊 | `#212121` / `#3B3B3B` / `#545454` | `#3F3F3F` / `#555555` / `#6B6B6B` |
-| Windows | 应用内亚克力（原生），未参与三色校准 | — | — |
+| Windows | WinUI 应用内亚克力，亮度层上限 0.80；常态按钮白层 `#1FFFFFFF`，保留 Fluent 状态 | `#252525` / `#3E3E3E` / `#575757` | `#404040` / `#555555` / `#6B6B6B` |
 
 对照基准是 iPad mini（A17 Pro）、iPadOS 27.2.1 的产品截图，为当前锚点而非系统材质常量，随系统版本与显示环境变化；辅助样本为星级胶囊 `#3C3C3C` / `#585858` / `#676767` 与命令圆钮 `#3C3C3C` / `#585858` / `#666666`（`targets-ios27.json`）。
 
-`tokens.json` 仍是参数权威，本表记录当前参数与观测，不是像素合规的硬阈值；采样口径见 [spec/shell.md](spec/shell.md)（SHELL-12），证据为本机产物 `artifacts/acceptance/sidebar-button-ios27/comparison.png`（不入库）。
+`tokens.json` 仍是参数权威，本表记录当前参数与观测，不是像素合规的硬阈值。Windows 读数取 SDR 下的窗口合成画面；采样口径见 [spec/shell.md](spec/shell.md)（SHELL-12）。上一轮跨平台对照见本机产物 `artifacts/acceptance/sidebar-button-ios27/comparison.png`（不入库）。
 
 ## filter
 
@@ -231,7 +231,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
 - **TOOLBAR-10**：视觉与反馈。底色/描边取 `color.toolbar.*`，圆角 `toolbar.cornerRadius`；星形与清零叉字号分别取 `toolbar.rating.glyph.fontSize` / `toolbar.rating.clearGlyph.fontSize`。
   - **TOOLBAR-10@mac / @win / @ios / @android**：原生按钮/开关可用系统悬停、按下、禁用、焦点色与轻量状态动效（L4）；占位、命中区与令牌几何一致，状态切换不引起布局抖动、残留或裁切。自绘控件按 `color.toolbar.*` 规则绘制，禁用只降内容，圆角不与系统 bezel 裁切叠加。
   - **TOOLBAR-10@web**：`PhotoViewer.Web/src/shell/controlbar.css`、`filterbar.css` 按 TOOLBAR-10 的自绘口径对标 macOS：命令圆按钮常态无描边、悬停出描边；命令圆按钮、星级胶囊、筛选胶囊与相似聚类开关同取 TOOLBAR-10 的模糊与半透明白色色层；评分槽悬停 / 按下为槽内内切正圆，筛选单胶囊与各段的状态层为段内同心内缩的胶囊形，两者都叠加 `color.menu.item.hover/pressed`；筛选下拉当前项画勾；开关型命令不在按钮上表达按下态（TOOLBAR-12）。
-  - **TOOLBAR-10@win**：命令圆按钮为默认样式 `Button`（44 见方、圆角 22，Fluent 底色、抬升描边与系统悬停/按下/禁用外观，不覆盖状态色）；星级胶囊衬底取同一原生按钮材质（224×44 半圆端），六个槽位为透明 `Button`，悬停/按下在槽内画内切正圆状态层（`SubtleFillColorSecondaryBrush` / `SubtleFillColorTertiaryBrush`，`WindowsControlStyles.ApplyRatingSlot`），无照片时只把星形降到 `color.toolbar.disabled.content.alpha`；来源浮窗星排复用同一槽位状态层。相似聚类开关用默认样式 `ToggleButton`，勾选态为系统强调色。仍由壳自绘的透明方块按钮与相似面板动作按钮继续由 `WindowsControlStyles` 覆盖状态键，禁用底色与描边保持常态。
+  - **TOOLBAR-10@win**：命令圆按钮为默认样式 `Button`（44 见方、圆角 22，常态填充取 `color.toolbar.button.tint` × `shell.glass.button.tint.opacity@windows`，保留 Fluent 抬升描边与系统状态外观），筛选胶囊、未选中相似聚类开关与星级胶囊同取常态填充；星级胶囊为 224×44 半圆端，六个槽位为透明 `Button`，悬停/按下在槽内画内切正圆状态层（`SubtleFillColorSecondaryBrush` / `SubtleFillColorTertiaryBrush`，`WindowsControlStyles.ApplyRatingSlot`），无照片时只把星形降到 `color.toolbar.disabled.content.alpha`；来源浮窗星排复用同一槽位状态层。相似聚类开关用默认样式 `ToggleButton`，勾选态为系统强调色。仍由壳自绘的透明方块按钮与相似面板动作按钮继续由 `WindowsControlStyles` 覆盖状态键，禁用底色与描边保持常态。
 - **TOOLBAR-11**：焦点与键盘。每个控件的焦点顺序按 TOOLBAR-11 由各端控件宿主给出，Enter/Space 触发与命令同一入口。
 - **TOOLBAR-12**：开关型命令的按钮态。四端当前都不在按钮上表达按下态/强调色，状态只在菜单勾选与面板可见性上。
 

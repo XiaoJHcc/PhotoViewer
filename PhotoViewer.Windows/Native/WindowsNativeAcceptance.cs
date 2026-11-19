@@ -132,6 +132,7 @@ internal sealed partial class WindowsMainWindow
             CheckWindowChrome();
             checks.Add($"PASS SHELL-02: content extends to the window top edge with system border kept and system title bar removed; empty state title {WindowsProductInfo.DisplayName}");
             checks.Add("PASS STATE-01: empty state product title, desktop operation subtitle and tertiary separator color");
+            await RunBarLuminanceChecksAsync(checks);
 
             await RunDeploymentChecksAsync(checks);
 

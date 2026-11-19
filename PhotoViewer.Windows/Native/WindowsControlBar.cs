@@ -39,9 +39,6 @@ internal sealed class WindowsControlBar : Grid
     /// <summary>EXIF 块衬底描边。</summary>
     private const string ExifBlockStrokeKey = "CardStrokeColorDefaultBrush";
 
-    /// <summary>评分胶囊的按钮材质底色。</summary>
-    private const string CapsuleBackgroundKey = "ControlFillColorDefaultBrush";
-
     /// <summary>评分胶囊的按钮材质描边(原生按钮的抬升描边)。</summary>
     private const string CapsuleStrokeKey = "ControlElevationBorderBrush";
 
@@ -131,7 +128,7 @@ internal sealed class WindowsControlBar : Grid
         _ratingChrome = new Border
         {
             IsHitTestVisible = false,
-            Background = WindowsControlStyles.ThemeBrush(CapsuleBackgroundKey, WindowsLayout.CommandButtonBackground),
+            Background = new SolidColorBrush(WindowsLayout.MainButtonFill),
             BorderBrush = WindowsControlStyles.ThemeBrush(CapsuleStrokeKey, WindowsLayout.CommandButtonBorder),
             BorderThickness = new Thickness(1),
         };
@@ -883,12 +880,12 @@ internal sealed class WindowsControlBar : Grid
             Width = ToolbarFlowLayout.CommandSize,
             Height = ToolbarFlowLayout.CommandSize,
             Padding = new Thickness(0),
-            // TOOLBAR-10、SHELL-12：原生按钮材质、抬升描边与系统状态外观，壳不覆盖状态色。
             CornerRadius = new CornerRadius(ToolbarFlowLayout.CommandSize / 2),
             Content = content,
             Tag = command,
             IsEnabled = _main.CurrentFile != null || command == "Open",
         };
+        WindowsControlStyles.ApplyMainButtonFill(button);
         button.Click += (_, _) => _execute(command);
         return button;
     }

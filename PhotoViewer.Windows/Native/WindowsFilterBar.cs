@@ -31,7 +31,6 @@ internal sealed class WindowsFilterBar : Panel
     private const string SecondaryForegroundBrushKey = "TextFillColorSecondaryBrush";
     private const string SubtleHoverBrushKey = "SubtleFillColorSecondaryBrush";
     private const string SubtlePressedBrushKey = "SubtleFillColorTertiaryBrush";
-    private const string CapsuleFillBrushKey = "ControlFillColorDefaultBrush";
     private const string CapsuleBorderBrushKey = "ControlElevationBorderBrush";
     private const string DividerBrushKey = "DividerStrokeColorDefaultBrush";
 
@@ -134,7 +133,7 @@ internal sealed class WindowsFilterBar : Panel
 
         _capsule = new Border
         {
-            Background = ThemeBrush(CapsuleFillBrushKey),
+            Background = new SolidColorBrush(WindowsLayout.MainButtonFill),
             BorderBrush = ThemeBrush(CapsuleBorderBrushKey),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(CapsuleCornerRadius),
@@ -583,7 +582,7 @@ internal sealed class WindowsFilterBar : Panel
 #if PHOTOVIEWER_DINO
     /// <summary>
     /// 相似聚类开关（FILTER-06）：原生 <see cref="ToggleButton"/> 默认样式——勾选态走系统强调色，
-    /// 不覆盖任何状态画刷；只给几何（共享开关矩形）与字号，勾选写回视图模型（持久化在设置里）。
+    /// 只校准未选中时的常态填充；勾选写回视图模型（持久化在设置里）。
     /// 标准版没有这个入口，不创建控件（EDITION-02）。
     /// </summary>
     /// <returns>开关。</returns>
@@ -604,6 +603,7 @@ internal sealed class WindowsFilterBar : Panel
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
         };
+        WindowsControlStyles.ApplyMainButtonFill(toggle);
         ToolTipService.SetToolTip(toggle, "展开/关闭相似聚类面板");
         toggle.Checked += (_, _) =>
         {

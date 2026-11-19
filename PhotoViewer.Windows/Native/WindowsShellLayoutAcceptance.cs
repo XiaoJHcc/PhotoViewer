@@ -5,6 +5,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Settings;
 using SkiaSharp;
 using Windows.Foundation;
@@ -16,6 +17,7 @@ namespace PhotoViewer.Windows.Native;
 /// 宽形态外壳的静态几何验收(SHELL-01、SHELL-11、SHELL-12、TOOLBAR-02/03、FILTER-07):主图视图铺满窗口、
 /// 适应区让到文件栏与工具区栏缘、交换链内亚克力区段与工具区背景出现条件、控制栏按钮与星级胶囊外形、筛选控件形态;
 /// 每个组合另存一张真实窗口截图供目视复核(屏幕取样,包含交换链与 XAML 合成后的结果)。
+/// 另在真实照片上回读交换链内栏底的灰度响应,作为亚克力配方的数值回归。
 /// </summary>
 internal sealed partial class WindowsMainWindow
 {
@@ -209,6 +211,97 @@ internal sealed partial class WindowsMainWindow
         return $"fitInsets=({insets.Left:0},{insets.Top:0},{insets.Right:0},{insets.Bottom:0}) regions={regions.Count}"
             + $" filter={_filterBar.Mode} {filter.Width:0}x{filter.Height:0} lines={_controlBar.GroupLineCount}"
             + $" shapes={shapes.Count} toolBackground={toolBackground} analysis={analysisSummary}";
+    }
+
+    /// <summary>
+    /// SHELL-12:让实际打开的黑、灰、白照片覆盖整个视口,回读文件栏的亚克力亮度。
+    /// </summary>
+    /// <param name="checks">通过项收集器。</param>
+    /// <returns>检查完成后的任务。</returns>
+    private async Task RunBarLuminanceChecksAsync(List<string> checks)
+    {
+        var recipe = _titleBar.BackdropRecipe;
+        RequireSmoke(recipe.HasLuminosityLayer
+            && recipe.LuminosityOpacity <= DesignTokens.ShellBarAcrylicLuminosityOpacityMax + 1e-4,
+            $"亚克力亮度层不符合上限: {recipe.LuminosityOpacity:0.###}");
+        var layout = _main.Settings.LayoutMode;
+        var filmstrip = _main.IsThumbnailViewVisible;
+        var windowSize = AppWindow.Size;
+        var samples = new List<string>(3);
+        try
+        {
+            _main.Settings.LayoutMode = LayoutMode.Col;
+            _main.IsThumbnailViewVisible = true;
+            var scale = _root.XamlRoot!.RasterizationScale;
+            AppWindow.Resize(new SizeInt32((int)Math.Round(1200 * scale), (int)Math.Round(850 * scale)));
+            await Task.Delay(200);
+            _root.UpdateLayout();
+
+            var insets = _photo.FitInsets;
+            int width = (int)Math.Ceiling((_root.ActualWidth + insets.Left + insets.Right + 200) * scale);
+            int height = (int)Math.Ceiling((_root.ActualHeight + insets.Top + insets.Bottom + 200) * scale);
+            foreach (byte level in new byte[] { 0, 128, 255 })
+            {
+                var name = $"sidebar-{level}.jpg";
+                var path = Path.Combine(SmokeOutputDirectory, "fixtures", "bar-luminance", name);
+                await Task.Run(() => CreateFlatFixture(path, width, height, level));
+                await OpenPathsAsync([path]);
+                await WaitForSmokeAsync(() => _main.CurrentFile?.Name == name
+                    && _session.Image is { } image && image.SourceWidth == width && image.SourceHeight == height,
+                    $"栏底灰度素材 {level} 载入");
+                _photo.FitToView();
+                _photo.ToggleFit();
+                await WaitForSmokeAsync(() => _session.Image != null && !_session.IsProxy, $"栏底灰度素材 {level} Full");
+                await WaitForUploadAsync($"栏底灰度素材 {level} 上传");
+                SimulateTitleBarPointerForAcceptance(false, WindowsLayout.TitleBarHotZoneHeight + 40);
+                _root.UpdateLayout();
+                RequireSmoke(_photo.TryGetImageRect(new Rect(0, 0, 1, 1), out var photo)
+                    && photo.Left <= 0 && photo.Top <= 0 && photo.Right >= _root.ActualWidth && photo.Bottom >= _root.ActualHeight,
+                    $"灰度素材 {level} 未覆盖整个窗口: {photo}");
+                var regions = _photo.BackdropRegions;
+                RequireSmoke(regions.Count > 0 && SameRect(regions[0].Bounds,
+                    new Rect(0, 0, _fileBarRight, _root.ActualHeight)), "交换链没有铺文件栏亚克力");
+                var file = regions[0].Bounds;
+                RequireSmoke(_photo.TryReadViewportPixel(file.Width / 2, file.Height / 2, out var pixel), "文件栏 GPU 回读失败");
+
+                // 中性衬底的编码亮度只取决于亮度层;忽略 2% 噪点,由取样容差覆盖。
+                var white = WindowsDisplayColor.Current.SdrWhiteScale;
+                var actual = (SrgbEncode(pixel.R / white), SrgbEncode(pixel.G / white), SrgbEncode(pixel.B / white));
+                var tint = 0.3f * recipe.Tint.R + 0.59f * recipe.Tint.G + 0.11f * recipe.Tint.B;
+                var expected = level / 255f * (1 - recipe.LuminosityOpacity) + tint * recipe.LuminosityOpacity;
+                RequireSmoke(Math.Abs(actual.Item1 - expected) < 0.02 && Math.Abs(actual.Item2 - expected) < 0.02
+                    && Math.Abs(actual.Item3 - expected) < 0.02, $"文件栏在灰度 {level} 上的亮度偏离配方: {actual} vs {expected:0.###}");
+                var gray = (int)Math.Round(actual.Item2 * 255);
+                samples.Add($"{level}=#{gray:X2}{gray:X2}{gray:X2}");
+            }
+
+            checks.Add($"PASS SHELL-12 file sidebar luminance (sRGB GPU readback): {string.Join(" ", samples)};"
+                + $" luminosityOpacity={recipe.LuminosityOpacity:0.###}");
+        }
+        finally
+        {
+            _main.Settings.LayoutMode = layout;
+            _main.IsThumbnailViewVisible = filmstrip;
+            AppWindow.Resize(windowSize);
+            _root.UpdateLayout();
+            _photo.FitToView();
+        }
+    }
+
+    /// <summary>写出一张纯色 JPEG(自生成灰度源,只写隔离输出目录)。</summary>
+    /// <param name="path">目标文件。</param>
+    /// <param name="width">宽(源像素)。</param>
+    /// <param name="height">高(源像素)。</param>
+    /// <param name="value">灰度(0-255)。</param>
+    private static void CreateFlatFixture(string path, int width, int height, byte value)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        using var bitmap = new SKBitmap(Math.Max(16, width), Math.Max(16, height));
+        using var canvas = new SKCanvas(bitmap);
+        canvas.Clear(new SKColor(value, value, value));
+        using var encoded = bitmap.Encode(SKEncodedImageFormat.Jpeg, 95);
+        using var stream = File.Create(path);
+        encoded.SaveTo(stream);
     }
 
     /// <summary>
