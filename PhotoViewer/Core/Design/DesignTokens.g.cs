@@ -59,6 +59,12 @@ public static class DesignTokens
     public const uint ColorAnalysisTileBorder = 0xFF444444u;
     /// <summary>color.bar.background（color） SHELL-01：窗口 / 栏位底色。</summary>
     public const uint ColorBarBackground = 0xFF111111u;
+    /// <summary>color.bar.overlay（color） SHELL-12：主屏栏底独立色层的中性深灰；基准值供 Web。</summary>
+    public const uint ColorBarOverlay = 0xFF292929u;
+    /// <summary>color.bar.overlay@android（color）：android 平台差异值（见 Design/platforms.md）。</summary>
+    public const uint ColorBarOverlayAndroid = 0xFF292929u;
+    /// <summary>color.bar.overlay@macos（color）：macos 平台差异值（见 Design/platforms.md）。</summary>
+    public const uint ColorBarOverlayMac = 0xFF2B2B2Bu;
     /// <summary>color.divider（color） SHELL-01：分区/控件分隔线与描边色。</summary>
     public const uint ColorDivider = 0xFF333333u;
     /// <summary>color.dropdown.background（color） FILTER-08：下拉按钮常态底（黑 40%）。</summary>
@@ -181,6 +187,8 @@ public static class DesignTokens
     public const uint ColorTitlebarClosePressed = 0xE6C42B1Cu;
     /// <summary>color.toolbar.block.background（color） TOOLBAR-01：EXIF 信息块与评分分组底色。</summary>
     public const uint ColorToolbarBlockBackground = 0xFF222222u;
+    /// <summary>color.toolbar.button.tint（color） TOOLBAR-10：主屏按钮常态底材的白色染色；不是字形色。</summary>
+    public const uint ColorToolbarButtonTint = 0xFFFFFFFFu;
     /// <summary>color.toolbar.command.background（color） TOOLBAR-01：命令按钮底色。</summary>
     public const uint ColorToolbarCommandBackground = 0xFF333333u;
     /// <summary>color.toolbar.command.border（color） TOOLBAR-01：命令按钮描边（Windows 显式；Android 只填充不描边）。</summary>
@@ -603,6 +611,16 @@ public static class DesignTokens
     public const double SettingsAndroidSheetPeekRatio = 0.5;
     /// <summary>shell.analysis.divider.thickness（pt） ANALYSIS-01：分析栏朝主图一侧的分隔线厚度。</summary>
     public const double ShellAnalysisDividerThickness = 1.0;
+    /// <summary>shell.bar.blur.radius（pt） SHELL-12：窗口内栏位背景模糊半径。</summary>
+    public const double ShellBarBlurRadius = 30.0;
+    /// <summary>shell.bar.blur.radius@macos（pt）：macos 平台差异值（见 Design/platforms.md）。</summary>
+    public const double ShellBarBlurRadiusMac = 30.0;
+    /// <summary>shell.bar.overlay.opacity（ratio） SHELL-12：主屏栏底独立色层的不透明度；基准值供 Web。</summary>
+    public const double ShellBarOverlayOpacity = 0.8;
+    /// <summary>shell.bar.overlay.opacity@android（ratio）：android 平台差异值（见 Design/platforms.md）。</summary>
+    public const double ShellBarOverlayOpacityAndroid = 0.8;
+    /// <summary>shell.bar.overlay.opacity@macos（ratio）：macos 平台差异值（见 Design/platforms.md）。</summary>
+    public const double ShellBarOverlayOpacityMac = 0.8;
     /// <summary>shell.divider.thickness（pt） SHELL-01：文件栏/主图、主图/控制栏之间的分隔线厚度。</summary>
     public const double ShellDividerThickness = 1.0;
     /// <summary>shell.filebar.content.width（pt） SHELL-01：文件栏内容宽（筛选条与胶片栏共用，分隔线另计 1）。</summary>
@@ -611,6 +629,12 @@ public static class DesignTokens
     public const double ShellFilterLeadingInset = 42.0;
     /// <summary>shell.glass.button.size（pt） SHELL-08：圆玻璃按钮与合体按钮每段的边长；同时保证 44×44 的最小命中区。</summary>
     public const double ShellGlassButtonSize = 44.0;
+    /// <summary>shell.glass.button.tint.opacity（ratio） TOOLBAR-10：主屏按钮常态底材染色的不透明度，不降低按钮内容不透明度；基准值供 Web。</summary>
+    public const double ShellGlassButtonTintOpacity = 0.135;
+    /// <summary>shell.glass.button.tint.opacity@android（ratio）：android 平台差异值（见 Design/platforms.md）。</summary>
+    public const double ShellGlassButtonTintOpacityAndroid = 0.135;
+    /// <summary>shell.glass.button.tint.opacity@macos（ratio）：macos 平台差异值（见 Design/platforms.md）。</summary>
+    public const double ShellGlassButtonTintOpacityMac = 0.195;
     /// <summary>shell.glass.container.spacing（pt） SHELL-12：相邻玻璃控件开始液态融合的距离（系统玻璃容器的融合距离）；取值与按钮组间距相同，静止时各自独立，按压放大时与相邻玻璃相连。</summary>
     public const double ShellGlassContainerSpacing = 8.0;
     /// <summary>shell.glass.group.gap（pt） SHELL-08：相邻按钮组（筛选、星级、缩放适应等）之间的间距。</summary>

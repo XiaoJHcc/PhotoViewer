@@ -5,10 +5,10 @@
     --pv-safe-right: env(safe-area-inset-right, 0px);
     --pv-safe-bottom: env(safe-area-inset-bottom, 0px);
     --pv-safe-left: env(safe-area-inset-left, 0px);
-    --pv-glass-background: color-mix(in srgb, var(--pv-color-bar-background) 68%, transparent);
-    --pv-material-blur: blur(var(--pv-shell-titlebar-backdrop-blurAmount));
+    --pv-glass-background: color-mix(in srgb, var(--pv-color-bar-overlay) calc(var(--pv-shell-bar-overlay-opacity) * 100%), transparent);
+    --pv-material-blur: blur(var(--pv-shell-bar-blur-radius));
     --pv-glass-radius: calc(var(--pv-shell-glass-button-size) / 2);
-    --pv-button-material: var(--pv-color-toolbar-command-background);
+    --pv-button-material: color-mix(in srgb, var(--pv-color-toolbar-button-tint) calc(var(--pv-shell-glass-button-tint-opacity) * 100%), transparent);
     --pv-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
     --pv-accent: #0A84FF;
     font-family: var(--pv-font);
@@ -150,7 +150,7 @@ html, body {
     z-index: 2;
 }
 
-/* SHELL-12@web：深色半透明 + backdrop-filter；不模拟系统玻璃融合或滚动边缘材质。 */
+/* SHELL-12@web：背景模糊上叠中灰色层。 */
 .pv-substrate {
     position: absolute;
     background: var(--pv-glass-background);

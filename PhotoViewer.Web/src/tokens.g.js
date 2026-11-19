@@ -27,6 +27,7 @@ const tokens = Object.freeze({
     "color.analysis.tile.background": "#222222",
     "color.analysis.tile.border": "#444444",
     "color.bar.background": "#111111",
+    "color.bar.overlay": "#292929",
     "color.divider": "#333333",
     "color.dropdown.background": "#66000000",
     "color.dropdown.background.hover": "#99000000",
@@ -88,6 +89,7 @@ const tokens = Object.freeze({
     "color.titlebar.close.hover": "#C42B1C",
     "color.titlebar.close.pressed": "#E6C42B1C",
     "color.toolbar.block.background": "#222222",
+    "color.toolbar.button.tint": "#FFFFFF",
     "color.toolbar.command.background": "#333333",
     "color.toolbar.command.border": "#555555",
     "color.toolbar.command.hover.background": "#3D3D3D",
@@ -297,10 +299,13 @@ const tokens = Object.freeze({
     "settings.android.sheet.heightRatio": 0.85,
     "settings.android.sheet.peekRatio": 0.5,
     "shell.analysis.divider.thickness": 1,
+    "shell.bar.blur.radius": 30,
+    "shell.bar.overlay.opacity": 0.8,
     "shell.divider.thickness": 1,
     "shell.filebar.content.width": 116,
     "shell.filter.leadingInset": 42,
     "shell.glass.button.size": 44,
+    "shell.glass.button.tint.opacity": 0.135,
     "shell.glass.container.spacing": 8,
     "shell.glass.group.gap": 8,
     "shell.phone.edgeMargin": 16,
@@ -378,8 +383,17 @@ const tokens = Object.freeze({
 });
 export const platformTokens = Object.freeze({
     "android": Object.freeze({
+        "color.bar.overlay": "#292929",
         "filter.toggle.width": 76,
         "image.hint.detail.gap": 24,
+        "shell.bar.overlay.opacity": 0.8,
+        "shell.glass.button.tint.opacity": 0.135,
+    }),
+    "macos": Object.freeze({
+        "color.bar.overlay": "#2B2B2B",
+        "shell.bar.blur.radius": 30,
+        "shell.bar.overlay.opacity": 0.8,
+        "shell.glass.button.tint.opacity": 0.195,
     }),
     "windows": Object.freeze({
         "analysis.tile.innerCornerRadius": 0,

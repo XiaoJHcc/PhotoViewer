@@ -290,6 +290,8 @@ internal static class NativeToolbarAcceptance
                         || Math.Abs((double)ratingControl.CornerRadius - RatingControlGeometry.Thickness / 2) > .01
                         || ratingControl.ContentView is not { } content)
                         throw new InvalidOperationException("评分控件外框未使用系统玻璃胶囊");
+                    RequireColor(ratingControl.TintColor, MacDesignColors.Argb(
+                        DesignTokens.ColorToolbarButtonTint, DesignTokens.ShellGlassButtonTintOpacityMac), "评分胶囊玻璃染色");
                     double cross = horizontal ? (double)control.Bounds.Height : (double)control.Bounds.Width;
                     foreach (var button in bar.Ratings)
                     {
@@ -318,6 +320,9 @@ internal static class NativeToolbarAcceptance
                             || command.BezelStyle != NSBezelStyle.Rounded || command.BorderShape != NSControlBorderShape.Circle
                             || !command.ShowsBorderOnlyWhileMouseInside)
                             throw new InvalidOperationException($"组 {groupIndex} 命令 {index} 未使用原生玻璃视图与圆钮");
+                        RequireColor(glass.TintColor, MacDesignColors.Argb(
+                            DesignTokens.ColorToolbarButtonTint, DesignTokens.ShellGlassButtonTintOpacityMac),
+                            $"组 {groupIndex} 命令 {index} 玻璃染色");
                     }
                     break;
             }
@@ -402,6 +407,8 @@ internal static class NativeToolbarAcceptance
                 || Math.Abs((double)glass.CornerRadius - RatingControlGeometry.Thickness / 2) > .01
                 || glass.ContentView is not { } content)
                 throw new InvalidOperationException("展开评分外框未使用系统玻璃胶囊");
+            RequireColor(glass.TintColor, MacDesignColors.Argb(
+                DesignTokens.ColorToolbarButtonTint, DesignTokens.ShellGlassButtonTintOpacityMac), "窄窗口评分胶囊玻璃染色");
             if (bar.Ratings.Count != 6 || bar.Ratings.Any(button => button.Hidden) || content.Subviews.Length != 6)
                 throw new InvalidOperationException("窄窗口未完整显示六个评分槽位");
             foreach (var button in bar.Ratings)
@@ -569,9 +576,11 @@ internal static class NativeToolbarAcceptance
     /// <summary>读取整个原生玻璃控件，核对常态覆盖、真实指针命中、系统悬停配置与按下反馈。</summary>
     private static async Task VerifyButtonSurfaceAsync(NSGlassEffectView glass, NSButton button, string output)
     {
+        var window = button.Window ?? throw new InvalidOperationException("命令按钮没有原生窗口");
+        window.MakeKeyAndOrderFront(null);
+        await Task.Delay(120);
         string path = System.IO.Path.Combine(output, "toolbar-button-surface.png");
-        NativeSnapshots.SaveView(glass, path);
-        using var bitmap = SKBitmap.Decode(path) ?? throw new InvalidOperationException("按钮绘制截图无法读取");
+        using var bitmap = CaptureViewRegion(window, glass, path);
         var painted = Enumerable.Range(0, bitmap.Height).Where(row =>
         {
             var color = bitmap.GetPixel(bitmap.Width / 2, row);
@@ -579,27 +588,56 @@ internal static class NativeToolbarAcceptance
         }).ToArray();
         if (painted.Length == 0 || painted[^1] - painted[0] < bitmap.Height * .8)
             throw new InvalidOperationException("系统玻璃表面没有覆盖方形区域");
-        var window = button.Window ?? throw new InvalidOperationException("命令按钮没有原生窗口");
-        window.MakeKeyAndOrderFront(null);
         var location = button.ConvertPointToView(new CGPoint(button.Bounds.GetMidX(), button.Bounds.GetMidY()), null);
         using (var hover = NSEvent.MouseEvent(NSEventType.MouseMoved, location, 0,
             NSProcessInfo.ProcessInfo.SystemUptime, window.WindowNumber, null!, 1, 1, 0)!)
             NSApplication.SharedApplication.PostEvent(hover, false);
         await Task.Delay(120);
         string hovered = Path.Combine(output, "toolbar-button-hover.png");
-        NativeSnapshots.SaveView(glass, hovered);
+        using (CaptureViewRegion(window, glass, hovered)) { }
         if (!ReferenceEquals(window.ContentView!.HitTest(location), button) || !button.ShowsBorderOnlyWhileMouseInside)
             throw new InvalidOperationException("真实指针未命中命令按钮，或缺少 AppKit 悬停边框配置");
         button.Cell!.Highlighted = true;
         button.NeedsDisplay = true;
+        await Task.Delay(120);
         string pressed = Path.Combine(output, "toolbar-button-pressed.png");
-        NativeSnapshots.SaveView(glass, pressed);
+        using (CaptureViewRegion(window, glass, pressed)) { }
         if (File.ReadAllBytes(hovered).SequenceEqual(File.ReadAllBytes(pressed))) throw new InvalidOperationException("按钮按下无可见反馈");
         button.Cell.Highlighted = false;
         using (var leave = NSEvent.MouseEvent(NSEventType.MouseMoved, CGPoint.Empty, 0,
             NSProcessInfo.ProcessInfo.SystemUptime, window.WindowNumber, null!, 1, 1, 0)!)
             NSApplication.SharedApplication.PostEvent(leave, false);
         await Task.Delay(80);
+    }
+
+    /// <summary>TOOLBAR-10：系统玻璃染色后离屏缓存不再包含玻璃合成，改从 WindowServer 窗口截图按视图矩形裁切。</summary>
+    private static SKBitmap CaptureViewRegion(NSWindow window, NSView view, string path)
+    {
+        string full = Path.Combine(Path.GetTempPath(), $"pv-view-{Guid.NewGuid():N}.png");
+        NativeSnapshots.SaveWindow(window, full);
+        try
+        {
+            using var source = SKBitmap.Decode(full) ?? throw new InvalidOperationException("窗口截图无法读取");
+            var rect = view.ConvertRectToView(view.Bounds, null);
+            double scaleX = source.Width / (double)window.Frame.Width;
+            double scaleY = source.Height / (double)window.Frame.Height;
+            int left = Math.Clamp((int)Math.Round((double)rect.X * scaleX), 0, source.Width - 1);
+            int top = Math.Clamp((int)Math.Round(((double)window.Frame.Height - ((double)rect.Y + (double)rect.Height)) * scaleY), 0, source.Height - 1);
+            int width = Math.Clamp((int)Math.Round((double)rect.Width * scaleX), 1, source.Width - left);
+            int height = Math.Clamp((int)Math.Round((double)rect.Height * scaleY), 1, source.Height - top);
+            var crop = new SKBitmap(width, height, source.ColorType, source.AlphaType);
+            using (var canvas = new SKCanvas(crop))
+                canvas.DrawBitmap(source, new SKRect(left, top, left + width, top + height), new SKRect(0, 0, width, height));
+            using var image = SKImage.FromBitmap(crop);
+            using var data = image.Encode(SKEncodedImageFormat.Png, 100)
+                ?? throw new InvalidOperationException("按钮区域截图编码失败");
+            using (var stream = File.Create(path)) data.SaveTo(stream);
+            return crop;
+        }
+        finally
+        {
+            File.Delete(full);
+        }
     }
 
     /// <summary>

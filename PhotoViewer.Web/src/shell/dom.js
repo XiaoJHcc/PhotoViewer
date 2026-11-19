@@ -47,14 +47,14 @@ export function touches(regions, ...names) {
     return names.some((name) => regions.has(name));
 }
 
-/** 把令牌写成 CSS 变量：--pv-<点分名转连字符>，颜色转 CSS、数值带 px（ms/ratio/count 不带）。 */
+/** 把令牌写成 CSS 变量：--pv-<点分名转连字符>，颜色转 CSS、尺寸带 px，时长、比例和不透明度等按原值。 */
 export function applyTokenVariables(root, t, names) {
     for (const name of names) {
         const value = t(name);
         const variable = `--pv-${name.replaceAll(".", "-")}`;
         let css;
         if (typeof value === "string" && value.startsWith("#")) css = colorToCss(value);
-        else if (typeof value === "number" && !/(duration|delay|alpha|ratio|ms$|tick|timeout|lowerBound|threshold|overscan|Scale|step)/i.test(name)) css = `${value}px`;
+        else if (typeof value === "number" && !/(duration|delay|alpha|opacity|ratio|ms$|tick|timeout|lowerBound|threshold|overscan|Scale|step)/i.test(name)) css = `${value}px`;
         else css = String(value);
         root.style.setProperty(variable, css);
     }

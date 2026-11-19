@@ -411,7 +411,7 @@ internal static partial class AndroidNativeChecks
                 && Math.Abs(hoverCircle.Height() - Math.Min(hoverSlot.Width(), hoverSlot.Height())) <= 1
                 && Near(hoverCircle.CenterX(), hoverSlot.CenterX()) && Near(hoverCircle.CenterY(), hoverSlot.CenterY());
             bool rippleTheme = ripple != null && rating.HighlightColorForChecks == pressedLayer && rating.FillColorForChecks
-                == AndroidUiTheme.FromToken(DesignTokens.ColorToolbarCommandBackground);
+                == ExpectedGlassButtonFill();
             Check("RATING-07 逐格悬停/按下正圆反馈", hovered && pressed && rated == 4 && cleared && exited
                     && Near(circle, RatingControlGeometry.Slot) && circleGeometry && rippleTheme
                     && Near(rating.Width / density, RatingControlGeometry.ExpandedLength)

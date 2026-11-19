@@ -40,9 +40,9 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     private readonly PhotoLoadSession _session;
     private readonly AndroidPhotoView _photo;
     private readonly FrameLayout _photoPane;
-    private readonly View _fileBar;
+    private readonly AndroidBarScrim _fileBar;
     private readonly View _fileDivider;
-    private readonly View _controlBackground;
+    private readonly AndroidBarScrim _controlBackground;
     private readonly View _controlDivider;
     private readonly AndroidFilterBar _filterBar;
     private readonly AndroidControlBarScrollHost _filterScrollHost;
@@ -65,10 +65,10 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     private readonly TextView _statusLabel;
     private readonly AndroidNavigationOverlay _navigation;
     // 手机形态槽位：栏背景、筛选/更多、上下张、星级、缩放增强合体与 EXIF 块。
-    private readonly View _phoneTopBar;
-    private readonly View _phoneBottomBar;
-    private readonly View _phoneLeadingBar;
-    private readonly View _phoneTrailingBar;
+    private readonly AndroidBarScrim _phoneTopBar;
+    private readonly AndroidBarScrim _phoneBottomBar;
+    private readonly AndroidBarScrim _phoneLeadingBar;
+    private readonly AndroidBarScrim _phoneTrailingBar;
     private readonly AndroidGlassButton _phoneMoreButton;
     private readonly AndroidGlassCombo _phoneNavigation;
     private readonly AndroidGlassCombo _phoneFitEnhance;
@@ -166,6 +166,13 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     internal string? StatusTextForChecks => _statusLabel.Text;
     /// <summary>状态提示条是否可见（验收用）。</summary>
     internal bool StatusVisibleForChecks => _statusLabel.Visibility == ViewStates.Visible;
+    /// <summary>主屏栏底（验收读取实际色层）：宽形态文件栏/工具区与手机四侧栏底。</summary>
+    internal IReadOnlyList<(string Name, AndroidBarScrim Bar)> BarScrimsForChecks =>
+    [
+        ("fileBar", _fileBar), ("controlBackground", _controlBackground),
+        ("phoneTop", _phoneTopBar), ("phoneBottom", _phoneBottomBar),
+        ("phoneLeading", _phoneLeadingBar), ("phoneTrailing", _phoneTrailingBar),
+    ];
     /// <summary>最近一次主图菜单构建出的项（文本/勾选/可用/实际绘制的图标字形，验收用只读快照；产品路径不读取）。</summary>
     internal IReadOnlyList<(string Text, bool Checked, bool Enabled, string Icon)> PhotoMenuItemsForChecks => _photoMenuItems;
 

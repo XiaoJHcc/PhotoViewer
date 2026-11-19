@@ -1,5 +1,6 @@
 using AppKit;
 using CoreGraphics;
+using CoreImage;
 using Foundation;
 using PhotoViewer.Apple;
 using PhotoViewer.Core;
@@ -25,8 +26,8 @@ public sealed class MacMainWindow : IDisposable
     private const NSWindowStyle FullScreenStyleBit = (NSWindowStyle)(1 << 14);
     private readonly MainViewModel _main;
     private readonly RootView _root;
-    private readonly NSView _filePane;
-    private readonly NSView _toolBackground;
+    private readonly MacBarMaterial _filePane;
+    private readonly MacBarMaterial _toolBackground;
     private readonly NSView _fileDivider = Pane(MacDesignColors.Argb(DesignTokens.ColorDivider));
     private readonly NSView _controlDivider = Pane(MacDesignColors.Argb(DesignTokens.ColorDivider));
     private readonly NSTextField _hintDetail = Label("", 11);
@@ -203,8 +204,8 @@ public sealed class MacMainWindow : IDisposable
         Window.FrameAutosaveName = "PhotoViewer.Native.MainWindow";
         _root = new RootView(new CGRect(0, 0, 1200, 850));
         Window.ContentView = _root;
-        _filePane = new FileBarMaterial(); _controlPane = new MacControlBar(RequestControlsRefresh); _photoPane = Pane(NSColor.Black);
-        _toolBackground = new ToolRegionMaterial { Hidden = true };
+        _filePane = new MacBarMaterial(); _controlPane = new MacControlBar(RequestControlsRefresh); _photoPane = Pane(NSColor.Black);
+        _toolBackground = new MacBarMaterial(transparentToHits: true) { Hidden = true };
         _controlScroll = new MacControlScrollView { DocumentView = _controlPane, HasVerticalScroller = false, DrawsBackground = false, BackgroundColor = NSColor.Clear, BorderType = NSBorderType.NoBorder, ScrollerStyle = NSScrollerStyle.Overlay, AutomaticallyAdjustsContentInsets = false };
         // 主图铺满窗口并垫底；栏位材质在窗口内取样其下方照片，控制文档与滚动宿主保持透明。
         _root.AddSubview(_photoPane); _root.AddSubview(_toolBackground); _root.AddSubview(_filePane); _root.AddSubview(_controlScroll);
@@ -1924,31 +1925,30 @@ public sealed class MacMainWindow : IDisposable
         public override NSView? HitTest(CGPoint aPoint) => null;
     }
 
-    /// <summary>SHELL-12：文件栏系统深色模糊材质，窗口内取样照片；控件子视图直接叠在材质上。</summary>
-    private sealed class FileBarMaterial : NSVisualEffectView
+    /// <summary>SHELL-12：AppKit 窗口内背景模糊与独立深灰色层。</summary>
+    internal sealed class MacBarMaterial : NSView
     {
-        public FileBarMaterial()
-        {
-            Material = NSVisualEffectMaterial.Sidebar;
-            BlendingMode = NSVisualEffectBlendingMode.WithinWindow;
-            State = NSVisualEffectState.Active;
-            Appearance = NSAppearance.GetAppearance(NSAppearance.NameDarkAqua);
-        }
-        public override bool IsFlipped => true;
-    }
+        private readonly bool _transparentToHits;
 
-    /// <summary>SHELL-12：分析栏与控制栏共同工具区的连续材质宿主，窗口内取样且只在朝主图一侧保留外边界。</summary>
-    private sealed class ToolRegionMaterial : NSVisualEffectView
-    {
-        public ToolRegionMaterial()
+        internal MacBarMaterial(bool transparentToHits = false)
         {
-            Material = NSVisualEffectMaterial.Sidebar;
-            BlendingMode = NSVisualEffectBlendingMode.WithinWindow;
-            State = NSVisualEffectState.Active;
-            Appearance = NSAppearance.GetAppearance(NSAppearance.NameDarkAqua);
+            _transparentToHits = transparentToHits;
+            WantsLayer = true;
+            Layer!.MasksToBounds = true;
+            // AppKit 的公开 NSView.backgroundFilters；当前 .NET 绑定未公开此属性。
+            using var blur = new CIGaussianBlur { Radius = (float)DesignTokens.ShellBarBlurRadiusMac };
+            using var filters = NSArray.FromNSObjects(blur);
+            using var key = new NSString("backgroundFilters");
+            SetValueForKey(filters, key);
+            Layer.BackgroundColor = OverlayColor.CGColor;
         }
+
+        internal static NSColor OverlayColor =>
+            MacDesignColors.Argb(DesignTokens.ColorBarOverlayMac, DesignTokens.ShellBarOverlayOpacityMac);
+
         public override bool IsFlipped => true;
-        public override NSView? HitTest(CGPoint aPoint) => null;
+
+        public override NSView? HitTest(CGPoint aPoint) => _transparentToHits ? null : base.HitTest(aPoint);
     }
 
     /// <summary>SHELL-02：标题栏毛玻璃背景（系统 Titlebar 材质、窗口内混合、深色外观），只作背景、不参与命中。</summary>

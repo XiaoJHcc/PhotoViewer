@@ -326,6 +326,16 @@ internal static partial class AndroidNativeChecks
         else CheckPhoneGeometry(root, main, density, phase);
     }
 
+    /// <summary>SHELL-12：主屏各栏底使用同一 <c>color.bar.overlay</c> 与 <c>shell.bar.overlay.opacity</c> 色层。</summary>
+    private static void CheckBarScrimLayers(AndroidNativeRootView root, string phase)
+    {
+        var expected = ExpectedBarOverlay();
+        var bars = root.BarScrimsForChecks;
+        Check($"{phase} 栏底独立色层取 color.bar.overlay/opacity",
+            bars.Count > 0 && bars.All(item => item.Bar.ColorForChecks == expected),
+            $"expected={expected} actual={string.Join("/", bars.Select(item => $"{item.Name}:{item.Bar.ColorForChecks}"))}");
+    }
+
     /// <summary>宽形态：文件栏/主图/控制栏分区、筛选外框、控制栏分组与卡片大档。</summary>
     private static void CheckWideGeometry(AndroidNativeRootView root, MainViewModel main, double density, string phase)
     {
@@ -333,6 +343,7 @@ internal static partial class AndroidNativeChecks
         var panes = root.Panes;
         bool row = main.IsRowLayout;
         Check($"{phase} 宽形态分区", true, $"row={row} panes={Describe(panes)} screen={widthDp:0.#}x{heightDp:0.#}");
+        CheckBarScrimLayers(root, phase);
 
         var frames = new (string Name, LayoutRect Rect)[]
         {
@@ -506,13 +517,17 @@ internal static partial class AndroidNativeChecks
         if (root.ControlBar.HasRatingGroup)
         {
             double ratingCross = row ? ratingView.Height / density : ratingView.Width / density;
-            var commandFill = AndroidUiTheme.FromToken(DesignTokens.ColorToolbarCommandBackground);
+            var fill = ExpectedGlassButtonFill();
+            var toggle = root.FilterBar.ToggleForChecks;
             Check($"{phase} 评分胶囊交叉轴 44", Near(ratingCross, RatingControlGeometry.Thickness),
                 $"view={ratingView.Width / density:0.#}x{ratingView.Height / density:0.#} cross={ratingCross:0.#} row={row}");
-            Check($"{phase} 评分胶囊与命令按钮同底",
-                ratingView.FillColorForChecks == commandFill
-                && root.ControlBar.CommandViewsForChecks.Values.All(view => view.FillColorForChecks == commandFill),
-                $"rating={ratingView.FillColorForChecks} command={commandFill} "
+            Check($"{phase} 评分胶囊、合体与命令按钮同底",
+                ratingView.FillColorForChecks == fill
+                && root.ControlBar.CommandViewsForChecks.Values.All(view => view.FillColorForChecks == fill)
+                && root.FilterBar.ComboForChecks.FillColorForChecks == fill
+                && (toggle == null || toggle.FillColorForStateForChecks([]) == fill),
+                $"rating={ratingView.FillColorForChecks} expected={fill} combo={root.FilterBar.ComboForChecks.FillColorForChecks} "
+                + $"toggle={toggle?.FillColorForStateForChecks([]).ToString() ?? "none"} "
                 + $"views={string.Join("/", root.ControlBar.CommandViewsForChecks.Values.Select(v => v.FillColorForChecks))}");
             var stateLayer = AndroidX.Core.Content.ContextCompat.GetColorStateList(_activity!, Resource.Color.pv_glass_state_layer);
             var pressedLayer = stateLayer == null ? Color.Transparent
@@ -607,6 +622,7 @@ internal static partial class AndroidNativeChecks
         double widthDp = root.Width / density, heightDp = root.Height / density;
         Check($"{phase} 手机形态", root.Form != ScreenForm.Wide, $"portrait={portrait} form={root.Form} notchOnLeft={root.NotchOnLeft} "
             + $"window={widthDp:0.#}x{heightDp:0.#} safe={root.SafeInsets} fit={root.FitInsets}");
+        CheckBarScrimLayers(root, phase);
 
         Check($"{phase} 主图满窗口", root.Photo.Width == root.Width && root.Photo.Height == root.Height,
             $"photo={root.Photo.Width}x{root.Photo.Height} root={root.Width}x{root.Height}");
@@ -702,7 +718,7 @@ internal static partial class AndroidNativeChecks
             var stateLayer = AndroidX.Core.Content.ContextCompat.GetColorStateList(_activity!, Resource.Color.pv_glass_state_layer);
             var pressedLayer = stateLayer == null ? Color.Transparent
                 : new(stateLayer.GetColorForState([global::Android.Resource.Attribute.StatePressed], Color.White));
-            var commandFill = AndroidUiTheme.FromToken(DesignTokens.ColorToolbarCommandBackground);
+            var fill = ExpectedGlassButtonFill();
             bool rippleOk = true;
             var circleDetail = new StringBuilder();
             for (int slot = 0; slot < RatingControlGeometry.SlotCount; slot++)
@@ -718,12 +734,19 @@ internal static partial class AndroidNativeChecks
                 if (!ok) rippleOk = false;
                 circleDetail.Append($"{slot}:{circle.Width()}x{circle.Height()} ");
             }
-            Check($"{phase} 手机星级胶囊与命令按钮同底且用同一状态层色板",
-                root.PhoneRating.FillColorForChecks == commandFill && rippleOk
-                && root.PhoneNavigation.FillColorForChecks == commandFill
-                && root.PhoneFitEnhance.FillColorForChecks == commandFill
+            Check($"{phase} 手机玻璃控件同底且用同一状态层色板",
+                root.PhoneRating.FillColorForChecks == fill && rippleOk
+                && root.PhoneNavigation.FillColorForChecks == fill
+                && root.PhoneFitEnhance.FillColorForChecks == fill
+                && (portrait
+                    ? root.FilterBar.FilterButtonForChecks.FillColorForChecks == fill
+                        && root.PhoneMoreButton.FillColorForChecks == fill
+                    : root.FilterBar.ComboForChecks.FillColorForChecks == fill)
                 && root.PhoneNavigation.First.FillColorForChecks == Color.Transparent,
-                $"rating={root.PhoneRating.FillColorForChecks} command={commandFill} stateLayer={pressedLayer} circles={circleDetail}");
+                $"rating={root.PhoneRating.FillColorForChecks} expected={fill} "
+                + $"filter={(portrait ? root.FilterBar.FilterButtonForChecks.FillColorForChecks.ToString() : root.FilterBar.ComboForChecks.FillColorForChecks.ToString())} "
+                + $"nav={root.PhoneNavigation.FillColorForChecks} fit={root.PhoneFitEnhance.FillColorForChecks} "
+                + $"stateLayer={pressedLayer} circles={circleDetail}");
         }
         if (Has(slots.Exif) && slots.ExifItems > 0)
             Check($"{phase} EXIF 块落位", SameFrame(FrameOf(root.PhoneExif, root, density), slots.Exif),

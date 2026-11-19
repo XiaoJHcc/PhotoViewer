@@ -181,7 +181,7 @@ internal sealed class AndroidFilterBar : FrameLayout
         var checkedBackground = AndroidUiTheme.FromToken(DesignTokens.ColorFilterToggleCheckedBackground);
         var checkedBorder = AndroidUiTheme.FromToken(DesignTokens.ColorFilterToggleCheckedBorder);
         var checkedForeground = AndroidUiTheme.FromToken(DesignTokens.ColorFilterToggleCheckedForeground);
-        var normalBackground = AndroidUiTheme.FromToken(DesignTokens.ColorToolbarCommandBackground);
+        var normalBackground = AndroidUiTheme.GlassButtonFill;
         var foreground = AndroidUiTheme.TextPrimary;
         button.SetTextSize(global::Android.Util.ComplexUnitType.Sp, 12);
         button.Checkable = true;

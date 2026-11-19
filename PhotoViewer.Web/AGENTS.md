@@ -1,6 +1,6 @@
 # PhotoViewer.Web — Web 参考壳
 
-浏览器里的第五个壳（平台代号 `web`）：按 `Design/` 实现主屏业务行为与首屏静态几何，照片为程序化合成数据。它同时是三样东西：免下载的在线试用、设计规则的可执行基准（规则变更可先在这里验证再分发四端）、各平台几何比对的基准来源。材质只使用浏览器公开能力（CSS `backdrop-filter` 与半透明底色），不复刻系统玻璃融合或光学效果。设置窗口与工具窗口不做（`SCOPE-01@web`）。计划与缺口台账见 [Plans/web-shell-plan-1.md](../Plans/web-shell-plan-1.md)、[Plans/web-shell-gaps.md](../Plans/web-shell-gaps.md)。
+浏览器里的第五个壳（平台代号 `web`）：按 `Design/` 实现主屏业务行为与首屏静态几何，照片为程序化合成数据。它同时是三样东西：免下载的在线试用、设计规则的可执行基准（规则变更可先在这里验证再分发四端）、各平台几何比对的基准来源。材质使用 CSS `backdrop-filter`，栏底叠设计令牌指定的灰色色层，按钮常态叠白色色层；不复刻系统玻璃融合或折射。设置窗口与工具窗口不做（`SCOPE-01@web`）。计划与缺口台账见 [Plans/web-shell-plan-1.md](../Plans/web-shell-plan-1.md)、[Plans/web-shell-gaps.md](../Plans/web-shell-gaps.md)。
 
 ## 依据：Design/ 与 macOS 外观参照
 

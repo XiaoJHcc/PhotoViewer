@@ -689,6 +689,12 @@ internal sealed class MacControlBar : NSView
 /// <summary>系统玻璃视图只负责材质；命中按公开 Frame/Bounds/IsFlipped 换算后交给 ContentView 内的原生控件。</summary>
 internal class MacGlassEffectView : NSGlassEffectView
 {
+    /// <summary>TOOLBAR-10：主屏玻璃常态底材统一染 <c>color.toolbar.button.tint</c> 的白色色层。</summary>
+    internal MacGlassEffectView()
+    {
+        TintColor = MacDesignColors.Argb(DesignTokens.ColorToolbarButtonTint, DesignTokens.ShellGlassButtonTintOpacityMac);
+    }
+
     public override NSView? HitTest(CGPoint point)
     {
         if (Hidden || !Frame.Contains(point) || ContentView is not { } content || content.Hidden || Superview is not { } parent) return null;

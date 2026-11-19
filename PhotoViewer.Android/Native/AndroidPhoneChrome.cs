@@ -25,20 +25,23 @@ using PhotoViewer.ViewModels.Settings;
 namespace PhotoViewer.Android.Native;
 
 /// <summary>
-/// 栏位背景：深色半透明 View 承载（SHELL-12）。Android 没有对「应用内主图上取样模糊」的公开接口
+/// 栏位背景：中性灰独立色层承载（SHELL-12）。Android 没有对「应用内主图上取样模糊」的公开接口
 /// （<c>RenderEffect</c> 只作用于视图自身内容、<c>Window</c> 背景模糊会连窗口后面的系统界面一起模糊），
-/// 因此这里只用半透明深色铺底并登记材质差异，不做截屏、PixelCopy、离屏拷贝或自绘模糊。
+/// 因此这里只铺 <c>color.bar.overlay</c> 与 <c>shell.bar.overlay.opacity</c> 的同一色层，
+/// 不做截屏、PixelCopy、离屏拷贝或自绘模糊。
 /// </summary>
 internal sealed class AndroidBarScrim : View
 {
-    /// <summary>建一个深色半透明栏背景。</summary>
+    /// <summary>建一个中性灰色层栏背景。</summary>
     /// <param name="context">宿主上下文。</param>
     public AndroidBarScrim(Context context) : base(context)
     {
-        SetBackgroundColor(Color.Argb(0xE6, Color.GetRedComponent(AndroidUiTheme.BarBackground),
-            Color.GetGreenComponent(AndroidUiTheme.BarBackground), Color.GetBlueComponent(AndroidUiTheme.BarBackground)));
+        SetBackgroundColor(AndroidUiTheme.BarOverlay);
         ImportantForAccessibility = ImportantForAccessibility.No;
     }
+
+    /// <summary>栏底实际颜色（验收读取）。</summary>
+    internal Color ColorForChecks => Background is ColorDrawable drawable ? drawable.Color : Color.Transparent;
 }
 
 /// <summary>
@@ -143,7 +146,8 @@ internal sealed class AndroidGlyphDrawable : Drawable
 }
 
 /// <summary>
-/// 玻璃圆按钮（SHELL-12）：Material 3 图标按钮样式 <c>Widget.PhotoViewer.GlassButton</c> 承载底色、状态层与涟漪，
+/// 玻璃圆按钮（SHELL-12）：Material 3 图标按钮样式 <c>Widget.PhotoViewer.GlassButton</c> 承载常态底材、
+/// 状态层与涟漪；常态底材取 <c>color.toolbar.button.tint</c> 与 <c>shell.glass.button.tint.opacity</c> 的同一色层，
 /// uicons 字形放在 Material 图标槽并按墨迹居中，尺寸固定 <c>shell.glass.button.size</c>（44），
 /// 不随内容拉宽；禁用只把内容降到 <c>color.toolbar.disabled.content.alpha</c>，底色与几何不变。
 /// </summary>
@@ -171,7 +175,7 @@ internal sealed class AndroidGlassButton : MaterialButton
         _iconFont = iconFont;
         ContentDescription = description;
         CornerRadius = (int)Math.Round(Size / 2 * AndroidUiTheme.Density(context));
-        BackgroundTintList = ColorStateList.ValueOf(AndroidUiTheme.FromToken(DesignTokens.ColorToolbarCommandBackground));
+        BackgroundTintList = ColorStateList.ValueOf(AndroidUiTheme.GlassButtonFill);
         Focusable = true;
         Clickable = true;
         if (iconFont)
@@ -196,6 +200,15 @@ internal sealed class AndroidGlassButton : MaterialButton
 
     /// <summary>按钮实际底色（验收读取）。</summary>
     internal Color FillColorForChecks => new(BackgroundTintList?.DefaultColor ?? 0);
+
+    /// <summary>按钮在指定状态下的实际底色（验收读取；用于可勾选入口的未选中态）。</summary>
+    /// <param name="state">视图状态。</param>
+    /// <returns>该状态的底色。</returns>
+    internal Color FillColorForStateForChecks(int[] state)
+    {
+        var tint = BackgroundTintList;
+        return tint == null ? Color.Transparent : new(tint.GetColorForState(state, Color.Transparent));
+    }
 
     /// <summary>字形颜色：可用主色、禁用按令牌降内容强调（不改底色）。</summary>
     private static ColorStateList ContentColors(Context context)
@@ -285,7 +298,7 @@ internal sealed class AndroidGlassCombo : MaterialCardView
         Radius = (float)AndroidUiTheme.Dp(context, Size / 2);
         CardElevation = 0;
         StrokeWidth = 0;
-        SetCardBackgroundColor(AndroidUiTheme.FromToken(DesignTokens.ColorToolbarCommandBackground));
+        SetCardBackgroundColor(AndroidUiTheme.GlassButtonFill);
         SetContentPadding(0, 0, 0, 0);
         Clickable = false;
         _first = new AndroidGlassButton(context, firstGlyph, firstDescription);
@@ -459,7 +472,7 @@ internal sealed class AndroidRatingControl : MaterialCardView
         Radius = (float)AndroidUiTheme.Dp(context, RatingControlGeometry.Thickness / 2);
         CardElevation = 0;
         StrokeWidth = 0;
-        SetCardBackgroundColor(AndroidUiTheme.FromToken(DesignTokens.ColorToolbarCommandBackground));
+        SetCardBackgroundColor(AndroidUiTheme.GlassButtonFill);
         SetContentPadding(0, 0, 0, 0);
         Clickable = false;
         _starActive = StarPaint(context, AndroidUiTheme.StarActive, solid: true);

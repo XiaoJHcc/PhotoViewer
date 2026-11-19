@@ -10,7 +10,7 @@ namespace PhotoViewer.Android.Native;
 
 /// <summary>
 /// Android 原生壳视觉常量与绘制辅助（A3）：固定深色、显式圆角/字重，不引用 OEM 主题派生属性。
-/// 颜色与 iOS 原生壳同口径（#111 背景、白色 2/15 控件底、#444 描边），尺寸全部以 dp 表达。
+/// 颜色取设计令牌（#111 背景、主屏栏底与按钮底材按 `@android` 覆盖合成、#444 描边），尺寸全部以 dp 表达。
 /// </summary>
 internal static class AndroidUiTheme
 {
@@ -18,8 +18,10 @@ internal static class AndroidUiTheme
     internal static readonly Color Background = FromToken(DesignTokens.ColorBarBackground);
     /// <summary>主图区背景。</summary>
     internal static readonly Color PhotoBackground = Color.Black!;
-    /// <summary>栏位底色（SHELL-01）。</summary>
-    internal static readonly Color BarBackground = FromToken(DesignTokens.ColorBarBackground);
+    /// <summary>主屏栏底独立色层（SHELL-12）：<c>color.bar.overlay@android</c> 按 <c>shell.bar.overlay.opacity@android</c> 铺底。</summary>
+    internal static readonly Color BarOverlay = Layer(DesignTokens.ColorBarOverlayAndroid, DesignTokens.ShellBarOverlayOpacityAndroid);
+    /// <summary>主屏按钮常态底材（TOOLBAR-10）：白色染色按 <c>shell.glass.button.tint.opacity@android</c> 叠色，不降低内容不透明度。</summary>
+    internal static readonly Color GlassButtonFill = Layer(DesignTokens.ColorToolbarButtonTint, DesignTokens.ShellGlassButtonTintOpacityAndroid);
     /// <summary>分隔线。</summary>
     internal static readonly Color Divider = FromToken(DesignTokens.ColorDivider);
     /// <summary>控件底色（白 2/15，浮层与下拉等系统外观）。</summary>
@@ -94,6 +96,16 @@ internal static class AndroidUiTheme
     /// <returns>Android 颜色。</returns>
     internal static Color FromToken(uint argb) => Color.Argb(
         (int)((argb >> 24) & 0xFF),
+        (int)((argb >> 16) & 0xFF),
+        (int)((argb >> 8) & 0xFF),
+        (int)(argb & 0xFF))!;
+
+    /// <summary>按设计令牌颜色与不透明度合成独立色层（原 RGB 保留，alpha 取比例）。</summary>
+    /// <param name="argb">设计令牌颜色。</param>
+    /// <param name="opacity">0–1 的不透明度。</param>
+    /// <returns>带合成 alpha 的颜色。</returns>
+    internal static Color Layer(uint argb, double opacity) => Color.Argb(
+        Math.Clamp((int)Math.Round(255 * opacity), 0, 255),
         (int)((argb >> 16) & 0xFF),
         (int)((argb >> 8) & 0xFF),
         (int)(argb & 0xFF))!;

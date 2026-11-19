@@ -101,12 +101,12 @@ function computedState(node, fragment, { pseudo = null, state = ":hover" } = {})
     return snapshot;
 }
 
-function colorMatches(actual, expected) {
+function colorMatches(actual, expected, opacity) {
     const a = parseColor(actual);
     const b = parseColor(expected);
     if (!a || !b) return false;
     return Math.abs(a.r - b.r) <= 1 && Math.abs(a.g - b.g) <= 1
-        && Math.abs(a.b - b.b) <= 1 && Math.abs(a.a - b.a) <= 0.01;
+        && Math.abs(a.b - b.b) <= 1 && Math.abs(a.a - (opacity ?? b.a)) <= 0.01;
 }
 
 // ?check=all 的执行顺序：先读状态，再做会改变内存数据的提取，最后跑外壳持久化。
@@ -588,7 +588,7 @@ const CHECKS = [
             const entry = h.dom(".pv-filter-entry");
             h.assert(getComputedStyle(entry).backgroundColor === "rgba(0, 0, 0, 0)", "单胶囊按钮重复铺底");
             h.assert(getComputedStyle(entry).borderTopWidth === "0px", "单胶囊按钮常态画描边");
-            h.assert(colorMatches(capsuleStyle.backgroundColor, t("color.toolbar.command.background")),
+            h.assert(colorMatches(capsuleStyle.backgroundColor, t("color.toolbar.button.tint"), t("shell.glass.button.tint.opacity")),
                 `筛选胶囊材质 ${capsuleStyle.backgroundColor} 与命令按钮不同`);
             const entryRect = entry.getBoundingClientRect();
             const entryState = getComputedStyle(entry, "::after");
@@ -1394,7 +1394,7 @@ const CHECKS = [
             const t = (name) => shell.t(name);
             const command = h.dom('.pv-control-command-button[data-command="Next"]');
             const commandStyle = getComputedStyle(command);
-            h.assert(colorMatches(commandStyle.backgroundColor, t("color.toolbar.command.background")),
+            h.assert(colorMatches(commandStyle.backgroundColor, t("color.toolbar.button.tint"), t("shell.glass.button.tint.opacity")),
                 `命令常态底色 ${commandStyle.backgroundColor}`);
             h.assert(commandStyle.borderTopWidth === "1px" && colorMatches(commandStyle.borderTopColor, "#00000000"),
                 `命令常态仍画描边 ${commandStyle.borderTopColor}`);
@@ -1449,7 +1449,7 @@ const CHECKS = [
             const disabledColor = parseColor(getComputedStyle(disabled).color);
             h.assert(disabled.disabled && disabledColor && Math.abs(disabledColor.a - t("color.toolbar.disabled.content.alpha")) <= 0.01,
                 `命令禁用内容 alpha ${disabledColor?.a}`);
-            h.assert(colorMatches(getComputedStyle(disabled).backgroundColor, t("color.toolbar.command.background")),
+            h.assert(colorMatches(getComputedStyle(disabled).backgroundColor, t("color.toolbar.button.tint"), t("shell.glass.button.tint.opacity")),
                 "命令禁用换了底色");
             const disabledStar = h.dom('.pv-control-rating-button[data-rating="3"]');
             const starColor = parseColor(getComputedStyle(disabledStar).color);
@@ -2416,6 +2416,8 @@ const CHECKS = [
             const substrate = h.dom(".pv-substrate");
             const substrateStyle = getComputedStyle(substrate);
             h.assert(substrate && substrateStyle.backdropFilter !== "none", "栏底缺少 backdrop-filter");
+            h.assert(colorMatches(substrateStyle.backgroundColor, t("color.bar.overlay"), t("shell.bar.overlay.opacity")),
+                `栏底色层 ${substrateStyle.backgroundColor}`);
             h.assert(!substrateStyle.backdropFilter.includes("saturate"), "栏底使用了自创饱和度增强");
             h.assert(substrateStyle.boxShadow === "none", "栏底使用了自创高光/内阴影");
 

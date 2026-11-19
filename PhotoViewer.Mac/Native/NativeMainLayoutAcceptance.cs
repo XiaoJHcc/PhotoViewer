@@ -312,10 +312,14 @@ internal static class NativeMainLayoutAcceptance
         }
         if (Math.Abs((double)filterView.Frame.Height - (double)frames.Control.Height) > Exact)
             throw new InvalidOperationException($"{scope} 筛选控件高不是 {frames.Control.Height}：{filterView.Frame}");
+        if (filterView is not NSGlassEffectView filterGlass)
+            throw new InvalidOperationException($"{scope} 筛选控件未使用原生玻璃外框");
+        RequireGlassTint(filterGlass, $"{scope} 筛选控件");
 #if PHOTOVIEWER_DINO
         if (window.SimilarityToggle.Hidden)
             throw new InvalidOperationException($"{scope} 文件栏可见时相似开关被隐藏");
         var toggle = window.SimilarityToggleGlass;
+        RequireGlassTint(toggle, $"{scope} 相似聚类开关");
         RequireFrame(toggle.Frame, new CGRect(content.X + frames.Toggle.X, content.Y + frames.Toggle.Y, frames.Toggle.Width, frames.Toggle.Height),
             $"{scope} 相似聚类开关");
         double expectedToggleWidth = row ? DesignTokens.FilterToggleWidth : FilmCardGeometry.Width(FilmCardTier.Large);
@@ -351,14 +355,19 @@ internal static class NativeMainLayoutAcceptance
     /// <summary>核对文件栏/工具区材质出现条件与唯一外边界。</summary>
     private static void VerifyMaterialCondition(MacMainWindow window, bool row, string scope, ShellPaneFrames panes, List<string> observations)
     {
-        if (!(window.FileBarBackground is NSVisualEffectView fileMaterial) || fileMaterial.Hidden && window.Main.IsThumbnailViewVisible)
-            throw new InvalidOperationException($"{scope} 文件栏未使用可见的系统材质宿主");
+        if (window.FileBarBackground is not MacMainWindow.MacBarMaterial fileMaterial
+            || fileMaterial.Hidden && window.Main.IsThumbnailViewVisible)
+            throw new InvalidOperationException($"{scope} 文件栏未使用可见的系统栏位材质宿主");
         bool showsTool = window.Main.IsAnalysisViewVisible
             || window.Main.IsControlViewVisible && window.ControlBar.ExifItemCount > 0;
+        if (window.ToolBackground is not MacMainWindow.MacBarMaterial toolMaterial)
+            throw new InvalidOperationException($"{scope} 工具区缺少系统栏位材质宿主");
         if ((window.ToolBackground.Hidden == showsTool))
             throw new InvalidOperationException($"{scope} 工具区材质出现条件错误：shows={showsTool}, hidden={window.ToolBackground.Hidden}");
+        VerifyBarMaterial(fileMaterial, $"{scope} 文件栏");
         if (showsTool)
         {
+            VerifyBarMaterial(toolMaterial, $"{scope} 工具区");
             RequireFrame(window.ToolBackground.Frame, ToRect(panes.ControlBackground), $"{scope} 工具区材质宿主未铺满共同区域");
             if (window.ToolDivider.Hidden) throw new InvalidOperationException($"{scope} 工具区缺少朝主图外边界");
             var divider = window.ToolDivider.Frame;
@@ -371,7 +380,37 @@ internal static class NativeMainLayoutAcceptance
         if (!showsTool && window.Main.IsControlViewVisible
             && window.ControlBar.GroupKinds.Any(kind => kind is not (ControlBarGroupKind.Rating or ControlBarGroupKind.Command)))
             throw new InvalidOperationException($"{scope} 无 EXIF 与分析栏时控制栏仍带其他分组：{string.Join(",", window.ControlBar.GroupKinds)}");
-        observations.Add($"{scope}: 文件栏材质={fileMaterial.Material}, 工具区材质出现={showsTool}");
+        observations.Add($"{scope}: 文件栏材质=窗口内背景模糊+深灰色层, 工具区材质出现={showsTool}");
+    }
+
+    /// <summary>SHELL-12：仅以公开背景滤镜模糊栏位下面的窗口内容，深灰色填在其上。</summary>
+    private static void VerifyBarMaterial(MacMainWindow.MacBarMaterial material, string context)
+    {
+        using var key = new Foundation.NSString("backgroundFilters");
+        if (material.ValueForKey(key) is not Foundation.NSArray filters || filters.Count != 1
+            || filters.GetItem<CoreImage.CIGaussianBlur>(0) is not { } blur
+            || Math.Abs((double)blur.Radius - DesignTokens.ShellBarBlurRadiusMac) > .01
+            || material.Layer?.MasksToBounds != true)
+            throw new InvalidOperationException($"{context}栏位缺少受边界约束的背景模糊");
+        var expected = MacMainWindow.MacBarMaterial.OverlayColor
+            .UsingColorSpace(NSColorSpace.SRGBColorSpace)?.CGColor.Components;
+        var actual = material.Layer.BackgroundColor?.Components;
+        if (expected == null || actual == null || actual.Length != expected.Length
+            || actual.Zip(expected).Any(pair => Math.Abs((double)(pair.First - pair.Second)) > .004))
+            throw new InvalidOperationException($"{context}色层颜色不符：{material.Layer.BackgroundColor}");
+    }
+
+    /// <summary>TOOLBAR-10：主屏玻璃常态底材染白色，不透明度取共享令牌。</summary>
+    private static void RequireGlassTint(NSGlassEffectView glass, string context)
+    {
+        var expected = MacDesignColors.Argb(DesignTokens.ColorToolbarButtonTint, DesignTokens.ShellGlassButtonTintOpacityMac)
+            .UsingColorSpace(NSColorSpace.SRGBColorSpace)?.CGColor.Components;
+        var actual = glass.TintColor?.UsingColorSpace(NSColorSpace.SRGBColorSpace)?.CGColor.Components;
+        if (expected == null || actual == null || actual.Length < 4 || expected.Length < 4)
+            throw new InvalidOperationException($"{context}玻璃染色无法换算到 sRGB");
+        for (int channel = 0; channel < 4; channel++)
+            if (Math.Abs((double)actual[channel] - (double)expected[channel]) > .004)
+                throw new InvalidOperationException($"{context}玻璃染色不符：{glass.TintColor}");
     }
 
     /// <summary>

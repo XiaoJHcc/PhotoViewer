@@ -1,6 +1,7 @@
 import baseTokens, { platformTokens } from "../tokens.g.js";
 
-const PROFILE_PLATFORM = { web: "web", mac: "macos" };
+// Web 参考壳的 mac 配置档只切换窗口装饰几何；材质仍取同一条 Web 配方（SHELL-12@web、TOOLBAR-10@web）。
+const PROFILE_PLATFORM = { web: "web", mac: "web" };
 
 export function createTokens(profile = "web") {
     const platform = PROFILE_PLATFORM[profile];

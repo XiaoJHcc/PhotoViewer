@@ -16,13 +16,16 @@ public static class NativeSnapshots
     }
 
     /// <summary>由系统合成器截取指定窗口，包含 Metal、原生材质与滚动内容；需要屏幕录制权限。</summary>
-    public static void SaveMain(MacMainWindow window, string path)
+    public static void SaveMain(MacMainWindow window, string path) => SaveWindow(window.Window, path);
+
+    /// <summary>由系统合成器截取指定窗口，保留系统玻璃染色与合成结果；需要屏幕录制权限。</summary>
+    public static void SaveWindow(NSWindow window, string path)
     {
         var start = new ProcessStartInfo("/usr/sbin/screencapture") { UseShellExecute = false };
         start.ArgumentList.Add("-o");
         start.ArgumentList.Add("-x");
         start.ArgumentList.Add("-l");
-        start.ArgumentList.Add(window.Window.WindowNumber.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        start.ArgumentList.Add(window.WindowNumber.ToString(System.Globalization.CultureInfo.InvariantCulture));
         start.ArgumentList.Add(path);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("系统窗口截屏无法启动");
         if (!process.WaitForExit(5000))

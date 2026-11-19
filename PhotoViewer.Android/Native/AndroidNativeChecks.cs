@@ -1274,6 +1274,19 @@ internal static partial class AndroidNativeChecks
 
     private static bool Near(double a, double b) => Math.Abs(a - b) < .6;
 
+    /// <summary>主屏按钮常态底材的期望色（验收按 Android 平台令牌独立计算，不读实现常量）。</summary>
+    private static Color ExpectedGlassButtonFill()
+        => TokenLayer(DesignTokens.ColorToolbarButtonTint, DesignTokens.ShellGlassButtonTintOpacityAndroid);
+
+    /// <summary>主屏栏底色层的期望色（验收按 Android 平台令牌独立计算）。</summary>
+    private static Color ExpectedBarOverlay()
+        => TokenLayer(DesignTokens.ColorBarOverlayAndroid, DesignTokens.ShellBarOverlayOpacityAndroid);
+
+    /// <summary>令牌颜色按不透明度合成 alpha（验收期望值）。</summary>
+    private static Color TokenLayer(uint argb, double opacity) => Color.Argb(
+        (int)Math.Round(255 * opacity),
+        (int)((argb >> 16) & 0xFF), (int)((argb >> 8) & 0xFF), (int)(argb & 0xFF))!;
+
     /// <summary>当前检查模式是否包含某一组检查。</summary>
     private static bool Wants(string group) => _mode == group || _mode == "all";
 
