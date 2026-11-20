@@ -17,7 +17,7 @@ namespace PhotoViewer.Windows.Native;
 /// 宽形态外壳的静态几何验收(SHELL-01、SHELL-11、SHELL-12、TOOLBAR-02/03、FILTER-07):主图视图铺满窗口、
 /// 适应区让到文件栏与工具区栏缘、交换链内亚克力区段与工具区背景出现条件、控制栏按钮与星级胶囊外形、筛选控件形态;
 /// 每个组合另存一张真实窗口截图供目视复核(屏幕取样,包含交换链与 XAML 合成后的结果)。
-/// 另在真实照片上回读交换链内栏底的灰度响应,作为亚克力配方的数值回归。
+/// 另在真实照片上回读交换链内栏底的灰度响应,并按屏幕读数量标题栏合成材质的亮度,作为亚克力配方的数值回归。
 /// </summary>
 internal sealed partial class WindowsMainWindow
 {
@@ -214,7 +214,8 @@ internal sealed partial class WindowsMainWindow
     }
 
     /// <summary>
-    /// SHELL-12:让实际打开的黑、灰、白照片覆盖整个视口,回读文件栏的亚克力亮度。
+    /// SHELL-12:让实际打开的黑、灰、白照片覆盖整个视口,回读文件栏的亚克力亮度(GPU 回读,区段在交换链里);
+    /// 标题栏亚克力改由合成材质绘制,交换链里没有区段,亮度取真实窗口空白处的屏幕读数。
     /// </summary>
     /// <param name="checks">通过项收集器。</param>
     /// <returns>检查完成后的任务。</returns>
@@ -228,6 +229,7 @@ internal sealed partial class WindowsMainWindow
         var filmstrip = _main.IsThumbnailViewVisible;
         var windowSize = AppWindow.Size;
         var samples = new List<string>(3);
+        var titleSamples = new List<string>(3);
         try
         {
             _main.Settings.LayoutMode = LayoutMode.Col;
@@ -273,15 +275,39 @@ internal sealed partial class WindowsMainWindow
                     && Math.Abs(actual.Item3 - expected) < 0.02, $"文件栏在灰度 {level} 上的亮度偏离配方: {actual} vs {expected:0.###}");
                 var gray = (int)Math.Round(actual.Item2 * 255);
                 samples.Add($"{level}=#{gray:X2}{gray:X2}{gray:X2}");
+
+                SimulateTitleBarPointerForAcceptance(true, 4);
+                _root.UpdateLayout();
+                await Task.Delay(ScreenSampleSettleMs);
+                RequireSmoke(_titleBarMaterial is { IsVisible: true },
+                    $"灰度 {level}:标题栏没有走合成材质路径(WindowsTitleBarBackdrop 不可见)");
+                RequireSmoke(!HasTitleBarSwapChainRegion(),
+                    $"灰度 {level}:标题栏背景仍画在主图交换链上: [{string.Join("; ", _photo.BackdropRegions)}]");
+                // 标题栏由合成材质绘制,交换链里没有区段可回读;取窗口内标题栏空白处(65% 宽、栏高中线,
+                // 避开贴左缘的标题文字与最右 4 × 46 的窗口按钮)的屏幕读数。
+                var titleSample = new Rect((_root.ActualWidth * 0.65) - (ScreenSampleSize / 2),
+                    (WindowsLayout.TitleBarHeight / 2) - (ScreenSampleSize / 2), ScreenSampleSize, ScreenSampleSize);
+                RequireSmoke(TrySampleScreenAverage(titleSample, out var titleColor),
+                    $"灰度 {level}:标题栏屏幕取样失败: {titleSample}");
+                var red = (int)Math.Round(titleColor.R * 255);
+                var green = (int)Math.Round(titleColor.G * 255);
+                var blue = (int)Math.Round(titleColor.B * 255);
+                int target = level switch { 0 => 0x32, 128 => 0x4C, _ => 0x65 };
+                var hex = $"#{red:X2}{green:X2}{blue:X2}";
+                RequireSmoke(Math.Abs(red - target) <= 3 && Math.Abs(green - target) <= 3 && Math.Abs(blue - target) <= 3,
+                    $"SHELL-02 标题栏在灰度 {level} 上偏离中性灰目标: {hex} vs #{target:X2}{target:X2}{target:X2}");
+                titleSamples.Add($"{level}={hex}");
             }
 
             checks.Add($"PASS SHELL-12 file sidebar luminance (sRGB GPU readback): {string.Join(" ", samples)};"
                 + $" luminosityOpacity={recipe.LuminosityOpacity:0.###}");
+            checks.Add($"PASS SHELL-02 title bar luminance (screen readback of the composed acrylic): {string.Join(" ", titleSamples)}");
         }
         finally
         {
             _main.Settings.LayoutMode = layout;
             _main.IsThumbnailViewVisible = filmstrip;
+            SimulateTitleBarPointerForAcceptance(false, WindowsLayout.TitleBarHotZoneHeight + 40);
             AppWindow.Resize(windowSize);
             _root.UpdateLayout();
             _photo.FitToView();

@@ -40,7 +40,7 @@ internal interface ISwapChainPanelNativeWinUI
 
 /// <summary>
 /// 交换链内亚克力的配方:WinUI <c>AcrylicBrush</c> 的运行时取值(<c>TintColor</c> / <c>TintOpacity</c> /
-/// <c>TintLuminosityOpacity</c> / <c>FallbackColor</c>),亮度层不透明度受设计令牌限制,栏位背景、标题栏与浮动按钮衬底共用同一份。
+/// <c>TintLuminosityOpacity</c> / <c>FallbackColor</c>),栏位背景和浮动按钮衬底的亮度层不透明度受设计令牌限制。
 /// </summary>
 internal readonly struct AcrylicBackdropRecipe
 {
@@ -147,7 +147,8 @@ internal readonly struct AcrylicBackdropRecipe
 /// </summary>
 /// <param name="Bounds">区域(本视图 DIP 坐标)。</param>
 /// <param name="CornerRadius">圆角半径(DIP);0 表示直角矩形。</param>
-internal readonly record struct BackdropRegion(Rect Bounds, double CornerRadius);
+/// <param name="IsTitleBar">标题栏采用独立校准的亮度层。</param>
+internal readonly record struct BackdropRegion(Rect Bounds, double CornerRadius, bool IsTitleBar = false);
 
 /// <summary>
 /// GPU 照片表面(阶段 W-M1/W-M2):D3D11 + DXGI 合成翻转链(<c>R16G16B16A16_FLOAT</c>),
@@ -1386,7 +1387,7 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
         long total = _current?.Bytes ?? 0;
         foreach (var entry in _recentTextures) total += entry.Bytes;
         total += _spareTexture?.Bytes ?? 0;
-        total += _backdropBytes;
+        total += _backdropBytes + TitleBarSourceBytes;
         total += _stagedUpload?.Bytes ?? 0;
         Interlocked.Exchange(ref _gpuBytes, total);
     }
@@ -1523,6 +1524,7 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
         DisposeOutputColor();
         Interlocked.Exchange(ref _gpuBytes, 0);
         _renderTarget?.Dispose();
+        ReleaseTitleBarSource();
         _swapChain.Dispose();
         _noiseView?.Dispose();
         _noiseTexture?.Dispose();
@@ -1663,6 +1665,7 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
         if (_disposed || _renderTarget == null) return;
         long started = Stopwatch.GetTimestamp();
         RenderScene();
+        CopyTitleBarSource();
         double renderMs = WindowsUploadStats.Elapsed(started);
         long presentStarted = Stopwatch.GetTimestamp();
         _swapChain.Present(1, 0);
@@ -1714,7 +1717,9 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
     /// </summary>
     /// <param name="regions">区段列表(本视图 DIP 坐标);空列表表示不画背板,宽高不超过 0.5 的项忽略。</param>
     /// <param name="recipe">亚克力配方(主题画刷的运行时取值)。</param>
-    public void SetBackdropRegions(IReadOnlyList<BackdropRegion> regions, AcrylicBackdropRecipe recipe)
+    /// <param name="refreshTitleBarSource">是否需要为新的标题栏取样表面提交一帧。</param>
+    public void SetBackdropRegions(IReadOnlyList<BackdropRegion> regions, AcrylicBackdropRecipe recipe,
+        bool refreshTitleBarSource = false)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var kept = new List<BackdropRegion>(regions.Count);
@@ -1725,7 +1730,11 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
         }
 
         var next = kept.ToArray();
-        if (RegionsEqual(_backdropRegions, next) && recipe.NearlyEquals(_backdropRecipe)) return;
+        if (RegionsEqual(_backdropRegions, next) && recipe.NearlyEquals(_backdropRecipe))
+        {
+            if (refreshTitleBarSource) Draw();
+            return;
+        }
 
         _backdropRegions = next;
         _backdropRecipe = recipe;
@@ -1778,15 +1787,11 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
             _context.Object.OMSetRenderTargets(0, null, null);
             _context.Object.PSSetShaderResources(0, 1, NoShaderResources);
 
-            // 配方与噪点对各段都一样,先写一次(逐段只改 0–15 号槽与圆角半径)。
+            // WinUI 颜色混合、回退色和噪点在各段保持一致;标题栏只单独校准亮度层。
             _bandParameterData[16] = recipe.Tint.R;
             _bandParameterData[17] = recipe.Tint.G;
             _bandParameterData[18] = recipe.Tint.B;
             _bandParameterData[19] = recipe.TintOpacity;
-            _bandParameterData[20] = recipe.Tint.R;
-            _bandParameterData[21] = recipe.Tint.G;
-            _bandParameterData[22] = recipe.Tint.B;
-            _bandParameterData[23] = recipe.HasLuminosityLayer ? recipe.LuminosityOpacity : 0f;
             _bandParameterData[24] = recipe.FallbackLinear.R;
             _bandParameterData[25] = recipe.FallbackLinear.G;
             _bandParameterData[26] = recipe.FallbackLinear.B;
@@ -1815,6 +1820,13 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
                 int right = Math.Clamp((int)Math.Round((bounds.X + bounds.Width) * scale), 0, viewportWidth);
                 int bottom = Math.Clamp((int)Math.Round((bounds.Y + bounds.Height) * scale), 0, viewportHeight);
                 if (right <= left || bottom <= top) continue;
+
+                var luminosityGray = WindowsTitleBar.LuminosityTint;
+                _bandParameterData[20] = region.IsTitleBar ? luminosityGray : recipe.Tint.R;
+                _bandParameterData[21] = region.IsTitleBar ? luminosityGray : recipe.Tint.G;
+                _bandParameterData[22] = region.IsTitleBar ? luminosityGray : recipe.Tint.B;
+                _bandParameterData[23] = !recipe.HasLuminosityLayer ? 0f : region.IsTitleBar
+                    ? WindowsTitleBar.LuminosityOpacity : recipe.LuminosityOpacity;
 
                 // 模糊会带进邻域:逻辑源区按 3σ 外扩;真实像素只取视口内那部分,视口外由钳位寻址取最近的边缘像素。
                 float sigma = (float)(WindowsLayout.TitleBarBackdropBlurAmount * scale);

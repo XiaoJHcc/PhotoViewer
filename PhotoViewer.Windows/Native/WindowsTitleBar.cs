@@ -24,6 +24,9 @@ internal sealed class WindowsTitleBar
     /// <summary>WinUI 应用内亚克力主题画刷(深色主题),列布局与文件栏隐藏时铺在标题栏后面。</summary>
     private const string AcrylicBackgroundBrushKey = "AcrylicInAppFillColorDefaultBrush";
 
+    internal const float LuminosityOpacity = (float)DesignTokens.ShellTitlebarAcrylicLuminosityOpacity;
+    internal const float LuminosityTint = (DesignTokens.ShellTitlebarAcrylicLuminosityTint & 0xFF) / 255f;
+
     /// <summary>WinUI 悬停底色主题画刷。</summary>
     private const string HoverBackgroundBrushKey = "SubtleFillColorSecondaryBrush";
 
@@ -165,7 +168,7 @@ internal sealed class WindowsTitleBar
     /// <summary>标题文字元素(验收核对样式、截断与可用宽)。</summary>
     internal TextBlock TitleElement => _title;
 
-    /// <summary>覆盖层左缘在窗口内容内的偏移(列布局 = 文件栏右缘)。</summary>
+    /// <summary>覆盖层左缘在窗口内容内的偏移。</summary>
     public double Left => _root.Margin.Left;
 
     /// <summary>窗口按钮,从左到右为全屏、最小化、最大化、关闭。</summary>
@@ -192,7 +195,7 @@ internal sealed class WindowsTitleBar
     }
 
     /// <summary>
-    /// 按当前布局设置跨度与背景:列布局从文件栏右缘起,行布局悬停形态整宽无背景,
+    /// 按当前布局设置跨度与主题回退背景:列布局覆盖文件栏,行布局悬停形态整宽无背景,
     /// 窄宽度常驻栏与文件栏隐藏时整宽带亚克力。
     /// <paramref name="photoBand"/> 是主图渲染器已经画好亚克力的区段(覆盖层坐标),该处 XAML 背景让空:
     /// SwapChainPanel 不能给 <c>AcrylicBrush</c> 取样,只有交换链内的那一份才有真实的模糊。

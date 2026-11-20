@@ -627,7 +627,7 @@ public static class DesignTokens
     public const double ShellDividerThickness = 1.0;
     /// <summary>shell.filebar.content.width（pt） SHELL-01：文件栏内容宽（筛选条与胶片栏共用，分隔线另计 1）。</summary>
     public const double ShellFilebarContentWidth = 116.0;
-    /// <summary>shell.filter.leadingInset（pt） SHELL-02：仅 macOS 列布局筛选条首控件顶边让位 = shell.titlebar.height + filter.margin（避开标题栏与交通灯）；iOS/Android 使用真实安全区与普通 filter.margin。行布局整组居中，Android 仅在自然宽度溢出时前导起排并滚动。</summary>
+    /// <summary>shell.filter.leadingInset（pt） SHELL-02：Windows 与 macOS 列布局筛选条首控件顶边让位 = shell.titlebar.height + filter.margin（避开标题栏与窗口控件）；iOS/Android 使用真实安全区与普通 filter.margin。行布局整组居中，Android 仅在自然宽度溢出时前导起排并滚动。</summary>
     public const double ShellFilterLeadingInset = 42.0;
     /// <summary>shell.glass.button.size（pt） SHELL-08：圆玻璃按钮与合体按钮每段的边长；同时保证 44×44 的最小命中区。</summary>
     public const double ShellGlassButtonSize = 44.0;
@@ -647,6 +647,10 @@ public static class DesignTokens
     public const double ShellPhoneEdgeMargin = 16.0;
     /// <summary>shell.phone.rowInset（pt） SHELL-11：手机形态行到安全区/栏缘的间距，也是栏背景超出元素的余量。</summary>
     public const double ShellPhoneRowInset = 8.0;
+    /// <summary>shell.titlebar.acrylic.luminosityOpacity（ratio） SHELL-02：Windows 标题栏亚克力的独立亮度层不透明度，按 macOS 标题栏的满窗黑灰白响应校准。</summary>
+    public const double ShellTitlebarAcrylicLuminosityOpacity = 0.77;
+    /// <summary>shell.titlebar.acrylic.luminosityTint（color） SHELL-02：Windows 标题栏亮度层的中性灰基准，不改变 WinUI 主题画刷的颜色混合层；与栏底配方独立。</summary>
+    public const uint ShellTitlebarAcrylicLuminosityTint = 0xFF454545u;
     /// <summary>shell.titlebar.backdrop.blurAmount（pt） SHELL-02：Windows 主图渲染器在标题栏下绘制亚克力时的高斯模糊标准差（与 WinUI AcrylicBrush 的 BlurAmount 同值，按物理倍率换算到像素）。</summary>
     public const double ShellTitlebarBackdropBlurAmount = 30.0;
     /// <summary>shell.titlebar.button.glyphSize（pt） SHELL-02：Windows 窗口按钮 Segoe Fluent Icons 字形字号。</summary>

@@ -72,6 +72,7 @@
     <ItemGroup>
         <PackageReference Include="Microsoft.WindowsAppSDK" />
         <PackageReference Include="Microsoft.WindowsAppSDK.ML" ExcludeAssets="all" />
+        <PackageReference Include="Microsoft.Graphics.Win2D" />
         <PackageReference Include="CommunityToolkit.WinUI.Controls.SettingsControls" />
         <PackageReference Include="DirectNStandard" />
         <PackageReference Include="LibHeifSharp" />

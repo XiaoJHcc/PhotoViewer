@@ -97,8 +97,17 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
 - **SHELL-02**：悬停标题栏、行布局窄宽度常驻栏与拖动区。常驻回退（筛选挖空与窗口控制器区间相交）、挖空与背景的判定在共享 `PhotoViewer.Shared/TitleBarLayout.cs`，各端只提供筛选可点控件与窗口控制器的实际水平范围。
   - macOS：`PhotoViewer.Mac/Native/MacMainWindow.cs` 窗口 `FullSizeContentView` + 隐藏系统标题文字，交通灯保持系统位置；顶边监视器驱动 `SetTitlebarVisible`，`Layout` 按 Zoom 按钮右缘与筛选组左缘判定是否回退，常驻时给共享分区结果统一加 32 点纵向偏移并排布全宽 `DragZone` / `TitlebarBackdrop`（`NSVisualEffectView`，`Titlebar` 材质、窗口内混合、命中透传）与标题标签（`titleBarFont`，按 Zoom 按钮右缘与中线定位）；`HandleTitlebarDoubleClick` 按 `AppleActionOnDoubleClick` 分派。
   - Windows：`PhotoViewer.Windows/Native/WindowsTitleBar.cs`（标题文字、`AcrylicInAppFillColorDefaultBrush` 背景、四个 46×32 自绘窗口按钮与状态字形）+ `WindowsMainWindow.cs` 的 `ConfigureTitleBar`（`SetBorderAndTitleBar(true, false)`）、`RefreshTitleBarVisibility`（内容区与非客户区指针事件、拖动循环）、`UpdateTitleBarChrome`/`BuildCaptionRects`（筛选组与按钮相交判定、行宿主顶部让位、跨度、背景、筛选挖空与 `InputNonClientPointerSource` caption 登记）。隐藏或全屏时登记一条零面积 caption：清空区域会让 WinAppSDK 退回整幅宽默认拖动带。动态标题同时写 `Window.Title` 与标题栏文字。`icon.ico` 随普通输出复制并随单文件解包，激活后由 `AppWindow.SetIcon` 设置为真实窗口图标，供任务栏悬停浮窗读取。
-  - **SHELL-02@win**：自绘最大化按钮不提供系统贴靠布局浮层。材质为 WinUI 应用内亚克力主题画刷 `AcrylicInAppFillColorDefaultBrush`（深色）；窗口按钮悬停/按下底色取 `SubtleFillColorSecondaryBrush` / `SubtleFillColorTertiaryBrush`，Segoe Fluent 字形：最大化 `E922` ↔ 还原 `E923`、全屏 `E740` ↔ 退出全屏 `E73F`、最小化 `E921`、关闭 `E8BB`。WinUI 3 的 `SwapChainPanel` 不支持 `AcrylicBrush` 背板取样（XAML 亚克力在主图上只剩 `FallbackColor` 纯色），而主图视图铺满窗口，所以标题栏背景（含窄宽度常驻栏）整段由 `WindowsPhotoView.SetBackdropRegions` 在交换链内按同一配方绘制：高斯模糊（标准差 `shell.titlebar.backdrop.blurAmount`）→ 亮度混合 → 颜色混合（参数取该画刷运行时的 `TintColor` / `TintOpacity` / `TintLuminosityOpacity`，仅亮度层受 SHELL-12@win 的上限约束，均在 sRGB 编码值上）→ WinUI 随包噪点纹理 2%；标题栏区段排在栏位区段之后最后绘制，XAML 不再铺亚克力分段。
+  - **SHELL-02@win**：自绘最大化按钮不提供系统贴靠布局浮层。窗口按钮悬停/按下底色取 `SubtleFillColorSecondaryBrush` / `SubtleFillColorTertiaryBrush`，Segoe Fluent 字形：最大化 `E922` ↔ 还原 `E923`、全屏 `E740` ↔ 退出全屏 `E73F`、最小化 `E921`、关闭 `E8BB`。标题栏背景在窗口内容（含文件栏、工具区及控件）之上，在标题文字和窗口按钮之下；列布局覆盖文件栏，行布局宽窗的无背景挖空和窄窗的常驻让位保持原规则。`SwapChainPanel` 不进入 WinUI 的 `CompositionVisualSurface` 取样，因此在 GPU 内复制视口顶部所需条带（照片和已合成的栏底）加入窗口内容的可视化取样，再对合成结果做高斯模糊，叠加独立校准的中性灰亮度层和 `AcrylicInAppFillColorDefaultBrush`（深色）的运行时色调层。不读屏、不创建独立窗口；系统合成路径不可用时略过 XAML 前景取样，回退到交换链内模糊并保留标题栏独立亮度。
   - **SHELL-02@mac**：材质为 `NSVisualEffectView`（`Titlebar` 材质、窗口内混合、深色外观），标题文字 `titleBarFont`。
+
+  **SHELL-02 标题栏校准锚点（sRGB）**：取满窗纯色照片上方、没有其他控件或栏位影响的空白带内区域。Windows 只调标题栏的亮度层（`shell.titlebar.acrylic.luminosityTint`、`shell.titlebar.acrylic.luminosityOpacity`），不改 SHELL-12@win 的栏底或按钮配方。Windows 实测取自 SDR 窗口合成画面。
+
+  | 满窗照片 | macOS 实测 | Windows 中性灰目标 | Windows 实测 |
+  |---|---|---|---|---|
+  | `#000000` | `#303232` | `#323232` | `#333333` |
+  | `#808080` | `#4A4C4C` | `#4C4C4C` | `#4C4C4C` |
+  | `#FFFFFF` | `#646565` | `#656565` | `#656565` |
+
   - iOS：根控制器隐藏状态栏（`PrefersStatusBarHidden`），窗口级入口由主图长按菜单承担。
   - Android：`Theme.PhotoViewer.Native` 固定深色、edge-to-edge + insets，无标题栏双击语义；横屏资源主题从启动画面起隐藏状态栏，`AndroidSystemBars` 在 Bootstrap 与原生 Activity 中按方向隐藏/恢复，根视图继续按真实 insets 排布。
   - **SHELL-02@ios / @android**：无窗口装饰与标题栏双击语义，属平台差异。

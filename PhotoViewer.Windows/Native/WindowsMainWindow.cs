@@ -50,6 +50,11 @@ internal sealed partial class WindowsMainWindow : Window
     private readonly WindowsNavigator _navigator;
     private readonly WindowsFilmstripView _filmstrip;
     private readonly WindowsFilterBar _filterBar;
+    private readonly Grid _titleBarCaptureContent = new();
+    private readonly Grid _titleBarPhotoSource = new() { IsHitTestVisible = false };
+    private readonly Grid _titleBarMaterialHost = new() { IsHitTestVisible = false };
+    private WindowsTitleBarBackdrop? _titleBarMaterial;
+    private bool _titleBarMaterialFailed;
     private readonly WindowsControlBar _controlBar;
 #if PHOTOVIEWER_DINO
     private readonly WindowsSimilarityPanel _similarity;
@@ -102,6 +107,7 @@ internal sealed partial class WindowsMainWindow : Window
     private bool _layingOut;
     private bool _shellLayoutPending;
     private Rect _fitArea;
+    /// <summary>列布局文件栏右缘(含相似面板扩宽与分隔线);标题栏不再从这里起,只供文件栏亚克力区段与验收使用。</summary>
     private double _fileBarRight;
     private bool _toolBackgroundVisible;
     private LayoutRect _fileBackdrop;
@@ -241,6 +247,8 @@ internal sealed partial class WindowsMainWindow : Window
         // SHELL-11：主图视图恒铺满整个窗口，栏位浮在其上；照片在适应区内适应，放大后可越过栏缘。
         _photoHost = new Grid { Background = new SolidColorBrush(WindowsLayout.ViewerBackground) };
         _photoHost.Children.Add(_photo);
+        // 取样副本补足 VisualSurface 看不到的交换链像素，上方的 XAML 仍按原顺序叠合。
+        _photoHost.Children.Add(_titleBarPhotoSource);
         _photoHost.Children.Add(_highlightLayer);
         _photoHost.Children.Add(_fitOverlay);
 
@@ -280,13 +288,15 @@ internal sealed partial class WindowsMainWindow : Window
         };
         _ratingSources = new WindowsRatingSourcesFlyout(main, _root, () => WindowsWorkArea.VisibleBoundsIn(_root, this));
         _filterBar.PopupOpening += _ratingSources.Close;
-        _root.Children.Add(_photoHost);
-        _root.Children.Add(_filePane);
-        _root.Children.Add(_fileDivider);
-        _root.Children.Add(_toolHitArea);
-        _root.Children.Add(_analysis);
-        _root.Children.Add(_controlBar);
-        _root.Children.Add(_controlDivider);
+        _titleBarCaptureContent.Children.Add(_photoHost);
+        _titleBarCaptureContent.Children.Add(_filePane);
+        _titleBarCaptureContent.Children.Add(_fileDivider);
+        _titleBarCaptureContent.Children.Add(_toolHitArea);
+        _titleBarCaptureContent.Children.Add(_analysis);
+        _titleBarCaptureContent.Children.Add(_controlBar);
+        _titleBarCaptureContent.Children.Add(_controlDivider);
+        _root.Children.Add(_titleBarCaptureContent);
+        _root.Children.Add(_titleBarMaterialHost);
         _root.Children.Add(_titleBar.Root);
         Content = _root;
 
@@ -403,6 +413,7 @@ internal sealed partial class WindowsMainWindow : Window
         _filterBar.Detach();
         _controlBar.Detach();
         _session.Dispose();
+        _titleBarMaterial?.Dispose();
         _photo.Dispose();
     }
 
@@ -1398,8 +1409,9 @@ internal sealed partial class WindowsMainWindow : Window
 
     /// <summary>
     /// 标题栏跨度、背景与标题可用宽(SHELL-02):常驻与否由 <see cref="LayoutShell"/> 按共享判定得出;
-    /// 行布局悬停形态整宽无背景并挖空筛选控件,列布局与文件栏隐藏时铺亚克力。
-    /// 主图视图铺满窗口,标题栏背景整段由主图交换链绘制(SwapChainPanel 取不到 AcrylicBrush 背板)。
+    /// 跨度恒为整个窗口宽——列布局也整宽盖住文件栏(筛选条已按 shell.filter.leadingInset 让开 caption),铺深色亚克力;
+    /// 行布局悬停形态整宽无背景并挖空筛选控件,窄宽度常驻栏与文件栏隐藏时整宽带亚克力。
+    /// 主图视图铺满窗口；标题栏背景优先在内容之上单独合成。
     /// </summary>
     private void UpdateTitleBarChrome()
     {
@@ -1416,7 +1428,7 @@ internal sealed partial class WindowsMainWindow : Window
 
         var fileBarVisible = _main.IsThumbnailViewVisible;
         var persistent = _isTitleBarPersistent;
-        var left = fileBarVisible && !_isRowLayout ? _fileBarRight : 0;
+        var left = 0.0;
         var width = Math.Max(0, _root.ActualWidth - left);
         var showBackground = TitleBarLayout.HasBackdrop(_isRowLayout, fileBarVisible, persistent);
         var drawsBackdrop = _titleBar.IsVisible && showBackground && _titleBar.HasBackdropRecipe && width > 0;
@@ -1441,7 +1453,7 @@ internal sealed partial class WindowsMainWindow : Window
 
     /// <summary>
     /// 交换链内亚克力区段(SHELL-02、SHELL-12):先文件栏(含分隔线)与工具区背景,只剩评分与命令时改为
-    /// 各控件自身的圆形/胶囊衬底;标题栏最后画,叠在其下区段之上。配方取标题栏主题画刷的运行时值。
+    /// 各控件自身的圆形/胶囊衬底。仅在标题栏合成路径不可用时，把其背景加为最后一个区段。
     /// </summary>
     private void UpdateBackdropRegions()
     {
@@ -1471,12 +1483,49 @@ internal sealed partial class WindowsMainWindow : Window
             }
         }
 
-        if (_titleBarBackdrop is { } band)
+        var composed = TryUpdateTitleBarMaterial(out bool refreshSource);
+        if (!composed && _titleBarBackdrop is { } band)
         {
-            regions.Add(new BackdropRegion(band, 0));
+            regions.Add(new BackdropRegion(band, 0, IsTitleBar: true));
         }
 
-        _photo.SetBackdropRegions(regions, _titleBar.BackdropRecipe);
+        _photo.SetBackdropRegions(regions, _titleBar.BackdropRecipe, refreshSource);
+    }
+
+    private bool TryUpdateTitleBarMaterial(out bool refreshSource)
+    {
+        refreshSource = false;
+        if (_titleBarBackdrop is not { } band || _titleBarMaterialFailed || _photo.TitleBarSourceFailed)
+        {
+            if (_titleBarMaterial is { IsVisible: true }) _titleBarMaterial.Hide();
+            _photo.ReleaseTitleBarSource();
+            return false;
+        }
+
+        try
+        {
+            _titleBarMaterial ??= new WindowsTitleBarBackdrop(_titleBarCaptureContent, _titleBarPhotoSource,
+                _titleBarMaterialHost, _titleBar.BackdropRecipe);
+            var scale = _root.XamlRoot?.RasterizationScale ?? 1;
+            var captureHeight = Math.Min(_root.ActualHeight, band.Height + 3 * WindowsLayout.TitleBarBackdropBlurAmount);
+            var source = _photo.PrepareTitleBarSource(_titleBarMaterial.Compositor, (int)Math.Ceiling(captureHeight * scale));
+            if (source is null)
+            {
+                if (_titleBarMaterial.IsVisible) _titleBarMaterial.Hide();
+                return false;
+            }
+
+            refreshSource = _titleBarMaterial.SetSource(source, (float)band.Width, (float)captureHeight, (float)band.Height);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _titleBarMaterialFailed = true;
+            _titleBarMaterial?.Hide();
+            _photo.ReleaseTitleBarSource();
+            NativeStartupLog.Fail("title bar composition", ex);
+            return false;
+        }
     }
 
     /// <summary>
@@ -1747,6 +1796,8 @@ internal sealed partial class WindowsMainWindow : Window
     /// <summary>主图渲染状态变化:导航图与细节预览绿框一起跟随缩放/平移。</summary>
     private void OnPhotoRenderStateChanged()
     {
+        if (_photo.TitleBarSourceFailed && _titleBarMaterial is { IsVisible: true })
+            _root.DispatcherQueue.TryEnqueue(UpdateBackdropRegions);
         UpdateNavigator();
         UpdateDetailHighlight();
     }

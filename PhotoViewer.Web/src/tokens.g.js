@@ -311,6 +311,8 @@ const tokens = Object.freeze({
     "shell.glass.group.gap": 8,
     "shell.phone.edgeMargin": 16,
     "shell.phone.rowInset": 8,
+    "shell.titlebar.acrylic.luminosityOpacity": 0.77,
+    "shell.titlebar.acrylic.luminosityTint": "#454545",
     "shell.titlebar.backdrop.blurAmount": 30,
     "shell.titlebar.button.glyphSize": 10,
     "shell.titlebar.button.width": 46,

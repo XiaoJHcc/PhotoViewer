@@ -19,7 +19,8 @@ namespace PhotoViewer.Windows.Native;
 /// 桌面宽形态是三段合体（FILTER-07）——每段显示当前选项、各自弹出原生单选菜单；
 /// 三段放不下时退化为单一「筛选」胶囊，弹出同一套「排序 / 方向 / 星级」无标题分组菜单。
 /// 计数「共 N 张」固定在控件内部（FILTER-04），不参与段宽，也不单独成为入口。
-/// 几何全部取共享 <see cref="WideFilterLayout"/>：行布局整组居中、列布局固定胶片卡片列宽；
+/// 几何全部取共享 <see cref="WideFilterLayout"/>：行布局整组居中、列布局固定胶片卡片列宽并按
+/// <see cref="DesignTokens.ShellFilterLeadingInset"/> 让开整宽标题栏的 caption 区；
 /// AI 版末位另有相似聚类开关（FILTER-06），标准版不创建也不留空槽（EDITION-02）。
 /// </summary>
 internal sealed class WindowsFilterBar : Panel
@@ -240,7 +241,9 @@ internal sealed class WindowsFilterBar : Panel
 
     /// <summary>
     /// 计算当前宽度下的形态与矩形（纯计算，布局与验收共用）。
-    /// 列布局的前导让位取 <see cref="MainScreenLayout.FilterMargin"/>：Windows 的标题栏不覆盖文件栏。
+    /// 列布局的前导让位取 <see cref="DesignTokens.ShellFilterLeadingInset"/>：标题栏在列布局整宽盖住文件栏，
+    /// 首控件按标题栏高加 filter.margin 让开 caption；行布局整组仍从 <see cref="MainScreenLayout.FilterMargin"/> 起排。
+    /// 该让位计入主轴长度，胶片栏与列布局相似面板据此自然下移。
     /// </summary>
     /// <param name="row">是否行布局。</param>
     /// <param name="contentWidth">文件栏内容区宽度。</param>
@@ -249,7 +252,8 @@ internal sealed class WindowsFilterBar : Panel
     {
         var (sortWidth, orderWidth, ratingWidth) = NaturalSegmentWidths();
         double capsuleWidth = FilmCardGeometry.Width(FilmCardTier.Large);
-        return WideFilterLayout.Compute(row, contentWidth, capsuleWidth, MainScreenLayout.FilterMargin,
+        double leadingInset = row ? MainScreenLayout.FilterMargin : DesignTokens.ShellFilterLeadingInset;
+        return WideFilterLayout.Compute(row, contentWidth, capsuleWidth, leadingInset,
             sortWidth, orderWidth, ratingWidth, capsuleWidth, ShowsSimilarityToggle, DesignTokens.FilterToggleWidth);
     }
 
@@ -436,7 +440,7 @@ internal sealed class WindowsFilterBar : Panel
     /// <param name="rect">目标矩形。</param>
     private static void MeasureChild(UIElement child, Rect rect) => child.Measure(new Size(rect.Width, rect.Height));
 
-    /// <summary>段间 1 点分隔线：贴段边界，上下按 filter.margin 内缩（TOOLBAR-10）。</summary>
+    /// <summary>段间 1 点分隔线：贴段边界，上下按 filter.margin 内缩（TOOLBAR-10；控件内部竖向内缩，与前导让位无关）。</summary>
     /// <param name="frames">本次落位结果。</param>
     /// <param name="localX">段边界在控件内的横坐标。</param>
     /// <returns>面板坐标矩形。</returns>

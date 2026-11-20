@@ -489,7 +489,8 @@ internal sealed partial class WindowsMainWindow
         CheckWindowIcon();
         await CheckContextMenuIconsAsync();
         CheckCommandTooltips();
-        checks.Add("PASS SHELL-02 backdrop" + _backdropSummary + ": photo renderer draws the title bar acrylic inside the swap chain (blur -> luminosity blend -> color blend from the theme brush recipe), band pixel differs from / keeps the hue of / is darker than the plain photo, restored when hidden, XAML acrylic only outside the photo band, WinUI noise texture loaded, both sides of the photo/XAML seam fade to the same FallbackColor acrylic value, band region PNG exported");
+        checks.Add("PASS SHELL-02 backdrop" + _backdropSummary + ": the title bar acrylic is composed by the XAML compositor (VisualSurface capture of the content stacked over the GPU swap chain -> Gaussian blur with calibrated luminosity and theme tint layers), the swap chain carries no title-bar region, screen readback shows the band pixel differs from / keeps the hue of / is darker than the plain photo and returns when hidden, WinUI noise texture remains on the swap-chain bar layers, foreground probe (white XAML block over the swap-chain bar) darkened when composed and lifting its neighbour by Gaussian spread"
+            + _probeSummary + ", whole-window band screenshot exported");
         checks.Add($"PASS SHELL-02/MENU-06/TOOLBAR-04: hover and persistent title bars, zero caption while hover-hidden, full-width acrylic and 32-DIP row offset at 700 DIP, persistent visibility outside the hot zone and on deactivation, restored hover overlay at 1200 DIP, caption regions ending at the buttons and excluding filter controls only in hover mode, caption text mirrored from folder - file - {AppTitle} title (single-image dedupe), window icon served from icon.ico via WM_GETICON, semantic menu icons including toggles, shared command tooltip format");
     }
 
@@ -546,9 +547,10 @@ internal sealed partial class WindowsMainWindow
     }
 
     /// <summary>
-    /// SHELL-02:主图区段由交换链内的亚克力背板覆盖 —— SwapChainPanel 取不到 AcrylicBrush,
-    /// 所以这里直接读回后台缓冲核对:显示时的带内像素与隐藏时不同、保留照片色相(非中性灰)、更暗,
-    /// 隐藏后回到原始像素;XAML 背景分段不铺到主图区段上。
+    /// SHELL-02:标题栏背板由合成材质绘制 —— 取样树(<see cref="WindowsTitleBarBackdrop"/>)把主图交换链顶部
+    /// 与压在其上的 XAML 内容一起经 VisualSurface 取走,模糊后叠亮度/颜色混合,标题栏背景不再进交换链层。
+    /// 因此这里直接读屏幕核对:显示时的带内像素与隐藏时不同、保留照片色相(非中性灰)、更暗,
+    /// 隐藏后回到原始像素;交换链里不再有标题栏区段,XAML 背景分段也不铺到主图区段上。
     /// </summary>
     /// <returns>检查完成后的任务</returns>
     private async Task CheckTitleBarBackdropAsync()
@@ -577,26 +579,34 @@ internal sealed partial class WindowsMainWindow
             await Task.Delay(80);
             RequireSmoke(_isRowLayout == false, "列布局未生效,背板检查需要列布局");
 
-            // 1) 隐藏态:标题栏区段不在交换链区段里,取基准像素。
+            var band = ExpectedTitleBarBand();
+            RequireSmoke(band.Width > 8 && band.Height > 8,
+                $"标题栏与窗口没有重叠区段: band={band}, root={_root.ActualWidth}x{_root.ActualHeight}");
+            // 取样点落在标题栏空白处:标题文字贴左缘、窗口按钮占最右 4 × 46,取 65% 宽、栏高中线。
+            var sample = new Rect((band.Width * 0.65) - (ScreenSampleSize / 2),
+                (band.Height / 2) - (ScreenSampleSize / 2), ScreenSampleSize, ScreenSampleSize);
+
+            // 1) 隐藏态:合成材质收起、交换链里也没有标题栏区段,取基准像素。
             SimulateTitleBarPointerForAcceptance(false, WindowsLayout.TitleBarHotZoneHeight + 40);
             _root.UpdateLayout();
-            var band = ExpectedPhotoBand();
-            RequireSmoke(band.Width > 8 && band.Height > 8,
-                $"标题栏与主图没有重叠区段: band={band}, root={_root.ActualWidth}x{_root.ActualHeight}");
-            RequireSmoke(!HasBackdropRegion(band), "标题栏隐藏时主图仍在画标题栏背板");
-            var sampleX = band.X + (band.Width / 2);
-            var sampleY = band.Y + (band.Height / 2);
-            RequireSmoke(_photo.TryReadViewportPixel(sampleX, sampleY, out var plain), "隐藏态背板取样失败");
+            await Task.Delay(ScreenSampleSettleMs);
+            RequireSmoke(_titleBarMaterial is not { IsVisible: true }, "标题栏隐藏后合成材质仍在显示");
+            RequireSmoke(!HasTitleBarSwapChainRegion(), "标题栏隐藏时主图仍在画标题栏背板");
+            RequireSmoke(TrySampleScreenAverage(sample, out var plain), $"隐藏态背板屏幕取样失败: {sample}");
 
-            // 2) 显示态:区段打开且最后绘制,同一点应变成亚克力(偏色仍带照片色相、更暗)。
+            // 2) 显示态:合成材质盖住整条标题栏,同一点应变成亚克力(偏色仍带照片色相、更暗)。
             SimulateTitleBarPointerForAcceptance(true, 4);
             _root.UpdateLayout();
+            await Task.Delay(ScreenSampleSettleMs);
             RequireSmoke(_titleBar.IsVisible, "标题栏未进入显示态");
-            var regions = _photo.BackdropRegions;
-            RequireSmoke(regions.Count > 0 && SameRect(regions[regions.Count - 1].Bounds, band)
-                && regions[regions.Count - 1].CornerRadius == 0,
-                $"标题栏区段不是交换链最后一段或与标题栏不一致: [{string.Join("; ", regions)}] vs {band}");
-            RequireSmoke(_photo.TryReadViewportPixel(sampleX, sampleY, out var banded), "显示态背板取样失败");
+            RequireSmoke(_titleBarMaterial is { IsVisible: true },
+                "标题栏没有走合成材质路径(WindowsTitleBarBackdrop 不可见,只可能是回退路径)");
+            RequireSmoke(!HasTitleBarSwapChainRegion(),
+                $"标题栏背景仍画在主图交换链上: [{string.Join("; ", _photo.BackdropRegions)}]");
+            RequireSmoke(_titleBarBackdrop is { } barSpan
+                && Math.Abs(barSpan.X) < 0.5 && Math.Abs(barSpan.Width - _root.ActualWidth) < 0.5,
+                $"标题栏亚克力没有铺满窗口宽: {_titleBarBackdrop} vs {_root.ActualWidth}");
+            RequireSmoke(TrySampleScreenAverage(sample, out var banded), $"显示态背板屏幕取样失败: {sample}");
             var delta = Math.Max(Math.Abs(banded.R - plain.R), Math.Max(Math.Abs(banded.G - plain.G), Math.Abs(banded.B - plain.B)));
             RequireSmoke(delta > 0.02,
                 $"背板没有改变带内像素: plain=({plain.R:0.000},{plain.G:0.000},{plain.B:0.000})"
@@ -605,32 +615,37 @@ internal sealed partial class WindowsMainWindow
             RequireSmoke(chroma > 0.02,
                 $"背板把饱和照片压成了中性灰: chroma={chroma:0.000}"
                 + $" banded=({banded.R:0.000},{banded.G:0.000},{banded.B:0.000})");
-            var plainLuma = (0.3 * plain.R) + (0.59 * plain.G) + (0.11 * plain.B);
-            var bandedLuma = (0.3 * banded.R) + (0.59 * banded.G) + (0.11 * banded.B);
+            var plainLuma = ScreenLuma(plain);
+            var bandedLuma = ScreenLuma(banded);
             RequireSmoke(bandedLuma < plainLuma,
                 $"背板没有压暗照片: plain={plainLuma:0.000} banded={bandedLuma:0.000}");
 
-            // 3) 主图视图铺满窗口:整条标题栏都由交换链绘制,不再铺 XAML 亚克力分段;噪点取 WinUI 随包的同一张纹理。
-            _backdropSummary = $" plain=({plain.R:0.000},{plain.G:0.000},{plain.B:0.000})"
+            // 3) 合成路径:整条标题栏都由取样树绘制,不铺 XAML 亚克力分段;交换链层的栏底仍带 WinUI 随包的噪点纹理,
+            //    与 XAML 前景一起进入取样树。
+            _backdropSummary = $" screen plain=({plain.R:0.000},{plain.G:0.000},{plain.B:0.000})"
                 + $" band=({banded.R:0.000},{banded.G:0.000},{banded.B:0.000}) chroma={chroma:0.000}"
-                + $" luma={plainLuma:0.000}->{bandedLuma:0.000} regions={regions.Count}";
+                + $" luma={plainLuma:0.000}->{bandedLuma:0.000} regions={_photo.BackdropRegions.Count}";
             RequireSmoke(_titleBar.BackgroundSegments.Count == 0,
                 $"主图铺满窗口时标题栏仍铺了 XAML 亚克力分段: [{string.Join("; ", _titleBar.BackgroundSegments)}]");
-            RequireSmoke(_photo.HasBackdropNoise, "交换链区段没有载入 WinUI 亚克力噪点纹理");
+            RequireSmoke(_photo.HasBackdropNoise, "交换链栏底没有载入 WinUI 亚克力噪点纹理");
 
-            // 4) 导出带内区域截图供目视核对(回读是 D3D 调用,必须在 UI 线程)。
-            SaveBandScreenshot(sampleX, sampleY, band.Width, band.Height);
+            // 4) 导出整窗截图(屏幕取样,已含交换链与合成材质)供目视核对。
+            SaveWindowScreenshot("titlebar-backdrop.png");
 
-            // 5) 再隐藏:带内像素必须回到未加背板的原始值。
+            // 5) 再隐藏:屏幕读数必须回到未加合成材质的原始像素。
             SimulateTitleBarPointerForAcceptance(false, WindowsLayout.TitleBarHotZoneHeight + 40);
             _root.UpdateLayout();
-            RequireSmoke(!HasBackdropRegion(band), "再次隐藏后主图仍在画标题栏背板");
-            RequireSmoke(_photo.TryReadViewportPixel(sampleX, sampleY, out var restored), "恢复态背板取样失败");
-            RequireSmoke(Math.Abs(restored.R - plain.R) < 0.002 && Math.Abs(restored.G - plain.G) < 0.002
-                && Math.Abs(restored.B - plain.B) < 0.002,
+            await Task.Delay(ScreenSampleSettleMs);
+            RequireSmoke(_titleBarMaterial is not { IsVisible: true }, "再次隐藏后合成材质仍在显示");
+            RequireSmoke(!HasTitleBarSwapChainRegion(), "再次隐藏后主图仍在画标题栏背板");
+            RequireSmoke(TrySampleScreenAverage(sample, out var restored), $"恢复态背板屏幕取样失败: {sample}");
+            RequireSmoke(Math.Abs(restored.R - plain.R) < 0.012 && Math.Abs(restored.G - plain.G) < 0.012
+                && Math.Abs(restored.B - plain.B) < 0.012,
                 $"隐藏后带内像素没有回到原图: plain=({plain.R:0.000},{plain.G:0.000},{plain.B:0.000})"
                 + $" restored=({restored.R:0.000},{restored.G:0.000},{restored.B:0.000})");
 
+            // 6) 叠压回归:取样树要把压在交换链栏底之上的 XAML 前景一起模糊。
+            await CheckTitleBarForegroundProbeAsync();
         }
         finally
         {
@@ -651,14 +666,14 @@ internal sealed partial class WindowsMainWindow
         return linear <= 0.0031308f ? linear * 12.92f : 1.055f * MathF.Pow(linear, 1f / 2.4f) - 0.055f;
     }
 
-    /// <summary>标题栏区段(主图视图坐标;主图视图铺满窗口,与窗口内容坐标相同),按布局独立算出。</summary>
-    /// <returns>区段(DIP);无重叠时为空矩形。</returns>
-    private Rect ExpectedPhotoBand()
-    {
-        var bar = new Rect(_titleBar.Left, 0, _root.ActualWidth - _titleBar.Left, WindowsLayout.TitleBarHeight);
-        bar.Intersect(new Rect(0, 0, _photo.ActualWidth, _photo.ActualHeight));
-        return bar;
-    }
+    /// <summary>标题栏带(窗口内容坐标):合成材质按整窗宽铺 <c>shell.titlebar.height</c>。</summary>
+    /// <returns>区段(DIP)。</returns>
+    private Rect ExpectedTitleBarBand()
+        => new(0, 0, _root.ActualWidth, Math.Min(WindowsLayout.TitleBarHeight, _root.ActualHeight));
+
+    /// <summary>交换链区段里是否还留着标题栏那一段:合成路径下必须没有,只有回退路径才交给交换链。</summary>
+    /// <returns>存在标题栏区段时为 true。</returns>
+    private bool HasTitleBarSwapChainRegion() => _photo.BackdropRegions.Any(region => region.IsTitleBar);
 
     /// <summary>交换链区段里是否有一段与给定矩形一致(1 DIP 容差)。</summary>
     /// <param name="rect">期望矩形。</param>
@@ -673,34 +688,152 @@ internal sealed partial class WindowsMainWindow
         => Math.Abs(a.X - b.X) <= 1 && Math.Abs(a.Y - b.Y) <= 1
             && Math.Abs(a.Width - b.Width) <= 1 && Math.Abs(a.Height - b.Height) <= 1;
 
-    /// <summary>把带内区域从后台缓冲导出为 PNG(目视核对亚克力)。</summary>
-    /// <param name="xDip">区段中心横向位置(主图视图 DIP)。</param>
-    /// <param name="yDip">区段中心纵向位置(主图视图 DIP)。</param>
-    /// <param name="widthDip">区段宽(DIP)。</param>
-    /// <param name="heightDip">区段高(DIP)。</param>
-    private void SaveBandScreenshot(double xDip, double yDip, double widthDip, double heightDip)
+    /// <summary>
+    /// SHELL-02 叠压回归:取样树必须把"压在交换链栏底之上的 XAML 前景"一起取走并模糊。
+    /// 在文件栏顶部空白区(筛选控件上方、标题文字行之外)临时放一块白块作控件前景探针:
+    /// 标题栏隐藏时屏幕直接读到白,显示时同一位置被合成亚克力压暗,右侧相邻区因为高斯扩散比不放白块时更亮一点。
+    /// 探针的挂载与移除都在 try/finally 里,不留痕。
+    /// </summary>
+    /// <returns>检查完成后的任务</returns>
+    private async Task CheckTitleBarForegroundProbeAsync()
     {
-        var scale = _root.XamlRoot?.RasterizationScale ?? 1.0;
-        var width = (int)Math.Round(widthDip * scale);
-        var height = (int)Math.Round(heightDip * scale);
-        var left = (int)Math.Round((xDip - (widthDip / 2)) * scale);
-        var top = (int)Math.Round((yDip - (heightDip / 2)) * scale);
-        if (!_photo.TryReadBackBufferSrgb(left, top, width, height, out var bgra, out var rowBytes))
+        var probe = new Microsoft.UI.Xaml.Shapes.Rectangle
         {
-            NativeStartupLog.Write("title bar backdrop: 区段截图回读失败,跳过 PNG 导出");
-            return;
+            Width = ForegroundProbeRect.Width,
+            Height = ForegroundProbeRect.Height,
+            Fill = new SolidColorBrush(Microsoft.UI.Colors.White),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(ForegroundProbeRect.X, ForegroundProbeRect.Y, 0, 0),
+            IsHitTestVisible = false,
+        };
+        // 取样窗口取探针下缘内侧与它右侧紧邻区:两者都在标题栏高内、都避开靠左缘居中排的标题文字。
+        var center = new Rect(ForegroundProbeRect.X + (ForegroundProbeRect.Width / 2) - (ScreenSampleSize / 2),
+            ForegroundProbeRect.Bottom - ScreenSampleSize - 3, ScreenSampleSize, ScreenSampleSize);
+        var adjacent = new Rect(ForegroundProbeRect.Right + 2, center.Y, ScreenSampleSize, ScreenSampleSize);
+        RequireSmoke(!_isRowLayout && _main.IsThumbnailViewVisible,
+            $"前景探针检查需要列布局与可见的文件栏: row={_isRowLayout} film={_main.IsThumbnailViewVisible}");
+        RequireSmoke(ForegroundProbeRect.Right < _fileBarRight && adjacent.Right < _fileBarRight,
+            $"前景探针超出文件栏: probe={ForegroundProbeRect} adjacent={adjacent} fileBarRight={_fileBarRight}");
+        try
+        {
+            _titleBarCaptureContent.Children.Add(probe);
+            _root.UpdateLayout();
+            await Task.Delay(ScreenSampleSettleMs);
+
+            // 1) 隐藏态:探针是普通 XAML 内容,屏幕上直接看到白色。
+            SimulateTitleBarPointerForAcceptance(false, WindowsLayout.TitleBarHotZoneHeight + 40);
+            _root.UpdateLayout();
+            await Task.Delay(ScreenSampleSettleMs);
+            RequireSmoke(TrySampleScreenAverage(center, out var bare), $"前景探针隐藏态屏幕取样失败: {center}");
+            RequireSmoke(bare.R > 0.9 && bare.G > 0.9 && bare.B > 0.9,
+                $"隐藏态没有采到探针白块: ({bare.R:0.000},{bare.G:0.000},{bare.B:0.000}) @ {center}"
+                + $" probe={ForegroundProbeRect}");
+
+            // 2) 显示态:合成材质盖住探针,中心被压暗;相邻区也分到一份扩散。
+            SimulateTitleBarPointerForAcceptance(true, 4);
+            _root.UpdateLayout();
+            await Task.Delay(ScreenSampleSettleMs);
+            RequireSmoke(_titleBarMaterial is { IsVisible: true }, "前景探针检查时标题栏合成材质未显示");
+            RequireSmoke(!HasTitleBarSwapChainRegion(),
+                $"前景探针检查时标题栏背景仍画在主图交换链上: [{string.Join("; ", _photo.BackdropRegions)}]");
+            RequireSmoke(TrySampleScreenAverage(center, out var covered), $"前景探针显示态屏幕取样失败: {center}");
+            RequireSmoke(TrySampleScreenAverage(adjacent, out var spread), $"前景探针相邻区屏幕取样失败: {adjacent}");
+            var darkened = ScreenLuma(bare) - ScreenLuma(covered);
+            RequireSmoke(darkened > 0.1,
+                $"标题栏合成材质没有压暗探针: bare={ScreenLuma(bare):0.000} covered={ScreenLuma(covered):0.000}");
+
+            // 3) 同一显示态撤掉探针:中心与相邻区的差就只剩白块本身和它的高斯扩散。
+            _titleBarCaptureContent.Children.Remove(probe);
+            _root.UpdateLayout();
+            await Task.Delay(ScreenSampleSettleMs);
+            RequireSmoke(TrySampleScreenAverage(center, out var blank), $"无探针显示态屏幕取样失败: {center}");
+            RequireSmoke(TrySampleScreenAverage(adjacent, out var bareNeighbour), $"无探针相邻区屏幕取样失败: {adjacent}");
+            var centerLift = ScreenLuma(covered) - ScreenLuma(blank);
+            var neighbourLift = ScreenLuma(spread) - ScreenLuma(bareNeighbour);
+            _probeSummary = $" probe white={ScreenLuma(bare):0.000} covered={ScreenLuma(covered):0.000}"
+                + $" without={ScreenLuma(blank):0.000} neighbour={ScreenLuma(spread):0.000}->{ScreenLuma(bareNeighbour):0.000}"
+                + $" lift={centerLift:0.000}/{neighbourLift:0.000}";
+            RequireSmoke(centerLift > 0.008,
+                $"取样树没有取到压在栏底之上的 XAML 前景: 带探针={ScreenLuma(covered):0.000}"
+                + $" 无探针={ScreenLuma(blank):0.000} @ {center}");
+            RequireSmoke(neighbourLift > 0.004,
+                $"白块没有模糊扩散到相邻区: 带探针={ScreenLuma(spread):0.000}"
+                + $" 无探针={ScreenLuma(bareNeighbour):0.000} @ {adjacent}");
+        }
+        finally
+        {
+            if (_titleBarCaptureContent.Children.Contains(probe))
+            {
+                _titleBarCaptureContent.Children.Remove(probe);
+            }
+
+            _root.UpdateLayout();
+            SimulateTitleBarPointerForAcceptance(false, WindowsLayout.TitleBarHotZoneHeight + 40);
+        }
+    }
+
+    /// <summary>前景探针实测数值(写进汇总行,便于校准阈值)。</summary>
+    private string _probeSummary = string.Empty;
+
+    /// <summary>前景探针(白块)在文件栏顶部空白区的位置与大小(DIP):筛选控件上方,尺寸留出取样余量。</summary>
+    private static readonly Rect ForegroundProbeRect = new(70, 5, 36, 29);
+
+    /// <summary>屏幕取样前的合成等待(毫秒):显隐切换与取样树内容变化都要等合成器出一帧。</summary>
+    private const int ScreenSampleSettleMs = 180;
+
+    /// <summary>屏幕取样窗口边长(DIP):小块平均,压掉像素量化与亚克力噪点。</summary>
+    private const double ScreenSampleSize = 6;
+
+    /// <summary>sRGB 编码值的亮度(0–1)。</summary>
+    /// <param name="color">颜色。</param>
+    /// <returns>亮度。</returns>
+    private static double ScreenLuma((double R, double G, double B) color)
+        => (0.3 * color.R) + (0.59 * color.G) + (0.11 * color.B);
+
+    /// <summary>
+    /// 窗口客户区内一小块的平均屏幕读数(sRGB 编码值 0–1):合成材质只存在于 XAML 合成树里,
+    /// 只有屏幕取样(交换链与合成结果合在一起)才看得到。只读,不改界面。
+    /// </summary>
+    /// <param name="rect">客户区矩形(DIP)。</param>
+    /// <param name="color">平均颜色。</param>
+    /// <returns>取样成功时为 true。</returns>
+    private bool TrySampleScreenAverage(Rect rect, out (double R, double G, double B) color)
+    {
+        color = default;
+        var hwnd = Microsoft.UI.Win32Interop.GetWindowFromWindowId(AppWindow.Id);
+        if (hwnd == IntPtr.Zero)
+        {
+            return false;
         }
 
-        var directory = Path.GetFullPath("artifacts/scratch");
-        Directory.CreateDirectory(directory);
-        var path = Path.Combine(directory, "titlebar-backdrop.png");
-        using var bitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Opaque));
-        Marshal.Copy(bgra, 0, bitmap.GetPixels(), bgra.Length);
-        using var image = SKImage.FromBitmap(bitmap);
-        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
-        using var stream = File.Create(path);
-        data.SaveTo(stream);
-        NativeStartupLog.Write($"title bar backdrop: 区段截图 {width}x{height} stride={rowBytes} → {path}");
+        var scale = _root.XamlRoot?.RasterizationScale ?? 1.0;
+        var origin = new NativePoint();
+        if (!ClientToScreen(hwnd, ref origin))
+        {
+            return false;
+        }
+
+        int width = Math.Max(1, (int)Math.Round(rect.Width * scale));
+        int height = Math.Max(1, (int)Math.Round(rect.Height * scale));
+        var pixels = CaptureScreen(origin.X + (int)Math.Round(rect.X * scale),
+            origin.Y + (int)Math.Round(rect.Y * scale), width, height);
+        if (pixels is null)
+        {
+            return false;
+        }
+
+        double red = 0, green = 0, blue = 0;
+        for (var index = 0; index < pixels.Length; index += 4)
+        {
+            blue += pixels[index];
+            green += pixels[index + 1];
+            red += pixels[index + 2];
+        }
+
+        var count = pixels.Length / 4.0;
+        color = (red / count / 255, green / count / 255, blue / count / 255);
+        return true;
     }
 
     /// <summary>
@@ -3378,27 +3511,39 @@ internal sealed partial class WindowsMainWindow
                 $"caption 拖动区压住窗口按钮: {region.X}+{region.Width} > {buttonLeftPx}");
         }
 
-        // 2) 跨度与背景。主图视图铺满窗口,整条标题栏的亚克力由主图交换链绘制(SwapChainPanel 取不到 AcrylicBrush)。
+        // 2) 跨度与背景。标题栏背板由合成材质绘制(取样树取主图交换链顶部 + 压在上面的 XAML 内容),
+        //    交换链里不再有标题栏区段——回退路径才会有,合成路径正常时这里必须是空的。
         var fileBarVisible = _main.IsThumbnailViewVisible;
-        var titleBand = HasBackdropRegion(ExpectedPhotoBand());
-        var hasBackdrop = _titleBar.IsBackgroundVisible || titleBand;
+        var titleMaterial = _titleBarMaterial is { IsVisible: true };
+        var titleBandInSwapChain = HasTitleBarSwapChainRegion();
+        var hasBackdrop = _titleBar.IsBackgroundVisible || titleMaterial;
+        RequireSmoke(!titleBandInSwapChain,
+            $"标题栏背景仍画在主图交换链上: [{string.Join("; ", _photo.BackdropRegions)}]");
+        if (hasBackdrop)
+        {
+            RequireSmoke(_titleBarBackdrop is { } band
+                && Math.Abs(band.X) < 0.5 && Math.Abs(band.Width - _root.ActualWidth) < 0.5,
+                $"标题栏亚克力没有铺满窗口宽: {_titleBarBackdrop} vs {_root.ActualWidth}");
+        }
+
         if (!fileBarVisible)
         {
             RequireSmoke(regions.Length == 1 && regions[0].X == 0 && regions[0].X + regions[0].Width == buttonLeftPx,
                 "文件栏隐藏时拖动区未覆盖窗口左缘到按钮之间");
             RequireSmoke(_titleBar.Left == 0, $"文件栏隐藏时标题栏未从窗口左缘开始: {_titleBar.Left}");
-            RequireSmoke(hasBackdrop, "文件栏隐藏时标题栏没有亚克力背景");
+            RequireSmoke(titleMaterial,
+                "文件栏隐藏时标题栏没有走合成材质路径(WindowsTitleBarBackdrop 不可见,只可能是回退路径)");
         }
         else if (!_isRowLayout)
         {
-            var fileRightPx = (int)Math.Round((_fileDivider.Margin.Left + _fileDivider.Width) * scale);
-            var barLeftPx = (int)Math.Round(_titleBar.Left * scale);
-            RequireSmoke(Math.Abs(barLeftPx - fileRightPx) <= 1,
-                $"列布局标题栏未从文件栏右缘开始: {barLeftPx} vs 文件栏右缘 {fileRightPx}");
-            RequireSmoke(regions.Length == 1 && Math.Abs(regions[0].X - barLeftPx) <= 1
+            RequireSmoke(_titleBar.Left == 0 && regions.Length == 1 && regions[0].X == 0
                 && regions[0].X + regions[0].Width == buttonLeftPx,
-                "列布局拖动区未覆盖文件栏右缘到按钮之间");
-            RequireSmoke(hasBackdrop, "列布局标题栏没有亚克力背景");
+                "列布局标题栏未跨过文件栏，或拖动区未从窗口左缘延伸到按钮组");
+            var filterTop = _filterBar.GetInteractiveBounds(_root).Y;
+            RequireSmoke(filterTop >= WindowsLayout.TitleBarHeight,
+                $"列布局筛选控件未避开标题栏: {filterTop}");
+            RequireSmoke(titleMaterial,
+                "列布局标题栏没有走合成材质路径(WindowsTitleBarBackdrop 不可见,只可能是回退路径)");
         }
         else
         {
@@ -3413,8 +3558,8 @@ internal sealed partial class WindowsMainWindow
                     $"窄宽度常驻栏未占用 32 点布局高度: filePane={_filePane.Margin.Top} fitTop={_photo.FitInsets.Top}");
                 RequireSmoke(cut.Y >= WindowsLayout.TitleBarHeight,
                     $"筛选组未整体下移到常驻标题栏下方: {cut.Y}");
-                RequireSmoke(titleBand && _titleBar.BackgroundSegments.Count == 0,
-                    "窄宽度常驻栏未由主图交换链铺整通栏亚克力");
+                RequireSmoke(titleMaterial && _titleBar.BackgroundSegments.Count == 0,
+                    "窄宽度常驻栏未由合成材质铺整通栏亚克力");
                 RequireSmoke(regions.Length == 1 && regions[0].X == 0 && regions[0].X + regions[0].Width == buttonLeftPx,
                     "窄宽度常驻栏未提供窗口左缘到按钮组的完整拖动区");
                 var title = _titleBar.TitleElement;
@@ -3428,7 +3573,7 @@ internal sealed partial class WindowsMainWindow
                 var cutRight = (int)Math.Ceiling((cut.X + cut.Width) * scale);
                 RequireSmoke(Math.Abs(_filePane.Margin.Top) < 0.01,
                     $"行布局悬停覆盖层不应占用布局高度: {_filePane.Margin.Top}");
-                RequireSmoke(!_titleBar.IsBackgroundVisible && !titleBand,
+                RequireSmoke(!_titleBar.IsBackgroundVisible && !titleMaterial && _titleBarBackdrop is null,
                     "行布局悬停标题栏不应有背景");
                 RequireSmoke(regions[0].X == 0, $"行布局拖动区未从窗口左缘开始: {regions[0].X}");
                 foreach (var region in regions)
