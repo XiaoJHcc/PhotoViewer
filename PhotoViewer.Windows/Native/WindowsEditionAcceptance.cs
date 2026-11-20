@@ -342,7 +342,7 @@ internal sealed partial class WindowsMainWindow
             && SettingsNumberEquals(document, "similarityMaxResults", state.MaxResults),
             SummarizeSettings(document));
         check("相似展开态保留但不可见", ReadViewStateBool(SettingsViewStateKeys.SimilarityPanelExpanded)
-            && !_main.FileVM.IsSimilarityPanelOpen && FilterItemCount() == 4,
+            && !_main.FileVM.IsSimilarityPanelOpen && FilterItemCount() == 3,
             $"stored={ReadViewStateBool(SettingsViewStateKeys.SimilarityPanelExpanded)}"
                 + $" open={_main.FileVM.IsSimilarityPanelOpen} filterItems={FilterItemCount()}");
 
@@ -440,7 +440,7 @@ internal sealed partial class WindowsMainWindow
                 + $" dino={_main.Settings.AnalysisImmediateCompute} cv={_main.Settings.AnalysisImmediateCvCompute}");
         check("标准版修改的通用设置生效", _main.Settings.SameNameAsOnePhoto,
             $"sameNameAsOnePhoto={_main.Settings.SameNameAsOnePhoto}");
-        check("相似面板展开态恢复", _main.FileVM.IsSimilarityPanelOpen && FilterItemCount() == 5,
+        check("相似面板展开态恢复", _main.FileVM.IsSimilarityPanelOpen && FilterItemCount() == 4,
             $"open={_main.FileVM.IsSimilarityPanelOpen} filterItems={FilterItemCount()}");
 
         var digest = await ComputeFeatureDigestAsync();
@@ -511,8 +511,8 @@ internal sealed partial class WindowsMainWindow
     }
 
     /// <summary>
-    /// 筛选条实际业务项数(FILTER-01):排序 / 方向 / 星级三项(三合体为三段,单胶囊为同一菜单里的三个分组)、
-    /// 控件内的计数,AI 版另加可见的相似聚类开关;标准版不创建开关,也不留空槽。
+    /// 筛选条实际业务项数(FILTER-01):排序 / 方向 / 星级三项(三合体为三段,单胶囊为同一菜单里的三个分组),
+    /// AI 版另加可见的相似聚类开关;标准版不创建开关,也不留空槽。
     /// </summary>
     /// <returns>项数。</returns>
     private int FilterItemCount()
@@ -520,20 +520,19 @@ internal sealed partial class WindowsMainWindow
         int groups = _filterBar.Mode == FilterControlMode.Segmented
             ? _filterBar.Entries.Count
             : _filterBar.SortMenu.Items.OfType<MenuFlyoutSeparator>().Count() + 1;
-        int count = _filterBar.CountText.StartsWith("共 ", StringComparison.Ordinal) ? 1 : 0;
 #if PHOTOVIEWER_DINO
         int toggle = _filterBar.SimilarityToggle.Visibility == Visibility.Visible ? 1 : 0;
 #else
         const int toggle = 0;
 #endif
-        return groups + count + toggle;
+        return groups + toggle;
     }
 
-    /// <summary>筛选条按版本实际项数构成:标准版四项、AI 版五项,入口按主轴顺序排布,AI 版开关排在筛选控件之后。</summary>
+    /// <summary>筛选条按版本实际项数构成:标准版三项、AI 版四项,入口按主轴顺序排布,AI 版开关排在筛选控件之后。</summary>
     /// <returns>验收文案。</returns>
     private string CheckEditionFilterBar()
     {
-        RequireSmoke(FilterItemCount() == (WindowsProductInfo.HasDino ? 5 : 4),
+        RequireSmoke(FilterItemCount() == (WindowsProductInfo.HasDino ? 4 : 3),
             $"筛选条项数与发行版不一致: {FilterItemCount()}");
         RequireSmoke(WindowsFilterBar.ShowsSimilarityToggle == WindowsProductInfo.HasDino,
             $"筛选条开关声明与发行版不一致: {WindowsFilterBar.ShowsSimilarityToggle}");
@@ -553,7 +552,7 @@ internal sealed partial class WindowsMainWindow
         RequireSmoke(axis.Length >= 1 && inOrder,
             $"筛选条控件未按主轴顺序排布: [{string.Join(",", axis.Select(value => value.ToString("0")))}]");
         return $"PASS edition filter bar: {FilterItemCount()} items mode={_filterBar.Mode} entries=[{string.Join(",", _filterBar.EntryLabels)}]"
-            + $" count=\"{_filterBar.CountText}\" {(horizontal ? "row" : "column")} axis=[{string.Join(",", axis.Select(value => value.ToString("0")))}]";
+            + $" {(horizontal ? "row" : "column")} axis=[{string.Join(",", axis.Select(value => value.ToString("0")))}]";
     }
 
     /// <summary>分析栏实际瓦片数:AI 版 6/7 张含 PCA/Cosine,标准版 4/5 张且无 DINO。</summary>

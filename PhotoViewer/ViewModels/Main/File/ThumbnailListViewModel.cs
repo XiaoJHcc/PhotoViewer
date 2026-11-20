@@ -47,6 +47,8 @@ public class ThumbnailListViewModel : ReactiveObject
     /// <summary>滚动到当前图片的事件,由 View 订阅</summary>
     public event Action? ScrollToCurrentRequested;
 
+    internal event Action? FilterProjectionChanged;
+
     private readonly BitmapPrefetcher _bitmapPrefetcher;
 
     /// <summary>
@@ -96,6 +98,7 @@ public class ThumbnailListViewModel : ReactiveObject
         _filter.SortChanged += ApplySort;
 
         _folder.AllFilesChanged += ApplyFilter;
+        _folder.SortKeysLoaded += ApplySort;
         _folder.ScrollToCurrentRequested += () => ScrollToCurrentRequested?.Invoke();
         _folder.PriorityThumbnailRequested += file => QueueThumbnailLoad(file, priority: true);
 
@@ -257,6 +260,8 @@ public class ThumbnailListViewModel : ReactiveObject
 
     private void OnFilterChanged()
     {
+        // FILTER-05：改星暂留不豁免用户刚修改的筛选条件。
+        _retainedFile = null;
         ApplyFilter();
         LoadVisibleThumbnailsAfterFilter();
     }
@@ -287,12 +292,12 @@ public class ThumbnailListViewModel : ReactiveObject
             _retainedFile);
 
         _groups = projection.Groups;
-        // FILTER-04：先提交列表再通知计数，保证同一帧内列表与文本一致。
+        // FILTER-04：先提交列表再通知计数，保证业务计数与列表一致。
         FilteredFiles = projection.Items.ToList();
+        FilterProjectionChanged?.Invoke();
 
         // 同名合并后，文件夹打开时可能把“被隐藏”的 ARW/HIF 设为 CurrentFile；
         // 主图与卡片会因此不是同一张。把当前文件映射回它所在组的代表文件。
-        // FILTER-04：映射后仍要发出计数通知，列表与文本在同一次刷新中一起提交。
         if (_main.CurrentFile is { } current && !_filteredFiles.Contains(current))
         {
             var representative = _groups.RepresentativeFor(current);
@@ -310,10 +315,13 @@ public class ThumbnailListViewModel : ReactiveObject
     /// </summary>
     private void ApplySort()
     {
-        FilteredFiles = PhotoListProjection.SortItems(
-            _filteredFiles.ToList(),
+        // FILTER-02：遇到相同排序值时以文件源顺序为准，而非上一次选用的排序键。
+        var displayed = _filteredFiles.ToHashSet();
+        var sorted = PhotoListProjection.SortItems(
+            _groups.Representatives.Where(displayed.Contains).ToList(),
             _filter.SortMode,
             _filter.SortOrder);
+        if (!sorted.SequenceEqual(_filteredFiles)) FilteredFiles = sorted;
     }
 
     /// <summary>

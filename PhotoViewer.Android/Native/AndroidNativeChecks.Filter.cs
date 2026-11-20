@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using Android.OS;
 using Android.Views;
@@ -34,13 +35,140 @@ internal static partial class AndroidNativeChecks
             $"visible={filter.Visibility} entry={filter.EntryFrameForChecks} control={filter.ControlFrame} "
             + $"row={main.IsRowLayout} phone={filter.IsPhone}");
 
+        await RunStepAsync("filter 默认排序", CheckFilterDefaultsAsync);
         await RunStepAsync("filter 分组菜单", CheckGroupedMenuAsync);
+        await RunStepAsync("filter 星级多选", CheckGroupedRatingMultiSelectAsync);
         await RunStepAsync("filter 无关设置", CheckGroupedUnrelatedSettingAsync);
         await RunStepAsync("filter 星级设置", CheckGroupedSettingImpactAsync);
         await RunStepAsync("filter 行选择", CheckGroupedRowSelectionAsync);
         await RunStepAsync("filter 锚点隐藏", CheckGroupedHiddenClosesAsync);
         await RunStepAsync("filter 旋转与窄屏", CheckGroupedRotationAndNarrowAsync);
     }
+
+    /// <summary>FILTER-02/FILTER-09：默认拍摄时间升序，排序与方向文案固定。</summary>
+    private static Task CheckFilterDefaultsAsync()
+    {
+        var bar = _main!.FileVM.FilterBar;
+        var name = bar.SortModes.Find(option => (SortMode)option.Value == SortMode.Name);
+        var ascending = bar.SortOrders.Find(option => (SortOrder)option.Value == SortOrder.Ascending);
+        var descending = bar.SortOrders.Find(option => (SortOrder)option.Value == SortOrder.Descending);
+        Check("filter 默认排序为拍摄时间升序",
+            bar.SortMode == SortMode.Date && bar.SortOrder == SortOrder.Ascending,
+            $"sort={bar.SortMode}/{bar.SortOrder}");
+        Check("filter 排序与方向文案",
+            name?.DisplayName == "文件名" && ascending?.DisplayName == "升序" && descending?.DisplayName == "降序",
+            $"name={name?.DisplayName ?? "无"} asc={ascending?.DisplayName ?? "无"} desc={descending?.DisplayName ?? "无"}");
+        Check("filter 默认星级为全部",
+            bar.IsRatingFilterSelected(PhotoListProjection.AllRatings) && !bar.IsRatingFilterActive,
+            $"all={bar.IsRatingFilterSelected(PhotoListProjection.AllRatings)} active={bar.IsRatingFilterActive}");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// FILTER-03/FILTER-08：真实行连续多选、外部状态就地更新、全部重置与取消最后条件回到全部；
+    /// 全程同一个 PopupWindow，不重开也不重建行。同时核对每行语义图标与分组。
+    /// </summary>
+    private static async Task CheckGroupedRatingMultiSelectAsync()
+    {
+        var root = _root!;
+        var main = _main!;
+        var bar = main.FileVM.FilterBar;
+        var filter = root.FilterBar;
+        root.DismissFilterDropdown();
+        bar.ToggleRatingFilter(PhotoListProjection.AllRatings);
+        await Task.Delay(150);
+        if (!await OpenGroupedMenuAsync(root))
+        {
+            Check("filter 星级多选", false, "下拉未打开");
+            return;
+        }
+        var instance = filter.DropdownInstanceForChecks;
+        var rows = filter.DropdownRowsForChecks;
+        int sortRows = rows.Count(row => row.Group == "Sort");
+        int orderRows = rows.Count(row => row.Group == "Order");
+        int ratingRows = rows.Count(row => row.Group == "Rating");
+        Check("filter 菜单行语义图标与分组",
+            rows.Count == 14 && sortRows == 3 && orderRows == 2 && ratingRows == 9
+            && rows.All(row => row.HasIcon && row.IconDescription.Length > 0),
+            $"rows={rows.Count} sort={sortRows} order={orderRows} rating={ratingRows} "
+            + $"icons={rows.Count(row => row.HasIcon)} glyphs={string.Join("|", rows.Select(row => row.IconDescription))}");
+        var all = FindFilterRow(filter, "全部");
+        Check("filter 菜单初始勾选全部",
+            all.HasValue && all.Value.Selected && all.Value.Marked,
+            $"all={Describe(all)} open={filter.IsDropdownOpen}");
+
+        bool clicked = ClickMenuText(filter.DropdownContentViewForChecks, "三星");
+        await Task.Delay(350);
+        var three = FindFilterRow(filter, "三星");
+        all = FindFilterRow(filter, "全部");
+        Check("filter 星级多选勾选三星",
+            clicked && bar.IsRatingFilterSelected("Eq3")
+            && three.HasValue && three.Value.Selected && three.Value.Marked
+            && all.HasValue && !all.Value.Selected && !all.Value.Marked
+            && filter.IsDropdownOpen && ReferenceEquals(filter.DropdownInstanceForChecks, instance),
+            $"clicked={clicked} eq3={bar.IsRatingFilterSelected("Eq3")} row={Describe(three)} "
+            + $"all={Describe(all)} same={ReferenceEquals(filter.DropdownInstanceForChecks, instance)}");
+
+        clicked = ClickMenuText(filter.DropdownContentViewForChecks, "四星");
+        await Task.Delay(350);
+        var four = FindFilterRow(filter, "四星");
+        Check("filter 星级连续多选三星+四星",
+            clicked && bar.IsRatingFilterSelected("Eq3") && bar.IsRatingFilterSelected("Eq4")
+            && four.HasValue && four.Value.Selected && four.Value.Marked
+            && filter.IsDropdownOpen && ReferenceEquals(filter.DropdownInstanceForChecks, instance),
+            $"clicked={clicked} eq3={bar.IsRatingFilterSelected("Eq3")} eq4={bar.IsRatingFilterSelected("Eq4")} "
+            + $"row={Describe(four)} open={filter.IsDropdownOpen}");
+
+        // 外部状态变化（非行点选）也必须就地更新勾选，不重开浮窗。
+        bar.ToggleRatingFilter("Eq5");
+        await Task.Delay(350);
+        var five = FindFilterRow(filter, "五星");
+        Check("filter 星级外部改动就地更新",
+            bar.IsRatingFilterSelected("Eq5") && five.HasValue && five.Value.Selected && five.Value.Marked
+            && filter.IsDropdownOpen && ReferenceEquals(filter.DropdownInstanceForChecks, instance),
+            $"eq5={bar.IsRatingFilterSelected("Eq5")} row={Describe(five)} open={filter.IsDropdownOpen} "
+            + $"same={ReferenceEquals(filter.DropdownInstanceForChecks, instance)}");
+
+        clicked = ClickMenuText(filter.DropdownContentViewForChecks, "全部");
+        await Task.Delay(350);
+        all = FindFilterRow(filter, "全部");
+        three = FindFilterRow(filter, "三星");
+        Check("filter 星级全部重置",
+            clicked && !bar.IsRatingFilterActive
+            && all.HasValue && all.Value.Selected && all.Value.Marked
+            && three.HasValue && !three.Value.Selected && !three.Value.Marked
+            && filter.IsDropdownOpen && ReferenceEquals(filter.DropdownInstanceForChecks, instance),
+            $"clicked={clicked} active={bar.IsRatingFilterActive} all={Describe(all)} three={Describe(three)} "
+            + $"same={ReferenceEquals(filter.DropdownInstanceForChecks, instance)}");
+
+        bool selectedFive = ClickMenuText(filter.DropdownContentViewForChecks, "五星");
+        await Task.Delay(300);
+        bool clearedFive = ClickMenuText(filter.DropdownContentViewForChecks, "五星");
+        await Task.Delay(350);
+        all = FindFilterRow(filter, "全部");
+        Check("filter 取消最后条件回到全部",
+            selectedFive && clearedFive && !bar.IsRatingFilterActive
+            && all.HasValue && all.Value.Selected && all.Value.Marked
+            && filter.IsDropdownOpen && ReferenceEquals(filter.DropdownInstanceForChecks, instance),
+            $"select={selectedFive} clear={clearedFive} active={bar.IsRatingFilterActive} all={Describe(all)} "
+            + $"open={filter.IsDropdownOpen}");
+
+        bar.ToggleRatingFilter(PhotoListProjection.AllRatings);
+        root.DismissFilterDropdown();
+        await Task.Delay(200);
+    }
+
+    private static AndroidFilterBar.FilterMenuRowForChecks? FindFilterRow(AndroidFilterBar filter, string label)
+    {
+        foreach (var row in filter.DropdownRowsForChecks)
+            if (row.Label == label) return row;
+        return null;
+    }
+
+    private static string Describe(AndroidFilterBar.FilterMenuRowForChecks? row)
+        => row.HasValue
+            ? $"{row.Value.Label}:selected={row.Value.Selected},marked={row.Value.Marked},icon={row.Value.IconDescription}"
+            : "缺失";
 
     /// <summary>真实入口点按打开 → 同一实例跨周期存活 → 重排/同几何 Arrange 不收起 → 行选择保持展开 → 返回键收起。</summary>
     private static async Task CheckGroupedMenuAsync()

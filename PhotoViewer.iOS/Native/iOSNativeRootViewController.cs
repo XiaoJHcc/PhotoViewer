@@ -2108,7 +2108,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
             _filmstrip.Collection.LayoutIfNeeded();
             _ratingPopup.RevalidateAnchor();
         }
-        // 筛选条文本/菜单、计数宽度与分区几何一并刷新；文件格式变化也在这里反映到胶片栏。
+        // 筛选条与分区几何一并刷新；文件格式变化也在这里反映到胶片栏。
         if ((impact & (SettingsChangeImpact.Layout | SettingsChangeImpact.FileProjection)) != 0) RefreshScreen();
         else
         {
@@ -2131,7 +2131,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         else if (args.PropertyName == nameof(_main.ControlVM.EnabledControls)) ApplySettingsChange(SettingsChangeImpact.Commands);
     }
 
-    /// <summary>列表原子替换后重载胶片栏并刷新计数（不主动居中，[FILM-01]）。</summary>
+    /// <summary>列表原子替换后重载胶片栏（不主动居中，[FILM-01]）。</summary>
     /// <param name="sender">事件源（缩略图列表 VM）。</param>
     /// <param name="args">属性变化参数。</param>
     private void OnFilesChanged(object? sender, PropertyChangedEventArgs args)
@@ -2158,10 +2158,15 @@ internal sealed class iOSNativeRootViewController : UIViewController
         });
     }
 
-    /// <summary>筛选状态变化：同步筛选控件与计数宽度（不触发定位）。</summary>
+    /// <summary>筛选状态变化：同步筛选控件（不触发定位）。</summary>
     /// <param name="sender">事件源（筛选条 VM）。</param>
     /// <param name="args">属性变化参数。</param>
-    private void OnFilterChanged(object? sender, PropertyChangedEventArgs args) => UiDispatcher.Post(RefreshScreen);
+    private void OnFilterChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName is nameof(FilterBarViewModel.SortMode) or nameof(FilterBarViewModel.SortOrder)
+            or nameof(FilterBarViewModel.SelectedRatingFilters) or nameof(FilterBarViewModel.IsSimilarityPanelOpen))
+            UiDispatcher.Post(RefreshScreen);
+    }
 
 #if PHOTOVIEWER_DINO
     /// <summary>

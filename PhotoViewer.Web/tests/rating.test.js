@@ -11,6 +11,7 @@ import {
     displayStars,
     hasRatingConflict,
     matchesRatingFilter,
+    matchesRatingFilters,
     ratingSources,
     ratingWriteBlockReason,
     readRatingRecord,
@@ -130,7 +131,7 @@ test("RATING-05：显示星取代表内嵌，-1 与无效不点亮", () => {
     assert.deepEqual(representativeRating(photo("A.JPG", { rating: -1 })), { state: "rejected", value: -1 });
 });
 
-test("FILTER-03：数字/以上按代表内嵌，已拒绝独立，冲突独立", () => {
+test("FILTER-03：数字档按代表内嵌，已拒绝独立，冲突独立", () => {
     const zero = card(photo("A.JPG", { rating: 0 }));
     const missing = card(photo("A.JPG", { rating: null, ratingState: "missing" }));
     const rejected = card(photo("A.JPG", { rating: -1, ratingState: "rejected" }));
@@ -153,6 +154,11 @@ test("FILTER-03：数字/以上按代表内嵌，已拒绝独立，冲突独立"
     assert.equal(matchesRatingFilter(conflict, "5"), false);
     assert.equal(matchesRatingFilter(conflict, "conflict"), true);
     assert.equal(matchesRatingFilter(zero, "conflict"), false);
+
+    assert.equal(matchesRatingFilters(conflict, ["conflict", "5"]), true);
+    assert.equal(matchesRatingFilters(zero, ["none", "5"]), true);
+    assert.equal(matchesRatingFilters(invalid, ["3", "4"]), false);
+    assert.equal(matchesRatingFilters(rejected, ["all", "3"]), true);
 
     const list = listOf([
         photo("A.JPG", { rating: 0 }),

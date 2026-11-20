@@ -1,5 +1,5 @@
 /* 筛选入口（FILTER-07/08@web）：宽形态一个玻璃胶囊内的三段（排序 / 方向 / 星级）或单按钮，
-   手机竖屏两个圆按钮、横屏「筛选 / 更多」88 合体。计数固定在控件内部底边。 */
+   手机竖屏两个圆按钮、横屏「筛选 / 更多」88 合体。 */
 .pv-filter-layer {
     --pv-filter-state-inset: 3px;
     position: absolute;
@@ -14,7 +14,6 @@
 .pv-filter-capsule,
 .pv-filter-entry,
 .pv-filter-more,
-.pv-filter-count,
 .pv-filter-toggle,
 .pv-popup {
     position: absolute;
@@ -36,7 +35,7 @@
     align-items: center;
     justify-content: center;
     margin: 0;
-    padding: 0 0 var(--pv-filter-count-height);
+    padding: 0;
     border: 0;
     border-radius: var(--pv-glass-radius);
     background: transparent;
@@ -127,25 +126,13 @@
     display: block;
 }
 
-.pv-filter-count {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-    color: var(--pv-color-text-secondary);
-    font-size: var(--pv-filter-count-fontSize);
-    line-height: 1;
-    white-space: nowrap;
-    pointer-events: none;
-}
-
-/* 桌面三段合体：各段显示当前选项，段间 1 点分隔线，文字在计数之上居中。 */
+/* 桌面三段合体：各段显示当前选项，段间 1 点分隔线。 */
 .pv-popup {
     display: flex;
     align-items: center;
     justify-content: center;
     margin: 0;
-    padding: 0 var(--pv-dropdown-paddingLeft) var(--pv-filter-count-height);
+    padding: 0 var(--pv-dropdown-paddingLeft);
     border: 0;
     border-radius: 0;
     background: transparent;

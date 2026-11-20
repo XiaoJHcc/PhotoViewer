@@ -68,6 +68,26 @@ internal static class WindowsIcons
     /// <summary>设置:齿轮字形(<c>icon.menu.settings</c>)。</summary>
     public const string SettingsGlyph = "\uE713";
 
+    // FILTER-08：筛选菜单项的语义前置图标（Segoe Fluent Icons）。
+
+    /// <summary>拍摄时间:日历字形。</summary>
+    public const string CalendarGlyph = "\uE787";
+
+    /// <summary>文件大小:页面字形。</summary>
+    public const string PageGlyph = "\uE7C3";
+
+    /// <summary>升序:向上箭头字形。</summary>
+    public const string UpGlyph = "\uE74A";
+
+    /// <summary>降序:向下箭头字形。</summary>
+    public const string DownGlyph = "\uE74B";
+
+    /// <summary>全选:星级条件「全部」。</summary>
+    public const string SelectAllGlyph = "\uE8B3";
+
+    /// <summary>已拒绝:禁止字形。</summary>
+    public const string BlockedGlyph = "\uECCD";
+
     /// <summary>命令 → 单字形映射。null 表示该命令在本阶段不显示/不可达(P3 延期)。</summary>
     private static readonly Dictionary<string, string?> Glyphs = new(StringComparer.Ordinal)
     {

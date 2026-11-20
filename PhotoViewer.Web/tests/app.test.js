@@ -582,9 +582,9 @@ test("SHELL-04/FILTER-09：显隐与相似开关持久化，排序与星级筛�
     assert.equal(second.app.state.panes.film, false);
     assert.equal(second.app.state.panes.control, false);
     assert.equal(second.app.settings.similarityPanelExpanded, true);
-    assert.equal(second.app.state.sortKey, "name");
+    assert.equal(second.app.state.sortKey, "taken");
     assert.equal(second.app.state.sortOrder, "asc");
-    assert.equal(second.app.state.ratingFilter, "all");
+    assert.deepEqual(second.app.state.ratingFilters, ["all"]);
     assert.equal(second.app.state.displayedId, null);
     assert.equal(second.app.state.similarity.visible, false);
 
@@ -742,14 +742,50 @@ test("FILTER-09/OPEN-04：打开不改变排序、星级筛选与相似开关", 
     app.openFolder("one");
     assert.equal(app.state.sortKey, "taken");
     assert.equal(app.state.sortOrder, "desc");
-    assert.equal(app.state.ratingFilter, "3");
+    assert.deepEqual(app.state.ratingFilters, ["3"]);
     assert.equal(app.settings.similarityPanelExpanded, true);
     assert.equal(app.state.count, 1);
 
     app.openFolder("empty");
     assert.equal(app.state.sortKey, "taken");
-    assert.equal(app.state.ratingFilter, "3");
+    assert.deepEqual(app.state.ratingFilters, ["3"]);
     assert.equal(app.state.count, 0);
+});
+
+test("FILTER-03/09：多选条件跨文件夹保留，新会话回到拍摄时间升序与全部", () => {
+    const first = harness();
+    first.app.openFolder("f1");
+    first.app.setRatingFilters(["3", "5"]);
+    first.app.openFolder("one");
+    assert.deepEqual(first.app.state.ratingFilters, ["3", "5"]);
+    first.app.openFolder("f1");
+    assert.deepEqual(first.app.state.ratingFilters, ["3", "5"]);
+
+    const second = harness();
+    assert.equal(second.app.state.sortKey, "taken");
+    assert.equal(second.app.state.sortOrder, "asc");
+    assert.deepEqual(second.app.state.ratingFilters, ["all"]);
+});
+
+test("FILTER-03/08：等价或空结果的条件也刷新筛选快照与列表通知", async () => {
+    const { app } = harness();
+    app.openFolder("f1");
+    await flush();
+    app.setRatingFilter("all");
+    await flush();
+
+    const events = [];
+    app.on("change", (regions) => events.push(regions));
+    assert.equal(app.setRatingFilter("all"), false);
+    await flush();
+    assert.equal(events.length, 1);
+    assert.ok(events[0].has("list"));
+
+    app.setRatingFilters(["rejected", "conflict"]);
+    await flush();
+    assert.deepEqual(app.state.ratingFilters, ["rejected", "conflict"]);
+    assert.equal(app.state.count, 0);
+    assert.ok(events.at(-1).has("list"));
 });
 
 test("SIM-03/SIM-10：提取全部转发相似面板并刷新未提取计数", async () => {
@@ -779,7 +815,7 @@ test("EDITION-01/02：缺省 AI 版保留相似入口与 6/7 瓦片", async () =
     assert.equal(app.state.analysis.dino, true);
 });
 
-test("EDITION-02：标准版筛选条四项、无相似入口、分析栏 4/5 瓦片", async () => {
+test("EDITION-02：标准版保留排序、方向与星级三项，无相似入口、分析栏 4/5 瓦片", async () => {
     const { app } = harness({ edition: "standard" });
     app.openFolder("f1", { target: "f1/A001.JPG" });
     app.toggleAnalysis();
@@ -797,7 +833,7 @@ test("EDITION-02：标准版筛选条四项、无相似入口、分析栏 4/5 �
     );
 });
 
-test("EDITION-02：标准版行布局按四项重新整组居中", () => {
+test("EDITION-02：标准版行布局筛选控件整组居中", () => {
     const { app } = harness({ edition: "standard" });
     app.updateSettings({ layoutMode: "row" });
     app.setWindowSize(1200, 850);

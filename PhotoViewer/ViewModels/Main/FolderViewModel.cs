@@ -52,6 +52,7 @@ public class FolderViewModel : ReactiveObject, IDisposable
 
     /// <summary>原始文件集合发生变化时触发(新增/清空/重载),由 ThumbnailListViewModel 订阅以重算筛选</summary>
     public event Action? AllFilesChanged;
+    internal event Action? SortKeysLoaded;
 
     /// <summary>请求 View 滚动到当前文件(事件转发给 ThumbnailListView)</summary>
     public event Action? ScrollToCurrentRequested;
@@ -586,7 +587,11 @@ public class FolderViewModel : ReactiveObject, IDisposable
                 backgroundFiles = files.Where(file => !reusedSet.Contains(file)).ToList();
             }
 
-            session.StartBackgroundLoads(backgroundFiles, CreateRatingsLoadedCallback(session, backgroundFiles));
+            session.StartBackgroundLoads(backgroundFiles, CreateRatingsLoadedCallback(session, backgroundFiles),
+                () => UiDispatcher.InvokeAsync(() =>
+                {
+                    if (IsSessionActive(session)) SortKeysLoaded?.Invoke();
+                }));
 
             Console.WriteLine($"[Folder] Phase2 (UI updated): {stopwatch.ElapsedMilliseconds}ms");
         });

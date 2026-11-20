@@ -46,6 +46,7 @@
     <PackageReference Include="Microsoft.WindowsAppSDK.ML" ExcludeAssets="all" />
     <PackageReference Include="CommunityToolkit.WinUI.Controls.SettingsControls" />
     <PackageReference Include="DirectNStandard" />
+    <PackageReference Include="Microsoft.Graphics.Win2D" />
     <PackageReference Include="LibHeifSharp" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" />
     <PackageReference Include="WicNet" />

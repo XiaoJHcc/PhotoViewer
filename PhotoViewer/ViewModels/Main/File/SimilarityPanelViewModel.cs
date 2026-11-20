@@ -238,9 +238,7 @@ public class SimilarityPanelViewModel : ReactiveObject, IDisposable
         // 候选池来自主缩略图列表的 FilteredFiles(已应用同名分组与筛选);
         // 列表整体替换时(开关分组、改筛选、切文件夹)同步重算,避免相似面板出现"被合并掉的伴侣文件"或"自身的另一格式"。
         // 使用 _anchorFile 而非 CurrentFile,避免用户从相似列表选中某项后改星级触发 FilteredFiles 重建时锚点漂移。
-        _thumbnailList.WhenAnyValue(x => x.FilteredFiles)
-            .Skip(1)
-            .Subscribe(__ => { if (IsPanelVisible) _ = RecomputeAsync(_anchorFile); });
+        _thumbnailList.FilterProjectionChanged += OnFilterProjectionChanged;
 
         // 设置变化（阈值 / 最多数量）即时重算当前列表。
         _main.Settings.WhenAnyValue(x => x.SimilarityThreshold, x => x.SimilarityMaxResults)
@@ -272,6 +270,11 @@ public class SimilarityPanelViewModel : ReactiveObject, IDisposable
         };
     }
 
+    private void OnFilterProjectionChanged()
+    {
+        if (IsPanelVisible) _ = RecomputeAsync(_anchorFile);
+    }
+
     /// <summary>
     /// 释放:只取消在途相似度计算与批量提取,不阻塞 UI 线程等任务结束。
     /// 在途提取的收尾(归还存储租约、已入库部分保留)由后台任务自己完成。
@@ -280,6 +283,7 @@ public class SimilarityPanelViewModel : ReactiveObject, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _thumbnailList.FilterProjectionChanged -= OnFilterProjectionChanged;
 
         _computeCts?.Cancel();
         _computeCts = null;

@@ -46,20 +46,22 @@ public sealed class MacMainWindow : IDisposable
     private readonly NSCollectionView _collection;
     private readonly MacFilmstripLayout _filmstripLayout;
     private readonly CollectionSource _source;
-    private readonly NSPopUpButton _sort;
-    private readonly NSPopUpButton _order;
-    private readonly NSPopUpButton _ratingFilter;
     private readonly NSSegmentedControl _filterSegments;
     private readonly NSGlassEffectView _filterGlass;
     private readonly NSPopUpButton _capsule;
     private readonly NSGlassEffectView _capsuleGlass;
-    private readonly NSTextField _count;
+    private readonly NSMenu _sortMenu;
+    private readonly NSMenu _orderMenu;
+    private readonly NSMenu _ratingMenu;
+    private readonly NSMenu _capsuleMenu;
+    private readonly NSObject _filterTarget;
+    private readonly NSMenuDelegate _filterDelegate;
+    private readonly List<(NSMenuItem Item, Func<bool> Checked)> _filterChecks = [];
+    private readonly Dictionary<int, Action> _filterActions = [];
+    private readonly double _sortWidth;
+    private readonly double _orderWidth;
+    private readonly double _ratingWidth;
     private NSView _activeFilterTarget = null!;
-    private NSMenu? _capsuleMenu;
-    private NSMenuDelegate? _capsuleDelegate;
-    private readonly NSObject _capsuleTarget;
-    private readonly List<(NSMenuItem Item, Func<bool> Checked)> _capsuleChecks = [];
-    private readonly Dictionary<int, Action> _capsuleActions = [];
 #if PHOTOVIEWER_DINO
     private readonly FilterToggleButton _similarityToggle;
     private readonly NSGlassEffectView _similarityGlass;
@@ -139,12 +141,16 @@ public sealed class MacMainWindow : IDisposable
     internal NSView ToolDivider => _controlDivider;
     /// <summary>当前筛选控件与外框的共享几何结果。</summary>
     internal WideFilterFrames FilterLayout => _filterFrames;
-    /// <summary>三段筛选的原生连续控件与菜单业务源，供系统菜单验收读取。</summary>
+    /// <summary>三段筛选的原生连续控件，供系统菜单验收读取。</summary>
     internal NSSegmentedControl FilterSegments => _filterSegments;
     internal NSGlassEffectView FilterSegmentedGlass => _filterGlass;
     internal NSGlassEffectView FilterCapsuleGlass => _capsuleGlass;
-    internal IReadOnlyList<NSPopUpButton> FilterMenuSources => [_sort, _order, _ratingFilter];
-    internal NSTextField CountView => _count;
+    internal NSPopUpButton FilterCapsuleButton => _capsule;
+    /// <summary>三段与单胶囊的菜单，供系统菜单验收读取。</summary>
+    internal NSMenu SortFilterMenu => _sortMenu;
+    internal NSMenu OrderFilterMenu => _orderMenu;
+    internal NSMenu RatingFilterMenu => _ratingMenu;
+    internal NSMenu CapsuleFilterMenu => _capsuleMenu;
     /// <summary>当前筛选是否回退为单胶囊。</summary>
     internal bool FilterCapsuleMode => _filterCapsule;
     /// <summary>筛选控件与相似开关在窗口坐标中的联合范围。</summary>
@@ -273,11 +279,10 @@ public sealed class MacMainWindow : IDisposable
         _busyPill.Hidden = true;
         _photoPane.AddSubview(_busyPill);
         _photoPane.AddSubview(_toast);
-        _sort = Popup(_main.FileVM.FilterBar.SortModes.Select(item => item.DisplayName).ToArray());
-        _order = Popup(_main.FileVM.FilterBar.SortOrders.Select(item => item.DisplayName).ToArray());
-        _ratingFilter = Popup(_main.FileVM.FilterBar.RatingFilters.Select(item => item.DisplayName).ToArray());
-        _count = Label("共 0 张", 12); _count.Alignment = NSTextAlignment.Center;
-        _count.Hidden = true;
+        var filterBar = _main.FileVM.FilterBar;
+        _sortWidth = MeasureFilterWidth(filterBar.SortModes.Select(item => item.DisplayName).ToArray());
+        _orderWidth = MeasureFilterWidth(filterBar.SortOrders.Select(item => item.DisplayName).ToArray());
+        _ratingWidth = MeasureFilterWidth([.. filterBar.RatingFilters.Select(item => item.DisplayName), RatingMultiSelectTitle]);
         _capsule = Popup(["筛选"]);
         _filterSegments = new NSSegmentedControl
         {
@@ -309,9 +314,6 @@ public sealed class MacMainWindow : IDisposable
             IsOn = _main.FileVM.FilterBar.IsSimilarityPanelOpen,
         };
 #endif
-        _sort.Activated += (_, _) => _main.FileVM.FilterBar.SortMode = (SortMode)_main.FileVM.FilterBar.SortModes[(int)_sort.IndexOfSelectedItem].Value;
-        _order.Activated += (_, _) => _main.FileVM.FilterBar.SortOrder = (SortOrder)_main.FileVM.FilterBar.SortOrders[(int)_order.IndexOfSelectedItem].Value;
-        _ratingFilter.Activated += (_, _) => _main.FileVM.FilterBar.SelectedRatingFilter = _main.FileVM.FilterBar.RatingFilters[(int)_ratingFilter.IndexOfSelectedItem].Key;
 #if PHOTOVIEWER_DINO
         _similarityToggle.Toggled = open => _main.FileVM.FilterBar.IsSimilarityPanelOpen = open;
         _similarityToggle.Bordered = true;
@@ -327,11 +329,16 @@ public sealed class MacMainWindow : IDisposable
         foreach (var control in new NSView[] { _filterGlass, _capsuleGlass }) _filePane.AddSubview(control);
 #endif
         _activeFilterTarget = _filterSegments;
-        _capsuleTarget = new CapsuleMenuTarget(this);
-        _capsuleMenu = BuildCapsuleMenu();
-        _capsuleDelegate = new CapsuleMenuDelegate(this);
-        _capsuleMenu.Delegate = _capsuleDelegate;
+        _filterTarget = new FilterMenuTarget(this);
+        _filterDelegate = new FilterMenuDelegate(this);
+        var menus = BuildFilterMenus();
+        _sortMenu = menus.Sort;
+        _orderMenu = menus.Order;
+        _ratingMenu = menus.Rating;
+        _capsuleMenu = menus.Capsule;
         _capsule.Menu = _capsuleMenu;
+        // 下拉按钮把第一项当作入口标题并从菜单里隐藏，标题不参与勾选。
+        _capsule.PullsDown = true;
         _capsule.Hidden = true;
         _filmstripLayout = new MacFilmstripLayout();
         _collection = new NSCollectionView(new CGRect(0, 0, 116, 680)) { CollectionViewLayout = _filmstripLayout, Selectable = false, BackgroundColors = [NSColor.Clear] };
@@ -523,10 +530,9 @@ public sealed class MacMainWindow : IDisposable
         }
     }
 
-    /// <summary>保留原生筛选菜单和选择事件，以按钮左下角定位菜单，避免选中标记使菜单向左偏移。</summary>
+    /// <summary>单胶囊入口沿用原生弹出按钮：以按钮左下角定位菜单，避开选中标记造成的左移。</summary>
     private sealed class FilterPopUpCell : NSPopUpButtonCell
     {
-        private const double MenuAnchorGap = 8;
         /// <summary>初始化常规尺寸的原生弹出按钮单元格。</summary>
         public FilterPopUpCell() : base(string.Empty, false) => BezelStyle = NSBezelStyle.Rounded;
 
@@ -541,7 +547,7 @@ public sealed class MacMainWindow : IDisposable
             Highlight(true, cellFrame, controlView);
             try
             {
-                double anchorY = controlView.IsFlipped ? (double)(cellFrame.Y + cellFrame.Height) + MenuAnchorGap : (double)cellFrame.Y - MenuAnchorGap;
+                double anchorY = controlView.IsFlipped ? (double)(cellFrame.Y + cellFrame.Height) + FilterMenuAnchorGap : (double)cellFrame.Y - FilterMenuAnchorGap;
                 return menu.PopUpMenu(null, new CGPoint(cellFrame.X, anchorY), controlView);
             }
             finally
@@ -579,12 +585,11 @@ public sealed class MacMainWindow : IDisposable
 #else
             const bool includeSimilarityToggle = false;
 #endif
-            double sortWidth = NaturalFilterWidth(_sort), orderWidth = NaturalFilterWidth(_order),
-                ratingWidth = NaturalFilterWidth(_ratingFilter), capsuleWidth = FilmCardGeometry.Width(FilmCardTier.Large);
-            var rowFilter = WideFilterLayout.Compute(true, width, cardWidth, leadingInset, sortWidth, orderWidth,
-                ratingWidth, capsuleWidth, includeSimilarityToggle, toggleWidth);
+            double capsuleWidth = FilmCardGeometry.Width(FilmCardTier.Large);
+            var rowFilter = WideFilterLayout.Compute(true, width, cardWidth, leadingInset, _sortWidth, _orderWidth,
+                _ratingWidth, capsuleWidth, includeSimilarityToggle, toggleWidth);
             var columnFilter = WideFilterLayout.Compute(false, MainScreenLayout.FileBarContentWidth, cardWidth,
-                leadingInset, sortWidth, orderWidth, ratingWidth, capsuleWidth, includeSimilarityToggle, toggleWidth);
+                leadingInset, _sortWidth, _orderWidth, _ratingWidth, capsuleWidth, includeSimilarityToggle, toggleWidth);
             double filterMain = row ? rowFilter.MainLength : columnFilter.MainLength;
             var zoom = TrafficLightInRoot(NSWindowButton.ZoomButton);
             double windowControlsRight = zoom.IsEmpty ? 0 : (double)zoom.X + (double)zoom.Width;
@@ -655,7 +660,6 @@ public sealed class MacMainWindow : IDisposable
             {
                 _capsuleGlass.Frame = controlFrame;
                 _capsule.Frame = _capsuleGlass.Bounds;
-                ResetCapsuleEntry();
                 _activeFilterTarget = _capsule;
             }
             else
@@ -667,18 +671,6 @@ public sealed class MacMainWindow : IDisposable
                 _filterSegments.SetWidth((nfloat)filterFrames.Rating.Width, 2);
                 _activeFilterTarget = _filterSegments;
             }
-            NSView countHost = _filterCapsule ? _capsule : _filterSegments;
-            if (_count.Superview != countHost)
-            {
-                _count.RemoveFromSuperview();
-                countHost.AddSubview(_count);
-            }
-            _count.Hidden = !fileVisible;
-            _count.Frame = _filterCapsule
-                ? new CGRect(0, countHost.Bounds.Height - 13, countHost.Bounds.Width, 11)
-                : new CGRect((nfloat)(filterFrames.Sort.Width + filterFrames.Order.Width), countHost.Bounds.Height - 13,
-                    (nfloat)filterFrames.Rating.Width, 11);
-            _count.Font = NSFont.SystemFontOfSize(9) ?? throw new InvalidOperationException("系统字体不可用");
 #if PHOTOVIEWER_DINO
             _similarityToggle.Hidden = _similarityGlass.Hidden = !_filterToggleVisible;
             if (_filterToggleVisible)
@@ -825,28 +817,39 @@ public sealed class MacMainWindow : IDisposable
         return Math.Ceiling(width);
     }
 
-    /// <summary>把三个业务菜单的当前选项同步到原生连续控件。</summary>
+    /// <summary>FILTER-03：星级段在多选时的标题，与共享 RatingFilterLabel 的文案一致。</summary>
+    private const string RatingMultiSelectTitle = "多选";
+    /// <summary>筛选菜单与入口之间的垂直间隙。</summary>
+    private const double FilterMenuAnchorGap = 8;
+
+    /// <summary>以原生弹出按钮测量筛选段标题的自然宽，取全部候选标题（含多选标题）的最大值。</summary>
+    private static double MeasureFilterWidth(string[] titles) => NaturalFilterWidth(Popup(titles));
+
+    /// <summary>FILTER-08：三段入口显示当前值；星级多选时显示「多选」，完整条件作为控件无障碍值。</summary>
     private void SyncFilterSegments()
     {
-        var sources = new[] { _sort, _order, _ratingFilter };
-        for (int index = 0; index < sources.Length; index++)
-            _filterSegments.SetLabel(sources[index].TitleOfSelectedItem ?? string.Empty, index);
+        var filter = _main.FileVM.FilterBar;
+        int sortIndex = filter.SortModes.FindIndex(item => (SortMode)item.Value == filter.SortMode);
+        int orderIndex = filter.SortOrders.FindIndex(item => (SortOrder)item.Value == filter.SortOrder);
+        _filterSegments.SetLabel(sortIndex >= 0 ? filter.SortModes[sortIndex].DisplayName : string.Empty, 0);
+        _filterSegments.SetLabel(orderIndex >= 0 ? filter.SortOrders[orderIndex].DisplayName : string.Empty, 1);
+        _filterSegments.SetLabel(filter.RatingFilterLabel, 2);
+        ((NSView)_filterSegments).AccessibilityValue = new NSString(filter.RatingFilterSelectionText);
     }
 
-    /// <summary>由连续控件的段动作打开对应系统菜单，菜单位置与该段对齐。</summary>
+    /// <summary>由连续控件的段动作打开对应原生菜单，菜单贴在入口正下方并与入口左边缘对齐。</summary>
     internal void OpenFilterSegmentMenu(nint segment)
     {
         if (_filterCapsule || segment < 0 || segment > 2) return;
-        var source = new[] { _sort, _order, _ratingFilter }[(int)segment];
-        var rect = segment switch
+        var (menu, rect) = segment switch
         {
-            0 => _filterFrames.Sort,
-            1 => _filterFrames.Order,
-            _ => _filterFrames.Rating,
+            0 => (_sortMenu, _filterFrames.Sort),
+            1 => (_orderMenu, _filterFrames.Order),
+            _ => (_ratingMenu, _filterFrames.Rating),
         };
         try
         {
-            source.Cell.PerformClick(new CGRect(rect.X, rect.Y, rect.Width, rect.Height), _filterSegments);
+            ShowFilterMenu(menu, rect);
         }
         finally
         {
@@ -854,85 +857,117 @@ public sealed class MacMainWindow : IDisposable
         }
     }
 
-    /// <summary>单胶囊回退菜单：排序、方向与星级筛选三组无标题内联单选组，沿用同一业务属性。</summary>
-    private NSMenu BuildCapsuleMenu()
+    /// <summary>以入口宽为菜单最小宽，在入口下沿外留出原生间隙后弹出。</summary>
+    private void ShowFilterMenu(NSMenu menu, LayoutRect anchor)
     {
-        var menu = new NSMenu("筛选");
-        var filter = _main.FileVM.FilterBar;
-        _capsuleChecks.Clear();
-        _capsuleActions.Clear();
-        // 入口标题固定为「筛选」；该行只承载标题，禁用后键盘导航从排序组开始。
-        var entry = new NSMenuItem("筛选", (_, _) => { }) { State = NSCellStateValue.On, Enabled = false };
-        menu.AddItem(entry);
-        menu.AddItem(NSMenuItem.SeparatorItem);
-        AddGroup(menu, filter.SortModes.Select(item => (item.DisplayName, (Func<bool>)(() => (SortMode)item.Value == filter.SortMode),
-            (Action)(() => filter.SortMode = (SortMode)item.Value))));
-        menu.AddItem(NSMenuItem.SeparatorItem);
-        AddGroup(menu, filter.SortOrders.Select(item => (item.DisplayName, (Func<bool>)(() => (SortOrder)item.Value == filter.SortOrder),
-            (Action)(() => filter.SortOrder = (SortOrder)item.Value))));
-        menu.AddItem(NSMenuItem.SeparatorItem);
-        AddGroup(menu, filter.RatingFilters.Select(item => (item.DisplayName, (Func<bool>)(() => item.Key == filter.SelectedRatingFilter),
-            (Action)(() => filter.SelectedRatingFilter = item.Key))));
-        return menu;
+        menu.MinimumWidth = (nfloat)anchor.Width;
+        double y = _filterSegments.IsFlipped
+            ? anchor.Y + anchor.Height + FilterMenuAnchorGap
+            : anchor.Y - FilterMenuAnchorGap;
+        menu.PopUpMenu(null, new CGPoint(anchor.X, y), _filterSegments);
+    }
 
-        void AddGroup(NSMenu target, IEnumerable<(string Title, Func<bool> Checked, Action Apply)> entries)
+    /// <summary>三段与单胶囊共用的四份菜单：三段各一组，单胶囊把三组合成一个下拉。</summary>
+    private sealed record FilterMenus(NSMenu Sort, NSMenu Order, NSMenu Rating, NSMenu Capsule);
+
+    /// <summary>构建筛选菜单：固定顺序、单选或并集多选，图标取共享符号名，勾选只来自真实状态。</summary>
+    private FilterMenus BuildFilterMenus()
+    {
+        var filter = _main.FileVM.FilterBar;
+        _filterChecks.Clear();
+        _filterActions.Clear();
+        var sort = FilterMenu("排序方式");
+        var order = FilterMenu("排序方向");
+        var rating = FilterMenu("星级筛选");
+        AddSortOptions(sort);
+        AddOrderOptions(order);
+        AddRatingOptions(rating);
+
+        var capsule = FilterMenu("筛选");
+        // 下拉按钮的第一项只作为入口标题，AppKit 把它从菜单中隐藏，标题不参与勾选。
+        capsule.AddItem(new NSMenuItem("筛选", (_, _) => { }));
+        capsule.AddItem(NSMenuItem.SeparatorItem);
+        AddSortOptions(capsule);
+        capsule.AddItem(NSMenuItem.SeparatorItem);
+        AddOrderOptions(capsule);
+        capsule.AddItem(NSMenuItem.SeparatorItem);
+        AddRatingOptions(capsule);
+        return new FilterMenus(sort, order, rating, capsule);
+
+        NSMenu FilterMenu(string title)
+            => new(title) { AutoEnablesItems = false, Delegate = _filterDelegate };
+
+        void AddSortOptions(NSMenu menu)
         {
-            foreach (var entry in entries)
+            foreach (var option in filter.SortModes)
             {
-                var item = new NSMenuItem(entry.Title)
-                {
-                    Target = _capsuleTarget,
-                    Action = new ObjCRuntime.Selector("applyCapsule:"),
-                    Tag = target.Items.Length,
-                };
-                item.State = entry.Checked() ? NSCellStateValue.On : NSCellStateValue.Off;
-                target.AddItem(item);
-                _capsuleChecks.Add((item, entry.Checked));
-                _capsuleActions[(int)item.Tag] = entry.Apply;
+                var mode = (SortMode)option.Value;
+                AddFilterOption(menu, option.DisplayName, AppleSymbolNames.Filter.ForSortMode(mode),
+                    () => filter.SortMode == mode, () => filter.SortMode = mode);
+            }
+        }
+
+        void AddOrderOptions(NSMenu menu)
+        {
+            foreach (var option in filter.SortOrders)
+            {
+                var value = (SortOrder)option.Value;
+                AddFilterOption(menu, option.DisplayName, AppleSymbolNames.Filter.ForSortOrder(value),
+                    () => filter.SortOrder == value, () => filter.SortOrder = value);
+            }
+        }
+
+        void AddRatingOptions(NSMenu menu)
+        {
+            foreach (var option in filter.RatingFilters)
+            {
+                var key = option.Key;
+                AddFilterOption(menu, option.DisplayName, AppleSymbolNames.Filter.ForRatingFilter(key),
+                    () => filter.IsRatingFilterSelected(key), () => filter.ToggleRatingFilter(key));
             }
         }
     }
 
-    /// <summary>菜单每次展开前只同步勾选，不重建条目，避免菜单跟踪期间换掉正在派发的项。</summary>
-    private void UpdateCapsuleMenuStates()
+    /// <summary>加入一个筛选选项：菜单项自身携带 target/action 与语义图标，勾选态由共享状态决定。</summary>
+    private void AddFilterOption(NSMenu menu, string title, string symbol, Func<bool> isChecked, Action apply)
     {
-        foreach (var (item, checkedState) in _capsuleChecks)
-            item.State = checkedState() ? NSCellStateValue.On : NSCellStateValue.Off;
-    }
-
-    /// <summary>菜单展开前同步勾选，关闭后只把入口显示复位；业务动作由菜单项自身的 target/action 提交。</summary>
-    private sealed class CapsuleMenuDelegate(MacMainWindow owner) : NSMenuDelegate
-    {
-        public override void MenuWillOpen(NSMenu menu) => owner.UpdateCapsuleMenuStates();
-
-        public override void MenuDidClose(NSMenu menu)
+        var item = new NSMenuItem(title)
         {
-            owner.ResetCapsuleEntry();
-            owner.UpdateCapsuleMenuStates();
-        }
+            Target = _filterTarget,
+            Action = new ObjCRuntime.Selector("applyFilter:"),
+            Image = MacSymbols.Get(symbol),
+            Tag = _filterActions.Count,
+        };
+        menu.AddItem(item);
+        _filterChecks.Add((item, isChecked));
+        _filterActions[(int)item.Tag] = apply;
     }
 
-    /// <summary>应用单胶囊菜单选中项：菜单项动作与鼠标、键盘走同一条 target/action 路径。</summary>
-    private void ApplyCapsuleSelection(int index)
+    /// <summary>菜单展开前只同步勾选，不重建条目，避免菜单跟踪期间换掉正在派发的项。</summary>
+    private void UpdateFilterMenuStates()
     {
-        if (_capsuleActions.TryGetValue(index, out var action)) action();
-        UpdateCapsuleMenuStates();
+        foreach (var (item, isChecked) in _filterChecks)
+            item.State = isChecked() ? NSCellStateValue.On : NSCellStateValue.Off;
     }
 
-    /// <summary>
-    /// 入口显示回到「筛选」行。<see cref="NSPopUpButton"/> 的选中项是它自己的状态，菜单展开与收起不会改动它；
-    /// 只有真的被改过才写回，避免在菜单跟踪期间反复改写选中项去打断正在派发的会话。
-    /// </summary>
-    private void ResetCapsuleEntry()
+    /// <summary>筛选菜单共用的展开前同步委托。</summary>
+    private sealed class FilterMenuDelegate(MacMainWindow owner) : NSMenuDelegate
     {
-        if (_capsule.IndexOfSelectedItem != 0) _capsule.SelectItem(0);
+        public override void MenuWillOpen(NSMenu menu) => owner.UpdateFilterMenuStates();
     }
 
-    /// <summary>单胶囊菜单的原生 target：菜单项动作按序号回到主窗口业务回调。</summary>
-    private sealed class CapsuleMenuTarget(MacMainWindow owner) : NSObject
+    /// <summary>应用筛选菜单选项：菜单项动作与鼠标、键盘走同一条 target/action 路径。</summary>
+    private void ApplyFilterSelection(int tag)
     {
-        [Foundation.Export("applyCapsule:")]
-        public void Apply(NSMenuItem item) => owner.ApplyCapsuleSelection((int)item.Tag);
+        if (_filterActions.TryGetValue(tag, out var action)) action();
+        UpdateFilterMenuStates();
+    }
+
+    /// <summary>筛选菜单的原生 target：菜单项动作按序号回到主窗口业务回调。</summary>
+    private sealed class FilterMenuTarget(MacMainWindow owner) : NSObject
+    {
+        [Foundation.Export("applyFilter:")]
+        public void Apply(NSMenuItem item) => owner.ApplyFilterSelection((int)item.Tag);
     }
 
     /// <summary>系统全屏态：全屏没有自绘标题栏，顶部交给系统（SHELL-02/03）。</summary>
@@ -1295,7 +1330,7 @@ public sealed class MacMainWindow : IDisposable
         if (args.PropertyName == nameof(_main.ControlVM.EnabledExifItems)) OnSettingsChanged(SettingsChangeImpact.Exif);
         else if (args.PropertyName == nameof(_main.ControlVM.EnabledControls)) OnSettingsChanged(SettingsChangeImpact.Commands);
     }
-    /// <summary>列表原子替换后刷新 CollectionView 和计数；后台星级扫描未改变列表顺序时不打断滚动或重建卡片。</summary>
+    /// <summary>列表原子替换后刷新 CollectionView；后台星级扫描未改变列表顺序时不打断滚动或重建卡片。</summary>
     private void OnFilesChanged(object? sender, PropertyChangedEventArgs args)
     {
         if (args.PropertyName != nameof(_main.FileVM.ThumbnailList.FilteredFiles)) return;
@@ -1315,21 +1350,17 @@ public sealed class MacMainWindow : IDisposable
                 _collection.ReloadData();
                 UpdateFilmstripLayout();
             }
-            _count.StringValue = $"共 {files.Count} 张";
             Layout();
             ReportVisible();
         });
     }
-    /// <summary>业务排序/筛选状态同步回原生控件，程序化或文件源刷新不会留下旧选中项；相似聚类开关同时驱动面板显隐与重排。</summary>
+    /// <summary>业务排序/筛选状态同步回段标题与菜单勾选，程序化或文件源刷新不会留下旧态；相似聚类开关同时驱动面板显隐与重排。</summary>
     private void OnFilterChanged(object? sender, PropertyChangedEventArgs args) => UiDispatcher.Post(() =>
     {
         if (_disposed) return;
         var filter = _main.FileVM.FilterBar;
-        _sort.SelectItem(filter.SortModes.FindIndex(item => (SortMode)item.Value == filter.SortMode));
-        _order.SelectItem(filter.SortOrders.FindIndex(item => (SortOrder)item.Value == filter.SortOrder));
-        _ratingFilter.SelectItem(filter.RatingFilters.FindIndex(item => item.Key == filter.SelectedRatingFilter));
         SyncFilterSegments();
-        UpdateCapsuleMenuStates();
+        UpdateFilterMenuStates();
 #if PHOTOVIEWER_DINO
         _similarityToggle.IsOn = filter.IsSimilarityPanelOpen;
         if (args.PropertyName == nameof(FilterBarViewModel.IsSimilarityPanelOpen)) Layout();

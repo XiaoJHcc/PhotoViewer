@@ -138,7 +138,7 @@ internal static class iOSNativeFormCheck
         var entryOrientation = UIInterfaceOrientation.Unknown;
         var entrySort = SortMode.Name;
         var entryOrder = SortOrder.Ascending;
-        string entryRatingFilter = "All";
+        IReadOnlySet<string> entryRatingFilter = new HashSet<string>(StringComparer.Ordinal);
         MainViewModel? main = null;
         try
         {
@@ -166,7 +166,7 @@ internal static class iOSNativeFormCheck
             entryOrientation = CurrentOrientation(root);
             entrySort = main.FileVM.FilterBar.SortMode;
             entryOrder = main.FileVM.FilterBar.SortOrder;
-            entryRatingFilter = main.FileVM.FilterBar.SelectedRatingFilter;
+            entryRatingFilter = main.FileVM.FilterBar.SelectedRatingFilters;
 
             await main.FolderVM.OpenFolderAsync(new LocalFolderRef(directory));
             await WaitAsync(() => main.CurrentFile != null && session.Image != null, "首图解码");
@@ -2299,7 +2299,7 @@ internal static class iOSNativeFormCheck
     /// <param name="ratingFilter">进入时的星级筛选。</param>
     private static async Task RestoreAsync(iOSNativeRootViewController root, MainViewModel main, AppSettings settings,
         bool film, bool control, bool analysis, bool exifVisible, HashSet<string> entryExif,
-        UIInterfaceOrientation orientation, SortMode sort, SortOrder order, string ratingFilter)
+        UIInterfaceOrientation orientation, SortMode sort, SortOrder order, IReadOnlySet<string> ratingFilter)
     {
         await UiDispatcher.InvokeAsync(() =>
         {
@@ -2319,7 +2319,7 @@ internal static class iOSNativeFormCheck
             }
             main.FileVM.FilterBar.SortMode = sort;
             main.FileVM.FilterBar.SortOrder = order;
-            main.FileVM.FilterBar.SelectedRatingFilter = ratingFilter;
+            main.FileVM.FilterBar.SelectedRatingFilters = ratingFilter;
             root.SupportedOrientationsOverride = null;
             root.SetNeedsUpdateOfSupportedInterfaceOrientations();
         });

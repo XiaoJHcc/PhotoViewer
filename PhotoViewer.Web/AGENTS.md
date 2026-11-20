@@ -20,7 +20,7 @@ VS Code Tasks：**Serve Web**、**Test Web**。ES module 在 `file://` 下会被
 
 页面参数：`?demo` 打开窗口外演示面板（尺寸、布局模式、安全区注入、设置、故障注入、状态读数、几何导出）；`?check=<模块|all>` 运行页内行为与静态几何检查并输出按设计 ID 的报告；`?platform=mac` 切到 mac 配置档，只保留浏览器没有的窗口装饰几何（列布局首控件 42 让位、标题栏让位与拖动区导出），其余渲染与几何和默认档一致；`?check=mac` 只跑 mac 配置档检查；`?edition=standard|ai` 选择构建变体（缺省 `ai`）；`?empty` 以空态启动；`?folder=<id>` 指定首个文件夹。开发期可用 `?width=<px>&height=<px>&layout=auto|row|col|phone&safe=<top,right,bottom,left>&film=0&control=0&analysis=1` 直接落到指定视口、形态与栏位；这些参数只写会话 override，不写持久设置。安全区参数是显式几何输入，不代表浏览器具备额外探测能力。
 
-`?edition` 只用于参考壳的 EDITION 差分验收，不是产品内版本切换：`standard` 不创建相似聚类入口与面板、筛选条按四项居中、分析栏只有 4/5 张瓦片（无 PCA/Cosine），设置模型保留不可见的 DINO/相似参数，只启用独立的「即时计算 CV」；`ai` 保持完整入口与六/七瓦片。两个版本都不显示升级、缺模型或版本说明文案。
+`?edition` 只用于参考壳的 EDITION 差分验收，不是产品内版本切换：`standard` 不创建相似聚类入口与面板、筛选组居中、不留相似开关空槽、分析栏只有 4/5 张瓦片（无 PCA/Cosine），设置模型保留不可见的 DINO/相似参数，只启用独立的「即时计算 CV」；`ai` 保持完整入口与六/七瓦片。两个版本都不显示升级、缺模型或版本说明文案。
 
 页内检查可无人值守跑：无头 Chrome 的 `--virtual-time-budget` 至少给到 120000 ms，预算偏小时只跑完部分检查（报告是 `done/total`，不是 FAIL）；`--headless=new` 需同时关掉 crashpad（`--disable-breakpad --disable-crash-reporter --disable-features=Crashpad`），否则在沙箱环境里会以 SIGTRAP 退出。
 
@@ -69,11 +69,11 @@ src/
 tests/                  # node --test，测试名以设计 ID 开头
 dev/                    # 开发用（不进产品）：render-preview（方向码/代理/Full/增强/连拍目视）、<组件>-harness（单组件自查页）
 assets/                 # 图标字体子集：uicons-pv.woff2（描边）、uicons-pv-solid.woff2（实心星/叉）
-tools/export-geometry.mjs  # 导出几何 JSON（--profile mac；--edition standard|ai；--form wide|phone|all 覆盖宽/手机开关矩阵；--count-width 固定计数宽，Design/README §8）
+tools/export-geometry.mjs  # 导出几何 JSON（--profile mac；--edition standard|ai；--form wide|phone|all 覆盖宽/手机开关矩阵；Design/README §8）
 tools/subset-icons.py      # 从 Design/tokens.json 的 icon.* 码位生成 assets/ 下的图标字体子集
 ```
 
-图标（TOOLBAR-04、FILM-05、FILTER-08、MENU-02、MENU-06）统一用 `icon.font` 字形，不写内联 SVG：`src/shell/icons.js` 的 `icon(t, token)` / `solidIcon(code)` 输出带 `pv-icon` 的文本节点，字号取各控件 glyph 令牌。主图菜单按 MENU-06 在勾选列与文字之间渲染 `.pv-menu-icon`：图标角色由 `app.menuModel()` 的 `icon` 字段给出（`icon.menu.*`，增强复用 `icon.command.toggleEnhance`），几何取 `menu.icon.size/gap/fontSize`。命令悬停提示的格式（`名称（主 / 次）`）见 `core/input.js` 的 `tooltipText`，与四端共享 `CommandTooltipText` 同一文案；控制栏 EXIF 小块的 `标签 · 值` 是另一条规则，不受影响。字形一律放在单独的 `aria-hidden="true"` span 里，纯字形控件的可访问名称由 `aria-label` 提供，不得让私有区字符进入 `role="application"` 容器的可读文本；`?check=shell` 的 SHELL-06 会遍历窗口文本节点拦截回归。`src/assets/` 只放子集产物，改 `Design/tokens.json` 的 `icon.*` 后运行：
+图标（TOOLBAR-04、FILM-05、FILTER-08、MENU-02、MENU-06）统一用 `icon.font` 字形，不写内联 SVG：`src/shell/icons.js` 的 `icon(t, token)` / `solidIcon(code)` 输出带 `pv-icon` 的文本节点，字号取各控件 glyph 令牌。主图菜单与筛选菜单按 MENU-06 在勾选列与文字之间渲染 `.pv-menu-icon`：图标角色分别由 `app.menuModel()` 与 `core/filter.js` 选项表的 `icon` 字段给出，几何取 `menu.icon.size/gap/fontSize`。命令悬停提示的格式（`名称（主 / 次）`）见 `core/input.js` 的 `tooltipText`，与四端共享 `CommandTooltipText` 同一文案；控制栏 EXIF 小块的 `标签 · 值` 是另一条规则，不受影响。字形一律放在单独的 `aria-hidden="true"` span 里，纯字形控件的可访问名称由 `aria-label` 提供，不得让私有区字符进入 `role="application"` 容器的可读文本；`?check=shell` 的 SHELL-06 会遍历窗口文本节点拦截回归。`src/assets/` 只放子集产物，改 `Design/tokens.json` 的 `icon.*` 后运行：
 
 ```bash
 python3 PhotoViewer.Web/tools/subset-icons.py        # 需要 fonttools + brotli，pyftsubset 可用 PYFTSUBSET 指定

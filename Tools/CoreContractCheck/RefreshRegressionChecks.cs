@@ -75,6 +75,53 @@ internal static class RefreshRegressionChecks
         settings.BitmapCacheMaxMemory = int.MaxValue;
         c.Equal("工作副本缓存张数输入上界", 400, settings.BitmapCacheMaxCount);
         c.Equal("工作副本缓存内存输入上界", 32768, settings.BitmapCacheMaxMemory);
+
+        await VerifyFilterSessionAsync(c, root);
+    }
+
+    private static async Task VerifyFilterSessionAsync(Checks c, string root)
+    {
+        c.Section("FILTER-02 / FILTER-03：默认拍摄时间与星级多选");
+        using var main = new MainViewModel();
+        var filter = main.FileVM.FilterBar;
+        c.Equal("新会话默认拍摄时间", SortMode.Date, filter.SortMode);
+        c.Equal("新会话默认升序", SortOrder.Ascending, filter.SortOrder);
+        c.Equal("名称选项使用文件名", "文件名", filter.SortModes[0].DisplayName);
+        c.Equal("只有九个星级筛选选项", 9, filter.RatingFilters.Count);
+
+        var directory = Path.Combine(root, "filter-session");
+        Directory.CreateDirectory(directory);
+        string anchorPath = Path.Combine(directory, "a.jpg");
+        string rawPath = Path.Combine(directory, "z.arw");
+        await File.WriteAllBytesAsync(anchorPath, Jpeg(1));
+        File.Copy("Fixtures/raw/A7C01489.ARW", rawPath);
+        var fallback = new DateTimeOffset(2030, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        File.SetLastWriteTimeUtc(anchorPath, fallback.UtcDateTime);
+        File.SetLastWriteTimeUtc(rawPath, fallback.AddYears(1).UtcDateTime);
+        await main.FolderVM.OpenImageAsync(new LocalFileRef(anchorPath), resetView: false);
+        var list = main.FileVM.ThumbnailList;
+        var anchor = main.CurrentFile;
+        var raw = main.FolderVM.AllFiles.Single(file => file.Name == "z.arw");
+        for (int i = 0; i < 250 && (list.FilteredFiles.FirstOrDefault() != raw || raw.PhotoDate >= fallback
+            || main.FolderVM.AllFiles.Any(file => file.ModifiedDate == null || file.RatingSources.Count == 0)); i++)
+            await Task.Delay(20);
+        c.True("未浏览的 RAW 按 EXIF 排在靠修改时间排序的 JPG 之前",
+            raw.PhotoDate is { } date && date < fallback && list.FilteredFiles.FirstOrDefault() == raw);
+        c.Equal("无 EXIF 时回退文件修改时间", fallback, anchor?.PhotoDate);
+        c.True("后台重排不切换显式目标", anchor != null && ReferenceEquals(main.CurrentFile, anchor));
+        c.True("新会话只有‘全部’勾选", filter.IsRatingFilterSelected("All"));
+        filter.ToggleRatingFilter("Eq1");
+        filter.ToggleRatingFilter("Conflict");
+        c.True("星级条件可独立勾选", filter.SelectedRatingFilters.SetEquals(["Eq1", "Conflict"]));
+        c.Equal("分段显示多选", "多选", filter.RatingFilterLabel);
+        c.True("并集保留一星目标", anchor != null && list.FilteredFiles.Contains(anchor));
+        filter.ToggleRatingFilter("Eq1");
+        filter.ToggleRatingFilter("Conflict");
+        c.True("取消最后一项恢复全部", filter.IsRatingFilterSelected("All"));
+        filter.ToggleRatingFilter("None");
+        filter.ToggleRatingFilter("Eq2");
+        filter.ToggleRatingFilter("All");
+        c.True("点击全部清空条件且恢复全部卡片", filter.IsRatingFilterSelected("All") && list.FilteredFiles.Count == 2);
     }
 
     private static byte[] Packet(int value) => Encoding.UTF8.GetBytes(

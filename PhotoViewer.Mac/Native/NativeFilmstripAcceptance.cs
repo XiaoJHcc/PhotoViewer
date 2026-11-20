@@ -1,6 +1,7 @@
 using AppKit;
 using Foundation;
 using CoreGraphics;
+using PhotoViewer.Apple;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.Core.Storage;
@@ -134,7 +135,7 @@ internal static class NativeFilmstripAcceptance
             }
             window.Window.SetContentSize(new CGSize(900, 650));
             await Task.Delay(200);
-            VerifyFilterMenus(window, observations);
+            await VerifyFilterMenusAsync(window, observations);
             await Task.Delay(250);
             NativeSnapshots.SaveMain(window, System.IO.Path.Combine(output, "filmstrip-" + mode + ".png"));
             NativeSnapshots.SaveView(window.FilmstripScroll, System.IO.Path.Combine(output, "filmstrip-controls-" + mode + ".png"));
@@ -371,10 +372,10 @@ internal static class NativeFilmstripAcceptance
         filter.SortOrder = original;
         await Task.Delay(450);
         if (AxisOffset(scroll) > 1) throw new InvalidOperationException("恢复排序误触居中");
-        filter.SelectedRatingFilter = "None";
+        filter.SelectedRatingFilters = new HashSet<string>(["None"], StringComparer.Ordinal);
         await Task.Delay(450);
         if (AxisOffset(scroll) > 1) throw new InvalidOperationException("筛选刷新误触居中");
-        filter.SelectedRatingFilter = "All";
+        filter.SelectedRatingFilters = new HashSet<string>(StringComparer.Ordinal);
         await Task.Delay(150);
         window.Main.CurrentFile = window.Main.FileVM.ThumbnailList.FilteredFiles[^1];
         observations.Add($"{window.Main.Settings.LayoutMode}/{original}: card click, ordinary selection, exchange, sort/filter preserve offset; explicit navigation animates (intermediate={intermediate:0.##}, endpoint={maximum:0.##}); wheel/click cancel; latest request wins");
@@ -621,21 +622,21 @@ internal static class NativeFilmstripAcceptance
     private static double AxisOffset(NSScrollView scroll)
         => scroll is MacFilmstripScrollView { Horizontal: true } ? (double)scroll.ContentView.Bounds.X : (double)scroll.ContentView.Bounds.Y;
 
-    /// <summary>打开真实系统筛选菜单，以屏幕几何验证左边缘对齐、垂直无重叠、选中标记及键盘选择事件。</summary>
-    private static void VerifyFilterMenus(MacMainWindow window, List<string> observations)
+    /// <summary>打开真实系统筛选菜单，以屏幕几何验证对齐、间距、图标与真实勾选，并核对星级多选与选择事件（FILTER-03/08）。</summary>
+    private static async Task VerifyFilterMenusAsync(MacMainWindow window, List<string> observations)
     {
+        var filter = window.Main.FileVM.FilterBar;
+        var entryRatings = filter.SelectedRatingFilters;
+        SortMode entryMode = filter.SortMode;
         bool capsule = window.FilterCapsuleMode;
-        var popups = capsule
-            ? window.Window.ContentView!.Subviews.SelectMany(view => view.Subviews)
-                .OfType<NSGlassEffectView>().Select(glass => glass.ContentView)
-                .OfType<NSPopUpButton>().Where(popup => !popup.Hidden).ToArray()
-            : window.FilterMenuSources.ToArray();
-        if (popups.Length != (capsule ? 1 : 3))
-            throw new InvalidOperationException($"筛选菜单数量错误：{popups.Length}");
-        for (int index = 0; index < popups.Length; index++)
+        NSView view = capsule ? window.FilterCapsuleButton : window.FilterSegments;
+        var menus = capsule
+            ? [window.CapsuleFilterMenu]
+            : new[] { window.SortFilterMenu, window.OrderFilterMenu, window.RatingFilterMenu };
+        if (view.Hidden) throw new InvalidOperationException("筛选入口被隐藏");
+        for (int index = 0; index < menus.Length; index++)
         {
-            var popup = popups[index];
-            NSView view = capsule ? popup : window.FilterSegments;
+            var menu = menus[index];
             var segment = capsule ? default : index switch
             {
                 0 => window.FilterLayout.Sort,
@@ -653,23 +654,21 @@ internal static class NativeFilmstripAcceptance
             {
                 try
                 {
-                    var buttonFrame = window.Window.ConvertRectToScreen(view.ConvertRectToView(rect, null));
-                    var menuFrame = popup.Menu!.AccessibilityFrame;
                     inspected = true;
+                    var buttonFrame = window.Window.ConvertRectToScreen(view.ConvertRectToView(rect, null));
+                    var menuFrame = menu.AccessibilityFrame;
                     if (menuFrame.Height <= 0 || Math.Abs((double)(menuFrame.X - buttonFrame.X)) > 1 || menuFrame.Width < buttonFrame.Width)
                         throw new InvalidOperationException($"筛选菜单与按钮未对齐：button={buttonFrame}, menu={menuFrame}");
                     double gap = (double)(buttonFrame.Y - menuFrame.Y - menuFrame.Height);
                     if (gap < 2 || gap > 8)
                         throw new InvalidOperationException($"筛选菜单垂直间距错误：gap={gap}, button={buttonFrame}, menu={menuFrame}");
-                    bool hasChecked = popup.Menu.Items.Any(item => item.State == NSCellStateValue.On);
-                    if (capsule ? !hasChecked : popup.SelectedItem?.State != NSCellStateValue.On)
-                        throw new InvalidOperationException("筛选菜单丢失选中标记");
-                    observations.Add($"filter menu {popup.TitleOfSelectedItem}: button={buttonFrame}, menu={menuFrame}, gap={gap}; selected checkmark retained");
+                    VerifyFilterMenuItems(window, menu, index, capsule);
+                    observations.Add($"filter menu {menu.Title}: button={buttonFrame}, menu={menuFrame}, gap={gap}; icons and real checkmarks retained");
                 }
                 catch (Exception exception) { failure = exception; }
                 finally
                 {
-                    popup.Menu!.CancelTracking();
+                    menu.CancelTracking();
                     using var release = NSEvent.MouseEvent(NSEventType.LeftMouseUp, clickPoint, 0, NSProcessInfo.ProcessInfo.SystemUptime,
                         window.Window.WindowNumber, null!, 1, 1, 0) ?? throw new InvalidOperationException("筛选鼠标释放事件创建失败");
                     NSApplication.SharedApplication.PostEvent(release, false);
@@ -680,36 +679,96 @@ internal static class NativeFilmstripAcceptance
             {
                 using var click = NSEvent.MouseEvent(NSEventType.LeftMouseDown, clickPoint, 0, NSProcessInfo.ProcessInfo.SystemUptime,
                     window.Window.WindowNumber, null!, 1, 1, 1) ?? throw new InvalidOperationException("筛选鼠标事件创建失败");
-                popup.MouseDown(click);
+                window.FilterCapsuleButton.MouseDown(click);
             }
             else window.OpenFilterSegmentMenu(index);
             if (failure != null) throw failure;
             if (!inspected) throw new InvalidOperationException("筛选段动作未打开系统菜单");
         }
-        var sort = popups[0];
-        var filter = window.Main.FileVM.FilterBar;
-        SortMode originalMode = filter.SortMode;
-        var menu = sort.Menu!;
-        menu.CancelTracking();
-        if (capsule)
+
+        NSMenuItem Item(string title) => menus.SelectMany(menu => menu.Items)
+            .First(item => !item.Hidden && item.Title == title);
+        void Invoke(NSMenuItem item)
         {
-            var item = menu.Items[3];
             if (item.Target is null || item.Action is null)
-                throw new InvalidOperationException($"菜单项丢失 target/action：title={item.Title}, target={item.Target}, action={item.Action}");
+                throw new InvalidOperationException($"菜单项丢失 target/action：{item.Title}");
             item.Target.PerformSelector(item.Action, item);
         }
-        else
-        {
-            sort.SelectItem(1);
-            if (sort.Action is not { } action || sort.Target is not { } target)
-                throw new InvalidOperationException("筛选控件丢失 target/action");
-            sort.SendAction(action, target);
-        }
+        string RatingTitle(string key) => filter.RatingFilters.First(option => option.Key == key).DisplayName;
+
+        filter.SelectedRatingFilters = new HashSet<string>(["Eq3"], StringComparer.Ordinal);
+        await Task.Delay(80);
+        Invoke(Item(RatingTitle("Eq4")));
+        await Task.Delay(80);
+        if (!filter.SelectedRatingFilters.SetEquals(["Eq3", "Eq4"]))
+            throw new InvalidOperationException($"星级多选未按并集更新：{string.Join(",", filter.SelectedRatingFilters)}");
+        if (filter.RatingFilterLabel != "多选")
+            throw new InvalidOperationException($"星级多选标题不是「多选」：{filter.RatingFilterLabel}");
+        if (!capsule && window.FilterSegments.GetLabel(2) != "多选")
+            throw new InvalidOperationException($"星级段未显示「多选」：{window.FilterSegments.GetLabel(2)}");
+        if (!capsule && window.FilterSegments.AccessibilityValue?.ToString() != filter.RatingFilterSelectionText)
+            throw new InvalidOperationException($"星级段读屏值未包含完整条件：{window.FilterSegments.AccessibilityValue}");
+        Invoke(Item(RatingTitle("Eq3")));
+        Invoke(Item(RatingTitle("Eq4")));
+        await Task.Delay(80);
+        if (filter.SelectedRatingFilters.Count != 0 || filter.RatingFilterLabel != "全部")
+            throw new InvalidOperationException($"取消全部星级条件后未回到「全部」：{filter.RatingFilterLabel}");
+
         var expectedMode = (SortMode)filter.SortModes[1].Value;
-        bool selectionApplied = filter.SortMode == expectedMode && (!capsule || sort.IndexOfSelectedItem == 0);
-        if (!selectionApplied)
-            throw new InvalidOperationException($"原生菜单选择未更新筛选业务属性：selected={sort.IndexOfSelectedItem}, mode={filter.SortMode}, expected={expectedMode}, capsule={capsule}");
-        filter.SortMode = originalMode;
-        observations.Add("native segmented/capsule menu target/action updates shared sort mode");
+        Invoke(Item(filter.SortModes[1].DisplayName));
+        if (filter.SortMode != expectedMode)
+            throw new InvalidOperationException($"原生菜单选择未更新排序方式：mode={filter.SortMode}, expected={expectedMode}");
+        filter.SortMode = entryMode;
+        filter.SelectedRatingFilters = entryRatings;
+        observations.Add("native segmented/capsule menu target/action updates shared sort mode; rating group toggles by union and returns to 全部");
+    }
+
+    /// <summary>核对筛选菜单的条目数、语义图标与真实勾选；单胶囊入口标题按原生下拉隐藏且不参与勾选。</summary>
+    private static void VerifyFilterMenuItems(MacMainWindow window, NSMenu menu, int group, bool capsule)
+    {
+        var filter = window.Main.FileVM.FilterBar;
+        int expectedCount = capsule
+            ? filter.SortModes.Count + filter.SortOrders.Count + filter.RatingFilters.Count + 4
+            : group switch { 0 => filter.SortModes.Count, 1 => filter.SortOrders.Count, _ => filter.RatingFilters.Count };
+        if (menu.Items.Length != expectedCount)
+            throw new InvalidOperationException($"筛选菜单条目数错误：{menu.Items.Length}, expected={expectedCount}");
+        var expected = new Dictionary<string, (bool Checked, string Symbol)>(StringComparer.Ordinal);
+        void AddSort()
+        {
+            foreach (var option in filter.SortModes)
+                expected[option.DisplayName] = (filter.SortMode == (SortMode)option.Value, AppleSymbolNames.Filter.ForSortMode((SortMode)option.Value));
+        }
+        void AddOrder()
+        {
+            foreach (var option in filter.SortOrders)
+                expected[option.DisplayName] = (filter.SortOrder == (SortOrder)option.Value, AppleSymbolNames.Filter.ForSortOrder((SortOrder)option.Value));
+        }
+        void AddRating()
+        {
+            foreach (var option in filter.RatingFilters)
+                expected[option.DisplayName] = (filter.IsRatingFilterSelected(option.Key), AppleSymbolNames.Filter.ForRatingFilter(option.Key));
+        }
+        if (capsule) { AddSort(); AddOrder(); AddRating(); }
+        else if (group == 0) AddSort();
+        else if (group == 1) AddOrder();
+        else AddRating();
+        if (capsule && (!menu.Items[0].Hidden || menu.Items[0].Title != "筛选"))
+            throw new InvalidOperationException("单胶囊入口标题未按原生下拉隐藏");
+        int visible = 0;
+        foreach (var item in menu.Items)
+        {
+            if (item.Hidden || item.IsSeparatorItem) continue;
+            visible++;
+            if (!expected.TryGetValue(item.Title, out var wanted))
+                throw new InvalidOperationException($"筛选菜单出现未登记选项：{item.Title}");
+            if ((item.State == NSCellStateValue.On) != wanted.Checked)
+                throw new InvalidOperationException($"筛选菜单勾选错误：{item.Title}, state={item.State}, expected={wanted.Checked}");
+            if (!item.Enabled)
+                throw new InvalidOperationException($"筛选菜单选项被误禁用：{item.Title}");
+            if (!ReferenceEquals(item.Image, MacSymbols.Get(wanted.Symbol)))
+                throw new InvalidOperationException($"筛选菜单图标不是共享符号：{item.Title}");
+        }
+        if (visible != expected.Count)
+            throw new InvalidOperationException($"筛选菜单可见选项数错误：{visible}, expected={expected.Count}");
     }
 }

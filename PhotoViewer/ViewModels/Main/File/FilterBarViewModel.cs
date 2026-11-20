@@ -1,5 +1,6 @@
 using ReactiveUI;
 using System;
+using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reactive.Linq;
@@ -17,10 +18,13 @@ public class FilterBarViewModel : ReactiveObject
     private readonly FolderViewModel _folder;
     private Func<int> _filteredCountProvider = () => 0;
 
+    public const SortMode DefaultSortMode = SortMode.Date;
+    public const SortOrder DefaultSortOrder = SortOrder.Ascending;
+
     /// <summary>排序方式下拉选项</summary>
     public List<SortOption> SortModes { get; } =
     [
-        new() { DisplayName = "名称", Value = SortMode.Name },
+        new() { DisplayName = "文件名", Value = SortMode.Name },
         new() { DisplayName = "拍摄时间", Value = SortMode.Date },
         new() { DisplayName = "文件大小", Value = SortMode.Size }
     ];
@@ -28,8 +32,8 @@ public class FilterBarViewModel : ReactiveObject
     /// <summary>排序方向下拉选项</summary>
     public List<SortOption> SortOrders { get; } =
     [
-        new() { DisplayName = "升序 ↑", Value = SortOrder.Ascending },
-        new() { DisplayName = "降序 ↓", Value = SortOrder.Descending }
+        new() { DisplayName = "升序", Value = SortOrder.Ascending },
+        new() { DisplayName = "降序", Value = SortOrder.Descending }
     ];
 
     /// <summary>星级筛选选项：首项「全部」表示不限条件，其余条件可多选并按并集命中。</summary>
@@ -46,21 +50,21 @@ public class FilterBarViewModel : ReactiveObject
         new() { DisplayName = "星级冲突", Key = "Conflict" },
     ];
 
-    private SortMode _sortMode = SortMode.Name;
+    private SortMode _sortMode = DefaultSortMode;
     public SortMode SortMode
     {
         get => _sortMode;
         set => this.RaiseAndSetIfChanged(ref _sortMode, value);
     }
 
-    private SortOrder _sortOrder = SortOrder.Ascending;
+    private SortOrder _sortOrder = DefaultSortOrder;
     public SortOrder SortOrder
     {
         get => _sortOrder;
         set => this.RaiseAndSetIfChanged(ref _sortOrder, value);
     }
 
-    private IReadOnlySet<string> _selectedRatingFilters = new HashSet<string>(StringComparer.Ordinal);
+    private IReadOnlySet<string> _selectedRatingFilters = FrozenSet<string>.Empty;
 
     /// <summary>已选星级条件键；空集表示「全部」，集合内容不变时不发通知。</summary>
     public IReadOnlySet<string> SelectedRatingFilters
@@ -73,7 +77,7 @@ public class FilterBarViewModel : ReactiveObject
                     && RatingFilters.Exists(option => option.Key == key)),
                 StringComparer.Ordinal);
             if (next.SetEquals(_selectedRatingFilters)) return;
-            _selectedRatingFilters = next;
+            _selectedRatingFilters = next.ToFrozenSet(StringComparer.Ordinal);
             this.RaisePropertyChanged();
             this.RaisePropertyChanged(nameof(SelectedRatingFilter));
             this.RaisePropertyChanged(nameof(IsRatingFilterActive));
@@ -89,6 +93,12 @@ public class FilterBarViewModel : ReactiveObject
 
     /// <summary>是否有生效的星级条件。</summary>
     public bool IsRatingFilterActive => _selectedRatingFilters.Count > 0;
+
+    public string RatingFilterSelectionText => string.Join("、", RatingFilters
+        .Where(option => IsRatingFilterSelected(option.Key))
+        .Select(option => option.DisplayName));
+
+    public string RatingFilterLabel => _selectedRatingFilters.Count > 1 ? "多选" : RatingFilterSelectionText;
 
     /// <summary>读取某个星级条件的勾选态；「全部」仅在空集合时选中。</summary>
     public bool IsRatingFilterSelected(string key)

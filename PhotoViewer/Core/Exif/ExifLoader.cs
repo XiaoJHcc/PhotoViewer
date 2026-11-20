@@ -149,6 +149,19 @@ public static class ExifLoader
         }
     }
 
+    internal static async Task<DateTime?> LoadCaptureDateAsync(IFileRef file, CancellationToken cancellationToken)
+    {
+        await using var stream = await file.OpenReadAsync(cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!stream.CanSeek) return null;
+        var directories = ImageMetadataReader.ReadMetadata(stream);
+        return ReadCaptureDate(FindShootingExifSubIfd(directories));
+    }
+
+    private static DateTime? ReadCaptureDate(ExifSubIfdDirectory? subIfd)
+        => subIfd != null && subIfd.TryGetDateTime(ExifDirectoryBase.TagDateTimeOriginal, out var dateTime)
+            ? dateTime : null;
+
     private static XmpRatingSnapshot ReadEmbeddedSnapshot(IReadOnlyList<MetadataExtractor.Directory> directories)
     {
         try
@@ -248,8 +261,7 @@ public static class ExifLoader
         else if (subIfd.TryGetRational(ExifDirectoryBase.Tag35MMFilmEquivFocalLength, out var equivFocalLengthRational))
             exifData.EquivFocalLength = equivFocalLengthRational;
 
-        if (subIfd.TryGetDateTime(ExifDirectoryBase.TagDateTimeOriginal, out var dateTime))
-            exifData.DateTimeOriginal = dateTime;
+        exifData.DateTimeOriginal = ReadCaptureDate(subIfd);
 
         if (subIfd.HasTagName(ExifDirectoryBase.TagLensModel))
             exifData.LensModel = subIfd.GetDescription(ExifDirectoryBase.TagLensModel);

@@ -24,6 +24,7 @@ public class ImageFile : ReactiveObject
     private bool _isInCache;
     private PhotoGroup? _group;
     private DateTimeOffset? _modifiedDate;
+    private long _captureDateBinary;
     private ulong? _fileSize;
     private bool _basicPropsLoaded;
     private bool? _isShake;
@@ -67,14 +68,13 @@ public class ImageFile : ReactiveObject
     {
         get
         {
-            if (ExifData?.DateTimeOriginal.HasValue == true)
-            {
-                return new DateTimeOffset(ExifData.DateTimeOriginal.Value);
-            }
-            return ModifiedDate;
+            if (ExifData is { } exif)
+                return exif.DateTimeOriginal is { } date ? new DateTimeOffset(date) : ModifiedDate;
+            long captureDate = Volatile.Read(ref _captureDateBinary);
+            return captureDate == 0 ? ModifiedDate : new DateTimeOffset(DateTime.FromBinary(captureDate));
         }
     }
-        
+
     /// <summary>
     /// 列表缩略图。存储于 <see cref="BitmapLoader"/> 统一缓存(Thumb 档),本属性为查询视图:
     /// getter 直查缓存,setter 写入/移除缓存项(淘汰与释放归缓存所有)。
@@ -244,6 +244,16 @@ public class ImageFile : ReactiveObject
         {
             Console.WriteLine($"Failed to load basic properties for {Name}: {ex.Message}");
         }
+    }
+
+    internal async Task LoadCaptureDateAsync(CancellationToken cancellationToken)
+    {
+        if (ExifData != null) return;
+        int version = Volatile.Read(ref _metadataVersion);
+        var date = await ExifLoader.LoadCaptureDateAsync(File, cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (IsCurrentMetadataVersion(version))
+            Volatile.Write(ref _captureDateBinary, date?.ToBinary() ?? 0);
     }
 
     /// <summary>

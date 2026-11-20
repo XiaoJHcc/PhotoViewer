@@ -4,38 +4,52 @@
  * 星级投影与组级冲突口径集中在 rating.js（RATING-01/05）。
  * 所有变更方法返回 cards 是否变化；version 在 cards 变化时 +1。
  */
-import { hasRatingConflict, matchesRatingFilter } from "./rating.js";
+import { hasRatingConflict, matchesRatingFilters } from "./rating.js";
 
 export const RATING_FILTERS = Object.freeze([
-    { value: "all", label: "全部" },
-    { value: "none", label: "无星级" },
-    { value: "1", label: "一星" },
-    { value: "2", label: "二星" },
-    { value: "3", label: "三星" },
-    { value: "4", label: "四星" },
-    { value: "5", label: "五星" },
-    { value: "1+", label: "一星以上" },
-    { value: "2+", label: "二星以上" },
-    { value: "3+", label: "三星以上" },
-    { value: "4+", label: "四星以上" },
-    { value: "rejected", label: "已拒绝" },
-    { value: "conflict", label: "星级冲突" },
+    { value: "all", label: "全部", icon: "icon.filter.grid" },
+    { value: "none", label: "无星级", icon: "icon.filter.unrated" },
+    { value: "1", label: "一星", icon: "icon.filter.one" },
+    { value: "2", label: "二星", icon: "icon.filter.two" },
+    { value: "3", label: "三星", icon: "icon.filter.three" },
+    { value: "4", label: "四星", icon: "icon.filter.four" },
+    { value: "5", label: "五星", icon: "icon.filter.five" },
+    { value: "rejected", label: "已拒绝", icon: "icon.filter.rejected" },
+    { value: "conflict", label: "星级冲突", icon: "icon.warning" },
 ]);
 
 export const SORT_KEYS = Object.freeze([
-    { value: "name", label: "名称" },
-    { value: "taken", label: "拍摄时间" },
-    { value: "size", label: "文件大小" },
+    { value: "name", label: "文件名", icon: "icon.menu.openFile" },
+    { value: "taken", label: "拍摄时间", icon: "icon.filter.camera" },
+    { value: "size", label: "文件大小", icon: "icon.filter.drive" },
 ]);
 
 export const SORT_ORDERS = Object.freeze([
-    { value: "asc", label: "升序 ↑" },
-    { value: "desc", label: "降序 ↓" },
+    { value: "asc", label: "升序", icon: "icon.filter.ascending" },
+    { value: "desc", label: "降序", icon: "icon.filter.descending" },
 ]);
 
 const RATING_VALUES = new Set(RATING_FILTERS.map((entry) => entry.value));
 const SORT_KEY_VALUES = new Set(SORT_KEYS.map((entry) => entry.value));
 const SORT_ORDER_VALUES = new Set(SORT_ORDERS.map((entry) => entry.value));
+
+function normalizeRatingFilters(value) {
+    const list = Array.isArray(value) ? value : [value];
+    for (const entry of list) {
+        if (!RATING_VALUES.has(entry)) throw new Error(`未知星级筛选：${entry}`);
+    }
+    if (list.includes("all")) return ["all"];
+    const selected = new Set(list);
+    // FILTER-03：条件按固定顺序保存，勾选顺序不影响快照与菜单展示。
+    const ordered = RATING_FILTERS
+        .filter((entry) => entry.value !== "all" && selected.has(entry.value))
+        .map((entry) => entry.value);
+    return ordered.length > 0 ? ordered : ["all"];
+}
+
+function sameFilters(left, right) {
+    return left.length === right.length && left.every((value, index) => value === right[index]);
+}
 
 function buildExtIndex(formats) {
     const index = new Map();
@@ -93,9 +107,9 @@ export class FileList {
         this._cards = [];
         this._cardByPhoto = new Map();
         this._cardIndex = new Map();
-        this._sortKey = "name";
+        this._sortKey = "taken";
         this._sortOrder = "asc";
-        this._ratingFilter = "all";
+        this._ratingFilters = ["all"];
         this._currentId = null;
         this._retainedKey = null;
         this._anchor = null;
@@ -124,8 +138,8 @@ export class FileList {
         return this._sortOrder;
     }
 
-    get ratingFilter() {
-        return this._ratingFilter;
+    get ratingFilters() {
+        return this._ratingFilters.slice();
     }
 
     get version() {
@@ -158,10 +172,32 @@ export class FileList {
     }
 
     setRatingFilter(value) {
+        if (Array.isArray(value)) return this.setRatingFilters(value);
         if (!RATING_VALUES.has(value)) throw new Error(`未知星级筛选：${value}`);
-        if (value === this._ratingFilter) return false;
-        this._ratingFilter = value;
+        return this.setRatingFilters([value]);
+    }
+
+    setRatingFilters(values) {
+        const next = normalizeRatingFilters(values);
+        if (sameFilters(next, this._ratingFilters)) return false;
+        this._ratingFilters = next;
+        this._retainedKey = null;
         return this._recompute();
+    }
+
+    /** FILTER-03：除「全部」外独立勾选并按并集命中；点全部或取消最后一项都回到全部。 */
+    toggleRatingFilter(value) {
+        if (!RATING_VALUES.has(value)) throw new Error(`未知星级筛选：${value}`);
+        let next;
+        if (value === "all") {
+            next = ["all"];
+        } else if (this._ratingFilters.includes(value)) {
+            next = this._ratingFilters.filter((entry) => entry !== value);
+            if (next.length === 0) next = ["all"];
+        } else {
+            next = [...this._ratingFilters.filter((entry) => entry !== "all"), value];
+        }
+        return this.setRatingFilters(next);
     }
 
     setCurrent(photoId) {
@@ -319,7 +355,7 @@ export class FileList {
     }
 
     _matches(card) {
-        return matchesRatingFilter(card, this._ratingFilter);
+        return matchesRatingFilters(card, this._ratingFilters);
     }
 
     _compare(a, b) {

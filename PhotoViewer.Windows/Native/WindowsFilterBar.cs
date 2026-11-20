@@ -15,10 +15,12 @@ using Windows.Foundation;
 namespace PhotoViewer.Windows.Native;
 
 /// <summary>
-/// 筛选控件（FILTER-01）：排序方式、升降序、星级筛选与筛选后计数收在同一个玻璃胶囊里。
-/// 桌面宽形态是三段合体（FILTER-07）——每段显示当前选项、各自弹出原生单选菜单；
+/// 筛选控件（FILTER-01）：排序方式、排序方向与星级筛选收在同一个玻璃胶囊里。
+/// 桌面宽形态是三段合体（FILTER-07）——每段显示当前选项、各自弹出原生菜单；
 /// 三段放不下时退化为单一「筛选」胶囊，弹出同一套「排序 / 方向 / 星级」无标题分组菜单。
-/// 计数「共 N 张」固定在控件内部（FILTER-04），不参与段宽，也不单独成为入口。
+/// 排序方式与方向是原生单选（<see cref="RadioMenuFlyoutItem"/>），星级条件是各自独立的原生多选
+/// （<see cref="ToggleMenuFlyoutItem"/>），「全部」清空条件（FILTER-03）；菜单项带 Fluent 语义图标（FILTER-08）。
+/// 勾选一律由共享筛选状态回填，点选后就地校正，菜单重开时再同步一次。
 /// 几何全部取共享 <see cref="WideFilterLayout"/>：行布局整组居中、列布局固定胶片卡片列宽并按
 /// <see cref="DesignTokens.ShellFilterLeadingInset"/> 让开整宽标题栏的 caption 区；
 /// AI 版末位另有相似聚类开关（FILTER-06），标准版不创建也不留空槽（EDITION-02）。
@@ -49,15 +51,6 @@ internal sealed class WindowsFilterBar : Panel
     /// <summary>状态层圆角：与胶囊同心，故取 高度 / 2 − 内缩。</summary>
     private static readonly double StatePillCornerRadius = CapsuleHeight / 2 - StatePillInset;
 
-    /// <summary>
-    /// 上带（当前选项）高度：带边界仍落在 44 − filter.count.height 处，只按状态层内缩裁掉下缘；
-    /// 因此三段与单胶囊的标签落在同一 Y。
-    /// </summary>
-    private static readonly double LabelBandHeight = CapsuleHeight - DesignTokens.FilterCountHeight - StatePillInset;
-
-    /// <summary>下带（计数）高度：计数带上缘同上，下缘内缩一份状态层。</summary>
-    private static readonly double CountBandHeight = DesignTokens.FilterCountHeight - StatePillInset;
-
     private readonly FilterBarViewModel _filter;
     private readonly Border _capsule;
     private readonly Border _dividerBeforeOrder;
@@ -70,18 +63,15 @@ internal sealed class WindowsFilterBar : Panel
     private readonly MenuFlyout _orderMenu;
     private readonly MenuFlyout _ratingMenu;
     private readonly MenuFlyout _capsuleMenu;
-    private readonly FilterGroup _sortGroup;
-    private readonly FilterGroup _orderGroup;
-    private readonly FilterGroup _ratingGroup;
+    private readonly FilterRadioGroup _sortGroup;
+    private readonly FilterRadioGroup _orderGroup;
+    private readonly FilterRatingGroup _ratingGroup;
     private readonly TextBlock _capsuleLabel;
-    private readonly TextBlock _ratingCount;
-    private readonly TextBlock _capsuleCount;
     private readonly Button[] _segmentedEntries;
     private readonly Button[] _capsuleEntries;
 #if PHOTOVIEWER_DINO
     private readonly ToggleButton _similarityToggle;
 #endif
-    private string _countText = "共 0 张";
     private FilterControlMode _mode = FilterControlMode.Segmented;
     private WideFilterFrames _frames;
     private (double Sort, double Order, double Rating) _naturalWidths;
@@ -97,40 +87,33 @@ internal sealed class WindowsFilterBar : Panel
     {
         _filter = filter;
 
-        _sortGroup = new FilterGroup("Sort", "排序方式",
+        _sortGroup = new FilterRadioGroup("Sort", "排序方式",
             _filter.SortModes.Select(option => option.DisplayName).ToArray(),
             _filter.SortModes.Select(option => option.Value).ToArray(),
             () => _filter.SortMode,
             index =>
             {
                 if (!_syncing) _filter.SortMode = (SortMode)_filter.SortModes[index].Value;
-            });
-        _orderGroup = new FilterGroup("Order", "排序方向",
+            },
+            index => SortModeGlyph((SortMode)_filter.SortModes[index].Value));
+        _orderGroup = new FilterRadioGroup("Order", "排序方向",
             _filter.SortOrders.Select(option => option.DisplayName).ToArray(),
             _filter.SortOrders.Select(option => option.Value).ToArray(),
             () => _filter.SortOrder,
             index =>
             {
                 if (!_syncing) _filter.SortOrder = (SortOrder)_filter.SortOrders[index].Value;
-            });
-        _ratingGroup = new FilterGroup("Rating", "星级筛选",
-            _filter.RatingFilters.Select(option => option.DisplayName).ToArray(),
-            _filter.RatingFilters.Select(option => option.Key).ToArray(),
-            () => _filter.SelectedRatingFilter,
-            index =>
-            {
-                if (!_syncing) _filter.SelectedRatingFilter = _filter.RatingFilters[index].Key;
-            });
+            },
+            index => SortOrderGlyph((SortOrder)_filter.SortOrders[index].Value));
+        _ratingGroup = new FilterRatingGroup(_filter);
 
-        _ratingCount = CreateBandText(DesignTokens.FilterCountFontSize, SecondaryForegroundBrushKey);
-        _capsuleLabel = CreateBandText(DesignTokens.DropdownFontSize, PrimaryForegroundBrushKey);
+        _capsuleLabel = CreateEntryText(DesignTokens.DropdownFontSize, PrimaryForegroundBrushKey);
         _capsuleLabel.Text = "筛选";
-        _capsuleCount = CreateBandText(DesignTokens.FilterCountFontSize, SecondaryForegroundBrushKey);
 
-        _sortEntry = CreateEntryButton(CreateBandGrid(_sortGroup.Label, null));
-        _orderEntry = CreateEntryButton(CreateBandGrid(_orderGroup.Label, null));
-        _ratingEntry = CreateEntryButton(CreateBandGrid(_ratingGroup.Label, _ratingCount));
-        _capsuleEntry = CreateEntryButton(CreateBandGrid(_capsuleLabel, _capsuleCount));
+        _sortEntry = CreateEntryButton(_sortGroup.Label);
+        _orderEntry = CreateEntryButton(_orderGroup.Label);
+        _ratingEntry = CreateEntryButton(_ratingGroup.Label);
+        _capsuleEntry = CreateEntryButton(_capsuleLabel);
 
         _capsule = new Border
         {
@@ -201,8 +184,38 @@ internal sealed class WindowsFilterBar : Panel
     /// <summary>验收专用：当前承载排序选项的菜单（排序段菜单，或含三分组的单胶囊菜单）。</summary>
     internal MenuFlyout SortMenu => _mode == FilterControlMode.Segmented ? _sortMenu : _capsuleMenu;
 
-    /// <summary>验收专用：控件内的计数文本。</summary>
-    internal string CountText => _countText;
+    /// <summary>验收专用：当前承载星级条件的入口（星级段，或单胶囊）。</summary>
+    internal Button RatingEntry => _mode == FilterControlMode.Segmented ? _ratingEntry : _capsuleEntry;
+
+    /// <summary>验收专用：当前承载星级条件的菜单（星级段菜单，或含三分组的单胶囊菜单）。</summary>
+    internal MenuFlyout RatingMenu => _mode == FilterControlMode.Segmented ? _ratingMenu : _capsuleMenu;
+
+    /// <summary>验收专用：当前形态实际使用的星级切换项。</summary>
+    internal IReadOnlyList<ToggleMenuFlyoutItem> RatingItems => _mode == FilterControlMode.Segmented
+        ? _ratingGroup.SegmentItems
+        : _ratingGroup.CapsuleItems;
+
+    /// <summary>验收专用：当前形态实际使用的排序键单选项。</summary>
+    internal IReadOnlyList<RadioMenuFlyoutItem> SortItems => _mode == FilterControlMode.Segmented
+        ? _sortGroup.SegmentItems
+        : _sortGroup.CapsuleItems;
+
+    /// <summary>验收专用：当前形态实际使用的排序方向单选项。</summary>
+    internal IReadOnlyList<RadioMenuFlyoutItem> OrderItems => _mode == FilterControlMode.Segmented
+        ? _orderGroup.SegmentItems
+        : _orderGroup.CapsuleItems;
+
+    /// <summary>验收专用：星级段菜单的切换项（单胶囊形态下仍须与共享状态同步）。</summary>
+    internal IReadOnlyList<ToggleMenuFlyoutItem> SegmentRatingItems => _ratingGroup.SegmentItems;
+
+    /// <summary>验收专用：单胶囊菜单的星级切换项。</summary>
+    internal IReadOnlyList<ToggleMenuFlyoutItem> CapsuleRatingItems => _ratingGroup.CapsuleItems;
+
+    /// <summary>验收专用：星级段显示的摘要（全部 / 单选条件 / 多选）。</summary>
+    internal string RatingLabel => _ratingGroup.Label.Text;
+
+    /// <summary>验收专用：星级入口的读屏名称（含完整条件）。</summary>
+    internal string RatingAutomationName => AutomationProperties.GetName(RatingEntry);
 
 #if PHOTOVIEWER_DINO
     /// <summary>验收专用：相似聚类开关。</summary>
@@ -228,15 +241,6 @@ internal sealed class WindowsFilterBar : Panel
         _isRowLayout = isRowLayout;
         InvalidateMeasure();
         InvalidateArrange();
-    }
-
-    /// <summary>刷新计数文本（FILTER-04：计数在控件内部，且不改各段宽度）。</summary>
-    public void RefreshCount()
-    {
-        _countText = $"共 {_filter.FilteredCount} 张";
-        _ratingCount.Text = _countText;
-        _capsuleCount.Text = _countText;
-        UpdateAutomationNames();
     }
 
     /// <summary>
@@ -336,7 +340,7 @@ internal sealed class WindowsFilterBar : Panel
 
     /// <summary>
     /// 三段自然宽：各段选项名在 <see cref="DesignTokens.DropdownFontSize"/> 下的最大文本宽加两侧内边距，上取整。
-    /// 计数文本不计入（FILTER-07：计数变长不改变段宽），选项固定故只算一次。
+    /// 选项固定故只算一次。
     /// </summary>
     /// <returns>排序、方向、星级三段的自然宽。</returns>
     private (double Sort, double Order, double Rating) NaturalSegmentWidths()
@@ -453,9 +457,9 @@ internal sealed class WindowsFilterBar : Panel
 
     /// <summary>
     /// 段 / 胶囊入口按钮：透明 Subtle 底，悬停与按下在段内按同心圆角内缩填状态色（TOOLBAR-10），
-    /// 模板内边距清零、内容拉伸到整块，使文字带与命中区都是那个内缩胶囊。
+    /// 模板内边距清零、内容拉伸到整块，使文字与命中区都是那个内缩胶囊。
     /// </summary>
-    /// <param name="content">入口内容（上带当前选项、下带计数的两带栅格）。</param>
+    /// <param name="content">入口内容（当前选项文字）。</param>
     /// <returns>入口按钮。</returns>
     private static Button CreateEntryButton(UIElement content)
     {
@@ -471,7 +475,7 @@ internal sealed class WindowsFilterBar : Panel
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
-            VerticalContentAlignment = VerticalAlignment.Stretch,
+            VerticalContentAlignment = VerticalAlignment.Center,
         };
         ApplySubtleStates(button);
         return button;
@@ -502,7 +506,7 @@ internal sealed class WindowsFilterBar : Panel
     /// <param name="fontSize">字号。</param>
     /// <param name="brushKey">前景主题画刷键。</param>
     /// <returns>文字控件。</returns>
-    private static TextBlock CreateBandText(double fontSize, string brushKey) => new()
+    private static TextBlock CreateEntryText(double fontSize, string brushKey) => new()
     {
         FontSize = fontSize,
         Foreground = ThemeBrush(brushKey),
@@ -513,33 +517,6 @@ internal sealed class WindowsFilterBar : Panel
         TextTrimming = TextTrimming.CharacterEllipsis,
     };
 
-    /// <summary>
-    /// 入口内容的两带栅格：上带当前选项，下带计数（FILTER-04 计数在控件内部）。
-    /// 两带高度扣掉状态层内缩，带边界仍在 44 − filter.count.height，故各段标签落在同一 Y。
-    /// </summary>
-    /// <param name="label">上带文字。</param>
-    /// <param name="count">下带计数文字，不需要计数的段传 null。</param>
-    /// <returns>入口内容。</returns>
-    private static Grid CreateBandGrid(TextBlock label, TextBlock? count)
-    {
-        var grid = new Grid
-        {
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch,
-        };
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(LabelBandHeight) });
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(CountBandHeight) });
-        Grid.SetRow(label, 0);
-        grid.Children.Add(label);
-        if (count != null)
-        {
-            Grid.SetRow(count, 1);
-            grid.Children.Add(count);
-        }
-
-        return grid;
-    }
-
     /// <summary>段间分隔线：1 点宽的纯色条，不参与命中。</summary>
     /// <returns>分隔线条。</returns>
     private static Border CreateDivider() => new()
@@ -549,12 +526,13 @@ internal sealed class WindowsFilterBar : Panel
     };
 
     /// <summary>
-    /// 原生单选菜单：贴入口正下方展开，展开前通知宿主关闭来源浮窗（RATING-04）。
+    /// 原生菜单：贴入口正下方展开，展开前通知宿主关闭来源浮窗（RATING-04）并按共享状态回填全部勾选
+    /// （FILTER-08：菜单重开时校正系统可能残留的切换态）。
     /// 入口用 <see cref="Button.Flyout"/> 挂载，点击、Enter 与空格都由原生按钮语义打开。
     /// </summary>
     /// <param name="items">首组选项。</param>
     /// <returns>菜单。</returns>
-    private MenuFlyout CreateMenu(IReadOnlyList<RadioMenuFlyoutItem> items)
+    private MenuFlyout CreateMenu(IReadOnlyList<MenuFlyoutItemBase> items)
     {
         var menu = new MenuFlyout { Placement = FlyoutPlacementMode.Bottom };
         foreach (var item in items)
@@ -562,7 +540,11 @@ internal sealed class WindowsFilterBar : Panel
             menu.Items.Add(item);
         }
 
-        menu.Opening += (_, _) => PopupOpening?.Invoke();
+        menu.Opening += (_, _) =>
+        {
+            PopupOpening?.Invoke();
+            SyncFromViewModel();
+        };
         return menu;
     }
 
@@ -570,7 +552,7 @@ internal sealed class WindowsFilterBar : Panel
     /// <param name="menu">单胶囊菜单。</param>
     /// <param name="items">该组选项。</param>
     /// <param name="separator">是否在本组之前放分隔线。</param>
-    private static void AddMenuGroup(MenuFlyout menu, IReadOnlyList<RadioMenuFlyoutItem> items, bool separator)
+    private static void AddMenuGroup(MenuFlyout menu, IReadOnlyList<MenuFlyoutItemBase> items, bool separator)
     {
         if (separator)
         {
@@ -599,8 +581,7 @@ internal sealed class WindowsFilterBar : Panel
             Height = CapsuleHeight,
             MinWidth = 0,
             MinHeight = 0,
-            // 开关文字与计数同为 12 点小字。
-            FontSize = DesignTokens.FilterCountFontSize,
+            FontSize = DesignTokens.FilterToggleFontSize,
             CornerRadius = new CornerRadius(CapsuleCornerRadius),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
@@ -630,7 +611,7 @@ internal sealed class WindowsFilterBar : Panel
         {
             case nameof(FilterBarViewModel.SortMode):
             case nameof(FilterBarViewModel.SortOrder):
-            case nameof(FilterBarViewModel.SelectedRatingFilter):
+            case nameof(FilterBarViewModel.SelectedRatingFilters):
                 SyncFromViewModel();
                 break;
 #if PHOTOVIEWER_DINO
@@ -638,9 +619,6 @@ internal sealed class WindowsFilterBar : Panel
                 SyncFromViewModel();
                 break;
 #endif
-            case nameof(FilterBarViewModel.FilteredCount):
-                RefreshCount();
-                break;
         }
     }
 
@@ -655,11 +633,11 @@ internal sealed class WindowsFilterBar : Panel
         {
             SyncGroup(_sortGroup);
             SyncGroup(_orderGroup);
-            SyncGroup(_ratingGroup);
+            _ratingGroup.SyncChecks();
 #if PHOTOVIEWER_DINO
             _similarityToggle.IsChecked = _filter.IsSimilarityPanelOpen;
 #endif
-            RefreshCount();
+            UpdateAutomationNames();
         }
         finally
         {
@@ -667,9 +645,9 @@ internal sealed class WindowsFilterBar : Panel
         }
     }
 
-    /// <summary>把一组的当前值同步到段菜单与单胶囊菜单的勾选态，并更新段标签。</summary>
+    /// <summary>把单选分组的当前值同步到段菜单与单胶囊菜单的勾选态，并更新段标签。</summary>
     /// <param name="group">单选分组。</param>
-    private void SyncGroup(FilterGroup group)
+    private void SyncGroup(FilterRadioGroup group)
     {
         int current = CurrentIndexOf(group);
         for (var index = 0; index < group.Names.Length; index++)
@@ -680,13 +658,12 @@ internal sealed class WindowsFilterBar : Panel
         }
 
         group.Label.Text = current < 0 ? string.Empty : group.Names[current];
-        UpdateAutomationNames();
     }
 
     /// <summary>当前值在选项里的下标；不一致时记录日志并返回 -1，避免配置漂移在 UI 回调里抛异常。</summary>
     /// <param name="group">单选分组。</param>
     /// <returns>下标，找不到为 -1。</returns>
-    private static int CurrentIndexOf(FilterGroup group)
+    private static int CurrentIndexOf(FilterRadioGroup group)
     {
         var values = group.Values;
         var target = group.CurrentValue();
@@ -702,15 +679,54 @@ internal sealed class WindowsFilterBar : Panel
         return -1;
     }
 
-    /// <summary>读屏名称随选项与计数更新（分段报当前值，单胶囊报「筛选，共 N 张」）。</summary>
+    /// <summary>读屏名称随选项更新（分段报当前值与完整星级条件，单胶囊报三分组当前值）。</summary>
     private void UpdateAutomationNames()
     {
+        string rating = _filter.RatingFilterSelectionText;
         AutomationProperties.SetName(_sortEntry, $"{_sortGroup.AutomationLabel}：{_sortGroup.Label.Text}");
         AutomationProperties.SetName(_orderEntry, $"{_orderGroup.AutomationLabel}：{_orderGroup.Label.Text}");
-        AutomationProperties.SetName(_ratingEntry,
-            $"{_ratingGroup.AutomationLabel}：{_ratingGroup.Label.Text}，{_countText}");
-        AutomationProperties.SetName(_capsuleEntry, $"筛选，{_countText}");
+        AutomationProperties.SetName(_ratingEntry, $"{_ratingGroup.AutomationLabel}：{rating}");
+        AutomationProperties.SetName(_capsuleEntry,
+            $"筛选，排序方式：{_sortGroup.Label.Text}，排序方向：{_orderGroup.Label.Text}，星级筛选：{rating}");
     }
+
+    /// <summary>排序键的语义前置图标（FILTER-08）。</summary>
+    /// <param name="mode">排序键。</param>
+    /// <returns>Fluent 字形。</returns>
+    private static string SortModeGlyph(SortMode mode) => mode switch
+    {
+        SortMode.Date => WindowsIcons.CalendarGlyph,
+        SortMode.Size => WindowsIcons.PageGlyph,
+        _ => WindowsIcons.DocumentGlyph,
+    };
+
+    /// <summary>排序方向的语义前置图标（FILTER-08）。</summary>
+    /// <param name="order">排序方向。</param>
+    /// <returns>Fluent 字形。</returns>
+    private static string SortOrderGlyph(SortOrder order)
+        => order == SortOrder.Descending ? WindowsIcons.DownGlyph : WindowsIcons.UpGlyph;
+
+    /// <summary>星级条件的语义前置图标（FILTER-08）；数字档共用星形。</summary>
+    /// <param name="key">条件键。</param>
+    /// <returns>Fluent 字形。</returns>
+    private static string RatingGlyph(string key) => key switch
+    {
+        "None" => WindowsIcons.ClearGlyph,
+        "Rejected" => WindowsIcons.BlockedGlyph,
+        "Conflict" => WindowsIcons.WarningGlyph,
+        _ when key.StartsWith("Eq", StringComparison.Ordinal) => WindowsIcons.StarGlyph,
+        _ => WindowsIcons.SelectAllGlyph,
+    };
+
+    /// <summary>菜单项的 Fluent 前置图标（MENU-06 同一套字体与尺寸）。</summary>
+    /// <param name="glyph">字形码位。</param>
+    /// <returns>可直接作为 <c>MenuFlyoutItem.Icon</c> 的图标元素。</returns>
+    private static FontIcon CreateMenuIcon(string glyph) => new()
+    {
+        FontFamily = new FontFamily(WindowsIcons.FluentFontFamily),
+        Glyph = glyph,
+        FontSize = DesignTokens.MenuIconSize,
+    };
 
     /// <summary>读取 WinUI 主题画刷；缺失时退回透明，避免资源键漂移让控件构造失败。</summary>
     /// <param name="key">资源键。</param>
@@ -721,31 +737,32 @@ internal sealed class WindowsFilterBar : Panel
             : TransparentBrush;
 
     /// <summary>
-    /// 一个单选分组（排序方式 / 排序方向 / 星级筛选）：选项名与共享取值来自视图模型，
+    /// 一个单选分组（排序方式 / 排序方向）：选项名与共享取值来自视图模型，
     /// 菜单项备两套实例——段菜单与单胶囊菜单各持一套（同一项不能同时属于两个菜单）。
     /// </summary>
-    private sealed class FilterGroup
+    private sealed class FilterRadioGroup
     {
         /// <summary>创建分组。</summary>
         /// <param name="key">菜单分组名前缀，保证同组单选且不与别的组串联。</param>
-        /// <param name="automationLabel">读屏名称里的组名（排序方式 / 排序方向 / 星级筛选）。</param>
+        /// <param name="automationLabel">读屏名称里的组名（排序方式 / 排序方向）。</param>
         /// <param name="names">选项显示名。</param>
         /// <param name="values">选项对应的共享取值。</param>
         /// <param name="currentValue">读取视图模型当前取值。</param>
         /// <param name="apply">写入视图模型。</param>
-        internal FilterGroup(string key, string automationLabel, string[] names, object[] values,
-            Func<object?> currentValue, Action<int> apply)
+        /// <param name="glyph">选项的菜单图标字形。</param>
+        internal FilterRadioGroup(string key, string automationLabel, string[] names, object[] values,
+            Func<object?> currentValue, Action<int> apply, Func<int, string> glyph)
         {
             AutomationLabel = automationLabel;
             Names = names;
             Values = values;
             CurrentValue = currentValue;
             Apply = apply;
-            Label = CreateBandText(DesignTokens.DropdownFontSize, PrimaryForegroundBrushKey);
+            Label = CreateEntryText(DesignTokens.DropdownFontSize, PrimaryForegroundBrushKey);
             for (var index = 0; index < names.Length; index++)
             {
-                SegmentItems.Add(CreateItem(key + "Segment", index));
-                CapsuleItems.Add(CreateItem(key + "Capsule", index));
+                SegmentItems.Add(CreateItem(key + "Segment", index, glyph(index)));
+                CapsuleItems.Add(CreateItem(key + "Capsule", index, glyph(index)));
             }
         }
 
@@ -773,14 +790,88 @@ internal sealed class WindowsFilterBar : Panel
         /// <summary>单胶囊菜单的选项（三分组共用同一个菜单）。</summary>
         internal List<RadioMenuFlyoutItem> CapsuleItems { get; } = new();
 
-        /// <summary>创建一个单选菜单项，选中即写回共享状态（原生菜单随后自行关闭）。</summary>
+        /// <summary>创建一个原生单选菜单项，选中即写回共享状态（原生菜单随后自行收起）。</summary>
         /// <param name="groupName">单选组名。</param>
         /// <param name="index">选项下标。</param>
+        /// <param name="glyph">选项图标字形。</param>
         /// <returns>菜单项。</returns>
-        private RadioMenuFlyoutItem CreateItem(string groupName, int index)
+        private RadioMenuFlyoutItem CreateItem(string groupName, int index, string glyph)
         {
-            var item = new RadioMenuFlyoutItem { Text = Names[index], GroupName = groupName };
+            var item = new RadioMenuFlyoutItem
+            {
+                Text = Names[index],
+                GroupName = groupName,
+                Icon = CreateMenuIcon(glyph),
+            };
             item.Click += (_, _) => Apply(index);
+            return item;
+        }
+    }
+
+    /// <summary>
+    /// 星级筛选分组（FILTER-03）：每项一个独立的多选开关，首项「全部」在无条件时保持勾选；
+    /// 段菜单与单胶囊菜单各持一套切换项，勾选一律从共享条件集回填。
+    /// </summary>
+    private sealed class FilterRatingGroup
+    {
+        private readonly FilterBarViewModel _filter;
+
+        /// <summary>创建星级分组。</summary>
+        /// <param name="filter">筛选视图模型。</param>
+        internal FilterRatingGroup(FilterBarViewModel filter)
+        {
+            _filter = filter;
+            Label = CreateEntryText(DesignTokens.DropdownFontSize, PrimaryForegroundBrushKey);
+            for (var index = 0; index < filter.RatingFilters.Count; index++)
+            {
+                SegmentItems.Add(CreateItem(index));
+                CapsuleItems.Add(CreateItem(index));
+            }
+        }
+
+        /// <summary>读屏名称里的组名。</summary>
+        internal string AutomationLabel => "星级筛选";
+
+        /// <summary>段按钮上的当前条件摘要（全部 / 单选项 / 多选）。</summary>
+        internal TextBlock Label { get; }
+
+        /// <summary>段菜单的星级切换项。</summary>
+        internal List<ToggleMenuFlyoutItem> SegmentItems { get; } = new();
+
+        /// <summary>单胶囊菜单的星级切换项。</summary>
+        internal List<ToggleMenuFlyoutItem> CapsuleItems { get; } = new();
+
+        /// <summary>按共享条件集回填两套菜单的勾选态与段摘要。</summary>
+        internal void SyncChecks()
+        {
+            for (var index = 0; index < _filter.RatingFilters.Count; index++)
+            {
+                bool selected = _filter.IsRatingFilterSelected(_filter.RatingFilters[index].Key);
+                SegmentItems[index].IsChecked = selected;
+                CapsuleItems[index].IsChecked = selected;
+            }
+
+            Label.Text = _filter.RatingFilterLabel;
+        }
+
+        /// <summary>创建一个原生多选菜单项；点选只切换共享条件，勾选随后由共享状态回填。</summary>
+        /// <param name="index">选项下标。</param>
+        /// <returns>菜单项。</returns>
+        private ToggleMenuFlyoutItem CreateItem(int index)
+        {
+            var option = _filter.RatingFilters[index];
+            var item = new ToggleMenuFlyoutItem
+            {
+                Text = option.DisplayName,
+                Icon = CreateMenuIcon(RatingGlyph(option.Key)),
+            };
+            item.Click += (_, _) =>
+            {
+                _filter.ToggleRatingFilter(option.Key);
+                // WinUI 在 Click 之前已翻转本项 IsChecked：空条件点「全部」会被系统取消勾选，
+                // 这里按共享条件立即回填，「全部」与多选的真实状态始终一致（FILTER-03/08）。
+                SyncChecks();
+            };
             return item;
         }
     }

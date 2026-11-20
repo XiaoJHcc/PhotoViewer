@@ -49,32 +49,32 @@ function makeList(photos, options = {}) {
     return list;
 }
 
-test("FILTER-02：名称排序忽略大小写，同键值保持原文件顺序", () => {
+test("FILTER-02：文件名排序忽略大小写，同键值保持原文件顺序", () => {
     const list = makeList([photo("b.JPG"), photo("A.JPG"), photo("a.JPG"), photo("C.JPG")], { sameNameAsOne: false });
+    list.setSort("name", "asc");
     assert.deepEqual(names(list), ["A.JPG", "a.JPG", "b.JPG", "C.JPG"]);
 });
 
 test("FILTER-02：排序键、方向与星级筛选取值固定", () => {
     assert.deepEqual(SORT_KEYS.map((entry) => [entry.value, entry.label]), [
-        ["name", "名称"],
+        ["name", "文件名"],
         ["taken", "拍摄时间"],
         ["size", "文件大小"],
     ]);
     assert.deepEqual(SORT_ORDERS.map((entry) => [entry.value, entry.label]), [
-        ["asc", "升序 ↑"],
-        ["desc", "降序 ↓"],
+        ["asc", "升序"],
+        ["desc", "降序"],
     ]);
     assert.deepEqual(RATING_FILTERS.map((entry) => entry.value), [
-        "all", "none", "1", "2", "3", "4", "5", "1+", "2+", "3+", "4+", "rejected", "conflict",
+        "all", "none", "1", "2", "3", "4", "5", "rejected", "conflict",
     ]);
     assert.deepEqual(RATING_FILTERS.map((entry) => entry.label), [
-        "全部", "无星级", "一星", "二星", "三星", "四星", "五星",
-        "一星以上", "二星以上", "三星以上", "四星以上", "已拒绝", "星级冲突",
+        "全部", "无星级", "一星", "二星", "三星", "四星", "五星", "已拒绝", "星级冲突",
     ]);
     const list = makeList([]);
-    assert.equal(list.sortKey, "name");
+    assert.equal(list.sortKey, "taken");
     assert.equal(list.sortOrder, "asc");
-    assert.equal(list.ratingFilter, "all");
+    assert.deepEqual(list.ratingFilters, ["all"]);
 });
 
 test("FILTER-02：换键保留方向，换方向保留键", () => {
@@ -117,8 +117,37 @@ test("FILTER-02：排序不改变成员与计数", () => {
     assert.deepEqual(new Set(names(list)), new Set(["a.JPG", "b.JPG", "c.JPG"]));
 });
 
+test("FILTER-03：多选条件按并集命中，点全部或取消最后一项回到全部", () => {
+    const list = makeList(ratingFixture());
+    assert.equal(list.toggleRatingFilter("3"), true);
+    assert.deepEqual(list.ratingFilters, ["3"]);
+    assert.deepEqual(names(list), ["D.JPG", "G.JPG"]);
+
+    list.toggleRatingFilter("5");
+    assert.deepEqual(list.ratingFilters, ["3", "5"]);
+    assert.deepEqual(names(list), ["D.JPG", "F.JPG", "G.JPG"]);
+
+    list.toggleRatingFilter("3");
+    assert.deepEqual(list.ratingFilters, ["5"]);
+    assert.deepEqual(names(list), ["F.JPG"]);
+
+    list.toggleRatingFilter("5");
+    assert.deepEqual(list.ratingFilters, ["all"]);
+    assert.equal(list.count, 7);
+
+    list.setRatingFilters(["none", "conflict"]);
+    assert.deepEqual(list.ratingFilters, ["none", "conflict"]);
+    assert.deepEqual(names(list), ["A.JPG", "G.JPG"]);
+
+    list.toggleRatingFilter("all");
+    assert.deepEqual(list.ratingFilters, ["all"]);
+    assert.equal(list.count, 7);
+    assert.throws(() => list.setRatingFilters(["1+"]), /未知星级筛选/);
+});
+
 test("FILTER-02：同名合并的显示名带伴侣格式，且不参与排序", () => {
     const list = makeList([photo("b.JPG"), photo("b.ARW"), photo("a.JPG")]);
+    list.setSort("name", "asc");
     assert.equal(list.cardOf("f/b.JPG").displayName, "b.JPG(RAW)");
     assert.deepEqual(names(list), ["a.JPG", "b.JPG"]);
 });
@@ -140,10 +169,7 @@ const RATING_CASES = [
     ["3", "三星", ["D", "G"]],
     ["4", "四星", ["E"]],
     ["5", "五星", ["F"]],
-    ["1+", "一星以上", ["B", "C", "D", "E", "F", "G"]],
-    ["2+", "二星以上", ["C", "D", "E", "F", "G"]],
-    ["3+", "三星以上", ["D", "E", "F", "G"]],
-    ["4+", "四星以上", ["E", "F"]],
+    ["rejected", "已拒绝", []],
     ["conflict", "星级冲突", ["G"]],
 ];
 
@@ -169,7 +195,7 @@ for (const [value, label, expected] of RATING_CASES) {
         assert.equal(list.setRatingFilter(value), true);
         assert.deepEqual(names(list), expected.map((name) => `${name}.JPG`));
         assert.equal(list.count, expected.length);
-        assert.equal(list.ratingFilter, value);
+        assert.deepEqual(list.ratingFilters, value === "all" ? ["all"] : [value]);
     });
 }
 
@@ -192,7 +218,7 @@ test("FILTER-03：筛选不修改评分、不改变当前照片", () => {
     assert.equal(list.neighbor("f/D.JPG", 0), null);
 });
 
-test("FILTER-04：计数含暂留项，列表与文本同一次刷新", () => {
+test("FILTER-04：业务计数含暂留项，与列表同步", () => {
     const data = [photo("A.JPG", { rating: 5 }), photo("B.JPG", { rating: 5 })];
     const list = makeList(data);
     list.setRatingFilter("5");
@@ -322,13 +348,13 @@ test("FILTER-10：空结果计数为 0，筛选条件不被自动放宽", () => 
     assert.deepEqual(empty.cards, []);
     assert.equal(empty.firstCard(), null);
     assert.equal(empty.setRatingFilter("none"), false);
-    assert.equal(empty.ratingFilter, "none");
+    assert.deepEqual(empty.ratingFilters, ["none"]);
     assert.equal(empty.count, 0);
 
     const list = makeList([photo("A.JPG", { rating: 0 }), photo("B.JPG", { rating: 0 })]);
     list.setRatingFilter("5");
     assert.equal(list.count, 0);
-    assert.equal(list.ratingFilter, "5");
+    assert.deepEqual(list.ratingFilters, ["5"]);
     assert.equal(list.firstCard().photo.name, "A.JPG");
 });
 
@@ -369,7 +395,7 @@ test("OPEN-02：同名合并开关即时重算且保留排序与星级筛选", (
     assert.equal(list.count, 0);
     assert.equal(list.sortKey, "size");
     assert.equal(list.sortOrder, "desc");
-    assert.equal(list.ratingFilter, "conflict");
+    assert.deepEqual(list.ratingFilters, ["conflict"]);
     list.setFormatOptions({ sameNameAsOne: true });
     assert.equal(list.count, 1);
 });
@@ -382,7 +408,7 @@ test("OPEN-02：替换文件夹保留排序与星级筛选", () => {
     assert.equal(list.setPhotos(next), true);
     assert.equal(list.sortKey, "size");
     assert.equal(list.sortOrder, "desc");
-    assert.equal(list.ratingFilter, "5");
+    assert.deepEqual(list.ratingFilters, ["5"]);
     assert.deepEqual(names(list), ["D.JPG", "C.JPG"]);
     assert.equal(list.groups.length, 2);
 });
@@ -416,10 +442,14 @@ test("FILTER-04：version 只在列表内容或顺序变化时递增", () => {
     assert.equal(list.setPhotos([photo("B.JPG"), photo("A.JPG")]), true);
     assert.equal(list.version, start + 1);
     const afterSet = list.version;
-    assert.equal(list.setSort("name", "asc"), false);
+    assert.equal(list.setSort("taken", "asc"), false);
     assert.equal(list.version, afterSet);
-    assert.equal(list.setSort("name", "desc"), true);
+    assert.equal(list.setSort("name", "asc"), true);
     assert.equal(list.version, afterSet + 1);
+    assert.equal(list.setSort("name", "asc"), false);
+    assert.equal(list.version, afterSet + 1);
+    assert.equal(list.setSort("name", "desc"), true);
+    assert.equal(list.version, afterSet + 2);
 
     const single = makeList([photo("A.JPG")]);
     const singleVersion = single.version;

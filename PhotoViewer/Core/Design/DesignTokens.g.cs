@@ -339,16 +339,14 @@ public static class DesignTokens
     public const double FilterControlHeight = 32.0;
     /// <summary>filter.control.width（pt） FILTER-01：排序/升降序/星级筛选三个下拉控件的占位宽。</summary>
     public const double FilterControlWidth = 90.0;
-    /// <summary>filter.count.fontSize（pt） FILTER-04：筛选条计数文本字号；宽度按平台字体自然宽度测量。</summary>
-    public const double FilterCountFontSize = 12.0;
-    /// <summary>filter.count.height（pt） FILTER-01：计数文本槽高（旧壳 12 点字的量得值），与 32 高控件垂直居中。</summary>
-    public const double FilterCountHeight = 17.0;
     /// <summary>filter.gap（pt） FILTER-01：筛选条控件之间的间距。</summary>
     public const double FilterGap = 5.0;
     /// <summary>filter.margin（pt） FILTER-01：筛选条四周外边距（列布局为尾部外边距；行布局整组居中的最小边距，Android 仅自然宽度溢出时作为滚动文档前导起点）。</summary>
     public const double FilterMargin = 10.0;
     /// <summary>filter.toggle.cornerRadius（pt） FILTER-01：相似聚类 toggle 自绘药丸圆角。</summary>
     public const double FilterToggleCornerRadius = 6.0;
+    /// <summary>filter.toggle.fontSize（pt） FILTER-06：相似聚类开关文字字号。</summary>
+    public const double FilterToggleFontSize = 12.0;
     /// <summary>filter.toggle.height（pt） FILTER-01：相似聚类 toggle 高；不得借用 32 高的下拉控件。</summary>
     public const double FilterToggleHeight = 27.0;
     /// <summary>filter.toggle.width（pt） FILTER-01：相似聚类 toggle 宽（与下拉同宽）；&lt;600 宽手机用紧凑宽 76（FILTER-01@android）。</summary>
@@ -385,6 +383,30 @@ public static class DesignTokens
     public const string IconCommandZoomOutScale = "U+F94E";
     /// <summary>icon.filter FILTER-07：筛选入口（fi-rr-bars-filter）：手机竖屏圆按钮、筛选/更多合体的筛选段。</summary>
     public const string IconFilter = "U+F215";
+    /// <summary>icon.filter.ascending（codepoint） FILTER-08：fi-rr-arrow-up</summary>
+    public const string IconFilterAscending = "U+F1B9";
+    /// <summary>icon.filter.camera（codepoint） FILTER-08：fi-rr-camera</summary>
+    public const string IconFilterCamera = "U+F348";
+    /// <summary>icon.filter.descending（codepoint） FILTER-08：fi-rr-arrow-down</summary>
+    public const string IconFilterDescending = "U+F18F";
+    /// <summary>icon.filter.drive（codepoint） FILTER-08：fi-rr-hdd</summary>
+    public const string IconFilterDrive = "U+F786";
+    /// <summary>icon.filter.five（codepoint） FILTER-08：fi-rr-circle-5</summary>
+    public const string IconFilterFive = "U+F3EE";
+    /// <summary>icon.filter.four（codepoint） FILTER-08：fi-rr-circle-4</summary>
+    public const string IconFilterFour = "U+F3ED";
+    /// <summary>icon.filter.grid（codepoint） FILTER-08：fi-rr-grid</summary>
+    public const string IconFilterGrid = "U+F71C";
+    /// <summary>icon.filter.one（codepoint） FILTER-08：fi-rr-circle-1</summary>
+    public const string IconFilterOne = "U+F3EA";
+    /// <summary>icon.filter.rejected（codepoint） FILTER-08：fi-rr-circle-xmark</summary>
+    public const string IconFilterRejected = "U+F429";
+    /// <summary>icon.filter.three（codepoint） FILTER-08：fi-rr-circle-3</summary>
+    public const string IconFilterThree = "U+F3EC";
+    /// <summary>icon.filter.two（codepoint） FILTER-08：fi-rr-circle-2</summary>
+    public const string IconFilterTwo = "U+F3EB";
+    /// <summary>icon.filter.unrated（codepoint） FILTER-08：fi-rr-ban</summary>
+    public const string IconFilterUnrated = "U+F205";
     /// <summary>icon.font TOOLBAR-04：主屏图标字体：Flaticon UIcons Regular Rounded（描边字形），四端与 Web 共用 PhotoViewer/Assets/Fonts 下的 ttf；实心星取 icon.fontSolid。</summary>
     public const string IconFont = "uicons-regular-rounded";
     /// <summary>icon.fontSolid TOOLBAR-03：实心字形字体：Flaticon UIcons Solid Straight（PhotoViewer/Assets/Fonts），只用于点亮的星与评分快捷命令的星底。</summary>

@@ -1,13 +1,15 @@
 /**
  * 共用弹出菜单（筛选下拉与主图右键菜单，MENU-03@web / FILTER-08@web：浏览器无原生弹层，自绘）。
- * createMenu({ host, onOpenChange }) → { open(items, anchor, options), close(), isOpen }
+ * createMenu({ host, onOpenChange }) → { open(items, anchor, options), close(), refresh(), isOpen }
  *   items: [{ id, label, type: "command"|"check"|"radio"|"separator"|"header", checked, enabled, shortcut, icon }]
  *     icon 是可选图标令牌（如 "icon.menu.filmstrip"），渲染在勾选列与文字之间（MENU-06）。
- *   anchor: { x, y }（窗口坐标点，右键：菜单左上角对齐指针）或 { rect }（下拉控件矩形：
- *     菜单贴按钮正下方、以按钮水平居中，最小宽 = 按钮宽，下方不足翻到上方）
- *   options: { onSelect(id), onClose(), returnFocus: HTMLElement, label, style: "menu"|"dropdown", focusFirst }
+ *   anchor: { x, y }（窗口坐标点，右键：菜单左上角对齐指针）、{ rect } 或 { rect, element }
+ *     （下拉控件矩形；带 element 时保持展开期间就地跟随入口并检测入口隐藏/移除）
+ *   options: { onSelect(id), onClose(), returnFocus: HTMLElement, label, style: "menu"|"dropdown",
+ *     focusFirst, keepOpen, items: () => items }
+ *     keepOpen 时选择后就地刷新勾选与 ARIA，保持菜单、焦点与滚动；主菜单不设此开关，仍选择即关闭。
  * 行为：夹在宿主内（MENU-03）；上下键移动、回车/空格选择、Esc/点外部关闭且不穿透（MENU-03、FILTER-08）；
- * 选择即关闭；同时只开一个；关闭后焦点回到 returnFocus。
+ * 同时只开一个；关闭后焦点回到 returnFocus。
  * 外观（旧壳 Avalonia Fluent 深色）：弹层 popup.*，菜单项 menu.*；下拉项 dropdown.*（当前项在勾选列画勾）。
  */
 import { el } from "./dom.js";
@@ -32,8 +34,10 @@ export function createMenu({ host, t, onOpenChange = () => {} }) {
 
     function open(items, anchor, options = {}) {
         close("replaced");
+        const itemSource = typeof options.items === "function" ? options.items : () => items;
+        const initialItems = itemSource() ?? [];
         const dropdown = options.style === "dropdown";
-        const checkable = items.some((item) => item.type === "check" || item.type === "radio");
+        const checkable = initialItems.some((item) => item.type === "check" || item.type === "radio");
         // MENU-03 / FILTER-08：菜单内有任一勾选项时所有项都让出勾选列 + 间距，当前项在该列画勾。
         const hasCheckColumn = checkable;
         const checkGlyph = codepoint(t("icon.check"));
@@ -46,7 +50,8 @@ export function createMenu({ host, t, onOpenChange = () => {} }) {
         if (hasCheckColumn) list.classList.add("has-check");
         const rows = [];
         const rowItems = [];
-        for (const item of items) {
+        const marks = [];
+        for (const item of initialItems) {
             if (item.type === "separator") {
                 list.append(el("div", { class: "pv-menu-sep", role: "separator" }));
                 continue;
@@ -67,11 +72,13 @@ export function createMenu({ host, t, onOpenChange = () => {} }) {
                 "aria-checked": item.type === "check" || item.type === "radio" ? String(Boolean(item.checked)) : null,
                 dataset: item.group ? { id: item.id, group: item.group } : { id: item.id },
             });
+            let mark = null;
             if (hasCheckColumn) {
-                row.append(el("span", {
+                mark = el("span", {
                     class: "pv-menu-mark",
                     "aria-hidden": "true",
-                }, item.checked ? checkGlyph : ""));
+                }, item.checked ? checkGlyph : "");
+                row.append(mark);
             }
             // MENU-06：命令图标位于勾选列之后、文字之前；字形是装饰，可访问名称只取文字。
             if (item.icon) row.append(icon(t, item.icon, "pv-menu-icon"));
@@ -96,35 +103,59 @@ export function createMenu({ host, t, onOpenChange = () => {} }) {
             });
             rows.push(row);
             rowItems.push(item);
+            marks.push(mark);
             list.append(row);
         }
+
+        const anchorElement = anchor?.element ?? null;
+        const fixedRect = anchor?.rect ?? null;
+        const requiresRect = Boolean(anchorElement || fixedRect);
+        function resolveAnchorRect() {
+            if (anchorElement) {
+                if (!anchorElement.isConnected || anchorElement.hidden) return null;
+                const r = anchorElement.getBoundingClientRect();
+                if (r.width <= 0 || r.height <= 0) return null;
+                const h = host.getBoundingClientRect();
+                return { x: r.left - h.left, y: r.top - h.top, w: r.width, h: r.height };
+            }
+            return fixedRect;
+        }
+        const initialRect = resolveAnchorRect();
+        if (requiresRect && !initialRect) {
+            options.onClose?.("anchor");
+            onOpenChange(false);
+            return;
+        }
+
         const root = el("div", { class: "pv-menu-layer" }, list);
         host.append(shield, root);
 
-        const hostRect = host.getBoundingClientRect();
-        const maxH = Math.max(40, hostRect.height - EDGE * 2);
-        if (list.getBoundingClientRect().height > maxH) list.style.maxHeight = `${maxH}px`;
-        const height = Math.min(list.getBoundingClientRect().height, maxH);
-        let x;
-        let y;
-        if (anchor.rect) {
-            const r = anchor.rect;
-            list.style.minWidth = `${r.w}px`;
+        function position(rect) {
+            const hostRect = host.getBoundingClientRect();
+            const maxH = Math.max(40, hostRect.height - EDGE * 2);
+            list.style.maxHeight = `${maxH}px`;
+            const height = Math.min(list.getBoundingClientRect().height, maxH);
+            let x;
+            let y;
+            if (rect) {
+                list.style.minWidth = `${rect.w}px`;
+                const width = list.getBoundingClientRect().width;
+                // FILTER-08：贴在按钮正下方、水平居中；下方不足翻到上方。
+                x = rect.x + rect.w / 2 - width / 2;
+                y = rect.y + rect.h;
+                if (y + height > hostRect.height - EDGE) y = rect.y - height;
+            } else {
+                // MENU-03：右键菜单左上角对齐指针。
+                x = anchor.x;
+                y = anchor.y;
+            }
             const width = list.getBoundingClientRect().width;
-            // FILTER-08：贴在按钮正下方、水平居中；下方不足翻到上方。
-            x = r.x + r.w / 2 - width / 2;
-            y = r.y + r.h;
-            if (y + height > hostRect.height - EDGE) y = r.y - height;
-        } else {
-            // MENU-03：右键菜单左上角对齐指针。
-            x = anchor.x;
-            y = anchor.y;
+            x = Math.min(Math.max(EDGE, x), Math.max(EDGE, hostRect.width - width - EDGE));
+            y = Math.min(Math.max(EDGE, y), Math.max(EDGE, hostRect.height - height - EDGE));
+            list.style.left = `${x}px`;
+            list.style.top = `${y}px`;
         }
-        const width = list.getBoundingClientRect().width;
-        x = Math.min(Math.max(EDGE, x), Math.max(EDGE, hostRect.width - width - EDGE));
-        y = Math.min(Math.max(EDGE, y), Math.max(EDGE, hostRect.height - height - EDGE));
-        list.style.left = `${x}px`;
-        list.style.top = `${y}px`;
+        position(initialRect);
 
         let focused = -1;
         function focusRow(index) {
@@ -139,11 +170,45 @@ export function createMenu({ host, t, onOpenChange = () => {} }) {
             let i = focused;
             for (let n = 0; n < rows.length; n++) {
                 i = (i + delta + rows.length) % rows.length;
-                if (!rows[i].classList.contains("is-disabled")) return focusRow(i);
+                if (rows[i].classList.contains("is-disabled")) continue;
+                focusRow(i);
+                const rowRect = rows[i].getBoundingClientRect();
+                const listRect = list.getBoundingClientRect();
+                if (rowRect.top < listRect.top) list.scrollTop -= listRect.top - rowRect.top;
+                else if (rowRect.bottom > listRect.bottom) list.scrollTop += rowRect.bottom - listRect.bottom;
+                return;
             }
+        }
+        function refreshItems() {
+            const next = itemSource() ?? [];
+            const byId = new Map(next.filter((item) => item.id !== undefined).map((item) => [item.id, item]));
+            let removed = false;
+            rowItems.forEach((item, index) => {
+                const fresh = byId.get(item.id);
+                if (!fresh) {
+                    removed = true;
+                    return;
+                }
+                const checked = Boolean(fresh.checked);
+                item.checked = checked;
+                item.enabled = fresh.enabled;
+                const row = rows[index];
+                if (row.getAttribute("role") !== "menuitem") row.setAttribute("aria-checked", String(checked));
+                if (marks[index]) marks[index].textContent = checked ? checkGlyph : "";
+                row.setAttribute("aria-disabled", fresh.enabled === false ? "true" : "false");
+                row.classList.toggle("is-disabled", fresh.enabled === false);
+                if (typeof fresh.label === "string") row.querySelector(".pv-menu-label").textContent = fresh.label;
+            });
+            if (removed) close("items");
+            else syncAnchor();
         }
         function select(id) {
             const handler = options.onSelect;
+            if (options.keepOpen) {
+                handler?.(id);
+                if (current) refreshItems();
+                return;
+            }
             close("select");
             handler?.(id);
         }
@@ -177,10 +242,21 @@ export function createMenu({ host, t, onOpenChange = () => {} }) {
         const onResize = () => close("resize");
         window.addEventListener("resize", onResize);
 
+        function syncAnchor() {
+            if (!current || !anchorElement) return;
+            const rect = resolveAnchorRect();
+            if (!rect) {
+                close("anchor");
+                return;
+            }
+            position(rect);
+        }
+
         current = {
             root,
             shield,
             options,
+            refresh: options.keepOpen ? refreshItems : syncAnchor,
             cleanup() {
                 window.removeEventListener("keydown", onKey, true);
                 window.removeEventListener("blur", onBlur);
@@ -200,6 +276,9 @@ export function createMenu({ host, t, onOpenChange = () => {} }) {
     return {
         open,
         close,
+        refresh() {
+            current?.refresh();
+        },
         get isOpen() {
             return current !== null;
         },

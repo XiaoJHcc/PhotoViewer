@@ -30,7 +30,6 @@ const scene = {
     similarityExpanded: false,
     similarityItemCount: 0,
     photoCount: 12,
-    countText: "共 12 张",
     exifCount: 4,
     showRating: true,
     commandCount: 6,
@@ -41,8 +40,6 @@ const scene = {
 function layout(overrides = {}, tokens = t, profile = "web") {
     return computeLayout({ ...scene, ...overrides }, { t: tokens, profile, measureText: approximateTextWidth });
 }
-
-const countWidth = approximateTextWidth("共 12 张", 12);
 
 test("SHELL-07：自动 <600 映射紧凑横向，显式行/列恒宽，手机模式可检验", () => {
     assert.equal(COMPACT_WIDTH, 600);
@@ -105,7 +102,7 @@ test("FILTER-07：宽形态三段合体 / 单胶囊与 AI 开关，三段放不�
     assert.equal(col.more, null);
     assert.deepEqual(col.controls, {});
     assert.deepEqual(col.toggle, { x: 10, y: 62, w: 96, h: 44 });
-    assert.deepEqual(col.count, { x: 10, y: 37, w: 96, h: t("filter.count.height") });
+    assert.equal("filter.count" in layout().nodes, false);
     assert.equal(col.bar.h, 116);
     assert.equal(layout().film.lead, 116);
     assert.deepEqual(layout().film.items[0], { x: 10, y: 116, w: 96, h: 144 });
@@ -117,7 +114,7 @@ test("FILTER-07：宽形态三段合体 / 单胶囊与 AI 开关，三段放不�
     assert.deepEqual(row.controls.order, { x: 506, y: 10, w: 90, h: 44 });
     assert.deepEqual(row.controls.rating, { x: 596, y: 10, w: 90, h: 44 });
     assert.deepEqual(row.toggle, { x: 694, y: 10, w: 90, h: 44 });
-    assert.deepEqual(row.count, { x: 596, y: 37, w: 90, h: t("filter.count.height") });
+    assert.equal("filter.count" in layout({ layoutMode: "row" }).nodes, false);
     assert.equal(row.bar.h, 64);
 
     const standard = layout({ showSimilarity: false, layoutMode: "row" });

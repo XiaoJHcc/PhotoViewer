@@ -7,7 +7,7 @@
  *   app.on(name, fn) / off       事件："change"(Set<区域>) 与 "request-open"({ kind })
  *
  * 动作：setWindowSize/openFolder/openFile/selectCard/selectSimilar/navigate/exchange/setSort/
- * setRatingFilter/rate/toggleFilmbar/toggleControlbar/toggleAnalysis/setSimilarityExpanded/
+ * setRatingFilter/setRatingFilters/toggleRatingFilter/rate/toggleFilmbar/toggleControlbar/toggleAnalysis/setSimilarityExpanded/
  * fit/zoomPreset/zoomScale/zoomBy/pan/centerOn/navigateTo/toggleEnhance/runCommand/runMenu/requestOpen/
  * keyDown/keyUp/blur/setModifierState/wheelOnPhoto/mouseOnPhoto/filmUserScrolled/filmResized/bindFilmScroller/layoutReady/
  * setMenuOpen/setDropdownOpen/setTextFocus/updateSettings/hoverDetail/clickDiagnostic/
@@ -481,19 +481,35 @@ class MainApp {
         // FILM-01：排序只更新列表，不抢用户位置；只把偏移夹到合法范围。
         this._positioner?.onSortOrFilter();
         this.filmResized();
-        this._syncSimilarityPool();
-        this._invalidate(["list", "similarity"]);
+        this._invalidate(["list"]);
         return changed;
     }
 
     setRatingFilter(value) {
         const changed = this._fileList.setRatingFilter(value);
+        this._afterRatingFilters();
+        return changed;
+    }
+
+    setRatingFilters(values) {
+        const changed = this._fileList.setRatingFilters(values);
+        this._afterRatingFilters();
+        return changed;
+    }
+
+    toggleRatingFilter(value) {
+        const changed = this._fileList.toggleRatingFilter(value);
+        this._afterRatingFilters();
+        return changed;
+    }
+
+    _afterRatingFilters() {
         // FILTER-05：筛选不改主图、不定位；保留偏移并只夹到新范围，候选池随筛选更新。
         this._positioner?.onSortOrFilter();
         this.filmResized();
         this._syncSimilarityPool();
+        // FILTER-03/08：即使结果集与上一个条件等价，也要刷新菜单勾选、入口标题与空列表。
         this._invalidate(["list", "toolbar", "layout", "similarity"]);
-        return changed;
     }
 
     rate(photoId, rating) {
@@ -1171,7 +1187,6 @@ class MainApp {
             similarityItemCount: similarity.items.length,
             similarityDockTexts,
             photoCount: this._fileList.count,
-            countText: `共 ${this._fileList.count} 张`,
             filterSegmentWidths: this._filterSegmentWidths(),
             exifCount: toolbar.exif.length,
             showRating: this._settings.showRating,
@@ -1250,10 +1265,9 @@ class MainApp {
             photo: this._displayedPhoto(),
             cards: this._fileList.cards,
             count: this._fileList.count,
-            countText: `共 ${this._fileList.count} 张`,
             sortKey: this._fileList.sortKey,
             sortOrder: this._fileList.sortOrder,
-            ratingFilter: this._fileList.ratingFilter,
+            ratingFilters: this._fileList.ratingFilters,
             listVersion: this._fileList.version,
             anchorId: this._anchorId,
             displayedId: this._displayedId,

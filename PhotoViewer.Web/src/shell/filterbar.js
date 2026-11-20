@@ -3,19 +3,20 @@ import { icon } from "./icons.js";
 import { SORT_KEYS, SORT_ORDERS, RATING_FILTERS } from "../core/filter.js";
 
 const MENU_GROUPS = [
-    { kind: "sort", label: "排序方式", options: SORT_KEYS, valueOf: (state) => state.sortKey },
-    { kind: "order", label: "排序方向", options: SORT_ORDERS, valueOf: (state) => state.sortOrder },
-    { kind: "rating", label: "星级筛选", options: RATING_FILTERS, valueOf: (state) => state.ratingFilter },
+    { kind: "sort", label: "排序方式", options: SORT_KEYS, selected: (state) => [state.sortKey] },
+    { kind: "order", label: "排序方向", options: SORT_ORDERS, selected: (state) => [state.sortOrder] },
+    { kind: "rating", label: "星级筛选", options: RATING_FILTERS, selected: (state) => state.ratingFilters },
 ];
 
 function menuItemsFor(state, group) {
-    const current = group.valueOf(state);
+    const selected = new Set(group.selected(state));
     return group.options.map((option) => ({
         id: option.value,
         group: group.kind,
         label: option.label,
-        type: "radio",
-        checked: option.value === current,
+        type: group.kind === "rating" ? "check" : "radio",
+        checked: selected.has(option.value),
+        icon: option.icon,
     }));
 }
 
@@ -62,7 +63,6 @@ export function mountFilterBar(host, ctx) {
         "aria-label": "更多",
     }, icon(t, "icon.more", "pv-filter-glyph"));
     const capsule = el("div", { class: "pv-filter-capsule" });
-    const count = el("div", { class: "pv-filter-count", "aria-hidden": "true" });
 
     const toggle = app.capabilities.similarity
         ? el("button", {
@@ -80,7 +80,7 @@ export function mountFilterBar(host, ctx) {
         });
     }
 
-    host.append(capsule, entry, more, ...segmentButtons.map((item) => item.button), count);
+    host.append(capsule, entry, more, ...segmentButtons.map((item) => item.button));
     if (toggle) host.append(toggle);
 
     entry.addEventListener("click", () => openFilterMenu(entry));
@@ -99,15 +99,16 @@ export function mountFilterBar(host, ctx) {
     }
 
     function openSegmentMenu(group, button) {
-        const state = app.state;
-        const filter = state.layout.filter;
+        const filter = app.state.layout.filter;
         if (!filter?.controls?.[group.kind]) return;
         app.setDropdownOpen(true);
         button.setAttribute("aria-expanded", "true");
-        menu.open(menuItemsFor(state, group), { rect: filter.controls[group.kind] }, {
+        menu.open([], { rect: filter.controls[group.kind], element: button }, {
             style: "dropdown",
             label: group.label,
             returnFocus: button,
+            keepOpen: true,
+            items: () => menuItemsFor(app.state, group),
             onSelect: (id) => {
                 applyChoice(group.kind, id);
             },
@@ -119,20 +120,24 @@ export function mountFilterBar(host, ctx) {
     }
 
     function openFilterMenu(button) {
-        const state = app.state;
-        const filter = state.layout.filter;
+        const filter = app.state.layout.filter;
         if (!filter?.entry) return;
-        const items = [];
-        MENU_GROUPS.forEach((group, index) => {
-            if (index > 0) items.push({ type: "separator" });
-            items.push(...menuItemsFor(state, group));
-        });
         app.setDropdownOpen(true);
         button.setAttribute("aria-expanded", "true");
-        menu.open(items, { rect: filter.entry }, {
+        menu.open([], { rect: filter.entry, element: button }, {
             style: "dropdown",
             label: "筛选",
             returnFocus: button,
+            keepOpen: true,
+            items: () => {
+                const state = app.state;
+                const items = [];
+                MENU_GROUPS.forEach((group, index) => {
+                    if (index > 0) items.push({ type: "separator" });
+                    items.push(...menuItemsFor(state, group));
+                });
+                return items;
+            },
             onSelect: (id) => {
                 const kind = MENU_GROUPS.find((group) => group.options.some((option) => option.value === id))?.kind;
                 if (kind) applyChoice(kind, id);
@@ -149,7 +154,7 @@ export function mountFilterBar(host, ctx) {
         if (!filter?.more) return;
         button.setAttribute("aria-expanded", "true");
         app.setDropdownOpen(true);
-        menu.open(mainMenuItems(app), { rect: filter.more }, {
+        menu.open(mainMenuItems(app), { rect: filter.more, element: button }, {
             label: "更多",
             returnFocus: button,
             onSelect: (id) => app.runMenu(id),
@@ -164,7 +169,7 @@ export function mountFilterBar(host, ctx) {
         const state = app.state;
         if (kind === "sort") app.setSort(value, state.sortOrder);
         else if (kind === "order") app.setSort(state.sortKey, value);
-        else app.setRatingFilter(value);
+        else app.toggleRatingFilter(value);
     }
 
     function placeControls(state) {
@@ -184,7 +189,6 @@ export function mountFilterBar(host, ctx) {
             capsule.hidden = true;
             entry.hidden = true;
             more.hidden = true;
-            count.hidden = true;
             for (const item of segmentButtons) item.button.hidden = true;
             if (toggle) toggle.hidden = true;
             return;
@@ -193,8 +197,6 @@ export function mountFilterBar(host, ctx) {
         const hasCapsule = Boolean(filter.composite) && !portrait;
         capsule.hidden = !hasCapsule;
         if (hasCapsule) place(capsule, filter.composite);
-        count.hidden = false;
-        place(count, filter.count);
 
         for (const item of segmentButtons) {
             item.button.hidden = !segments;
@@ -222,9 +224,13 @@ export function mountFilterBar(host, ctx) {
 
     function renderSegmentLabels(state) {
         for (const item of segmentButtons) {
-            const label = item.group.options.find((option) => option.value === item.group.valueOf(state))?.label ?? "";
+            const selected = item.group.selected(state);
+            const labels = item.group.options
+                .filter((option) => selected.includes(option.value))
+                .map((option) => option.label);
+            const label = labels.length > 1 ? "多选" : labels[0] ?? "";
             setText(item.text, label);
-            item.button.setAttribute("aria-label", `${item.group.label}：${label}`);
+            item.button.setAttribute("aria-label", `${item.group.label}：${labels.join("、")}`);
         }
     }
 
@@ -232,9 +238,10 @@ export function mountFilterBar(host, ctx) {
         update(state, regions) {
             if (touches(regions, "layout", "list", "settings", "similarity", "panes", "window")) {
                 placeControls(state);
-                setText(count, state.countText);
                 renderSegmentLabels(state);
                 renderToggle();
+                // FILTER-08：菜单保持展开时，入口移动/隐藏/移除按平台能力就地重定位或关闭。
+                if (menu.isOpen) menu.refresh();
             }
         },
     };

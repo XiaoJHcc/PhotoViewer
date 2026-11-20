@@ -144,6 +144,8 @@ const CHECKS = [
             await h.tick(80);
             h.assert(app.state.sortKey === "taken", "排序未应用");
             h.assert(h.filmOffset() === offsetAfterNav, "排序改变了列表偏移");
+            h.key("Escape");
+            await h.tick(40);
 
             const displayBeforeStar = app.state.displayedId;
             const starCard = h.filmCardAt(1);
@@ -155,7 +157,9 @@ const CHECKS = [
             await h.openFilter("rating");
             h.click(h.menuItem("3"));
             await h.tick(80);
-            h.assert(app.state.ratingFilter === "3", "星级筛选未应用");
+            h.assert(app.state.ratingFilters.includes("3"), "星级筛选未应用");
+            h.key("Escape");
+            await h.tick(40);
             h.assert(app.state.displayedId === displayBeforeStar, "星级筛选切换了当前照片");
             h.assert(h.filmOffset() === offsetAfterNav, "星级筛选改变了列表偏移");
         },
@@ -420,7 +424,9 @@ const CHECKS = [
             await h.openFilter("rating");
             h.click(h.menuItem("3"));
             await h.tick(80);
-            h.assert(app.state.ratingFilter === "3", "三星筛选未应用");
+            h.assert(app.state.ratingFilters.includes("3"), "三星筛选未应用");
+            h.key("Escape");
+            await h.tick(40);
             const list = app.state.cards;
             let index = list.findIndex((card, position) => card.photo.rating === 3 && position < list.length - 1);
             if (index < 0) index = 0;
@@ -436,7 +442,6 @@ const CHECKS = [
             h.assert(app.state.displayedId === card.photo.id, "改星切换了当前照片");
             h.assert(app.state.cards.some((entry) => entry.key === card.key), "暂留项立即被移出列表");
             h.assert(app.state.count === countBefore, `暂留项未计入计数：${app.state.count} ≠ ${countBefore}`);
-            h.assert(app.state.countText === `共 ${countBefore} 张`, `计数文本不一致：${app.state.countText}`);
             h.assert(h.filmOffset() === beforeOffset, "改星改变了列表偏移");
 
             h.key("ArrowRight");
@@ -447,7 +452,7 @@ const CHECKS = [
     },
     {
         id: "FILTER-01",
-        title: "宽形态三段合体 / 单胶囊、计数在控件内、AI 开关独立且标准版无空槽",
+        title: "宽形态三段合体 / 单胶囊、无计数占位、AI 开关独立且标准版无空槽",
         async run(shell, h) {
             const { app } = shell;
             const t = (name) => shell.t(name);
@@ -468,14 +473,8 @@ const CHECKS = [
             h.assert(h.dom(".pv-filter-entry").hidden, "三段模式下仍显示单胶囊按钮");
             h.assert(Math.abs(h.dom(".pv-filter-capsule").getBoundingClientRect().width - row.control.w) <= 1,
                 "玻璃胶囊宽与三段组合宽不一致");
-            h.assert(row.count.x >= row.control.x && row.count.x + row.count.w <= row.control.x + row.control.w,
-                "计数没有收在筛选控件内部");
-            const countRect = h.dom(".pv-filter-count").getBoundingClientRect();
-            const capsuleRect = h.dom(".pv-filter-capsule").getBoundingClientRect();
-            h.assert(Math.abs(countRect.bottom - capsuleRect.bottom) <= 1, "计数未贴在胶囊内部底边");
-            h.assert(getComputedStyle(h.dom(".pv-filter-count")).fontSize === `${t("filter.count.fontSize")}px`,
-                "计数未取 filter.count.fontSize");
-            h.assert(h.dom(".pv-filter-count").textContent === `共 ${app.state.count} 张`, "计数文本不一致");
+            h.assert(document.querySelector(".pv-filter-count") === null, "筛选控件仍有计数元素");
+            h.assert(!("count" in row) && !("filter.count" in app.state.layout.nodes), "筛选几何仍预留计数");
 
             const toggle = document.querySelector(".pv-filter-toggle");
             if (app.capabilities.similarity) {
@@ -496,24 +495,26 @@ const CHECKS = [
             h.assert(col.entry !== null && col.entry.w === t("film.card.width"), "单胶囊入口宽不是 96");
             h.assert(h.domAll(".pv-popup.is-segment").every((node) => node.hidden), "单胶囊下三段仍可见");
             h.assert(!h.dom(".pv-filter-entry").hidden, "单胶囊入口未显示");
-            const colCount = h.dom(".pv-filter-count").getBoundingClientRect();
+            const entryRect = h.dom(".pv-filter-entry").getBoundingClientRect();
             const colCapsule = h.dom(".pv-filter-capsule").getBoundingClientRect();
-            h.assert(colCount.left >= colCapsule.left - 0.5 && colCount.right <= colCapsule.right + 0.5,
-                "列布局计数越出胶囊");
+            h.assert(entryRect.left >= colCapsule.left - 0.5 && entryRect.right <= colCapsule.right + 0.5,
+                "列布局入口越出胶囊");
             app.updateSettings({ layoutMode: "auto" });
             await h.tick(80);
         },
     },
     {
         id: "FILTER-03",
-        title: "星级筛选取值与菜单顺序固定，菜单打开期间 → 不切图",
+        title: "星级筛选取值与菜单顺序固定，多选就地更新且菜单打开期间 → 不切图",
         async run(shell, h) {
             const { app } = shell;
             await h.openFilter();
             const ratingItems = h.domAll('.pv-menu .pv-menu-item[data-group="rating"]');
             h.deepEqual(ratingItems.map((node) => node.querySelector(".pv-menu-label").textContent),
-                ["全部", "无星级", "一星", "二星", "三星", "四星", "五星", "一星以上", "二星以上", "三星以上", "四星以上", "已拒绝", "星级冲突"],
+                ["全部", "无星级", "一星", "二星", "三星", "四星", "五星", "已拒绝", "星级冲突"],
                 "星级筛选项或顺序不符");
+            h.assert(ratingItems.every((node) => node.getAttribute("role") === "menuitemcheckbox"),
+                "星级筛选项不是多选语义");
             const checked = h.domAll(".pv-menu .pv-menu-item").filter((node) => node.getAttribute("aria-checked") === "true");
             h.assert(checked.length === 3, `三个分组各应有一项勾选，实际 ${checked.length}`);
             const groups = new Set(h.domAll(".pv-menu .pv-menu-item").map((node) => node.dataset.group));
@@ -528,14 +529,17 @@ const CHECKS = [
             h.key("Escape");
             await h.tick();
             h.assert(h.menu() === null, "Esc 未关闭筛选菜单");
-            h.assert(app.state.ratingFilter === "all", "Esc 改变了星级筛选");
+            h.deepEqual(app.state.ratingFilters, ["all"], "Esc 改变了星级筛选");
 
             await h.openFilter();
             h.click(h.menuItem("5"));
             await h.tick(80);
-            h.assert(app.state.ratingFilter === "5", "选中即应用失败");
-            h.assert(h.menu() === null, "选中后菜单未关闭");
-            h.assert(h.dom(".pv-filter-count").textContent === `共 ${app.state.count} 张`, "应用后的计数不一致");
+            h.deepEqual(app.state.ratingFilters, ["5"], "选中即应用失败");
+            h.assert(h.menu() !== null, "选中后筛选菜单被关闭");
+            h.assert(h.menuItem("5").getAttribute("aria-checked") === "true", "选中项 ARIA 未原地更新");
+            h.assert(h.menuItem("all").getAttribute("aria-checked") === "false", "全部项 ARIA 未原地取消");
+            h.assert(h.menu().contains(document.activeElement), "选中后焦点离开了菜单");
+            h.assert(document.querySelector(".pv-filter-count") === null, "筛选控件仍有计数元素");
         },
     },
     {
@@ -640,7 +644,7 @@ const CHECKS = [
             h.key("Escape");
             await h.tick(40);
             h.assert(h.menu() === null, "Esc 未关闭筛选菜单");
-            h.assert(app.state.sortKey === "name", "Esc 改变了排序");
+            h.assert(app.state.sortKey === "taken", "Esc 改变了排序");
 
             app.updateSettings({ layoutMode: "row" });
             await h.tick(120);
@@ -678,7 +682,7 @@ const CHECKS = [
     },
     {
         id: "FILTER-08b",
-        title: "键盘 ↓ 从筛选入口打开菜单，上下键移动、回车确认",
+        title: "键盘 ↓ 从筛选入口打开菜单，上下键移动、回车确认后就地保持展开",
         async run(shell, h) {
             const { app } = shell;
             const entry = h.dom(".pv-filter-entry");
@@ -687,16 +691,103 @@ const CHECKS = [
             await h.tick();
             h.assert(h.menu() !== null, "↓ 未从筛选入口打开菜单");
             h.key("ArrowDown");
+            h.key("ArrowDown");
+            h.key("ArrowDown");
             await h.tick(20);
             h.key("Enter");
             await h.tick(80);
-            h.assert(h.menu() === null, "回车未关闭菜单");
-            h.assert(app.state.sortKey !== "name", "回车未应用到下一项");
+            h.assert(app.state.sortOrder === "desc", "回车未应用到下一项");
+            h.assert(h.menu() !== null, "回车后筛选菜单被关闭");
+            h.assert(document.activeElement?.classList.contains("pv-menu-item"), "回车后焦点离开菜单项");
+            h.key("Escape");
+            await h.tick(40);
+            h.assert(h.menu() === null, "Esc 未关闭筛选菜单");
+            h.assert(document.activeElement === entry, "Esc 后焦点未回到筛选入口");
+        },
+    },
+    {
+        id: "FILTER-08c",
+        title: "筛选菜单选择后就地更新并保持展开/焦点/滚动，入口失效时关闭，主菜单仍选择即关",
+        async run(shell, h) {
+            const { app } = shell;
+
+            app.updateSettings({ layoutMode: "row" });
+            await h.tick(120);
+            await h.openFilter("sort");
+            const sortMenu = h.menu();
+            const sortButton = h.dom('.pv-popup.is-segment[data-group="sort"]');
+            const beforeSort = app.state.sortKey;
+            h.key("ArrowDown");
+            await h.tick(20);
+            h.key("Enter");
+            await h.tick(60);
+            h.assert(app.state.sortKey !== beforeSort, "段菜单回车未应用排序");
+            h.assert(h.menu() === sortMenu, "段菜单选择后被重建或关闭");
+            h.assert(sortMenu.contains(document.activeElement), "段菜单选择后焦点离开菜单");
+            h.key("Escape");
+            await h.tick(40);
+            h.assert(document.activeElement === sortButton, "Esc 后焦点未回到排序段");
+
+            app.updateSettings({ layoutMode: "col" });
+            shell.setWindowSize(700, 360);
+            app.setSort("taken", "asc");
+            app.setRatingFilters(["all"]);
+            await h.tick(120);
+            await h.openFilter();
+            const list = h.menu();
+            list.scrollTop = 24;
+            const scrollBefore = list.scrollTop;
+            for (let step = 0; step < 8; step += 1) h.key("ArrowDown");
+            await h.tick(20);
+            h.key("Enter");
+            await h.tick(60);
+            h.assert(h.menu() === list, "星级菜单选择后被重建或关闭");
+            h.assert(list.scrollTop === scrollBefore, `选择后菜单滚动位置 ${list.scrollTop} ≠ ${scrollBefore}`);
+            h.assert(document.activeElement?.dataset.id === "3",
+                `选择后焦点未留在当前菜单项：${document.activeElement?.className ?? "无"}/${document.activeElement?.dataset?.id ?? "-"}`);
+            h.assert(h.menuItem("3").getAttribute("aria-checked") === "true", "三星勾选未原地更新");
+            h.assert(h.menuItem("all").getAttribute("aria-checked") === "false", "全部未随多选取消");
+
+            h.key("ArrowDown");
+            await h.tick(20);
+            h.key("Enter");
+            await h.tick(60);
+            h.deepEqual(app.state.ratingFilters, ["3", "4"], "多选并集未生效");
+            h.assert(h.menuItem("4").getAttribute("aria-checked") === "true", "四星勾选未原地更新");
+
+            h.click(h.menuItem("all"));
+            await h.tick(60);
+            h.deepEqual(app.state.ratingFilters, ["all"], "点全部未清空条件");
+            h.assert(h.menu() === list, "点全部关闭了菜单");
+            h.assert(h.menuItem("3").getAttribute("aria-checked") === "false", "点全部后旧条件仍勾选");
+
+            h.click(h.menuItem("3"));
+            h.click(h.menuItem("4"));
+            await h.tick(60);
+            h.deepEqual(app.state.ratingFilters, ["3", "4"], "多选条件未按并集保留");
+            h.click(h.menuItem("3"));
+            h.click(h.menuItem("4"));
+            await h.tick(60);
+            h.deepEqual(app.state.ratingFilters, ["all"], "取消最后一项未回到全部");
+            h.assert(h.menuItem("all").getAttribute("aria-checked") === "true", "回到全部后未勾选全部");
+
+            app.updateSettings({ layoutMode: "row" });
+            await h.tick(120);
+            h.assert(h.menu() === null, "筛选入口移走后菜单仍展开");
+            h.assert(app.state.dropdownOpen === false, "入口移走后下拉状态未复位");
+
+            app.updateSettings({ layoutMode: "auto" });
+            shell.setWindowSize(1200, 850);
+            await h.tick(120);
+            await h.openMainMenu();
+            h.click(h.menuItem("film"));
+            await h.tick(80);
+            h.assert(h.menu() === null, "主图菜单选择后未关闭");
         },
     },
     {
         id: "FILTER-10",
-        title: "空结果计数「共 0 张」、胶片栏留空，筛选条件保留",
+        title: "空结果胶片栏留空，筛选条件保留",
         async run(shell, h) {
             const { app } = shell;
             app.updateSettings({ sameNameAsOne: false });
@@ -704,10 +795,12 @@ const CHECKS = [
             await h.openFilter();
             h.click(h.menuItem("rejected"));
             await h.tick(100);
+            h.assert(h.menu() !== null, "选中后筛选菜单被关闭");
+            h.key("Escape");
+            await h.tick(40);
             app.openFolder("night");
             await h.tick(120);
             h.assert(app.state.count === 0, `空结果计数 ${app.state.count} ≠ 0`);
-            h.assert(app.state.countText === "共 0 张", `空结果计数文本 ${app.state.countText}`);
             h.assert(h.filmScroller().textContent.trim() === "", `胶片栏空态有文字：${h.filmScroller().textContent}`);
             h.assert(document.querySelector(".pv-film-empty") === null, "胶片栏仍有空状态元素");
             h.assert(!h.dom(".pv-filter-entry").disabled, "空结果时筛选入口被禁用");
@@ -1878,19 +1971,19 @@ const CHECKS = [
     },
     {
         id: "SIM-01",
-        title: "相似开关展开面板、文件栏加宽、计数与排序不变",
+        title: "相似开关展开面板、文件栏加宽、列表与排序不变",
         async run(shell, h) {
             const { app } = shell;
             if (!app.capabilities.similarity) {
                 h.assert(document.querySelector(".pv-filter-toggle") === null, "标准版仍创建相似聚类开关");
                 h.assert(document.querySelector(".pv-sim") === null, "标准版仍创建相似面板");
-                h.assert(app.state.similarity.visible === false, "标准版相似面板可见");
+                h.assert(app.state.similarity.visible === false, "标准版相似面板不可见");
                 h.assert(app.state.layout.similarity.occupation === 0, "标准版相似面板仍占位");
                 h.assert(await app.extractAll() === false, "标准版仍可批量提取");
                 return;
             }
             const before = app.state.layout.panes.filePane.w;
-            const countText = h.dom(".pv-filter-count").textContent;
+            const counts = app.state.count;
             const sortKey = app.state.sortKey;
             h.click(h.dom(".pv-filter-toggle"));
             await h.until(() => app.state.similarity.visible === true, 4000);
@@ -1904,7 +1997,7 @@ const CHECKS = [
                 `文件栏宽度 ${app.state.layout.panes.filePane.w} ≠ ${expectedWidth}`);
             h.assert(Math.abs(simRect.width - app.state.layout.similarity.width) <= 1,
                 `DOM 面板宽 ${simRect.width} ≠ 布局 ${app.state.layout.similarity.width}`);
-            h.assert(h.dom(".pv-filter-count").textContent === countText, "打开面板改变了计数");
+            h.assert(app.state.count === counts, "打开面板改变了列表");
             h.assert(app.state.displayedId === app.state.anchorId, "打开面板改变了当前照片");
             h.assert(app.state.sortKey === sortKey, "打开面板改变了排序");
             await h.until(() => app.state.similarity.items.length > 0 && app.state.similarity.calculating === false, 4000);
@@ -2472,9 +2565,13 @@ const CHECKS = [
             await h.openFilter("sort");
             h.click(h.menuItem("size"));
             await h.tick(80);
+            h.assert(h.menu() !== null, "选中后筛选菜单被关闭");
             const settings = JSON.parse(localStorage.getItem("PhotoViewer.Settings"));
-            h.assert(!("sortKey" in settings) && !("ratingFilter" in settings), "排序/筛选被写入设置");
+            h.assert(!("sortKey" in settings) && !("ratingFilter" in settings) && !("ratingFilters" in settings),
+                "排序/筛选被写入设置");
             h.assert(app.state.sortKey === "size", "排序未应用");
+            h.key("Escape");
+            await h.tick(40);
         },
     },
     {
@@ -2713,7 +2810,6 @@ const CHECKS = [
                 similarityExpanded: false,
                 similarityItemCount: 0,
                 photoCount: 12,
-                countText: "共 12 张",
                 filterSegmentWidths: [90, 90, 90],
                 exifCount: 4,
                 showRating: true,
@@ -2913,7 +3009,7 @@ const CHECKS = [
             let externalNext = externalOriginal === 2 ? 1 : 2;
             if (externalNext === currentSources[0].value) externalNext = externalNext === 1 ? 3 : 1;
             externalSource.photo.rating = externalNext;
-            app.setSort("name", "asc");
+            app.setSort(app.state.sortKey, app.state.sortOrder);
             await h.tick(140);
             h.assert(popup(), "外部来源变化关闭了浮窗");
             const refreshedStars = entries()[1].querySelectorAll(".pv-rating-source-star");
@@ -2922,7 +3018,7 @@ const CHECKS = [
                     === (externalSource.photo.rating >= value), `外部变化后第 ${value} 星未刷新`);
             }
             externalSource.photo.rating = externalOriginal;
-            app.setSort("name", "asc");
+            app.setSort(app.state.sortKey, app.state.sortOrder);
             await h.tick(140);
 
             // 卡片默认向下，以真实 0 号按钮为锚点并保留 arrowMargin。
@@ -3303,7 +3399,7 @@ const CHECKS = [
             h.assert(has(groupMissing), "多来源缺失未命中「无星级」");
             h.assert(!has(rejected), "已拒绝被并入「无星级」");
 
-            for (const value of ["1", "2", "3", "4", "5", "1+", "2+", "3+", "4+"]) {
+            for (const value of ["1", "2", "3", "4", "5"]) {
                 app.setRatingFilter(value);
                 await h.tick(20);
                 h.assert(!has(invalid), `无效代表命中了「${value}」`);
@@ -3775,16 +3871,20 @@ function createHelpers(shell) {
             patch.similarityMaxResults = 8;
         }
         app.updateSettings(patch);
-        app.setSort("name", "asc");
-        app.setRatingFilter("all");
+        app.setSort("taken", "asc");
+        app.setRatingFilters(["all"]);
         if (app.state.panes.analysis) app.toggleAnalysis();
         if (app.state.panes.exif === false) app.toggleExif();
         if (!app.state.panes.film) app.toggleFilmbar();
         if (!app.state.panes.control) app.toggleControlbar();
         if (app.capabilities.similarity && app.settings.similarityPanelExpanded) app.setSimilarityExpanded(false);
         shell.setWindowSize(1200, 850);
-        // OPEN-08：同一文件夹重开保持当前照片；检查统一从筛选后首张开始，避免上一检查的残留状态。
-        const first = app.state.cards[0];
+        // OPEN-08：同一文件夹重开保持当前照片；检查统一从已提取、有相似伙伴的首张开始，避免上一检查的残留状态。
+        app.openFolder("harbor");
+        await tick(40);
+        const candidates = app.state.cards.filter((card) => card.photo.extracted);
+        const first = candidates.find((card) => candidates.some((other) => other.key !== card.key
+            && other.photo.scene?.base === card.photo.scene?.base)) ?? candidates[0] ?? app.state.cards[0];
         app.openFolder("harbor", { target: first ? first.photo.id : undefined });
         await tick(80);
         if (!app.state.viewport.isFit) app.fit();

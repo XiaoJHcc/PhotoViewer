@@ -71,6 +71,16 @@ internal static class iOSFilterMenuCheck
             throw new InvalidOperationException("筛选菜单有选项缺少标识");
         if (!identifiers.All(IsFilterIdentifier))
             throw new InvalidOperationException($"筛选菜单标识未带分组前缀：{string.Join(" / ", identifiers)}");
+        var menuContentsCorrect = await UiDispatcher.InvokeAsync(() =>
+        {
+            var actions = Actions(built.Menu).ToArray();
+            return actions.Length == 14
+                && actions.Where(action => action.Identifier?.StartsWith(RatingPrefix, StringComparison.Ordinal) == true)
+                    .Select(action => action.Title).SequenceEqual(["全部", "无星级", "一星", "二星", "三星", "四星", "五星", "已拒绝", "星级冲突"])
+                && actions.First(action => action.Identifier == "sort:Name").Title == "文件名"
+                && actions.All(action => action.Image != null && action.Attributes.HasFlag(UIMenuElementAttributes.KeepsMenuPresented));
+        });
+        if (!menuContentsCorrect) throw new InvalidOperationException("筛选选项、图标或保持展开属性不符");
         var handlerKeys = built.Handlers.Keys.OrderBy(key => key, StringComparer.Ordinal).ToArray();
         if (!identifiers.SequenceEqual(handlerKeys, StringComparer.Ordinal))
             throw new InvalidOperationException(
@@ -145,6 +155,12 @@ internal static class iOSFilterMenuCheck
         await WaitAsync(() => buttons.All(button => HasSelection(button, RatingPrefix, "rating:Eq5")), "取消其中一个条件");
         await UiDispatcher.InvokeAsync(handlers["rating:All"]);
         await WaitAsync(() => !filter.IsRatingFilterActive && buttons.All(button => HasSelection(button, RatingPrefix, "rating:All")), "清空星级条件");
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            handlers["rating:Eq3"]();
+            handlers["rating:Eq3"]();
+        });
+        await WaitAsync(() => !filter.IsRatingFilterActive && buttons.All(button => HasSelection(button, RatingPrefix, "rating:All")), "取消最后一个条件");
         lines.Add("PASS FILTER-08：排序方向单选、星级多选、取消及清空，同步到三个入口的菜单模型");
     }
 

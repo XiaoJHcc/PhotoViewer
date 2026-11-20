@@ -155,7 +155,7 @@ export function hasRatingConflict(card) {
     return sources.some((source) => !consistentValue(source.state) || source.value !== first.value);
 }
 
-/** FILTER-03：数字/以上档按代表内嵌；冲突独立；已拒绝只看 -1。 */
+/** FILTER-03：数字档按代表内嵌；冲突独立；已拒绝只看 -1。 */
 export function matchesRatingFilter(card, value) {
     if (value === "all") return true;
     if (value === "conflict") return hasRatingConflict(card);
@@ -165,12 +165,17 @@ export function matchesRatingFilter(card, value) {
         return representative.state === RATING_STATES.MISSING
             || (representative.state === RATING_STATES.RATED && representative.value === 0);
     }
-    const text = String(value);
-    const threshold = text.endsWith("+");
-    const target = Number(threshold ? text.slice(0, -1) : text);
-    if (!Number.isFinite(target)) return false;
+    const target = Number(value);
+    if (!Number.isInteger(target)) return false;
     if (representative.state !== RATING_STATES.RATED) return false;
-    return threshold ? representative.value >= target : representative.value === target;
+    return representative.value === target;
+}
+
+/** FILTER-03：多选条件按并集命中；「全部」或无条件是唯一不受限的情况。 */
+export function matchesRatingFilters(card, values) {
+    const list = Array.isArray(values) ? values : [values];
+    if (list.length === 0 || list.includes("all")) return true;
+    return list.some((value) => matchesRatingFilter(card, value));
 }
 
 /** RATING-03 预检：返回该来源不能安全写入的原因；null 表示可写。 */

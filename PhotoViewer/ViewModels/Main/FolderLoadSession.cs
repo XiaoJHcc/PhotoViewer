@@ -126,15 +126,16 @@ internal sealed class FolderLoadSession : IDisposable
     }
 
     /// <summary>
-    /// 启动第三阶段：后台补齐基本属性与星级。任务归会话所有，取消后不再写入结果，
+    /// 启动第三阶段：后台补齐基本属性、拍摄时间与星级。任务归会话所有，取消后不再写入结果，
     /// 异常全部在会话内观察（不产生未观察的 Task）。
     /// </summary>
     /// <param name="snapshot">本次提交的列表快照。</param>
     /// <param name="ratingsLoaded">星级全部就绪后回到 UI 线程的提交回调。</param>
-    public void StartBackgroundLoads(IReadOnlyList<ImageFile> snapshot, Func<Task> ratingsLoaded)
+    /// <param name="sortKeysLoaded">基本属性与拍摄时间就绪后回到 UI 线程的提交回调。</param>
+    public void StartBackgroundLoads(IReadOnlyList<ImageFile> snapshot, Func<Task> ratingsLoaded, Func<Task> sortKeysLoaded)
     {
         if (snapshot.Count == 0) return;
-        Track(Task.Run(() => LoadPropertiesAsync(snapshot)));
+        Track(Task.Run(() => LoadPropertiesAsync(snapshot, sortKeysLoaded)));
         Track(Task.Run(() => LoadRatingsAsync(snapshot, ratingsLoaded)));
     }
 
@@ -166,7 +167,7 @@ internal sealed class FolderLoadSession : IDisposable
         _backgroundTasks.Clear();
     }
 
-    private async Task LoadPropertiesAsync(IReadOnlyList<ImageFile> snapshot)
+    private async Task LoadPropertiesAsync(IReadOnlyList<ImageFile> snapshot, Func<Task> sortKeysLoaded)
     {
         var token = Token;
         using var semaphore = new SemaphoreSlim(BackgroundParallelism);
@@ -184,7 +185,10 @@ internal sealed class FolderLoadSession : IDisposable
             try
             {
                 if (!token.IsCancellationRequested)
+                {
                     await file.LoadBasicPropertiesAsync(token).ConfigureAwait(false);
+                    await file.LoadCaptureDateAsync(token).ConfigureAwait(false);
+                }
             }
             catch (OperationCanceledException)
             {
@@ -207,6 +211,8 @@ internal sealed class FolderLoadSession : IDisposable
         catch (OperationCanceledException)
         {
         }
+        if (!token.IsCancellationRequested)
+            await sortKeysLoaded().ConfigureAwait(false);
     }
 
     private async Task LoadRatingsAsync(IReadOnlyList<ImageFile> snapshot, Func<Task> ratingsLoaded)

@@ -529,21 +529,9 @@ EXIF 开关关闭时筛选与更多上移到灵动岛/刘海两旁的显示区�
 - Android：本机未安装 android workload（`NETSDK1147`），本轮无法构建最终树；此前记录的 `AndroidNativeSettingsPresenter` 中 `LayoutMode.Auto` 在源码中为完整限定写法，本环境无法复现，也未做临时绕过或扩大重构。
 - Android 仅一处注释指向共享 `ShellPaneLayout`，无行为改动。
 
-### U5 筛选控件专项：计数进筛选按钮（未开始）
+### U5 筛选控件专项：计数进筛选按钮（取消）
 
-- **状态**：未开始。计数仍是四端缺口（status FILTER-04），本轮不设计新的计数 UI；筛选控件按 FILTER-01/07 的现行形态工作。
-- **目标**：所有形态的计数都在筛选控件内部显示，随控件一起点击，不是独立入口；同一帧内计数与列表一致（FILTER-04）。
-- **做法**（开工前评估）：
-  - 先评估原生按钮配置（图标 + 标题/副标题、玻璃配置）能否承载计数并随筛选即时更新；能满足就用原生，不能满足再自定义（需求 10 的原生优先）。
-  - 计数在 iPad 筛选/更多合体、手机筛选入口（竖屏单胶囊、横屏筛选/更多合体）、其他平台宽形态三合体/单胶囊内各以什么形式出现，由本专项出两三个候选，在 G5 定。
-  - 计数变化不改变相邻控件位置；列布局下不改变控件总宽，行布局只允许控件自身宽度变化。
-- **完成契约（/goal）**：
-  ```text
-  完成 new-ui U5 筛选控件专项。
-  完成判据：FILTER-04 的新条款落地；iOS 两版构建 0 错误；layout 检查新增"计数在筛选控件内可见、与列表同帧一致、计数变化不移动相邻控件且列布局总宽不变、iPad 筛选段与手机菜单点选不关闭"断言，并在 iPhone 17e、iPhone 17、iPad Pro 13（行布局、列布局、1/3 分屏）上 PASS；status.md 的 iOS 缺口关闭；截图落 artifacts/acceptance/new-ui/u5/。
-  范围：PhotoViewer.iOS、PhotoViewer.Shared、Tools/CoreContractCheck、Design、Plans。
-  停止：计数放进按钮后，窄屏顶部行放不下筛选、EXIF、更多三者，或 iPad 筛选/更多合体与 AI 开关放不下时，记录宽度与差值，停下等作者裁定。
-  ```
+现行 [FILTER-04](../Design/spec/filter.md#filter-04-筛选结果计数--必须) 明确不呈现计数。筛选菜单行为、原生差异与视觉待办分别由 FILTER-08、`Design/platforms.md` 和 `Design/status.md` 维护。
 
 ### U6 真机定版与规范冻结
 

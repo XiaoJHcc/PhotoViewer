@@ -235,7 +235,7 @@ bash PhotoViewer.Android/setup-android-signing.sh
 ```bash
 python3 Tools/generate-design-tokens.py
 python3 Tools/generate-design-tokens.py --check
-node PhotoViewer.Web/tools/export-geometry.mjs --profile mac --count-width 52 --out /tmp/web-geometry.json
+node PhotoViewer.Web/tools/export-geometry.mjs --profile mac --out /tmp/web-geometry.json
 python3 Tools/compare-layout-geometry.py /tmp/web-geometry.json artifacts/acceptance/native-p2-acceptance/native-layout-geometry.txt
 ```
 

@@ -14,7 +14,7 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 | `Native/WindowsLayout.cs` | 消费共享几何与设计令牌，补充 Windows 专属布局。 |
 | `Native/WindowsShellLayoutAcceptance.cs` | 宽形态外壳静态几何验收（行/列 × 分析栏开关 + 只剩评分与命令）：适应区、交换链区段与工具区背景条件、控件外形，并按组合导出真实窗口截图；用实开灰阶照片覆盖窗口，GPU 回读文件栏亚克力的亮度响应。 |
 | `Native/WindowsPhotoView*.cs`、`WindowsNavigator.cs`、`WindowsDisplayColor.cs`、`WindowsDisplayTransform*.cs` | D3D 照片表面（铺满窗口，适应区由 `SetFitInsets` 给出）、共享视口、交换链内亚克力区段（栏位背景、浮动按钮衬底与标题栏降级背板）、标题栏取样的 F16 GPU 条带与导航图。DisplayConfig 按窗口所在显示器探测实际 Advanced Color 模式，开启时由系统管理 scRGB，传统 SDR 按关联显示器 ICC 转换；矩阵/TRC 用 skcms、其余 profile 用 WCS 建宽域 3D LUT，主图在合成后转换。窗口移动与低频轮询更新输出而不重解照片，LUT/中间表面计入 GPU 占用。 |
-| `Native/WindowsFilterBar.cs`、`WindowsFilmstripView.cs`、`WindowsThumbnailCard.cs`、`WindowsControlBar.cs`、`WindowsControlStyles.cs` | 筛选（共享 `WideFilterLayout` 的三段合体 / 单胶囊，原生 `MenuFlyout` 单选菜单，计数在控件内，AI 版原生 `ToggleButton` 开关）、胶片栏、卡片、EXIF 摘要/评分胶囊/命令三组控制栏（尺寸与换行取共享 `ToolbarFlowLayout`，命令圆按钮与评分胶囊用原生按钮材质），以及仍由壳自绘的小型控件状态外观与评分槽位状态层。 |
+| `Native/WindowsFilterBar.cs`、`WindowsFilmstripView.cs`、`WindowsThumbnailCard.cs`、`WindowsControlBar.cs`、`WindowsControlStyles.cs` | 筛选（共享 `WideFilterLayout` 的三段合体 / 单胶囊；原生 `MenuFlyout`，排序与方向单选、星级条件各自独立多选并带 Fluent 语义图标；AI 版原生 `ToggleButton` 开关）、胶片栏、卡片、EXIF 摘要/评分胶囊/命令三组控制栏（尺寸与换行取共享 `ToolbarFlowLayout`，命令圆按钮与评分胶囊用原生按钮材质），以及仍由壳自绘的小型控件状态外观与评分槽位状态层。 |
 | `Native/WindowsRatingSourcesFlyout.cs` | RATING-04 原生 `Flyout` 来源浮窗：几何、方向与长名中间省略取共享 `RatingSourcesLayout`，复用共享整组写入；主窗口接入卡片/相似卡片/控制栏锚点与关闭联动。 |
 | `Native/WindowsAnalysisPanel.cs`、`WindowsSimilarityPanel.cs`、`WindowsDiagnostic*.cs`、`WindowsShakeFieldView.cs` | 分析/相似面板与共用诊断瓦片。 |
 | `Native/WindowsSettings*.cs`、`WindowsHotkeyRecorder.cs`、`WindowsNativeSettingsPresenter.cs` | 原生设置窗口、工作副本与快捷键录制；内存警告文字取 `color.settings.warning` 柔和暗金色，错误仍用系统语义色。 |
@@ -77,7 +77,7 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 - 窗口标题由 `WindowsMainWindow.UpdateWindowTitle` 统一写 `Window.Title` 与标题栏文字（同一个字符串）：`文件夹名 - 文件名 - <产品名>`，无当前文件只有产品名（由 `WindowsProductInfo.DisplayName` 给出 `PhotoViewer` / `PhotoViewer AI`），文件夹段与文件段同名时只出现一次，产品名固定保留在末段；订阅 `FolderVM.FolderName` 与 `MainViewModel.CurrentFile`。标题文字用 WinUI `CaptionTextBlockStyle`、单行尾部截断、不参与命中，可用宽不足时隐藏。
 - 全屏标志与 presenter 状态保持一致（系统还原时同步回窗口态）；退出全屏先落标志再动 presenter，避免 `Changed` 递归重设边框，并恢复同一系统边框（`hasTitleBar` 仍为 `false`）。
 - 任务栏缩略浮窗图标取窗口图标而不是 EXE 资源：csproj 把 `PhotoViewer/Assets/icon.ico` 以 `Link=icon.ico`、`ExcludeFromSingleFile=false` 复制到输出与单文件解包目录，激活后 `AppWindow.SetIcon(AppContext.BaseDirectory/icon.ico)`；缺失只记 `NativeStartupLog`，不阻塞启动。
-- 主图菜单每一项都有语义前置图标（`MenuFlyoutItem.Icon` + `FontIcon`，字形表在 `WindowsIcons`）：打开文件=文档、打开文件夹=文件夹、胶片栏=照片、分析栏=方格网、控制栏=滑杆、雾天增强=对比度、工具=扳手、设置=齿轮。WinUI 1.8 的 `ToggleMenuFlyoutItem` 派生自 `MenuFlyoutItem`，沿用同一 `Icon` 与模板的 `CheckedWithIcon`/`UncheckedWithIcon` 状态，勾选项保留系统勾选列；不要删勾选、不要把图标拼进 `Text`。
+- 主图菜单每一项都有语义前置图标（`MenuFlyoutItem.Icon` + `FontIcon`，字形表在 `WindowsIcons`）：打开文件=文档、打开文件夹=文件夹、胶片栏=照片、分析栏=方格网、控制栏=滑杆、雾天增强=对比度、工具=扳手、设置=齿轮。WinUI 1.8 的 `ToggleMenuFlyoutItem` 派生自 `MenuFlyoutItem`，沿用同一 `Icon` 与模板的 `CheckedWithIcon`/`UncheckedWithIcon` 状态，勾选项保留系统勾选列；不要删勾选、不要把图标拼进 `Text`。`ToggleMenuFlyoutItem` 在 `Click` 之前已翻转 `IsChecked`，筛选菜单的星级切换项因此在 `Click` 里按共享条件回填（空条件点「全部」也保持勾选），`MenuFlyout` 重开时再整体同步。
 - 控制栏按钮的悬停提示与读屏名称同源，统一走共享 `CommandTooltipText.Format`（`名称（主 / 次）`，空槽省略、主次相同只出现一次），键名仍由 `WindowsInput.FormatGesture` 给；未设置的槽传 `null`，不要出现"未设置"或用点号分隔命令名与绑定。
 - 全屏使用 `OverlappedPresenter` 的边框与最大化组合；独立窗口在 `Activate()` 前按目标 DPI 定尺寸，选择器绑定该窗口句柄。
 - 设置/工具共用 `WindowsWindowChrome` 和 `WindowsSettingsCard`。卡片使用 WinUI 主题资源；整块内容使用垂直对齐和 Stretch，需要撑满的控件放在 `Content`。设置拉条行按 SETTINGS-16 分成等宽左右两区，左区为标题，右区为拉条与固定宽数值列，跨分类的拉条边缘一致；缓存相关拉条不显示内部映射气泡，滚动预载延时直接使用共享模型的毫秒范围与步进。
@@ -96,7 +96,7 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 
 | 参数 | 用途 |
 |---|---|
-| `--pv-native-smoke` | 主窗口、解码/渲染、模型、评分冲突指示、交互冒烟；宽形态外壳静态几何（行/列 × 分析栏开关、只剩评分与命令的透明工具区）并把真实窗口截图写到输出目录 `screens/`；键盘入口先建立并核对根元素焦点与无修饰键，再调真实入口，前置条件超时写焦点与手势路由诊断，失败断言不重试；另含悬停与窄宽度常驻标题栏（显隐、跨度与背景、32 点布局让位、失焦保持、caption 拖动区、窗口按钮与窗口态字形）、动态窗口标题、窗口图标、菜单图标与命令提示格式、设置展示影响分流（跨两个 2 秒内存探测周期与显式诊断通知后来源浮窗锚点/开放态、评分按钮与命令按钮身份、筛选条下拉展开态均不变，真实评分显隐与快捷键子项变化仍按影响位刷新）；AI 版另用进程内预算源覆盖 Caution 起跑、提取中进入 Warning，核对真实三路落库、6000×4000 CV 尺寸、合并进度、UI dispatcher 心跳与不灌入浏览 LRU，压力日志写 `memory-events-batch.jsonl`，不改系统内存；使用隔离设置与数据库，输入素材取 `--pv-acceptance-fixtures`（AI 版另需 `jpeg-large/color-p3-large.jpg`）。 |
+| `--pv-native-smoke` | 主窗口、解码/渲染、模型、评分冲突指示、交互冒烟；宽形态外壳静态几何（行/列 × 分析栏开关、只剩评分与命令的透明工具区）并把真实窗口截图写到输出目录 `screens/`；键盘入口先建立并核对根元素焦点与无修饰键，再调真实入口，前置条件超时写焦点与手势路由诊断，失败断言不重试；另含悬停与窄宽度常驻标题栏（显隐、跨度与背景、32 点布局让位、失焦保持、caption 拖动区、窗口按钮与窗口态字形）、动态窗口标题、窗口图标、菜单图标与命令提示格式、设置展示影响分流（跨两个 2 秒内存探测周期与显式诊断通知后来源浮窗锚点/开放态、评分按钮与命令按钮身份、筛选条下拉展开态均不变，真实评分显隐与快捷键子项变化仍按影响位刷新；筛选菜单另验星级独立多选、空条件点「全部」与重开后的勾选回填）；AI 版另用进程内预算源覆盖 Caution 起跑、提取中进入 Warning，核对真实三路落库、6000×4000 CV 尺寸、合并进度、UI dispatcher 心跳与不灌入浏览 LRU，压力日志写 `memory-events-batch.jsonl`，不改系统内存；使用隔离设置与数据库，输入素材取 `--pv-acceptance-fixtures`（AI 版另需 `jpeg-large/color-p3-large.jpg`）。 |
 | `--pv-native-portable` | 与 smoke 合用，只针对单文件发布解包目录：真实使用的 libheif/pvhevc（AI 版另含 ORT/DirectML）必须已加载且来自解包目录；四份分发 CRT 显式从解包目录加载并核对来源，缺件不允许系统副本顶替。普通 Debug 输出不附带 CRT，不作为 portable 验收目标。 |
 | `--pv-native-settings`、`--pv-native-tools` | 设置/工具专项；追加 `-hold` 保持窗口供目视。 |
 | `--pv-native-edition` | 当前实际版本的能力、筛选条/分析栏/诊断页构成、独立 DINO/CV 门控与 CV 只读/不写库专项；默认输出到 `artifacts/acceptance/native-win-editions/<edition>/`，报告 `edition-checks-<edition>.json`。 |

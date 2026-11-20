@@ -34,8 +34,7 @@ internal static class iOSFilterMenu
         var order = Group(OrderGroup, true, filter.SortOrders.Select(option =>
         {
             var value = (SortOrder)option.Value;
-            string title = value == SortOrder.Ascending ? "升序" : "降序";
-            return new Option(value.ToString(), title, AppleSymbolNames.Filter.ForSortOrder(value),
+            return new Option(value.ToString(), option.DisplayName, AppleSymbolNames.Filter.ForSortOrder(value),
                 value == filter.SortOrder, () => filter.SortOrder = value);
         }), handlers, selectionChanged);
 
@@ -54,9 +53,7 @@ internal static class iOSFilterMenu
 
     internal static void Refresh(UIButton button, FilterBarViewModel filter)
     {
-        button.AccessibilityValue = string.Join("、", filter.RatingFilters
-            .Where(option => filter.IsRatingFilterSelected(option.Key))
-            .Select(option => option.DisplayName));
+        button.AccessibilityValue = filter.RatingFilterSelectionText;
         if (button is iOSMenuButton menuButton)
         {
             var selected = filter.RatingFilters

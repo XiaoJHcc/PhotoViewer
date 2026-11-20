@@ -101,7 +101,7 @@ internal static class OpenRequestChannelChecks
         var hasFixtures = WritePhoto(aPath);
         hasFixtures &= WritePhoto(bPath);
 
-        await main.OpenCoordinator.PublishAndWaitAsync([new LocalFolderRef(directory)], OpenRequestSource.SystemOpen);
+        await main.OpenCoordinator.PublishAndWaitAsync([new LocalFileRef(aPath)], OpenRequestSource.SystemOpen);
         c.Equal("首次打开枚举两个文件", 2, main.FolderVM.AllFiles.Count);
         var current = main.CurrentFile;
         c.True("首次打开有当前照片", current != null, "CurrentFile 为 null");
@@ -342,7 +342,7 @@ internal static class OpenRequestChannelChecks
         main.OpenCoordinator.RepeatActivation += () => repeats++;
 
         await main.OpenCoordinator.PublishAndWaitAsync(
-            [new LocalFolderRef(directory)], OpenRequestSource.SystemOpen);
+            [new LocalFileRef(aPath)], OpenRequestSource.SystemOpen);
         c.Equal("首次打开三个文件", 3, main.FolderVM.AllFiles.Count);
         var a = Find(main, "a.jpg");
         var b = Find(main, "b.jpg");

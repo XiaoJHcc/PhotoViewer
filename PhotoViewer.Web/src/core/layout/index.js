@@ -41,8 +41,6 @@ export function computeLayout(scene, { t, profile = "web", measureText = approxi
     const exifCount = scene.exifCount ?? 0;
     const commandCount = scene.commandCount ?? 0;
     const tileCount = scene.analysisTileCount ?? 6;
-    const countText = scene.countText ?? `共 ${photoCount} 张`;
-    const countWidth = measureText(countText, t("filter.count.fontSize"), 400);
 
     const filterBandHeight = filterBarHeight(t);
     const filmBandHeight = t("film.band.height");
@@ -167,7 +165,6 @@ export function computeLayout(scene, { t, profile = "web", measureText = approxi
             showSimilarity: similarityCapable,
             showFilmbar,
             fileContentWidth: t("shell.filebar.content.width"),
-            countWidth,
             topRowX: portraitControlLeft,
             topRowY: panes.topRow ? panes.topRow.y : 0,
             topRowRight: width - portraitControlRight,
@@ -665,7 +662,6 @@ function collectNodes(spec) {
         if (filter.entry) nodes["filter.entry"] = rect(filter.entry);
         if (filter.more) nodes["filter.more"] = rect(filter.more);
         if (filter.toggle) nodes["filter.toggle"] = rect(filter.toggle);
-        if (filter.count) nodes["filter.count"] = rect(filter.count);
         if (filter.controls) {
             for (const [name, frame] of Object.entries(filter.controls)) {
                 nodes[`filter.${name}`] = rect(frame);

@@ -341,12 +341,6 @@ internal static class NativeMainLayoutAcceptance
         if (filePane.Subviews.OfType<NSButton>().Any(button => !button.Hidden && button.Title == "相似聚类"))
             throw new InvalidOperationException($"{scope} 标准版残留相似开关");
 #endif
-        var count = window.CountView;
-        if (count.Hidden || count.Superview is not { } countHost
-            || count.Frame.X < countHost.Bounds.X || count.Frame.Y < countHost.Bounds.Y
-            || count.Frame.X + count.Frame.Width > countHost.Bounds.X + countHost.Bounds.Width
-            || count.Frame.Y + count.Frame.Height > countHost.Bounds.Y + countHost.Bounds.Height)
-            throw new InvalidOperationException($"{scope} 计数未完整显示在冻结筛选外框内：{count.Frame} / {count.Superview?.Bounds}");
         var union = window.FilterUnionFrame;
         if (Math.Abs((double)union.X - (content.X + frames.Control.X)) > Exact || union.Width <= 0)
             throw new InvalidOperationException($"{scope} 标题挖空联合范围与筛选控件不一致：{union}");

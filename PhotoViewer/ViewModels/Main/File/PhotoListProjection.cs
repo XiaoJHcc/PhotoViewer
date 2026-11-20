@@ -38,8 +38,8 @@ public static class PhotoListProjection
         IReadOnlyList<ImageFile> allFiles,
         SettingsViewModel settings,
         IReadOnlyCollection<string>? ratingKeys = null,
-        SortMode sortMode = SortMode.Name,
-        SortOrder sortOrder = SortOrder.Ascending,
+        SortMode sortMode = FilterBarViewModel.DefaultSortMode,
+        SortOrder sortOrder = FilterBarViewModel.DefaultSortOrder,
         ImageFile? retainedFile = null)
     {
         ArgumentNullException.ThrowIfNull(allFiles);
@@ -61,8 +61,8 @@ public static class PhotoListProjection
         IReadOnlyList<ImageFile> allFiles,
         SettingsViewModel settings,
         string ratingKey,
-        SortMode sortMode = SortMode.Name,
-        SortOrder sortOrder = SortOrder.Ascending,
+        SortMode sortMode = FilterBarViewModel.DefaultSortMode,
+        SortOrder sortOrder = FilterBarViewModel.DefaultSortOrder,
         ImageFile? retainedFile = null)
         => Project(
             allFiles,
@@ -119,12 +119,13 @@ public static class PhotoListProjection
             "Eq4" => HasNumericValue(state) && rating == 4,
             "Eq5" => HasNumericValue(state) && rating == 5,
             "Conflict" => file.HasRatingConflict,
-            _ => true
+            AllRatings => true,
+            _ => false
         };
     }
 
     private static bool HasNumericValue(XmpRatingState state) =>
-        state is not (XmpRatingState.Invalid or XmpRatingState.Unreadable or XmpRatingState.Conflict);
+        state is XmpRatingState.Missing or XmpRatingState.Rated;
 
     private static PhotoFormatRule[] BuildFormatRules(SettingsViewModel settings) =>
         settings.FileFormats

@@ -1,7 +1,7 @@
 /**
  * 筛选入口几何（FILTER-07@web、FILTER-04）：宽形态为一个玻璃胶囊内的三段合体（排序 / 方向 / 星级各一段），
  * 三段放不下时回退同一胶囊内的单按钮；手机竖屏为筛选圆按钮 + 更多圆按钮，横屏为「筛选 / 更多」88 合体。
- * AI 版相似聚类开关独立。计数只占筛选入口内部，不改组宽。所有矩形为窗口坐标；筛选层是全窗图层。
+ * AI 版相似聚类开关独立。筛选控件不显示计数，也不为计数预留空间。所有矩形为窗口坐标；筛选层是全窗图层。
  */
 
 export function filterGeometry(spec, t) {
@@ -26,19 +26,10 @@ export function filterGeometry(spec, t) {
     const button = t("shell.glass.button.size");
     const margin = t("filter.margin");
     const gap = t("shell.glass.group.gap");
-    const countWidth = spec.countWidth ?? 0;
-    const countHeight = t("filter.count.height");
-    const countFrame = (frame) => ({
-        x: frame.x,
-        y: frame.y + frame.h - countHeight,
-        w: frame.w,
-        h: countHeight,
-    });
 
     if (form === "phone" && orientation === "portrait") {
         const entry = { x: topRowX, y: topRowY, w: button, h: button };
         const more = { x: topRowRight - button, y: topRowY, w: button, h: button };
-        const count = countFrame(entry);
         return {
             form,
             orientation,
@@ -48,8 +39,6 @@ export function filterGeometry(spec, t) {
             more,
             composite: null,
             toggle: null,
-            count,
-            countWidth,
             segments: [
                 { kind: "filter", frame: entry },
                 { kind: "more", frame: more },
@@ -65,7 +54,6 @@ export function filterGeometry(spec, t) {
         const entry = { x, y, w: button, h: button };
         const more = { x: x + button, y, w: button, h: button };
         const composite = { x, y, w: total, h: button };
-        const count = countFrame(composite);
         return {
             form,
             orientation,
@@ -75,8 +63,6 @@ export function filterGeometry(spec, t) {
             more,
             composite,
             toggle: null,
-            count,
-            countWidth,
             segments: [
                 { kind: "filter", frame: entry },
                 { kind: "more", frame: more },
@@ -125,8 +111,6 @@ export function filterGeometry(spec, t) {
             entry: fits ? null : composite,
             more: null,
             toggle,
-            count: countFrame(fits ? controls.rating : composite),
-            countWidth,
             segments: [],
             bar: { x: 0, y: 0, w: fileContentWidth, h: barHeight },
         };
@@ -164,8 +148,6 @@ export function filterGeometry(spec, t) {
         entry: fits ? null : control,
         more: null,
         toggle,
-        count: countFrame(fits ? controls.rating : control),
-        countWidth,
         segments: [],
         bar: { x: 0, y: safe.top, w: width, h: rowHeight },
     };
