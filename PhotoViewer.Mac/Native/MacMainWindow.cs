@@ -30,9 +30,8 @@ public sealed class MacMainWindow : IDisposable
     private readonly MacBarMaterial _toolBackground;
     private readonly NSView _fileDivider = Pane(MacDesignColors.Argb(DesignTokens.ColorDivider));
     private readonly NSView _controlDivider = Pane(MacDesignColors.Argb(DesignTokens.ColorDivider));
-    private readonly NSTextField _hintDetail = Label("", 11);
-    private readonly NSTextField _hintDetailSeparator = Label("/", 11);
-    private readonly NSTextField _hintDetailSuffix = Label("", 11);
+    private readonly NSTextField _hintDetail = Label("", DesignTokens.ImageHintDetailFontSize);
+    private bool _showsStartHint;
     private readonly MacControlBar _controlPane;
     private readonly NSScrollView _controlScroll;
     private readonly NSView _photoPane;
@@ -239,23 +238,15 @@ public sealed class MacMainWindow : IDisposable
         _titleLabel = TitleLabel();
         _titleLabel.StringValue = Window.Title;
         _root.AddSubview(_titleLabel);
-        _hint = Label(PhotoHintText.EmptyProductTitle, 16);
+        _hint = Label(PhotoHintText.EmptyProductTitle, DesignTokens.ImageHintTitleFontSize);
         _hint.Alignment = NSTextAlignment.Center;
         _hint.TextColor = NSColor.Label;
         _hintDetail.Alignment = NSTextAlignment.Center;
         _hintDetail.TextColor = NSColor.SecondaryLabel;
         _hintDetail.LineBreakMode = NSLineBreakMode.ByWordWrapping;
         _hintDetail.MaximumNumberOfLines = 4;
-        _hintDetailSeparator.Alignment = NSTextAlignment.Center;
-        _hintDetailSeparator.TextColor = NSColor.TertiaryLabel;
-        _hintDetailSeparator.Hidden = true;
-        _hintDetailSuffix.Alignment = NSTextAlignment.Center;
-        _hintDetailSuffix.TextColor = NSColor.SecondaryLabel;
-        _hintDetailSuffix.Hidden = true;
         _photoPane.AddSubview(_hint);
         _photoPane.AddSubview(_hintDetail);
-        _photoPane.AddSubview(_hintDetailSeparator);
-        _photoPane.AddSubview(_hintDetailSuffix);
         _navigationHost = new NavigatorHostView { WantsLayer = true, CenterRequested = OnNavigatorCenterRequested };
         _navigationHost.Layer!.BackgroundColor = MacDesignColors.Argb(
             DesignTokens.ColorNavBackground, DesignTokens.ColorNavBackgroundAlpha).CGColor;
@@ -392,6 +383,7 @@ public sealed class MacMainWindow : IDisposable
         Window.DidResignKey += (_, _) => { SetTitlebarVisible(false); HideDetailHighlight(); };
         _deactivationObserver = NSNotificationCenter.DefaultCenter.AddObserver(NSApplication.DidResignActiveNotification, _ => { SetTitlebarVisible(false); HideDetailHighlight(); });
         Session.Changed += OnImageChanged;
+        _main.FolderVM.OpenStateChanged += OnOpenStateChanged;
         Session.Notice += ShowToast;
         _root.Resized = Layout;
         _root.OpenDroppedPaths = paths => _ = OpenPathsAsync(paths, OpenRequestSource.DragDrop);
@@ -698,30 +690,16 @@ public sealed class MacMainWindow : IDisposable
                 DesignTokens.ImageBusyHeight);
             _toast.StackOverBusyPill = !_busyPill.Hidden;
             _toast.Layout(FitArea);
-            double hintWidth = Math.Max(1, Math.Min(500, (double)photoRect.Width - 20));
+            double hintWidth = Math.Max(0, Math.Min(DesignTokens.ImageHintMaxWidth,
+                (double)photoRect.Width - 2 * DesignTokens.ImageHintInset));
             double hintLeft = (double)photoRect.X + ((double)photoRect.Width - hintWidth) / 2;
-            double hintTop = (double)photoRect.Y
-                + Math.Max(0, ((double)photoRect.Height - (_hintDetail.StringValue.Length > 0 ? 80 : 20)) / 2);
-            _hint.Frame = new CGRect(hintLeft, hintTop, hintWidth, 20);
-            if (!_hintDetailSuffix.Hidden)
-            {
-                _hintDetail.SizeToFit();
-                _hintDetailSeparator.SizeToFit();
-                _hintDetailSuffix.SizeToFit();
-                double prefixWidth = _hintDetail.Frame.Width;
-                double separatorWidth = _hintDetailSeparator.Frame.Width;
-                double suffixWidth = _hintDetailSuffix.Frame.Width;
-                double detailLeft = hintLeft + Math.Max(0, (hintWidth - prefixWidth - separatorWidth - suffixWidth) / 2);
-                _hintDetail.Frame = new CGRect(detailLeft, hintTop + 28, prefixWidth, 20);
-                _hintDetailSeparator.Frame = new CGRect(detailLeft + prefixWidth, hintTop + 28, separatorWidth, 20);
-                _hintDetailSuffix.Frame = new CGRect(detailLeft + prefixWidth + separatorWidth, hintTop + 28, suffixWidth, 20);
-            }
-            else
-            {
-                _hintDetail.Frame = new CGRect(hintLeft, hintTop + 28, hintWidth, 52);
-                _hintDetailSeparator.Frame = CGRect.Empty;
-                _hintDetailSuffix.Frame = CGRect.Empty;
-            }
+            double titleHeight = DesignTokens.ImageHintTitleLineHeight;
+            double detailY = titleHeight + DesignTokens.ImageHintRowGap;
+            double detailHeight = _showsStartHint ? DesignTokens.ImageHintDetailLineHeight : 52;
+            double hintHeight = _hintDetail.Hidden ? titleHeight : detailY + detailHeight;
+            double hintTop = (double)photoRect.Y + ((double)photoRect.Height - hintHeight) / 2;
+            _hint.Frame = new CGRect(hintLeft, hintTop, hintWidth, titleHeight);
+            _hintDetail.Frame = new CGRect(hintLeft, hintTop + detailY, hintWidth, detailHeight);
             if (fileVisible)
             {
                 if (row)
@@ -1228,7 +1206,8 @@ public sealed class MacMainWindow : IDisposable
     /// <returns>事件是否已被消费。</returns>
     internal bool TryOpenEmptyStatePicker(NSEvent nativeEvent)
     {
-        if (nativeEvent.Type != NSEventType.LeftMouseDown || Session.Image != null || nativeEvent.Window != Window) return false;
+        if (nativeEvent.Type != NSEventType.LeftMouseDown || !_main.FolderVM.IsStartScreen || Session.Image != null
+            || Session.IsLoadingVisible || !string.IsNullOrWhiteSpace(Session.Error) || nativeEvent.Window != Window) return false;
         if ((nativeEvent.ModifierFlags & (NSEventModifierMask.CommandKeyMask | NSEventModifierMask.AlternateKeyMask
             | NSEventModifierMask.ControlKeyMask | NSEventModifierMask.ShiftKeyMask)) != 0) return false;
         var point = _root.ConvertPointFromView(nativeEvent.LocationInWindow, null);
@@ -1396,28 +1375,7 @@ public sealed class MacMainWindow : IDisposable
     {
         UpdateFocusPoint();
         Photo.SetImage(Session.Image, Session.Generation);
-        // STATE-01：有照片但图未就绪时只在共享 300ms 延迟态可见后提示；STATE-02 的解码失败仍优先。
-        var (hintTitle, hintDetail) = PhotoHintText.Resolve(
-            _main.CurrentFile != null, Session.Error, Session.IsLoadingVisible, touch: false);
-        _hint.StringValue = hintTitle;
-        bool emptyHint = _main.CurrentFile == null && string.IsNullOrWhiteSpace(Session.Error);
-        if (emptyHint)
-        {
-            var parts = PhotoHintText.EmptyDetailParts(touch: false);
-            _hintDetail.StringValue = parts.Prefix;
-            _hintDetailSeparator.StringValue = parts.Separator;
-            _hintDetailSuffix.StringValue = parts.Suffix;
-        }
-        else
-        {
-            _hintDetail.StringValue = hintDetail;
-            _hintDetailSeparator.StringValue = string.Empty;
-            _hintDetailSuffix.StringValue = string.Empty;
-        }
-        _hint.Hidden = hintTitle.Length == 0;
-        _hintDetail.Hidden = hintDetail.Length == 0;
-        _hintDetailSeparator.Hidden = !emptyHint;
-        _hintDetailSuffix.Hidden = !emptyHint;
+        UpdateHint();
         // IMAGE-07：只有共享会话越过 500ms 门槛才显示"计算中…"。
         _busyPill.Hidden = !Session.IsEnhancingVisible;
         // IMAGE-03：屏上已有代理时 Full 升级失败只报非阻塞提示，不覆盖主图错误标题。
@@ -1430,6 +1388,49 @@ public sealed class MacMainWindow : IDisposable
         UpdateMenuChecks();
         Layout();
     }
+    private void OnOpenStateChanged()
+    {
+        UpdateHint();
+        Layout();
+    }
+
+    private void UpdateHint()
+    {
+        var (title, detail) = PhotoHintText.Resolve(
+            _main.CurrentFile != null, Session.Error, Session.IsLoadingVisible,
+            touch: false, showEmpty: _main.FolderVM.IsStartScreen);
+        _showsStartHint = title == PhotoHintText.EmptyProductTitle;
+        _hint.StringValue = title;
+        _hint.TextColor = _showsStartHint ? MacDesignColors.Argb(DesignTokens.ColorTextPrimary) : NSColor.Label;
+        _hintDetail.TextColor = _showsStartHint ? MacDesignColors.Argb(DesignTokens.ColorTextSecondary) : NSColor.SecondaryLabel;
+        _hintDetail.LineBreakMode = _showsStartHint ? NSLineBreakMode.TruncatingTail : NSLineBreakMode.ByWordWrapping;
+        _hintDetail.MaximumNumberOfLines = _showsStartHint ? 1 : 4;
+        if (_showsStartHint)
+        {
+            var parts = PhotoHintText.EmptyDetailParts(touch: false);
+            using var paragraph = new NSMutableParagraphStyle { Alignment = NSTextAlignment.Center, LineBreakMode = NSLineBreakMode.TruncatingTail };
+            using var baseText = new NSAttributedString(detail, new NSStringAttributes
+            {
+                Font = _hintDetail.Font,
+                ForegroundColor = _hintDetail.TextColor,
+                ParagraphStyle = paragraph,
+            });
+            using var text = new NSMutableAttributedString(baseText);
+            using var gap = NSNumber.FromDouble(DesignTokens.ImageHintSeparatorGap);
+            int separator = parts.Prefix.Length;
+            text.AddAttribute(NSStringAttributeKey.KerningAdjustment, gap, new NSRange(separator - 1, 1 + parts.Separator.Length));
+            text.AddAttribute(NSStringAttributeKey.ForegroundColor, MacDesignColors.Argb(DesignTokens.ColorTextTertiary),
+                new NSRange(separator, parts.Separator.Length));
+            _hintDetail.AttributedStringValue = text;
+        }
+        else
+        {
+            _hintDetail.StringValue = detail;
+        }
+        _hint.Hidden = title.Length == 0;
+        _hintDetail.Hidden = detail.Length == 0;
+    }
+
     /// <summary>EXIF 异步到达后同步对焦位置，避免主图先完成时 F 仍使用过期空值。</summary>
     private void UpdateFocusPoint()
     {
@@ -1583,8 +1584,7 @@ public sealed class MacMainWindow : IDisposable
         try
         {
             // 视口只在共享层判定为新目标时回到适应态；取消选择器或重开当前目标都不改变视口。
-            if (folder) { var selected = await FilePicker.PickFolderAsync("选择图片文件夹"); if (selected != null) await _main.FolderVM.OpenFolderAsync(selected); }
-            else { await _main.FolderVM.OpenFilePickerAsync(); }
+            await _main.FolderVM.OpenFilePickerAsync(pickFolder: folder);
         }
         catch (Exception exception)
         {
@@ -1809,6 +1809,7 @@ public sealed class MacMainWindow : IDisposable
         // NSPopover 关闭时仍会触碰定位视图，晚于 _controlPane/_similarityPane/Window 释放会访问已释放视图。
         _ratingSources.Dispose();
         Session.Notice -= ShowToast;
+        _main.FolderVM.OpenStateChanged -= OnOpenStateChanged;
         Session.Dispose(); _navigationBitmap?.Dispose(); _analysisPane.Dispose(); _controlPane.Dispose();
 #if PHOTOVIEWER_DINO
         _similarityPane.Dispose();

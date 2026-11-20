@@ -20,7 +20,6 @@ export { approximateTextWidth } from "./text.js";
 export { resolveScreenForm, normalizeSafeArea } from "./form.js";
 export { filterBarHeight } from "./filterbar.js";
 
-const HINT_TITLE_LINE_HEIGHT = 20;
 const LARGE_TIER_MIN_CARDS = 5;
 
 export function computeLayout(scene, { t, profile = "web", measureText = approximateTextWidth } = {}) {
@@ -610,14 +609,15 @@ function createOverlays(t, profile, layout, panes) {
 
     function hintFrames(pane) {
         const width = Math.max(0, Math.min(t("image.hint.maxWidth"), pane.w - 2 * t("image.hint.inset")));
-        const detailHeight = t("image.hint.detail.fontSize");
-        const gap = t("image.hint.detail.gap");
-        const total = HINT_TITLE_LINE_HEIGHT + (gap - HINT_TITLE_LINE_HEIGHT) + detailHeight;
+        const titleHeight = t("image.hint.title.lineHeight");
+        const detailHeight = t("image.hint.detail.lineHeight");
+        const offset = titleHeight + t("image.hint.rowGap");
+        const total = offset + detailHeight;
         const top = pane.y + (pane.h - total) / 2;
         const x = pane.x + (pane.w - width) / 2;
         return {
-            title: { x, y: top, w: width, h: HINT_TITLE_LINE_HEIGHT },
-            detail: { x, y: top + gap, w: width, h: detailHeight },
+            title: { x, y: top, w: width, h: titleHeight },
+            detail: { x, y: top + offset, w: width, h: detailHeight },
         };
     }
 

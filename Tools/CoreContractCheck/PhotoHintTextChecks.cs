@@ -16,8 +16,8 @@ internal static class PhotoHintTextChecks
 #else
         const string productTitle = "PhotoViewer";
 #endif
-        var desktopEmpty = PhotoHintText.Resolve(false, null, false, touch: false);
-        var touchEmpty = PhotoHintText.Resolve(false, null, false, touch: true);
+        var desktopEmpty = PhotoHintText.Resolve(false, null, false, touch: false, showEmpty: true);
+        var touchEmpty = PhotoHintText.Resolve(false, null, false, touch: true, showEmpty: true);
         c.Equal("桌面空态主标题是产品名", productTitle, desktopEmpty.Title);
         c.Equal("触屏空态主标题是产品名", productTitle, touchEmpty.Title);
         c.Equal("桌面空态副标题", "点击打开文件/拖拽照片到此处", desktopEmpty.Detail);
@@ -29,16 +29,21 @@ internal static class PhotoHintTextChecks
         c.True("触屏副标题拆出分隔字", touchParts.Prefix == "点击打开文件夹"
             && touchParts.Separator == "/" && touchParts.Suffix == "长按更多功能");
         c.Equal("失败标题固定", "无法打开该图片",
-            PhotoHintText.Resolve(true, "文件内容无效或已损坏", false, touch: false).Title);
+            PhotoHintText.Resolve(true, "文件内容无效或已损坏", false, touch: false, showEmpty: false).Title);
         c.Equal("失败详情是解码原因", "文件内容无效或已损坏",
-            PhotoHintText.Resolve(true, "文件内容无效或已损坏", false, touch: false).Detail);
+            PhotoHintText.Resolve(true, "文件内容无效或已损坏", false, touch: false, showEmpty: false).Detail);
         c.Equal("无照片时失败仍优先", "无法打开该图片",
-            PhotoHintText.Resolve(false, "文件内容无效或已损坏", false, touch: true).Title);
+            PhotoHintText.Resolve(false, "文件内容无效或已损坏", false, touch: true, showEmpty: true).Title);
         c.Equal("加载标题与四端一致", "正在载入…",
-            PhotoHintText.Resolve(true, "", true, touch: false).Title);
-        c.True("加载不带详情", PhotoHintText.Resolve(true, "", true, touch: true).Detail.Length == 0);
-        var none = PhotoHintText.Resolve(true, "", false, touch: false);
+            PhotoHintText.Resolve(true, "", true, touch: false, showEmpty: false).Title);
+        c.True("加载不带详情", PhotoHintText.Resolve(true, "", true, touch: true, showEmpty: false).Detail.Length == 0);
+        var none = PhotoHintText.Resolve(true, "", false, touch: false, showEmpty: false);
         c.True("有照片且图已就绪不显示提示", none.Title.Length == 0 && none.Detail.Length == 0);
+
+        c.Equal("没有文件但并非首屏时不显示操作提示", (string.Empty, string.Empty),
+            PhotoHintText.Resolve(false, null, false, touch: false, showEmpty: false));
+        c.Equal("加载可见时不回落为首屏提示", "正在载入…",
+            PhotoHintText.Resolve(false, null, true, touch: false, showEmpty: true).Title);
 
         c.Section("拍摄时间格式");
         var date = new DateTimeOffset(2026, 11, 6, 9, 5, 7, TimeSpan.FromHours(8));

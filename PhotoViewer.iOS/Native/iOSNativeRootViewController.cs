@@ -90,6 +90,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private readonly UIView _detailHighlight = new();
     private readonly UILabel _hintLabel = new();
     private readonly UILabel _hintDetail = new();
+    private bool _showsStartHint;
     /// <summary>导航图宿主：非适应态时显示在主图区右下角（半透明 #222、圆角 6）。</summary>
     private readonly UIView _navigationHost = new();
     /// <summary>导航图小图（GPU 小目标渲染 → sRGB8 → PNG）。</summary>
@@ -376,6 +377,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _main.FitToViewRequested += OnFitToViewRequested;
         _main.OpenFailed += OnOpenFailed;
         _main.FolderVM.AllFilesChanged += OnAllFilesChanged;
+        _main.FolderVM.OpenStateChanged += OnOpenStateChanged;
         _main.PropertyChanged += OnMainPropertyChanged;
         _main.Settings.PresentationChanged += OnSettingsChanged;
         _main.FileVM.ThumbnailList.PropertyChanged += OnFilesChanged;
@@ -413,7 +415,6 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _photo.AutoresizingMask = UIViewAutoresizing.FlexibleWidth | UIViewAutoresizing.FlexibleHeight;
         _photo.Frame = _photoPane.Bounds;
         _photoPane.AddSubview(_photo);
-        _hintLabel.Text = HintText();
         _hintLabel.Font = UIFont.SystemFontOfSize((nfloat)DesignTokens.ImageHintTitleFontSize);
         _hintLabel.TextColor = UIColor.Label;
         _hintLabel.TextAlignment = UITextAlignment.Center;
@@ -684,6 +685,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
             _main.FitToViewRequested -= OnFitToViewRequested;
             _main.OpenFailed -= OnOpenFailed;
             _main.FolderVM.AllFilesChanged -= OnAllFilesChanged;
+            _main.FolderVM.OpenStateChanged -= OnOpenStateChanged;
             _main.PropertyChanged -= OnMainPropertyChanged;
             _main.Settings.PresentationChanged -= OnSettingsChanged;
             _main.FileVM.ThumbnailList.PropertyChanged -= OnFilesChanged;
@@ -1434,14 +1436,16 @@ internal sealed class iOSNativeRootViewController : UIViewController
         var fit = FitArea();
         if ((double)fit.Width <= 0 || (double)fit.Height <= 0) return;
         double horizontalMargin = MainScreenLayout.FilterMargin;
-        double hintWidth = Math.Max(1, Math.Min(DesignTokens.ImageHintMaxWidth, (double)fit.Width - horizontalMargin * 2));
+        double hintWidth = Math.Max(0, Math.Min(DesignTokens.ImageHintMaxWidth, (double)fit.Width - 2 * DesignTokens.ImageHintInset));
         double hintLeft = (double)fit.X + ((double)fit.Width - hintWidth) / 2;
-        bool hasDetail = _hintDetail.Text?.Length > 0;
-        double titleHeight = Math.Ceiling((double)_hintLabel.Font.LineHeight);
-        double detailHeight = Math.Max(1, Math.Ceiling((double)fit.Height - DesignTokens.ImageHintDetailGap - titleHeight));
-        double hintTop = (double)fit.Y + Math.Max(0, ((double)fit.Height - (hasDetail ? DesignTokens.ImageHintDetailGap + Math.Min(52, detailHeight) : titleHeight)) / 2);
+        double titleHeight = DesignTokens.ImageHintTitleLineHeight;
+        double detailY = titleHeight + DesignTokens.ImageHintRowGap;
+        double detailHeight = _showsStartHint ? DesignTokens.ImageHintDetailLineHeight
+            : Math.Min(52, Math.Max(0, (double)fit.Height - detailY));
+        double hintHeight = _hintDetail.Hidden ? titleHeight : detailY + detailHeight;
+        double hintTop = (double)fit.Y + ((double)fit.Height - hintHeight) / 2;
         _hintLabel.Frame = new CGRect(hintLeft, hintTop, hintWidth, titleHeight);
-        _hintDetail.Frame = new CGRect(hintLeft, hintTop + DesignTokens.ImageHintDetailGap, hintWidth, Math.Min(52, detailHeight));
+        _hintDetail.Frame = new CGRect(hintLeft, hintTop + detailY, hintWidth, detailHeight);
         _enhanceBusy.Frame = new CGRect(
             (double)fit.X + Math.Max(0, ((double)fit.Width - DesignTokens.ImageBusyWidth) / 2),
             (double)fit.Y + Math.Max(0, (double)fit.Height - DesignTokens.ImageBusyHeight - DesignTokens.ImageBusyBottomOffset),
@@ -1855,7 +1859,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// （与 Mac 空首屏点开文件同义）。
     /// </summary>
     /// <param name="recognizer">点击识别器。</param>
-    private void OnPhotoTapped(UITapGestureRecognizer recognizer) => TapPhoto();
+    private void OnPhotoTapped(UITapGestureRecognizer recognizer)
+    {
+        if (FitArea().Contains(recognizer.LocationInView(_photoPane))) TapPhoto();
+    }
 
     /// <summary>主图点按入口（识别器与验收共用）：解除触控活动绿框优先，其次空态打开文件夹。</summary>
     internal void TapPhoto()
@@ -1866,7 +1873,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
             HideDetailHighlight();
             return;
         }
-        if (_session.Image == null) _ = OpenFolderPickerAsync();
+        if (_main.FolderVM.IsStartScreen && _session.Image == null && !_session.IsLoadingVisible
+            && string.IsNullOrWhiteSpace(_session.Error)) _ = OpenFolderPickerAsync();
     }
 
     /// <summary>
@@ -1985,20 +1993,12 @@ internal sealed class iOSNativeRootViewController : UIViewController
     }
 
     /// <summary>原生文件夹选择器 → 共享文件源。</summary>
-    internal async Task OpenFolderPickerAsync()
+    internal Task OpenFolderPickerAsync() => _main.FolderVM.OpenFilePickerAsync(pickFolder: true);
+
+    private void OnOpenStateChanged()
     {
-        try
-        {
-            var selected = await FilePicker.PickFolderAsync("选择图片文件夹");
-            if (selected == null) return;
-            _photo.FitToView();
-            await _main.FolderVM.OpenFolderAsync(selected);
-        }
-        catch (Exception exception)
-        {
-            Console.Error.WriteLine(exception);
-            _main.ReportOpenFailure(StatusMessages.OpenFailed(null, StatusMessages.ReasonFor(exception)));
-        }
+        UpdateHint();
+        LayoutOverlays();
     }
 
     /// <summary>文件夹加载完成后刷新计数与列表。</summary>
@@ -2316,36 +2316,35 @@ internal sealed class iOSNativeRootViewController : UIViewController
         UpdateNavigationIndicator();
     }
 
-    /// <summary>空态/加载提示文案（STATE-01：加载态由共享会话的 300ms 延迟态驱动）。</summary>
-    /// <returns>提示文本；有照片且不在加载时为空串。</returns>
-    private string HintText() => PhotoHintText.Resolve(
-        _main.CurrentFile != null, _session.Error, _session.IsLoadingVisible, touch: true).Title;
-
     /// <summary>同步空态/加载提示与解码失败详情（Full 升级失败走提示条，不占用此处）。</summary>
     private void UpdateHint()
     {
         var (title, detail) = PhotoHintText.Resolve(
-            _main.CurrentFile != null, _session.Error, _session.IsLoadingVisible, touch: true);
+            _main.CurrentFile != null, _session.Error, _session.IsLoadingVisible,
+            touch: true, showEmpty: _main.FolderVM.IsStartScreen);
+        _showsStartHint = title == PhotoHintText.EmptyProductTitle;
         _hintLabel.Text = title;
-        if (_main.CurrentFile == null && string.IsNullOrWhiteSpace(_session.Error))
+        _hintLabel.TextColor = _showsStartHint ? iOSColors.FromToken(DesignTokens.ColorTextPrimary) : UIColor.Label;
+        _hintDetail.Lines = _showsStartHint ? 1 : 0;
+        _hintDetail.TextColor = _showsStartHint ? iOSColors.FromToken(DesignTokens.ColorTextSecondary) : UIColor.SecondaryLabel;
+        if (_showsStartHint)
         {
             var parts = PhotoHintText.EmptyDetailParts(touch: true);
-            var attributed = new NSMutableAttributedString(new NSAttributedString(detail, new UIStringAttributes
+            using var text = new NSMutableAttributedString(detail, new UIStringAttributes
             {
                 Font = _hintDetail.Font,
-                ForegroundColor = UIColor.SecondaryLabel,
-            }));
-            attributed.AddAttribute(UIStringAttributeKey.ForegroundColor, UIColor.TertiaryLabel,
-                new NSRange(parts.Prefix.Length, parts.Separator.Length));
-            _hintDetail.AttributedText = attributed;
+                ForegroundColor = _hintDetail.TextColor,
+            });
+            using var gap = NSNumber.FromDouble(DesignTokens.ImageHintSeparatorGap);
+            int separator = parts.Prefix.Length;
+            text.AddAttribute(UIStringAttributeKey.KerningAdjustment, gap, new NSRange(separator - 1, 1 + parts.Separator.Length));
+            text.AddAttribute(UIStringAttributeKey.ForegroundColor, iOSColors.FromToken(DesignTokens.ColorTextTertiary),
+                new NSRange(separator, parts.Separator.Length));
+            _hintDetail.AttributedText = text;
         }
         else
         {
-            _hintDetail.AttributedText = new NSAttributedString(detail, new UIStringAttributes
-            {
-                Font = _hintDetail.Font,
-                ForegroundColor = UIColor.SecondaryLabel,
-            });
+            _hintDetail.Text = detail;
         }
         _hintLabel.Hidden = title.Length == 0;
         _hintDetail.Hidden = detail.Length == 0;

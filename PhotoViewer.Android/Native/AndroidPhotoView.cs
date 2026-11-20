@@ -89,8 +89,8 @@ internal sealed partial class AndroidPhotoView : FrameLayout, ISurfaceHolderCall
     internal Func<bool, int, bool>? WheelCommand { get; set; }
     /// <summary>主图长按：弹上下文菜单；参数为触点在本视图内的像素坐标。</summary>
     internal event Action<float, float>? LongPressRequested;
-    /// <summary>主图单击（空态打开文件夹 / 点空白清除细节预览）。</summary>
-    internal event Action? TapRequested;
+    /// <summary>主图单击（首屏空态打开文件夹 / 点空白清除细节预览）；参数为触点在本视图内的像素坐标。</summary>
+    internal event Action<float, float>? TapRequested;
 
     /// <summary>共享视口（验收读取缩放/平移状态）。</summary>
     internal PhotoViewport Viewport => _viewport;
@@ -819,8 +819,8 @@ internal sealed partial class AndroidPhotoView : FrameLayout, ISurfaceHolderCall
         /// <returns>消费。</returns>
         public override bool OnSingleTapUp(MotionEvent? e)
         {
-            if (_owner._touchActive && !_owner._moved && !_owner._multiTouch && !_owner._longPressed)
-                _owner.TapRequested?.Invoke();
+            if (e != null && _owner._touchActive && !_owner._moved && !_owner._multiTouch && !_owner._longPressed)
+                _owner.TapRequested?.Invoke(e.GetX(), e.GetY());
             return true;
         }
 

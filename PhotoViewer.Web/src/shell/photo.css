@@ -57,12 +57,16 @@
     appearance: none;
     -webkit-appearance: none;
     font-size: var(--pv-image-hint-title-fontSize);
+    line-height: var(--pv-image-hint-title-lineHeight);
     color: var(--pv-color-text-primary);
     cursor: default;
 }
 
 .pv-photo-hint-detail {
     font-size: var(--pv-image-hint-detail-fontSize);
+    line-height: var(--pv-image-hint-detail-lineHeight);
+    gap: var(--pv-image-hint-separator-gap);
+    overflow: hidden;
     color: var(--pv-color-text-secondary);
 }
 

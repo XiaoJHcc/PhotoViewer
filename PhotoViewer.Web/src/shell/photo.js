@@ -45,10 +45,10 @@ export function mountPhoto(host, ctx) {
     const canvas = el("canvas", { class: "pv-photo-canvas", role: "img", "aria-label": "主图" });
     const highlight = el("div", { class: "pv-photo-highlight", hidden: true, "aria-hidden": "true" });
     const hintTitle = el("button", { type: "button", class: "pv-photo-hint-title", hidden: true });
+    const hintPrefix = el("span");
+    const hintSuffix = el("span");
     const hintDetail = el("div", { class: "pv-photo-hint-detail", hidden: true },
-        el("span", {}, EMPTY_DETAIL_PREFIX),
-        el("span", { class: "pv-photo-hint-separator" }, EMPTY_DETAIL_SEPARATOR),
-        el("span", {}, EMPTY_DETAIL_SUFFIX));
+        hintPrefix, el("span", { class: "pv-photo-hint-separator" }, EMPTY_DETAIL_SEPARATOR), hintSuffix);
     const hint = el("div", { class: "pv-photo-hint", hidden: true }, hintTitle, hintDetail);
     const loading = el("div", { class: "pv-photo-loading", role: "status", hidden: true }, LOADING_TEXT);
     const errorTitle = el("div", { class: "pv-photo-error-title" });
@@ -173,7 +173,10 @@ export function mountPhoto(host, ctx) {
         hintTitle.hidden = !empty;
         hintDetail.hidden = !empty;
         if (!empty) return;
+        const phone = state.layout.form === "phone";
         setText(hintTitle, state.edition === "ai" ? "PhotoViewer AI" : "PhotoViewer");
+        setText(hintPrefix, phone ? "点击打开文件夹" : EMPTY_DETAIL_PREFIX);
+        setText(hintSuffix, phone ? "长按更多功能" : EMPTY_DETAIL_SUFFIX);
         place(hint, pane);
         const frames = state.layout.overlays.hintFrames(pane);
         // STATE-01：产品名主标题与操作副标题作为整体居中，「/」单独使用三级文字色。
@@ -326,7 +329,7 @@ export function mountPhoto(host, ctx) {
         host.dataset.fitRect = `${fit.x},${fit.y},${fit.w},${fit.h}`;
         canvas.setAttribute("aria-label", photo ? `照片 ${photo.name}` : "主图");
         host.classList.toggle("is-zoomed", Boolean(photo) && state.viewport.hasImage && !state.viewport.isFit);
-        syncHint(state, fit, !photo);
+        syncHint(state, fit, state.isStartScreen);
         syncLoading(state, fit);
         syncError(state, fit);
         syncNavigator(state, fit);
@@ -505,15 +508,17 @@ export function mountPhoto(host, ctx) {
     }
 
     function onClick(event) {
-        if (event.button !== 0) return;
-        if (app.state.photo) return;
-        // INPUT-10 / OPEN-01：空态主图区单击打开文件选择器。
-        app.requestOpen("file");
+        if (event.button !== 0 || event.altKey || event.ctrlKey || event.shiftKey || event.metaKey) return;
+        const point = pointOf(event);
+        const fit = app.state.layout.panes.fitRect;
+        if (point.x < fit.x || point.x >= fit.x + fit.w || point.y < fit.y || point.y >= fit.y + fit.h) return;
+        // INPUT-10 / OPEN-01：只响应适应区内的首屏点击。
+        app.requestOpenFromStartScreen();
     }
 
     function onHintClick(event) {
         event.stopPropagation();
-        app.requestOpen("file");
+        if (event.detail === 0) app.requestOpenFromStartScreen();
     }
 
     function hasFiles(event) {

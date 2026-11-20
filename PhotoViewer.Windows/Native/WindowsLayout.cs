@@ -88,11 +88,26 @@ internal static class WindowsLayout
     /// <summary>空首屏提示最大宽度。</summary>
     public const double HintMaxWidth = DesignTokens.ImageHintMaxWidth;
 
+    /// <summary>提示块左右最小留白。</summary>
+    public const double HintInset = DesignTokens.ImageHintInset;
+
     /// <summary>空首屏提示标题字号。</summary>
     public const double HintTitleFontSize = DesignTokens.ImageHintTitleFontSize;
 
+    /// <summary>空首屏提示标题行高。</summary>
+    public const double HintTitleLineHeight = DesignTokens.ImageHintTitleLineHeight;
+
     /// <summary>空首屏提示副标题字号。</summary>
     public const double HintDetailFontSize = DesignTokens.ImageHintDetailFontSize;
+
+    /// <summary>空首屏提示副标题行高。</summary>
+    public const double HintDetailLineHeight = DesignTokens.ImageHintDetailLineHeight;
+
+    /// <summary>空首屏提示标题与副标题的行盒间距。</summary>
+    public const double HintRowGap = DesignTokens.ImageHintRowGap;
+
+    /// <summary>空首屏副标题中分隔字两侧的留白。</summary>
+    public const double HintSeparatorGap = DesignTokens.ImageHintSeparatorGap;
 
     // ===== 增强预览计算中(IMAGE-07) =====
 

@@ -1155,7 +1155,7 @@ const CHECKS = [
     },
     {
         id: "INPUT-10",
-        title: "空态只有主图分区点击打开选择器，文件栏/控制栏/分析栏空白处不响应",
+        title: "空文件夹不是首屏，主图与其他分区点击都不打开选择器",
         async run(shell, h) {
             const { app } = shell;
             app.openFolder("empty");
@@ -1175,10 +1175,7 @@ const CHECKS = [
 
             h.click(h.photoCanvas());
             await h.tick(40);
-            h.assert(picker.hidden === false, "主图区点击未打开选择器");
-            h.click(h.dom(".pv-picker-button:not(.is-primary)"));
-            await h.tick(40);
-            h.assert(closed(), "取消后选择器未关闭");
+            h.assert(closed(), "空文件夹主图区点击错误打开了选择器");
         },
     },
     {
@@ -1316,7 +1313,7 @@ const CHECKS = [
     },
     {
         id: "IMAGE-10b",
-        title: "画布铺满窗口、适应区数据与窄主图提示/导航用真实 DOM 核对",
+        title: "画布铺满窗口、适应区数据与窄主图导航用真实 DOM 核对",
         async run(shell, h) {
             const { app } = shell;
             app.setLayoutModeOverride("col");
@@ -1333,11 +1330,6 @@ const CHECKS = [
             const host = h.dom(".pv-photo");
             h.assert(host.dataset.fitRect === `${fit.x},${fit.y},${fit.w},${fit.h}`,
                 `主图实际 render fitRect ${host.dataset.fitRect} ≠ ${fit.x},${fit.y},${fit.w},${fit.h}`);
-            const hint = h.dom(".pv-photo-hint-title").getBoundingClientRect();
-            h.assert(hint.left >= windowRect.left + fit.x - 0.5
-                && hint.right <= windowRect.left + fit.x + fit.w + 0.5,
-                `窄主图提示超出适应区：${hint.left}..${hint.right}`);
-
             app.openFolder("harbor");
             await h.tick(160);
             const fitAfter = app.state.layout.panes.fitRect;
@@ -1558,19 +1550,8 @@ const CHECKS = [
             const previousFolder = app.state.folder?.id;
             app.openFolder("empty");
             await h.tick(120);
-            const emptyTitle = h.dom(".pv-photo-hint-title");
-            const emptyDetail = h.dom(".pv-photo-hint-detail");
-            const emptySeparator = h.dom(".pv-photo-hint-separator");
-            const expectedProduct = app.state.edition === "ai" ? "PhotoViewer AI" : "PhotoViewer";
-            h.assert(!emptyTitle.hidden && !emptyDetail.hidden, "空态主标题或副标题未显示");
-            h.assert(emptyTitle.textContent === expectedProduct, `空态主标题 ${emptyTitle.textContent}`);
-            h.assert(emptyDetail.textContent === "点击打开文件/拖拽照片到此处", `空态副标题 ${emptyDetail.textContent}`);
-            h.assert(emptySeparator.textContent === "/", `空态分隔符 ${emptySeparator.textContent}`);
-            h.assert(getComputedStyle(emptyTitle).fontSize === `${shell.t("image.hint.title.fontSize")}px`, "空态主标题字号不符");
-            h.assert(getComputedStyle(emptyDetail).fontSize === `${shell.t("image.hint.detail.fontSize")}px`, "空态副标题字号不符");
-            h.assert(colorMatches(getComputedStyle(emptyTitle).color, shell.t("color.text.primary")), "空态主标题颜色不符");
-            h.assert(colorMatches(getComputedStyle(emptyDetail).color, shell.t("color.text.secondary")), "空态副标题颜色不符");
-            h.assert(colorMatches(getComputedStyle(emptySeparator).color, shell.t("color.text.tertiary")), "空态分隔字颜色不符");
+            h.assert(h.dom(".pv-photo-hint-title").hidden && h.dom(".pv-photo-hint-detail").hidden,
+                "空文件夹错误显示了首屏操作提示");
             app.openFolder(previousFolder);
             await h.tick(120);
             const usable = app.state.cards

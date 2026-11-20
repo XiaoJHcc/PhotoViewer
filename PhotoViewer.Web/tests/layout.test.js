@@ -456,13 +456,15 @@ test("IMAGE-07：计算中药丸居中贴底 24", () => {
     assert.deepEqual(pill, { x: 100 + (600 - 96) / 2, y: 50 + 400 - 24 - 28, w: 96, h: 28 });
 });
 
-test("IMAGE-10：空态提示居中，副文相对标题顶边下移 28", () => {
+test("IMAGE-10：首屏两行按行盒与间距令牌整体居中", () => {
     const pane = { x: 0, y: 0, w: 1200, h: 850 };
     const hint = layout().overlays.hintFrames(pane);
     assert.equal(hint.title.w, 500);
     assert.equal(hint.title.x, 350);
-    assert.equal(hint.detail.y - hint.title.y, 28);
-    assert.equal(hint.detail.h, 11);
+    assert.equal(hint.title.h, 20);
+    assert.equal(hint.detail.y - hint.title.y - hint.title.h, 8);
+    assert.equal(hint.detail.h, 16);
+    assert.equal((hint.title.y + hint.detail.y + hint.detail.h) / 2, pane.h / 2);
 });
 
 test("FILM-02/05：大档内容长度、卡片节点与小档几何", () => {

@@ -70,6 +70,22 @@ public class FolderViewModel : ReactiveObject, IDisposable
     private readonly List<FolderLoadSession> _liveSessions = new();
 
     private bool _disposed;
+    private int _openOperations;
+
+    /// <summary>OPEN-01：只有尚未打开文件源且没有在途打开的首屏可通过主图点按调用选择器。</summary>
+    public bool IsStartScreen => !_disposed && _openOperations == 0 && _currentFolder == null && Main.CurrentFile == null;
+
+    /// <summary>选择器或文件源打开操作开始/结束；当前照片变化另由主 VM 通知。</summary>
+    public event Action? OpenStateChanged;
+
+    private IDisposable BeginOpen()
+    {
+        if (++_openOperations == 1) OpenStateChanged?.Invoke();
+        return System.Reactive.Disposables.Disposable.Create(() =>
+        {
+            if (--_openOperations == 0 && !_disposed) OpenStateChanged?.Invoke();
+        });
+    }
 
     /// <summary>
     /// 构造文件源视图模型。
@@ -107,15 +123,17 @@ public class FolderViewModel : ReactiveObject, IDisposable
     /// 打开文件选择器。平台通过 <see cref="IFilePickerService.PreferFolderPicker"/> 声明主入口是目录选择
     /// （触屏），否则为单文件选择；选择器自身失败经 <see cref="MainViewModel.OpenFailed"/> 上报。
     /// </summary>
-    public async Task OpenFilePickerAsync()
+    /// <param name="pickFolder">显式指定文件或文件夹；为 null 时取平台默认入口。</param>
+    public async Task OpenFilePickerAsync(bool? pickFolder = null)
     {
         if (_disposed) return;
+        using var operation = BeginOpen();
 
         IFileRef? file = null;
         IFolderRef? folder = null;
         try
         {
-            if (FilePicker.PreferFolderPicker)
+            if (pickFolder ?? FilePicker.PreferFolderPicker)
             {
                 folder = await FilePicker.PickFolderAsync("选择图片文件夹");
             }
@@ -180,6 +198,7 @@ public class FolderViewModel : ReactiveObject, IDisposable
             return;
         }
 
+        using var operation = BeginOpen();
         // OPEN-05：新目标回到适应态；当前目标（含同组伴侣）只刷新，保留当前视口。
         if (resetView && !IsCurrentTarget(file)) Main.RequestFitToView();
 
@@ -217,6 +236,7 @@ public class FolderViewModel : ReactiveObject, IDisposable
     {
         if (_disposed) return;
 
+        using var operation = BeginOpen();
         // 只有切到新目录才是新的观片（OPEN-05）；同目录入口重复打开属于刷新，保留视口。
         var isSameFolder = HasSameStorageId(folder, _currentFolder);
         if (resetView && !isSameFolder) Main.RequestFitToView();

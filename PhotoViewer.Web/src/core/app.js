@@ -203,6 +203,7 @@ class MainApp {
         this._anchorId = null;
         this._history = [];
         this._menuOpen = false;
+        this._pickerOpen = false;
         this._dropdownOpen = false;
         this._textFocus = false;
         this._cached = new Set();
@@ -697,6 +698,21 @@ class MainApp {
             default:
                 return false;
         }
+    }
+
+    get isStartScreen() {
+        return this._folder === null && this._displayedId === null && !this._pickerOpen
+            && !this._sessionSnap.photoId && !this._sessionSnap.loadingHint && !this._sessionSnap.error;
+    }
+
+    setPickerOpen(open) {
+        this._pickerOpen = open;
+        this.setMenuOpen(open);
+    }
+
+    requestOpenFromStartScreen() {
+        if (!this.isStartScreen) return false;
+        return this.requestOpen(this.state.layout.form === "phone" ? "folder" : "file");
     }
 
     requestOpen(kind = "file") {
@@ -1262,6 +1278,7 @@ class MainApp {
             layout: this._layout,
             folder: this._folder ? { ...this._folder } : null,
             singleMode: this._singleMode,
+            isStartScreen: this.isStartScreen,
             photo: this._displayedPhoto(),
             cards: this._fileList.cards,
             count: this._fileList.count,

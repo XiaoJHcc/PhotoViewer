@@ -124,15 +124,32 @@ internal sealed partial class WindowsMainWindow
 
             // SHELL-02：空态标题只有应用名，窗口态保留系统边框、去掉系统标题栏。
             RequireSmoke(_main.CurrentFile == null, "空态检查前已存在当前照片");
+            RequireSmoke(_main.FolderVM.IsStartScreen, "启动空态未判定为首屏空态");
             RequireSmoke(Title == WindowsProductInfo.DisplayName, $"空态窗口标题不符: {Title}");
             RequireSmoke(_hintTitle.Text == WindowsProductInfo.DisplayName, $"空态主标题不符: {_hintTitle.Text}");
-            RequireSmoke(_hintDetail.Text == PhotoHintText.EmptyDesktopDetail, $"空态副标题不符: {_hintDetail.Text}");
-            var separator = _hintDetail.Inlines.OfType<Microsoft.UI.Xaml.Documents.Run>().Single(run => run.Text == "/");
-            RequireSmoke(separator.Foreground is SolidColorBrush separatorBrush
-                && separatorBrush.Color == WindowsLayout.HintDetailSeparatorForeground, "空态副标题分隔字未使用三级文字色");
+            RequireSmoke(_hintTitle.LineHeight == WindowsLayout.HintTitleLineHeight,
+                $"空态主标题行高不符: {_hintTitle.LineHeight}");
+            // STATE-01：首屏副标题是居中的两行，分隔字两侧留白由布局给出。
+            RequireSmoke(_hintDetail.Visibility == Visibility.Collapsed
+                && _hintStartDetail.Visibility == Visibility.Visible, "空态副标题未使用首屏两行布局");
+            RequireSmoke(_hintStartPrefix.Text + _hintStartSeparator.Text + _hintStartSuffix.Text
+                == PhotoHintText.EmptyDesktopDetail,
+                $"空态副标题不符: {_hintStartPrefix.Text}{_hintStartSeparator.Text}{_hintStartSuffix.Text}");
+            RequireSmoke(_hintStartPrefix.LineHeight == WindowsLayout.HintDetailLineHeight
+                && _hintStartSuffix.LineHeight == WindowsLayout.HintDetailLineHeight, "空态副标题行高不符");
+            RequireSmoke(_hintStartDetail.Margin.Top == WindowsLayout.HintRowGap, "空态两行行盒间距不符");
+            RequireSmoke(_hintStartSeparator.Margin.Left == WindowsLayout.HintSeparatorGap
+                && _hintStartSeparator.Margin.Right == WindowsLayout.HintSeparatorGap, "空态分隔字两侧留白不符");
+            RequireSmoke(_hintPanel.MaxWidth == WindowsLayout.HintMaxWidth
+                && _hintPanel.Margin.Left == WindowsLayout.HintInset
+                && _hintPanel.Margin.Right == WindowsLayout.HintInset, "空态提示宽度或左右留白不符");
+            var separatorBrush = _hintStartSeparator.Foreground as SolidColorBrush;
+            RequireSmoke(separatorBrush?.Color == WindowsLayout.HintDetailSeparatorForeground,
+                "空态副标题分隔字未使用三级文字色");
+            RequireSmoke(_emptyHitArea.Visibility == Visibility.Visible, "首屏空态未接住主图点按");
             CheckWindowChrome();
             checks.Add($"PASS SHELL-02: content extends to the window top edge with system border kept and system title bar removed; empty state title {WindowsProductInfo.DisplayName}");
-            checks.Add("PASS STATE-01: empty state product title, desktop operation subtitle and tertiary separator color");
+            checks.Add("PASS STATE-01: start screen product title, two centered operation rows with token line heights and tertiary separator color");
             await RunBarLuminanceChecksAsync(checks);
 
             await RunDeploymentChecksAsync(checks);
@@ -145,6 +162,10 @@ internal sealed partial class WindowsMainWindow
             await WaitForSmokeAsync(() => _session.Image is { SourceWidth: 3600, SourceHeight: 2400 }, "首次照片解码");
             RequireSmoke(_session.Image!.SourceWidth == 3600 && _session.Image.SourceHeight == 2400, "无 EXIF 尺寸时丢失真实源尺寸");
             await WaitForUploadAsync("首次主图上传");
+            // OPEN-01：打开照片后不再是首屏，提示与空态命中层都不得残留。
+            RequireSmoke(!_main.FolderVM.IsStartScreen
+                && _emptyHitArea.Visibility == Visibility.Collapsed
+                && _hintPanel.Visibility == Visibility.Collapsed, "打开照片后仍保留首屏提示或空态命中层");
             // 大图在适应态首次上屏必须走代理档。这条断言只能放在 resize/缩放循环之前:循环里的
             // ZoomBy 会短暂把 NeedsFull 抬高,会话据此解出 Full,而 Full 一旦满足代理请求就不再降级
             // 回代理(用已解出的全分辨率显示是更精确的正确行为)。循环之后再断言 IsProxy 只会测到

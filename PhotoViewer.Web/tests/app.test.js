@@ -654,6 +654,34 @@ test("FILTER-06/SIM-07：相似开关写入设置并扩宽文件栏，关闭后�
     assert.equal(app.state.layout.panes.filePane.w, 116);
 });
 
+test("OPEN-01：只有首屏主图可请求选择器；取消恢复，空文件夹与加载不响应", async () => {
+    const { app, clock } = harness();
+    const requests = [];
+    app.on("request-open", ({ kind }) => {
+        requests.push(kind);
+        app.setPickerOpen(true);
+    });
+    assert.equal(app.state.isStartScreen, true);
+    assert.equal(app.requestOpenFromStartScreen(), true);
+    assert.equal(app.state.isStartScreen, false);
+    assert.equal(app.requestOpenFromStartScreen(), false);
+    app.setPickerOpen(false);
+    assert.equal(app.state.isStartScreen, true);
+    app.setLayoutModeOverride("phone");
+    assert.equal(app.requestOpenFromStartScreen(), true);
+    assert.deepEqual(requests, ["file", "folder"]);
+    app.setPickerOpen(false);
+    app.openFolder("empty");
+    assert.equal(app.state.photo, null);
+    assert.equal(app.requestOpenFromStartScreen(), false);
+    app.openFolder("f1");
+    assert.equal(app.state.session.surface, null);
+    assert.equal(app.requestOpenFromStartScreen(), false);
+    await settle(clock);
+    assert.equal(app.requestOpenFromStartScreen(), false);
+    assert.equal(app.requestOpen("file"), true);
+});
+
 test("FILTER-10/OPEN-02：空文件夹计数为零、主图空态，不进入单图模式", () => {
     const { app } = harness();
     assert.equal(app.openFolder("empty"), true);

@@ -1183,7 +1183,7 @@ internal static partial class AndroidNativeChecks
         private readonly AndroidPhotoView _photo;
         private readonly AndroidAnalysisHost _host;
         private readonly Action<float, float> _longPress;
-        private readonly Action _tap;
+        private readonly Action<float, float> _tap;
         private readonly Action<int> _swipe;
         private readonly Action _hostChanged;
 
@@ -1195,7 +1195,7 @@ internal static partial class AndroidNativeChecks
             _photo = photo;
             _host = host;
             _longPress = (_, _) => LongPress++;
-            _tap = () => Tap++;
+            _tap = (_, _) => Tap++;
             _swipe = _ => Swipe++;
             _hostChanged = () => HostChanged++;
             photo.LongPressRequested += _longPress;

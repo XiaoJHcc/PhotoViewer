@@ -2,7 +2,7 @@
  * 打开选择器：OpenPanel 的无文件系统替代品（OPEN-01@web）。
  * mountPicker(windowEl, ctx, library) → { show(kind), update(state, regions) }
  * 模态 sheet 覆盖窗口内容区：左侧合成文件夹，右侧所选文件夹的文件列表。
- * 打开期间调用 app.setMenuOpen(true) 抑制照片命令（INPUT-02 模态），关闭后恢复并归还焦点。
+ * 打开期间调用 app.setPickerOpen(true) 抑制照片命令（INPUT-02 模态），关闭后恢复并归还焦点。
  */
 import { el, setText, touches } from "./dom.js";
 
@@ -214,7 +214,7 @@ export function mountPicker(windowEl, ctx, library) {
         if (!isOpen) return;
         isOpen = false;
         root.hidden = true;
-        app.setMenuOpen(false);
+        app.setPickerOpen(false);
         const target = returnFocus && returnFocus.isConnected ? returnFocus : windowEl;
         returnFocus = null;
         target.focus?.({ preventScroll: true });
@@ -274,7 +274,7 @@ export function mountPicker(windowEl, ctx, library) {
         }
         isOpen = true;
         root.hidden = false;
-        app.setMenuOpen(true);
+        app.setPickerOpen(true);
         focusZone(PRIMARY_ZONE[kind]);
     }
 

@@ -179,7 +179,7 @@ public static class DesignTokens
     public const uint ColorTextPrimary = 0xFFEEEEEEu;
     /// <summary>color.text.secondary（color）：次要文字色；Apple 平台取系统次级文字色（G6-34@mac/@ios）。；平台语义：ios=system-secondary-label，macos=system-secondary-label</summary>
     public const uint ColorTextSecondary = 0xFFAAAAAAu;
-    /// <summary>color.text.tertiary（color） STATE-01：更弱的三级文字色，用于空态副标题中的分隔符「/」；Apple 平台取系统三级文字色。；平台语义：ios=system-tertiary-label，macos=system-tertiary-label</summary>
+    /// <summary>color.text.tertiary（color） STATE-01：首屏空态副标题分隔符「/」的三级文字色。</summary>
     public const uint ColorTextTertiary = 0xFF666666u;
     /// <summary>color.titlebar.close.hover（color） SHELL-02：Windows 自绘关闭按钮悬停底色（Win11 系统 caption 关闭按钮同值），字形转白。</summary>
     public const uint ColorTitlebarCloseHover = 0xFFC42B1Cu;
@@ -447,18 +447,22 @@ public static class DesignTokens
     public const double ImageBusyWidth = 96.0;
     /// <summary>image.focus.followTolerance（ratio） IMAGE-02：跟随对焦判定：视口中心与对焦点两轴归一化偏差均小于 5% 时视为仍在跟随。</summary>
     public const double ImageFocusFollowTolerance = 0.05;
-    /// <summary>image.hint.detail.fontSize（pt） IMAGE-01：空首屏提示副标题/错误详情的字号。</summary>
+    /// <summary>image.hint.detail.fontSize（pt） STATE-01：空首屏提示副标题/错误详情的字号。</summary>
     public const double ImageHintDetailFontSize = 11.0;
-    /// <summary>image.hint.detail.gap（pt） IMAGE-01：副标题相对标题顶边的纵偏移：28 = 标题行高 20 + 间距 8；Android 行高不同取 24（IMAGE-01@android）。</summary>
-    public const double ImageHintDetailGap = 28.0;
-    /// <summary>image.hint.detail.gap@android（pt）：android 平台差异值（见 Design/platforms.md）。</summary>
-    public const double ImageHintDetailGapAndroid = 24.0;
+    /// <summary>image.hint.detail.lineHeight（pt） STATE-01：空首屏副标题的行盒高度。</summary>
+    public const double ImageHintDetailLineHeight = 16.0;
     /// <summary>image.hint.inset（pt） STATE-01：空态/失败提示块左右最小留白（提示宽 = min(image.hint.maxWidth, 主图宽 − 2 × 本值)）。</summary>
     public const double ImageHintInset = 10.0;
-    /// <summary>image.hint.maxWidth（pt） IMAGE-01：空首屏/错误提示区最大宽度。</summary>
+    /// <summary>image.hint.maxWidth（pt） STATE-01：空首屏/错误提示区最大宽度。</summary>
     public const double ImageHintMaxWidth = 500.0;
-    /// <summary>image.hint.title.fontSize（pt） IMAGE-01：空首屏提示标题字号。</summary>
+    /// <summary>image.hint.rowGap（pt） STATE-01：空首屏标题与副标题行盒之间的垂直间距。</summary>
+    public const double ImageHintRowGap = 8.0;
+    /// <summary>image.hint.separator.gap（pt） STATE-01：空首屏副标题的斜线与相邻文字之间每侧的留白。</summary>
+    public const double ImageHintSeparatorGap = 4.0;
+    /// <summary>image.hint.title.fontSize（pt） STATE-01：空首屏提示标题字号。</summary>
     public const double ImageHintTitleFontSize = 16.0;
+    /// <summary>image.hint.title.lineHeight（pt） STATE-01：空首屏标题的行盒高度。</summary>
+    public const double ImageHintTitleLineHeight = 20.0;
     /// <summary>image.keyRepeat.delay（ms） INPUT-05：iOS 按住按键后首次重复的固定延迟（UIPress 无系统重复速率）。</summary>
     public const int ImageKeyRepeatDelay = 350;
     /// <summary>image.keyRepeat.interval（ms） INPUT-05：iOS 按住按键的固定重复间隔。</summary>

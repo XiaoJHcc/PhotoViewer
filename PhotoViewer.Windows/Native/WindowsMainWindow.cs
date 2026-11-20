@@ -9,7 +9,6 @@ using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
@@ -73,6 +72,10 @@ internal sealed partial class WindowsMainWindow : Window
     private readonly StackPanel _hintPanel;
     private readonly TextBlock _hintTitle;
     private readonly TextBlock _hintDetail;
+    private readonly StackPanel _hintStartDetail;
+    private readonly TextBlock _hintStartPrefix;
+    private readonly TextBlock _hintStartSeparator;
+    private readonly TextBlock _hintStartSuffix;
     private readonly Border _statusToast;
     private readonly TextBlock _statusText;
     private readonly Border _busyPill;
@@ -153,17 +156,36 @@ internal sealed partial class WindowsMainWindow : Window
             Foreground = new SolidColorBrush(WindowsLayout.HintDetailForeground),
             TextAlignment = TextAlignment.Left,
             TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 8, 0, 0),
+            Margin = new Thickness(0, WindowsLayout.HintRowGap, 0, 0),
         };
+        // STATE-01：首屏副标题拆成三段，分隔字两侧的留白由布局给出，文案本身不插空格。
+        _hintStartPrefix = HintRow(WindowsLayout.HintDetailForeground);
+        _hintStartSeparator = HintRow(WindowsLayout.HintDetailSeparatorForeground);
+        _hintStartSeparator.Margin = new Thickness(
+            WindowsLayout.HintSeparatorGap, 0, WindowsLayout.HintSeparatorGap, 0);
+        _hintStartSuffix = HintRow(WindowsLayout.HintDetailForeground);
+        _hintStartDetail = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, WindowsLayout.HintRowGap, 0, 0),
+            Visibility = Visibility.Collapsed,
+            IsHitTestVisible = false,
+        };
+        _hintStartDetail.Children.Add(_hintStartPrefix);
+        _hintStartDetail.Children.Add(_hintStartSeparator);
+        _hintStartDetail.Children.Add(_hintStartSuffix);
         _hintPanel = new StackPanel
         {
             MaxWidth = WindowsLayout.HintMaxWidth,
+            Margin = new Thickness(WindowsLayout.HintInset, 0, WindowsLayout.HintInset, 0),
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
             IsHitTestVisible = false,
         };
         _hintPanel.Children.Add(_hintTitle);
         _hintPanel.Children.Add(_hintDetail);
+        _hintPanel.Children.Add(_hintStartDetail);
 
         _navigator = new WindowsNavigator
         {
@@ -317,6 +339,7 @@ internal sealed partial class WindowsMainWindow : Window
         _main.PropertyChanged += OnMainChanged;
         _main.Settings.PresentationChanged += OnSettingsPresentationChanged;
         _main.FolderVM.PropertyChanged += OnFolderChanged;
+        _main.FolderVM.OpenStateChanged += UpdateHint;
         _main.RatingWriteFailedDetailed += OnRatingWriteFailed;
         _main.OpenFailed += OnOpenFailed;
 #if PHOTOVIEWER_DINO
@@ -391,6 +414,7 @@ internal sealed partial class WindowsMainWindow : Window
         _main.PropertyChanged -= OnMainChanged;
         _main.Settings.PresentationChanged -= OnSettingsPresentationChanged;
         _main.FolderVM.PropertyChanged -= OnFolderChanged;
+        _main.FolderVM.OpenStateChanged -= UpdateHint;
         _main.RatingWriteFailedDetailed -= OnRatingWriteFailed;
         _main.OpenFailed -= OnOpenFailed;
 #if PHOTOVIEWER_DINO
@@ -615,14 +639,7 @@ internal sealed partial class WindowsMainWindow : Window
                     break;
                 case PhotoMenuItemId.OpenFolder:
                     var openFolder = new MenuFlyoutItem { Text = entry.Text, Icon = MenuGlyph(WindowsIcons.FolderGlyph) };
-                    openFolder.Click += async (_, _) =>
-                    {
-                        var folder = await FilePicker.PickFolderAsync("选择图片文件夹");
-                        if (folder != null)
-                        {
-                            await _main.FolderVM.OpenFolderAsync(folder);
-                        }
-                    };
+                    openFolder.Click += (_, _) => OpenFilePicker(pickFolder: true);
                     menu.Items.Add(openFolder);
                     break;
                 case PhotoMenuItemId.Filmstrip:
@@ -1920,35 +1937,57 @@ internal sealed partial class WindowsMainWindow : Window
         _session.UpdateViewport(viewport.Width, viewport.Height, _stressFull || _photo.NeedsFull || _main.IsAnalysisViewVisible);
     }
 
-    /// <summary>刷新空首屏提示与命中层;解码失败时给出可见原因(FILM-06 同口径)。</summary>
+    /// <summary>
+    /// 刷新空首屏提示与命中层;解码失败时给出可见原因(FILM-06 同口径)。
+    /// 首屏空态的两行提示取各自行高与行盒间距(STATE-01),加载/失败提示保持原样式;
+    /// 空态命中层只在首屏空态且没有失败时接住主图点按(OPEN-01)。
+    /// </summary>
     private void UpdateHint()
     {
+        var startScreen = _main.FolderVM.IsStartScreen;
         var (title, detail) = PhotoHintText.Resolve(
-            _main.CurrentFile != null, _session.Error, _session.IsLoadingVisible, touch: false);
+            _main.CurrentFile != null, _session.Error, _session.IsLoadingVisible,
+            touch: false, showEmpty: startScreen);
+        bool startRows = startScreen
+            && _main.CurrentFile == null
+            && string.IsNullOrWhiteSpace(_session.Error)
+            && !_session.IsLoadingVisible;
         _hintTitle.Text = title;
-        _hintDetail.Inlines.Clear();
-        if (_main.CurrentFile == null && string.IsNullOrWhiteSpace(_session.Error))
+        if (startRows)
         {
             var parts = PhotoHintText.EmptyDetailParts(touch: false);
-            _hintDetail.TextAlignment = TextAlignment.Center;
-            _hintDetail.Inlines.Add(new Run { Text = parts.Prefix });
-            _hintDetail.Inlines.Add(new Run
-            {
-                Text = parts.Separator,
-                Foreground = new SolidColorBrush(WindowsLayout.HintDetailSeparatorForeground),
-            });
-            _hintDetail.Inlines.Add(new Run { Text = parts.Suffix });
+            _hintTitle.LineHeight = WindowsLayout.HintTitleLineHeight;
+            _hintTitle.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+            _hintStartPrefix.Text = parts.Prefix;
+            _hintStartSeparator.Text = parts.Separator;
+            _hintStartSuffix.Text = parts.Suffix;
+            _hintStartDetail.Visibility = Visibility.Visible;
+            _hintDetail.Visibility = Visibility.Collapsed;
         }
         else
         {
-            _hintDetail.TextAlignment = TextAlignment.Left;
-            _hintDetail.Inlines.Add(new Run { Text = detail });
+            _hintTitle.LineHeight = 0;
+            _hintTitle.LineStackingStrategy = LineStackingStrategy.MaxHeight;
+            _hintDetail.Text = detail;
+            _hintStartDetail.Visibility = Visibility.Collapsed;
+            _hintDetail.Visibility = Visibility.Visible;
         }
 
         var visible = title.Length > 0 || detail.Length > 0;
         _hintPanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-        _emptyHitArea.Visibility = _main.CurrentFile == null ? Visibility.Visible : Visibility.Collapsed;
+        _emptyHitArea.Visibility = startRows ? Visibility.Visible : Visibility.Collapsed;
     }
+
+    /// <summary>创建首屏副标题的一段:固定字号与行高,颜色由调用方给出。</summary>
+    /// <param name="color">该段文字色。</param>
+    /// <returns>提示行文本块。</returns>
+    private static TextBlock HintRow(Color color) => new()
+    {
+        FontSize = WindowsLayout.HintDetailFontSize,
+        LineHeight = WindowsLayout.HintDetailLineHeight,
+        LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+        Foreground = new SolidColorBrush(color),
+    };
 
     /// <summary>
     /// 主窗快捷键入口:根元素 PreviewKeyDown 与实际键盘共用,返回是否消费按键(INPUT-01)。
@@ -2111,11 +2150,19 @@ internal sealed partial class WindowsMainWindow : Window
     private void SelectFile(ImageFile file) => _main.FileVM.ThumbnailList.SelectImageCommand(file);
 
     /// <summary>
-    /// 空首屏按下:鼠标只响应左键,右键交给窗口的右键菜单(旧壳 <c>ImageView</c> 同口径:
+    /// 首屏空态按下(OPEN-01):只在没有已打开文件源、没有在途打开、没有照片与失败时打开选择器;
+    /// 鼠标只响应左键,右键交给窗口的右键菜单(旧壳 <c>ImageView</c> 同口径:
     /// <c>IsRightButtonPressed</c> 先弹菜单、<c>IsLeftButtonPressed</c> 才打开文件);触摸/笔直接打开。
     /// </summary>
     private void OnEmptyAreaPressed(object sender, PointerRoutedEventArgs e)
     {
+        if (!_main.FolderVM.IsStartScreen
+            || !string.IsNullOrWhiteSpace(_session.Error)
+            || _main.CurrentFile != null)
+        {
+            return;
+        }
+
         var point = e.GetCurrentPoint(_emptyHitArea);
         if (point.PointerDeviceType == PointerDeviceType.Mouse && !point.Properties.IsLeftButtonPressed)
         {
@@ -2127,11 +2174,11 @@ internal sealed partial class WindowsMainWindow : Window
     }
 
     /// <summary>打开文件选择器;失败必须留痕,不能静默无响应。</summary>
-    private async void OpenFilePicker()
+    private async void OpenFilePicker(bool? pickFolder = null)
     {
         try
         {
-            await _main.FolderVM.OpenFilePickerAsync();
+            await _main.FolderVM.OpenFilePickerAsync(pickFolder);
         }
         catch (Exception ex)
         {

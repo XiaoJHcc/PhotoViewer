@@ -33,7 +33,6 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
 | 令牌 | 平台值 | 说明 |
 |---|---|---|
 | `filter.toggle.width` | `android` 76 | AI 相似聚类开关行布局的最小自然宽；筛选主体几何取 `MobileFilterLayout` 与手机槽位 |
-| `image.hint.detail.gap` | `android` 24 | 行高 24 + 内边距 6，视觉等效 28（IMAGE-01@android） |
 | `analysis.tile.innerCornerRadius` | `win` 0 | 单层裁切（ANALYSIS-02@windows） |
 | `color.text.secondary` | `macos` / `ios` system-secondary-label | Apple 系统次级文字色，与 #AAA 肉眼差 ≤2 阶（G6-34@mac/@ios） |
 | `tools.window.default.width` | `win` 960 | 常驻侧栏 240 + EXIF 表格 720（TOOLS-01@win） |
@@ -186,7 +185,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
   - Android 导航缩略图取当前展示产物（代理/Full/增强），按显示朝向抽样，不再二次解码原文件（`AndroidNavigationDecoder.CreateFromDisplayAsync`）。
 - **IMAGE-07**：增强状态 `PhotoViewer/Core/Image/PhotoLoadSession.cs`；药丸 `image.busy.*`、门槛 `image.busy.delay`（500ms）四端同一：macOS `MacMainWindow` 的 `_busyPill`、iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs` 的 `EnhanceBusyLabel`、Windows `PhotoViewer.Windows/Native/WindowsMainWindow.cs` 的 `_busyPill`、Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs` 的药丸标签。
 - **IMAGE-09**：定位入口 macOS `MacMainWindow.FocusDetailPoint`、iOS `iOSNativeRootViewController.FocusDetailPoint`、Windows `WindowsPhotoView.FocusOnImagePoint`、Android `AndroidPhotoView.FocusOnPoint`。
-- **IMAGE-10**：空态/加载/失败提示块由各端主图区标签显示（macOS `MacMainWindow.OnImageChanged`、iOS `iOSNativeRootViewController.UpdateHint`、Windows `WindowsMainWindow.UpdateHint`、Android `AndroidNativeRootView` 的提示刷新）。空态副标题按共享文案拆段，四端用各自原生富文本或分段标签把「/」设为 `color.text.tertiary`；macOS/iOS 的主、次、三级文字色分别取系统 Label / SecondaryLabel / TertiaryLabel，Windows/Android/Web 取同名令牌。
+- **IMAGE-10**：空态/加载/失败提示块由各端主图区标签显示（macOS `MacMainWindow.OnImageChanged`、iOS `iOSNativeRootViewController.UpdateHint`、Windows `WindowsMainWindow.UpdateHint`、Android `AndroidNativeRootView` 的提示刷新）。首屏的字号、行盒、间距与三级基准色统一取 STATE-01；原生标签通过富文本或分段布局给「/」着色并留白，Web 使用 CSS。
 - **IMAGE-11**：缩放/平移/适应/跟随只存会话；导航图开关与缩放预设走设置（`SettingsViewModel.ImagePreview.cs` 的 `ShowZoomIndicator` 与缩放预设），增强开关不持久化（`PhotoViewer/Core/Image/PhotoLoadSession.cs`）。
 
 ## analysis
@@ -296,7 +295,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
   - **INPUT-13@mac / @win**：桌面保持完整快捷键设置；Apple 修饰键映射只在 macOS 且外设可见条件满足时显示（`PhotoViewer.Apple/AppleInputMapping.cs`）。
   - 直接触控的手势入口（按压显示绿框、长按菜单、单指轻扫翻页）按实际事件类型处理；连接鼠标或触控板后仍可使用悬停，不能把“触控平台”视为无悬停能力。具体事件映射见各端入口；键鼠设置可见性独立按 INPUT-13 的外设连接状态决定。
 - **INPUT-09**：预设/比例缩放入口同 IMAGE-04（各端 `ZoomPreset`）。
-- **INPUT-10**：无照片时按钮禁用不隐藏、打开类命令始终可用；入口由各端控制栏与空态命中层实现。
+- **INPUT-10**：无照片时按钮禁用不隐藏、打开类命令始终可用；独立打开入口由各端控制栏或菜单提供；主图通过共享 `FolderViewModel.IsStartScreen` 与自身适应区命中，仅在首屏打开选择器。
 - **INPUT-11**：Android `OnBackPressedCallback` 先关设置/工具 sheet 与菜单。
 - **INPUT-12**：触屏通过卡片长按打开星级弹窗（RATING-07），iOS 与 Android 均使用同一入口处理卡片评分。
 - **INPUT-01@web**：浏览器保留 Ctrl/⌘+N，「打开文件」主绑定不可用，次绑定 Ctrl+O 与空态点击、菜单为等价入口。

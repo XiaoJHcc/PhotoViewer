@@ -26,18 +26,19 @@ public static class PhotoHintText
     public const string LoadingTitle = "正在载入…";
 
     /// <summary>
-    /// 按失败 → 空态 → 加载的优先级给出提示标题与详情。
+    /// 按失败 → 加载 → 首屏空态的优先级给出提示标题与详情。
     /// </summary>
     /// <param name="hasFile">当前是否有照片。</param>
     /// <param name="error">解码失败原因；空串/空白表示没有失败。</param>
     /// <param name="loadingVisible">共享会话的延迟加载态是否已可见。</param>
     /// <param name="touch">是否触屏平台（只影响空态副标题）。</param>
+    /// <param name="showEmpty">文件源是否处于 OPEN-01 的首屏空态。</param>
     /// <returns>标题与详情；都不显示时两项均为空串。</returns>
-    public static (string Title, string Detail) Resolve(bool hasFile, string? error, bool loadingVisible, bool touch)
+    public static (string Title, string Detail) Resolve(bool hasFile, string? error, bool loadingVisible, bool touch, bool showEmpty)
     {
         if (!string.IsNullOrWhiteSpace(error)) return (LoadErrorTitle, error);
-        if (!hasFile) return (EmptyProductTitle, touch ? EmptyTouchDetail : EmptyDesktopDetail);
         if (loadingVisible) return (LoadingTitle, string.Empty);
+        if (!hasFile && showEmpty) return (EmptyProductTitle, touch ? EmptyTouchDetail : EmptyDesktopDetail);
         return (string.Empty, string.Empty);
     }
 

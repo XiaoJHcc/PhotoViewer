@@ -86,6 +86,8 @@ internal static class OpenRequestChannelChecks
         reactiveBuilder.BuildApp();
         TryInitializeTestDecoder();
 
+        await CheckStartScreenAsync(c, root);
+
         using var main = new MainViewModel();
         var repeats = 0;
         main.OpenCoordinator.RepeatActivation += () => repeats++;
@@ -641,6 +643,28 @@ internal static class OpenRequestChannelChecks
             failures.Count == 0 ? "未触发 OpenFailed" : string.Join(" | ", failures));
     }
 
+    private static async Task CheckStartScreenAsync(Checks c, string root)
+    {
+        c.Section("首屏打开入口");
+        using var main = new MainViewModel();
+        var source = main.FolderVM;
+        var pickerResult = new TaskCompletionSource<IFileRef?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        FilePicker.Initialize(new StubPicker { PendingFile = pickerResult.Task });
+        var changes = new List<bool>();
+        source.OpenStateChanged += () => changes.Add(source.IsStartScreen);
+        c.True("初始化时允许首屏点按", source.IsStartScreen);
+        var picking = source.OpenFilePickerAsync();
+        c.True("选择器在途时不再是首屏", !source.IsStartScreen);
+        pickerResult.SetResult(null);
+        await picking;
+        c.True("取消选择器后首屏入口恢复", source.IsStartScreen && changes.SequenceEqual(new[] { false, true }));
+
+        string emptyDir = Path.Combine(root, "start-screen-empty");
+        Directory.CreateDirectory(emptyDir);
+        await source.OpenFolderAsync(new LocalFolderRef(emptyDir));
+        c.True("已打开空文件夹没有照片但不是首屏", source.CurrentFolder != null && main.CurrentFile == null && !source.IsStartScreen);
+    }
+
     /// <summary>选择器取消/重开当前目标不改变视口；只有新目录按 resetView 回到适应态。</summary>
     private static async Task CheckPickerViewportAsync(Checks c, MainViewModel main, string root)
     {
@@ -960,11 +984,12 @@ internal static class OpenRequestChannelChecks
         public IFolderRef? Folder { get; set; }
 
         public IFileRef? File { get; set; }
+        public Task<IFileRef?>? PendingFile { get; init; }
 
         public Task<IFolderRef?> PickFolderAsync(string title) => Task.FromResult(Folder);
 
         public Task<IFileRef?> PickFileAsync(string title, IReadOnlyList<FilePickFilter> filters) =>
-            Task.FromResult(File);
+            PendingFile ?? Task.FromResult(File);
     }
 
     private sealed class InlineDispatcher : IUiDispatcher

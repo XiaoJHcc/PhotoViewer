@@ -304,22 +304,29 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         _detailHighlight.Clickable = false;
         AddView(_detailHighlight);
 
+        // STATE-01：首屏空态两行提示只做展示，命中交给主图点按；提示层不拦截点按与拖入。
         _hintLabel = new TextView(activity)
         {
             Text = PhotoHintText.EmptyProductTitle,
             TextSize = (float)DesignTokens.ImageHintTitleFontSize,
             Gravity = GravityFlags.Center,
+            Clickable = false,
+            Focusable = false,
         };
         _hintLabel.SetTextColor(AndroidUiTheme.TextPrimary);
+        _hintLabel.SetTypeface(Typeface.Default, TypefaceStyle.Normal);
+        _hintLabel.SetIncludeFontPadding(false);
         _hintDetail = new TextView(activity)
         {
             Text = string.Empty,
             TextSize = (float)DesignTokens.ImageHintDetailFontSize,
             Gravity = GravityFlags.Center,
+            Clickable = false,
+            Focusable = false,
         };
         _hintDetail.SetTextColor(AndroidUiTheme.TextSecondary);
-        _hintLabel.Clickable = true;
-        _hintLabel.Click += (_, _) => { if (_session.Image == null) _ = _main.FolderVM.OpenFilePickerAsync(); };
+        _hintDetail.SetTypeface(Typeface.Default, TypefaceStyle.Normal);
+        _hintDetail.SetIncludeFontPadding(false);
         AddView(_hintLabel);
         AddView(_hintDetail);
 
@@ -376,6 +383,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         _main.FileVM.ThumbnailList.ScrollToCurrentRequested += OnScrollToCurrentRequested;
         _main.FileVM.FilterBar.PropertyChanged += OnFilterChanged;
         _main.FolderVM.AllFilesChanged += OnAllFilesChanged;
+        _main.FolderVM.OpenStateChanged += OnOpenStateChanged;
 #if PHOTOVIEWER_DINO
         _main.FileVM.SimilarityPanel.PropertyChanged += OnSimilarityPanelChanged;
 #endif
@@ -1038,14 +1046,30 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     /// <param name="text">提示文本。</param>
     private void OnSessionNotice(string text) => ShowStatus(text, DesignTokens.MotionStatusToastDuration);
 
-    private void OnPhotoTapped()
+    /// <summary>主图单击：先清细节预览；只有首屏空态适应区内的点按才打开选择器（OPEN-01 / INPUT-10）。</summary>
+    /// <param name="x">触点在本视图内的像素横坐标。</param>
+    /// <param name="y">触点在本视图内的像素纵坐标。</param>
+    private void OnPhotoTapped(float x, float y)
     {
         if (_analysisPane.DetailActive)
         {
             _analysisPane.ClearDetail();
             return;
         }
-        if (_session.Image == null) _ = _main.FolderVM.OpenFilePickerAsync();
+        if (_session.Image != null || _session.IsLoadingVisible || !string.IsNullOrWhiteSpace(_session.Error)) return;
+        if (!_main.FolderVM.IsStartScreen || !IsInsideFitArea(x, y)) return;
+        _ = _main.FolderVM.OpenFilePickerAsync();
+    }
+
+    /// <summary>触点是否落在实际主图适应区内（栏位与贴边控件都已在适应区外）。</summary>
+    /// <param name="x">触点像素横坐标。</param>
+    /// <param name="y">触点像素纵坐标。</param>
+    private bool IsInsideFitArea(float x, float y)
+    {
+        var pane = FitArea;
+        double density = AndroidUiTheme.Density(Context!);
+        double pointX = x / density, pointY = y / density;
+        return pointX >= pane.X && pointX <= pane.MaxX && pointY >= pane.Y && pointY <= pane.MaxY;
     }
 
     private void OnPhotoLongPressed(float x, float y) => ShowPhotoMenu(x, y);
@@ -1594,6 +1618,13 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         RequestLayout();
     }
 
+    /// <summary>OPEN-01：选择器或文件源打开开始/结束时首屏空态切换，提示随之显示或撤下。</summary>
+    private void OnOpenStateChanged()
+    {
+        UpdateHint();
+        RequestLayout();
+    }
+
     private void OnAllFilesChanged()
     {
         _filterBar.Refresh();
@@ -1729,27 +1760,53 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     {
         bool hasImage = _session.Image != null;
         bool hasFile = _main.CurrentFile != null;
-        bool hasError = !string.IsNullOrEmpty(_session.Error);
-        // STATE-01：加载提示由共享会话的 300ms 延迟态驱动，有文件但未到门槛时不显示任何文案。
-        bool show = !hasImage && (hasError || _session.IsLoadingVisible || !hasFile);
-        _hintLabel.Visibility = show ? ViewStates.Visible : ViewStates.Gone;
-        _hintDetail.Visibility = show ? ViewStates.Visible : ViewStates.Gone;
-        if (!show) return;
+        // STATE-01 / OPEN-01：首屏空态只在文件源处于 OPEN-01 时显示；失败与延迟加载态照旧显示。
         var (title, detail) = PhotoHintText.Resolve(
-            hasFile, _session.Error, _session.IsLoadingVisible, touch: true);
+            hasFile, _session.Error, _session.IsLoadingVisible, touch: true, showEmpty: _main.FolderVM.IsStartScreen);
+        bool show = !hasImage && title.Length > 0;
+        _hintLabel.Visibility = show ? ViewStates.Visible : ViewStates.Gone;
+        bool hasDetail = show && detail.Length > 0;
+        _hintDetail.Visibility = hasDetail ? ViewStates.Visible : ViewStates.Gone;
+        if (!show) return;
         _hintLabel.Text = title;
-        if (!hasFile && string.IsNullOrWhiteSpace(_session.Error))
+        // 只有首屏空态把副标题拆成三段并在「/」两侧留布局空白；失败/加载提示保持纯文本。
+        bool empty = title == PhotoHintText.EmptyProductTitle;
+        if (empty)
         {
-            var parts = PhotoHintText.EmptyDetailParts(touch: true);
-            var formatted = new SpannableString(detail);
-            formatted.SetSpan(new ForegroundColorSpan(AndroidUiTheme.TextTertiary),
-                parts.Prefix.Length, parts.Prefix.Length + parts.Separator.Length, SpanTypes.ExclusiveExclusive);
-            _hintDetail.TextFormatted = formatted;
+            int gapPx = AndroidUiTheme.DpPx(this, DesignTokens.ImageHintSeparatorGap);
+            _hintDetail.TextFormatted = EmptyDetailFormatted(gapPx);
         }
         else
         {
             _hintDetail.Text = detail;
         }
+    }
+
+    /// <summary>触屏空态副标题：分隔字取三级文字色，两侧各留一份布局空白（不在文案中插入空格）。</summary>
+    /// <param name="gapPx">分隔字单侧空白（像素）。</param>
+    private static SpannableStringBuilder EmptyDetailFormatted(int gapPx)
+    {
+        var parts = PhotoHintText.EmptyDetailParts(touch: true);
+        var builder = new SpannableStringBuilder();
+        builder.Append(parts.Prefix);
+        AppendHintGap(builder, gapPx);
+        int separatorStart = builder.Length();
+        builder.Append(parts.Separator);
+        builder.SetSpan(new ForegroundColorSpan(AndroidUiTheme.TextTertiary),
+            separatorStart, builder.Length(), SpanTypes.ExclusiveExclusive);
+        AppendHintGap(builder, gapPx);
+        builder.Append(parts.Suffix);
+        return builder;
+    }
+
+    /// <summary>以固定宽度占位符实现横向留白：字符本身不绘制，宽度由 <see cref="GapSpan"/> 给出。</summary>
+    /// <param name="builder">目标文本。</param>
+    /// <param name="gapPx">留白宽度（像素）。</param>
+    private static void AppendHintGap(SpannableStringBuilder builder, int gapPx)
+    {
+        int start = builder.Length();
+        builder.Append('\u200B');
+        builder.SetSpan(new GapSpan(gapPx), start, start + 1, SpanTypes.ExclusiveExclusive);
     }
 
     /// <summary>导航图缩略图取当前展示产物（含增强），只在产物引用变化时重出；可见框与百分比每帧更新。</summary>
@@ -1805,23 +1862,32 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     {
         var pane = FitArea;
         double bottomInset = 0;
+        // STATE-01：两行提示左右至少留一份 inset，行盒高度与行间距取令牌，整块在适应区内垂直居中。
         int hintWidthPx = Math.Max(1, (int)Math.Round(
-            Math.Max(1, Math.Min(DesignTokens.ImageHintMaxWidth, pane.Width - 2 * MainScreenLayout.FilterMargin)) * density));
+            Math.Max(1, Math.Min(DesignTokens.ImageHintMaxWidth, pane.Width - 2 * DesignTokens.ImageHintInset)) * density));
         int hintMaxHeightPx = Math.Max(1, (int)Math.Round(pane.Height * density));
         _hintLabel.Measure(MeasureSpec.MakeMeasureSpec(hintWidthPx, MeasureSpecMode.AtMost),
             MeasureSpec.MakeMeasureSpec(hintMaxHeightPx, MeasureSpecMode.AtMost));
-        _hintDetail.Measure(MeasureSpec.MakeMeasureSpec(hintWidthPx, MeasureSpecMode.AtMost),
-            MeasureSpec.MakeMeasureSpec(hintMaxHeightPx, MeasureSpecMode.AtMost));
         double hintWidth = hintWidthPx / density;
-        double labelHeight = _hintLabel.MeasuredHeight / density;
-        bool hasDetail = !string.IsNullOrEmpty(_hintDetail.Text);
-        double detailHeight = hasDetail ? _hintDetail.MeasuredHeight / density : 0;
-        double gap = DesignTokens.ImageHintDetailGapAndroid;
-        double blockHeight = hasDetail ? Math.Max(labelHeight, gap + detailHeight) : labelHeight;
+        double labelHeight = Math.Max(DesignTokens.ImageHintTitleLineHeight, _hintLabel.MeasuredHeight / density);
+        bool hasDetail = _hintDetail.Visibility == ViewStates.Visible;
+        double detailHeight = 0;
+        if (hasDetail)
+        {
+            _hintDetail.Measure(MeasureSpec.MakeMeasureSpec(hintWidthPx, MeasureSpecMode.AtMost),
+                MeasureSpec.MakeMeasureSpec(hintMaxHeightPx, MeasureSpecMode.AtMost));
+            detailHeight = Math.Max(DesignTokens.ImageHintDetailLineHeight, _hintDetail.MeasuredHeight / density);
+        }
+        double blockHeight = hasDetail ? labelHeight + DesignTokens.ImageHintRowGap + detailHeight : labelHeight;
         double hintLeft = pane.X + (pane.Width - hintWidth) / 2;
         double hintTop = pane.Y + Math.Max(0, (pane.Height - blockHeight) / 2);
         LayoutChild(_hintLabel, new LayoutRect(hintLeft, hintTop, hintWidth, labelHeight), density);
-        LayoutChild(_hintDetail, new LayoutRect(hintLeft, hintTop + gap, hintWidth, detailHeight), density);
+        if (hasDetail)
+        {
+            LayoutChild(_hintDetail,
+                new LayoutRect(hintLeft, hintTop + labelHeight + DesignTokens.ImageHintRowGap, hintWidth, detailHeight),
+                density);
+        }
 
         LayoutChild(_enhanceBusy, new LayoutRect(
             pane.X + (pane.Width - DesignTokens.ImageBusyWidth) / 2,
@@ -1907,6 +1973,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             _main.FileVM.ThumbnailList.ScrollToCurrentRequested -= OnScrollToCurrentRequested;
             _main.FileVM.FilterBar.PropertyChanged -= OnFilterChanged;
             _main.FolderVM.AllFilesChanged -= OnAllFilesChanged;
+            _main.FolderVM.OpenStateChanged -= OnOpenStateChanged;
 #if PHOTOVIEWER_DINO
             _main.FileVM.SimilarityPanel.PropertyChanged -= OnSimilarityPanelChanged;
 #endif
@@ -1931,6 +1998,26 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             _navigationSource = null;
         }
         base.Dispose(disposing);
+    }
+
+    /// <summary>固定宽度的不可见占位：为「/」两侧提供布局留白，不写入空格字符，也不绘制任何内容。</summary>
+    private sealed class GapSpan : ReplacementSpan
+    {
+        private readonly int _width;
+
+        /// <summary>按给定像素宽度创建占位。</summary>
+        /// <param name="width">占位宽度（像素）。</param>
+        public GapSpan(int width) => _width = width;
+
+        /// <summary>行内占位宽度。</summary>
+        public override int GetSize(Paint paint, Java.Lang.ICharSequence? text, int start, int end,
+            Paint.FontMetricsInt? fm) => _width;
+
+        /// <summary>占位本身不绘制。</summary>
+        public override void Draw(Canvas canvas, Java.Lang.ICharSequence? text, int start, int end, float x, int top,
+            int y, int bottom, Paint paint)
+        {
+        }
     }
 
     /// <summary>绿框的可见性标记；实际绘制在根视图 DispatchDraw，避免被 SurfaceView 子层裁剪。</summary>
