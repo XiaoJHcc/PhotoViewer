@@ -127,6 +127,12 @@ public static class AndroidNativeShell
             AndroidSettingsStorage.UseIsolatedProfile("input-checks");
         else if (string.Equals(intent?.GetStringExtra("pv-check"), "rating-perf", StringComparison.OrdinalIgnoreCase))
             AndroidSettingsStorage.UseIsolatedProfile("rating-perf");
+        // 液态玻璃验收要核对真实存在的栏底与 EXIF 块：独立档从默认栏位显隐起跑，用户设置不参与。
+        else if (string.Equals(intent?.GetStringExtra("pv-check"), "glass", StringComparison.OrdinalIgnoreCase))
+        {
+            AndroidSettingsStorage.UseIsolatedProfile("glass");
+            AndroidShellPreferences.UseIsolatedProfile("glass");
+        }
         InitializePlatform(activity);
 
         // 内存上限探针（验收）：只读系统退出原因，或接管界面做逐步分配；都不建主界面。

@@ -57,7 +57,7 @@
 
 - **录制**：`LayerBackdropLayout.DispatchDraw` 用 `RenderNode.BeginRecording(w, h)` 得到的 `RecordingCanvas` 绘制背景与整棵子树，再把同一个 `RenderNode` 绘制上屏。上屏与取样来自同一份显示列表，不会漏掉只走硬件录制路径的 `TextureView`，也避免每帧两次遍历。软件画布（离屏 `View.draw`、`Bitmap` 回读）不录制：`Canvas.drawRenderNode` 只支持硬件画布。
 - **取样**：`LayerBackdrop.DrawBackdrop` 按 `translate(层窗口原点 − 画布窗口原点)` 画节点，等价上游 `translate(-localPositionOf)`。`BackdropDrawContext.ForView` 从视图自身 `OnDraw` 取密度与画布原点，滚动容器偏移由 `GetLocationInWindow` 反映。**取样会把整层画出来**（不是只画本视图那一块），调用方必须先在画布上裁到自己的边界或形状（`canvas.ClipRect(0, 0, Width, Height)` / `ClipPath`），否则取样内容会溢出到别处。
-- **效果**：有 `RenderEffect` 时经一张离屏 `RenderNode`：按 `padding` 四面外扩、把层节点画到内偏移处、效果挂在离屏节点上，于是模糊能取到边界外像素（对应上游把 `renderEffect` 挂在加大后的 `GraphicsLayer`）。离屏录制只在尺寸或裁切变化时重建，层内容靠节点引用自动跟随本帧。
+- **效果**：有 `RenderEffect` 时经一张离屏 `RenderNode`：按 `padding` 四面外扩、把层节点画到内偏移处、效果挂在离屏节点上，于是模糊能取到边界外像素（对应上游把 `renderEffect` 挂在加大后的 `GraphicsLayer`）。离屏节点的**显示列表在源层每次完成新录制后重录一次**（`SetRecordedBounds` 置脏，复用同一个 `RenderNode`），不只依赖「引用同一个源节点自动跟随」——多帧实测里效果节点的缓存层可能继续复用上一次的取样输出。重录之后（或效果引用变化时）重新设置一次 `RenderEffect`，不假设 `BeginRecording` / `SetPosition` 会保留节点上原有的效果；同帧未重录且引用相同的其他取样方不重复设置。效果节点创建时调用 `SetUseCompositingLayer(true)`，使效果链不依赖当前是否存在可见消费者。效果链对象本身仍按密度与取样尺寸缓存，不逐帧重建。
 - **`CompositingStrategy.Offscreen` / 形状裁切**：`BackdropDrawer.Draw(..., Path clipPath)` 在离屏录制内 `ClipPath`，即内容先被裁切再上效果，与上游 `GraphicsLayer(clip = true, shape = …)` 同序。
 - **`TileMode`**：Java 枚举在绑定里是类而非常量，故本模块自带 `BackdropTileMode` 四值并映射到平台实例。
 - **取样顺序约束**：玻璃元素不得位于它所取样的 `LayerBackdropLayout` 子树内；取样方在层之后绘制时本来就读到本帧内容，层内容变化而取样方未被失效时订阅 `Recorded` 并让自己失效，可在下一次遍历跟上（最多一帧延迟）。
@@ -152,16 +152,17 @@ cd /tmp/pv-sdk201
 dotnet build /path/to/PhotoViewer.Android.Backdrop/PhotoViewer.Android.Backdrop.csproj -c Debug
 ```
 
-模块自身不含真机断言。阶段 0 的取样验收跑在头工程的 `pv-check glass` 里：
-`PhotoViewer.Android/Native/AndroidNativeChecks.Glass.Backdrop.cs`（SAMPLE 单层取样与 LAYERS 三层取样）
-用一份临时装配的 `AndroidPhotoView` + `LayerBackdropLayout` 舞台取证，收尾整体拆除。
+模块自身不含真机断言。头工程的 `pv-check glass` 是唯一验收入口：缺省 `all` = `host` + `product`。
+
+- `product`：**正式产品材质验收**（`PhotoViewer.Android/Native/AndroidNativeChecks.Glass.Product.cs`），跑在主屏现有照片层与共享材质上（6 个栏底、带衬底 EXIF），含结构/配方/分级断言与真实像素证明（黑/灰/白衬底、1px 条纹低通、阶跃边缘展开）和切图/缩放跟随。
+- `sample` / `layers`：显式 legacy 机制检查（`AndroidNativeChecks.Glass.Backdrop.cs`），只在点名时运行，用临时装配的 `AndroidPhotoView` + `LayerBackdropLayout` 舞台取证、收尾整体拆除；不作为产品材质验收证据。
 
 ## 边界与已知限制
 
 - 不含产品逻辑：令牌、几何、命中区、读屏、悬停、按压弹簧、弹窗入窗行为全部在接入层。
-- 只画宿主交给它的层：`SurfaceView` 内容在系统合成器的独立图层上、不在界面渲染层，录不到；`TextureView` 子视图被 `RenderNode` 录制时是否带上纹理，属阶段 0 的真机结论（见 `Plans/android-liquid-glass-plan-1.md`「阶段 0」），本模块不对该结论作任何保证。
+- 只画宿主交给它的层：`SurfaceView` 内容在系统合成器的独立图层上、不在界面渲染层，录不到；`TextureView` 子视图被 `RenderNode` 录制时会带上纹理（产品主图依赖这一点），本模块不对其他视图组合与平台版本作保证。
 - 子树上屏与取样共用同一次 `RenderNode` 录制；嵌套层仍各有自己的录制与合成成本，性能结论只在真机测。
 - `LayerBackdropLayout` 拥有自己的 `Backdrop`，视图被释放（`Dispose`）时一并回收 `RenderNode`，宿主不必另外记账。
-- 层内容变化无需通知，层尺寸变化由实现按当前录制尺寸自动检测重建；**只有替换传给取样的裁切形状才需要 `LayerBackdrop.Invalidate()`**。
+- 层内容变化无需通知：源层每次完成新录制即把效果显示列表置脏，下一次取样用同一个 `RenderNode` 重录；层尺寸变化由实现按当前录制尺寸自动检测重建。**只有替换传给取样的裁切形状才需要 `LayerBackdrop.Invalidate()`**。
 - 视图自身带缩放/旋转变换时如何按逆变换取样（上游 `InverseLayerScope`）未实现，属阶段 3。
 - 低版本不提供半透明自绘替代：分级为 `ColorLayer` 时调用方必须画正式色层。

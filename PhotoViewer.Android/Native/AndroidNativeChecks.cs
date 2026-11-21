@@ -32,7 +32,7 @@ namespace PhotoViewer.Android.Native;
 /// </summary>
 /// <remarks>
 /// <c>faults</c> / <c>layout</c> / <c>input</c> / <c>storage</c> / <c>filter</c> / <c>zoom</c> / <c>color</c> / <c>edition</c> /
-/// <c>rating-perf</c> 是独立模式：按精确模式名分发，
+/// <c>rating-perf</c> / <c>glass</c> 是独立模式：按精确模式名分发，
 /// 素材入口见模块手册（<see cref="Wants"/> 不覆盖它们），不并入 <c>all</c>。
 /// </remarks>
 internal static partial class AndroidNativeChecks
@@ -841,7 +841,7 @@ internal static partial class AndroidNativeChecks
         // EDITION-07：报告名带发行版，标准版与 AI 版在同一设备上互不覆盖。
         File.WriteAllText(IOPath.Combine(directory,
             $"android-checks-{_mode}-{AndroidAppCapabilities.EditionName}.txt"), report.ToString());
-        if (_mode is "zoom" or "input" or "rating-perf")
+        if (_mode is "zoom" or "input" or "rating-perf" or "glass")
         {
             global::Android.Util.Log.Info("PhotoViewerChecks", $"{_mode}: PASS {_passed} / FAIL {_failed}");
             foreach (var line in Lines) global::Android.Util.Log.Info("PhotoViewerChecks", line);

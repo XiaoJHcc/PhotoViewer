@@ -14,12 +14,20 @@ using PhotoViewer.Core.Image;
 namespace PhotoViewer.Android.Native;
 
 /// <summary>
-/// <c>--es pv-check glass</c> 的阶段 0 技术验证调度与宿主组（验收专用，不并入 <c>all</c>）：
-/// <c>--es pv-glass-stage host|sample|layers|all</c>（缺省 all）。
-/// 宿主组用当前真实的 <see cref="TextureView"/> 主图核对：能力与 EGL 缓冲尺寸、整窗 <see cref="PixelCopy"/>
+/// <c>--es pv-check glass</c> 的液态玻璃验收调度（独立模式，不并入 <c>all</c>）：
+/// <c>--es pv-glass-stage host|product|sample|layers|all</c>，缺省 <c>all</c> = <c>host</c> + <c>product</c>。
+/// <list type="bullet">
+/// <item><c>host</c>：用当前真实的 <see cref="TextureView"/> 主图核对能力与 EGL 缓冲尺寸、整窗 <see cref="PixelCopy"/>
 /// 色块与 <c>color</c> 期望、物理 100% 适应区逐字节比较（<see cref="GlassPixelComparison.ByteExact"/> 才判 PASS）、
 /// 输入响应的两段延迟（GL swap 交还 / 界面层取用）与 250ms 心跳，并把窗口位图格式与色域的原始读数写进报告。
-/// 取样组与多层组由 Backdrop 原型侧提供，本文件只按参数调用它们。
+/// 另可用 <c>--es pv-glass-host-step capability|quadrants|physical|input|hide|all</c>（缺省 <c>all</c>）
+/// 只跑所选宿主步骤，用于定位污染产品材质的来源；<c>hide</c> 只做「隐藏全部根子视图→恢复」的最小动作，
+/// 缺省 <c>all</c> 仍只跑原来那四步。缺省行为不变。</item>
+/// <item><c>product</c>：真实产品材质验收（SHELL-12@android）——根视图现有照片层与共享材质、6 个真实栏底与
+/// 带衬底 EXIF 的结构/配方/分级断言，加上真实可见栏底的像素证明（照片取样、低通、边缘展开）与切图/缩放跟随。</item>
+/// <item><c>sample</c> / <c>layers</c>：阶段 0 的迁移层机制检查（legacy），只在显式点名时运行，
+/// 不再作为产品验收证据；它们挂临时舞台、另建原型主图，与产品材质无关。</item>
+/// </list>
 /// </summary>
 internal static partial class AndroidNativeChecks
 {
@@ -33,24 +41,29 @@ internal static partial class AndroidNativeChecks
     private const int GlassHostPatternMargin = 128;
 
     /// <summary>
-    /// 读取 <c>pv-glass-stage</c> 并按分组跑阶段 0 验证；非法参数如实记一条 FAIL 后不再继续。
+    /// 读取 <c>pv-glass-stage</c> 并按分组跑验收；非法参数如实记一条 FAIL 后不再继续。
+    /// 缺省 <c>all</c> 只覆盖宿主与产品组，legacy 机制检查必须显式点名。
     /// </summary>
     private static async Task RunGlassChecksAsync()
     {
         string stage = (_activity!.Intent?.GetStringExtra("pv-glass-stage") ?? "all").Trim().ToLowerInvariant();
         bool host = stage is "host" or "all";
-        bool sample = stage is "sample" or "all";
-        bool layers = stage is "layers" or "all";
-        if (!host && !sample && !layers)
+        bool product = stage is "product" or "all";
+        bool sample = stage is "sample";
+        bool layers = stage is "layers";
+        if (!host && !product && !sample && !layers)
         {
-            Check("glass 阶段参数有效", false, $"pv-glass-stage={stage}，只接受 host|sample|layers|all");
+            Check("glass 阶段参数有效", false, $"pv-glass-stage={stage}，只接受 host|product|sample|layers|all");
             return;
         }
 
         await WaitForScreenAsync();
         await EnsureGesturePhotoAsync();
         Phase($"glass 阶段={stage}");
+        GlassHostNote("阶段口径：all = host + product（产品验收证据）；sample/layers 是阶段 0 迁移层机制检查（legacy），"
+            + "只在显式点名时运行，不作为产品材质验收证据");
         if (host) await RunGlassHostChecksAsync();
+        if (product) await RunStepAsync("产品材质", RunGlassProductChecksAsync);
         if (sample) await RunGlassSampleChecksAsync();
         if (layers) await RunGlassLayersChecksAsync();
     }
@@ -58,9 +71,26 @@ internal static partial class AndroidNativeChecks
     /// <summary>
     /// 宿主组：能力/缓冲读数 → 整窗色块 → 物理 100% 逐字节 → 输入响应（swap / 界面层取用）→ 250ms 心跳。
     /// 心跳循环覆盖整组，收尾无论成败都还原会话图与栏位可见性。
+    /// <c>--es pv-glass-host-step capability|quadrants|physical|input|hide|all</c>（缺省 <c>all</c>）只跑所选步骤，
+    /// 用于定位哪一步会污染随后的产品材质；<c>hide</c> 只做「隐藏全部根子视图→恢复」这一最小动作，
+    /// 缺省 <c>all</c> 仍只跑原来那四步，不把 <c>hide</c> 额外加入。
     /// </summary>
     private static async Task RunGlassHostChecksAsync()
     {
+        string hostStep = (_activity!.Intent?.GetStringExtra("pv-glass-host-step") ?? "all").Trim().ToLowerInvariant();
+        bool stepCapability = hostStep is "capability" or "all";
+        bool stepQuadrants = hostStep is "quadrants" or "all";
+        bool stepPhysical = hostStep is "physical" or "all";
+        bool stepInput = hostStep is "input" or "all";
+        bool stepHide = hostStep is "hide";
+        if (!stepCapability && !stepQuadrants && !stepPhysical && !stepInput && !stepHide)
+        {
+            Check("glass host-step 参数有效", false,
+                $"pv-glass-host-step={hostStep}，只接受 capability|quadrants|physical|input|hide|all");
+            return;
+        }
+        GlassHostNote($"glass host-step={hostStep}（缺省 all；只影响宿主组内部步骤选择，不改缺省行为）");
+
         var photo = _root!.Photo;
         var session = _session!;
         var rate = ReadGlassRefreshRate(_activity!);
@@ -84,10 +114,12 @@ internal static partial class AndroidNativeChecks
         GlassHostNote($"刷新率 {rate.Describe()} 心跳间隔={tickMs}ms（按一帧时长向上取整）");
         try
         {
-            await RunStepAsync("宿主能力", () => CheckGlassHostCapabilityAsync(rate));
-            await RunStepAsync("整窗色块", CheckGlassWindowQuadrantsAsync);
-            await RunStepAsync("物理100%逐像素", CheckGlassPhysicalPixelsAsync);
-            await RunStepAsync("输入响应", () => CheckGlassInputToCommitAsync(swapLatency, presentLatency, rate));
+            if (stepCapability) await RunStepAsync("宿主能力", () => CheckGlassHostCapabilityAsync(rate));
+            if (stepQuadrants) await RunStepAsync("整窗色块", CheckGlassWindowQuadrantsAsync);
+            if (stepPhysical) await RunStepAsync("物理100%逐像素", CheckGlassPhysicalPixelsAsync);
+            if (stepInput)
+                await RunStepAsync("输入响应", () => CheckGlassInputToCommitAsync(swapLatency, presentLatency, rate));
+            if (stepHide) await RunStepAsync("全隐藏恢复", CheckGlassHideRestoreAsync);
             var beat = heartbeat.Compute();
             Check("glass 心跳无 250ms 阻塞", beat.HasSamples && beat.MaxMs < 250, beat.Describe());
         }
@@ -440,7 +472,32 @@ internal static partial class AndroidNativeChecks
     }
 
     /// <summary>
-    /// 把主屏上除主图以外的可见子视图临时设为不可见（不参与布局，只不绘制），让整窗回读只剩照片层。
+    /// 二分用最小步骤：只做「隐藏全部根子视图（保留照片层）→ 等 160ms → 恢复可见性」，
+    /// 不注入合成图案、不缩放、不做 GL 回读也不做 <see cref="PixelCopy"/>。用来判断「全隐藏再恢复」
+    /// 本身是否会让后续取样退化为直通（<c>physical</c> 是唯一会同时隐藏全部取样视图的步骤）。
+    /// </summary>
+    private static async Task CheckGlassHideRestoreAsync()
+    {
+        var hidden = new List<(View View, ViewStates Visibility)>();
+        int hiddenCount;
+        try
+        {
+            hiddenCount = HideGlassOverlays(hidden);
+            await Task.Delay(160);
+        }
+        finally
+        {
+            RestoreGlassOverlays(hidden);
+        }
+        GlassHostNote($"glass 全隐藏恢复：隐藏 {hiddenCount} 个根子视图（保留照片层）→ 等 160ms → 已恢复可见性；"
+            + "本步不注入图案、不缩放、不做 GL 回读与 PixelCopy");
+        Check("glass 全隐藏恢复 可执行", hiddenCount > 0, $"本次隐藏={hiddenCount} 恢复清单={hidden.Count}");
+    }
+
+    /// <summary>
+    /// 把主屏上除照片层以外的可见子视图临时设为不可见（不参与布局，只不绘制），让整窗回读只剩照片层。
+    /// 照片层是根视图的直接子视图（SHELL-12@android 的取样源），必须保留；不能再按 <c>Photo.Parent</c>
+    /// 反推——主图分区已经挂在照片层里，那样会把照片层本身也隐藏掉。
     /// 可重复调用：期间被设置通知重新显示的栏位会在下一次调用里再被隐藏，并追加进同一份清单。
     /// </summary>
     /// <param name="hidden">原可见性清单（调用方持有，收尾交给 <see cref="RestoreGlassOverlays"/>）。</param>
@@ -448,12 +505,12 @@ internal static partial class AndroidNativeChecks
     private static int HideGlassOverlays(List<(View View, ViewStates Visibility)> hidden)
     {
         var root = _root!;
-        var photoPane = root.Photo.Parent as View;
+        var photoLayer = root.PhotoLayer;
         int added = 0;
         for (int index = 0; index < root.ChildCount; index++)
         {
             var child = root.GetChildAt(index);
-            if (child == null || ReferenceEquals(child, photoPane)) continue;
+            if (child == null || ReferenceEquals(child, photoLayer)) continue;
             if (child.Visibility != ViewStates.Visible) continue;
             hidden.Add((child, child.Visibility));
             child.Visibility = ViewStates.Invisible;

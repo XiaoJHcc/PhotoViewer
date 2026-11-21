@@ -84,11 +84,20 @@ internal sealed partial class AndroidPhotoView : FrameLayout, TextureView.ISurfa
     private double _wheelAccumulator;
     /// <summary>纹理占用快照（含 mip 链），GPU 私有内存不在 RssAnon 里，供内存预算源与管家读取。</summary>
     private long _textureBytes;
+    /// <summary>额外外部占用读数（照片效果层的离屏缓冲）；与纹理占用一起上报，不重复计费。</summary>
+    private Func<long>? _additionalFootprint;
     /// <summary>挂到 <see cref="AndroidMemoryBudgetProvider.ExternalFootprint"/> 的读数委托（释放时只摘自己这份）。</summary>
     private readonly Func<long> _textureFootprint;
 
     /// <summary>EGL 窗口表面就绪，允许宿主启动加载并按实际输出上传照片。</summary>
     internal event Action? SurfaceReady;
+    /// <summary>
+    /// 成功提交一帧新画面之后触发（<see cref="Draw"/> 里 swap 成功、<c>RenderedFrames</c> 已推进，
+    /// 且内部纹理与容器都已失效之后）。宿主用它驱动需要「真实出帧」才能跟进的外部状态，
+    /// 例如让包住主图的照片层重新录制（只靠视图失效不足以保证录制容器的 <c>DispatchDraw</c> 重跑）。
+    /// 只随真实上屏帧触发，不引入定时器。
+    /// </summary>
+    internal event Action? PresentationFrameRendered;
     /// <summary>视口变化通知（会话据此决定代理尺寸与 Full 升级，覆盖层据此刷新）。</summary>
     internal event Action? ViewportChanged;
     /// <summary>适应态横向轻扫：-1 上一张、+1 下一张。</summary>
@@ -126,14 +135,26 @@ internal sealed partial class AndroidPhotoView : FrameLayout, TextureView.ISurfa
 
     /// <summary>内存客户端名称。</summary>
     public string Name => "AndroidPhotoView";
-    /// <summary>纹理（当前 + 最近缓存 + 空纹理，含 mip 链）与表面估算字节（8 位 RGBA）。</summary>
+    /// <summary>
+    /// 主图宿主额外承担的外部占用读数（照片效果层的离屏缓冲等）。与纹理占用同一份委托上报给
+    /// <see cref="AndroidMemoryBudgetProvider.ExternalFootprint"/>，因此不会被计入两次。
+    /// 由宿主设置，释放时先置空。
+    /// </summary>
+    internal Func<long>? AdditionalFootprint
+    {
+        get => Volatile.Read(ref _additionalFootprint);
+        set => Volatile.Write(ref _additionalFootprint, value);
+    }
+
+    /// <summary>纹理（当前 + 最近缓存 + 空纹理，含 mip 链）与表面估算字节（8 位 RGBA），外加效果层估算。</summary>
     public long FootprintBytes
     {
         get
         {
             long texture = Interlocked.Read(ref _textureBytes);
             double backing = _viewport.BackingScale;
-            return texture + (long)(_viewport.ViewWidth * _viewport.ViewHeight * backing * backing * 4);
+            return texture + (long)(_viewport.ViewWidth * _viewport.ViewHeight * backing * backing * 4)
+                + ReadAdditionalFootprint();
         }
     }
 
@@ -158,9 +179,19 @@ internal sealed partial class AndroidPhotoView : FrameLayout, TextureView.ISurfa
         _gestures = new GestureDetector(context, new PhotoGestureListener(this));
         _scaleDetector = new ScaleGestureDetector(context, new PhotoScaleListener(this));
         // GPU 纹理不占 RssAnon，预算源要单独加上这份占用才与 MemoryLimiter 的可用量同口径。
-        _textureFootprint = () => Interlocked.Read(ref _textureBytes);
+        // 宿主可另挂一份外部占用（照片效果层），与纹理字节相加后一次上报。
+        _textureFootprint = () => Interlocked.Read(ref _textureBytes) + ReadAdditionalFootprint();
         AndroidMemoryBudgetProvider.ExternalFootprint = _textureFootprint;
         MemoryGovernor.Register(this);
+    }
+
+    /// <summary>读宿主挂的额外外部占用；探测线程随时会读，读数失败一律按 0。</summary>
+    private long ReadAdditionalFootprint()
+    {
+        var additional = Volatile.Read(ref _additionalFootprint);
+        if (additional == null) return 0;
+        try { return Math.Max(0, additional()); }
+        catch { return 0; }
     }
 
     private void SetImageCore(DecodedImage? image, int generation, DecodedImage? prepared = null)
@@ -439,6 +470,15 @@ internal sealed partial class AndroidPhotoView : FrameLayout, TextureView.ISurfa
             _renderedFrames++;
             // 表面纹理的内容只在视图重绘时被界面渲染线程取用：swap 之后必须安排一次重绘，否则新帧要等下一次无关重绘。
             _textureView.Invalidate();
+            // 只失效内部 TextureView 不够：主图容器挂在照片层（LayerBackdropLayout）里，该层把整棵子树录进
+            // RenderNode 供栏底与带衬底 EXIF 取样，而层的录制由**容器自身**的重绘驱动；容器不失效时照片层
+            // 不会重录，材质就取不到新帧（切图/缩放后栏底停在旧画面）。这里让失效沿 _photoPane 传到照片层，
+            // 既保证录制跟上，也让材质按渲染代际失效；不引入连续或定时重绘。
+            Invalidate();
+            // 实测：上面两处失效仍不足以保证录制容器重跑 DispatchDraw（照片层既不重录、也不触发 Recorded），
+            // 材质因此停在旧画面。把「出了一帧」这件事显式通知宿主，由宿主让照片层自己失效，
+            // 迫使下一次遍历真正重录并触发 Recorded。
+            PresentationFrameRendered?.Invoke();
         }
     }
 

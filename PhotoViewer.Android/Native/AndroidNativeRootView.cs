@@ -13,6 +13,7 @@ using Android.Text.Style;
 using Android.Views;
 using Android.Widget;
 using AndroidX.Core.View;
+using PhotoViewer.Android.Backdrop;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
@@ -33,6 +34,7 @@ namespace PhotoViewer.Android.Native;
 /// 手机形态的槽位全部由共享 <see cref="PhoneScreenLayout"/> 给出（竖屏顶行/分析/胶片/底行，
 /// 横屏刘海侧列/分析/控制列）。主图视图在所有形态下铺满窗口，照片落在
 /// <see cref="PhotoViewport.SetFitInsets"/> 给出的适应区内，放大后可越过栏缘。
+/// 照片层是根视图最底层的录制容器：栏底与带衬底 EXIF 从它取样（SHELL-12@android）。
 /// </summary>
 internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
 {
@@ -40,6 +42,10 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     private readonly PhotoLoadSession _session;
     private readonly AndroidPhotoView _photo;
     private readonly FrameLayout _photoPane;
+    private readonly LayerBackdropLayout _photoLayer;
+    private readonly AndroidPhotoMaterial _photoMaterial;
+    /// <summary>上一次让材质失效时的主图渲染代际；用于避免材质重绘与照片层重录互相触发。</summary>
+    private int _materialFrames = -1;
     private readonly AndroidBarScrim _fileBar;
     private readonly View _fileDivider;
     private readonly AndroidBarScrim _controlBackground;
@@ -126,6 +132,10 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     internal AndroidNavigationOverlay Navigation => _navigation;
     /// <summary>空态提示所在的主图分区。</summary>
     internal FrameLayout PhotoPane => _photoPane;
+    /// <summary>照片层录制容器（验收读取：取样源身份与录制状态）。</summary>
+    internal LayerBackdropLayout PhotoLayer => _photoLayer;
+    /// <summary>共享照片层材质（验收读取：分级、配方、效果快照、取样源与绘制计数）。</summary>
+    internal AndroidPhotoMaterial PhotoMaterial => _photoMaterial;
     /// <summary>当前布局安全区（dp）；横屏已忽略手势导航条底部。</summary>
     internal AndroidInsets SafeInsets => _insets;
     /// <summary>最近一次收到的原始窗口 Insets（dp，验收用：核对旋转后由原始值重新派生）。</summary>
@@ -229,14 +239,23 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         _photo = new AndroidPhotoView(activity);
         _main.FitToViewRequested += OnFitToViewRequested;
         _photoPane.AddView(_photo, new FrameLayout.LayoutParams(LayoutParams.MatchParent, LayoutParams.MatchParent));
-        AddView(_photoPane, new LayoutParams(LayoutParams.MatchParent, LayoutParams.MatchParent));
+        // SHELL-12@android：照片层是唯一取样源——主图（TextureView）录进 RenderNode，栏底与带衬底 EXIF
+        // 都从这一层取样。层铺满窗口、位于根视图最底层；栏内容与取样方都不进这一层（上游取样规则）。
+        _photoLayer = new LayerBackdropLayout(activity);
+        _photoLayer.SetClipChildren(true);
+        _photoLayer.AddView(_photoPane, new FrameLayout.LayoutParams(LayoutParams.MatchParent, LayoutParams.MatchParent));
+        AddView(_photoLayer, new LayoutParams(LayoutParams.MatchParent, LayoutParams.MatchParent));
+        _photoMaterial = new AndroidPhotoMaterial(_photoLayer);
+        _photoLayer.Recorded += OnPhotoLayerRecorded;
+        // 共享效果层的离屏缓冲与主图纹理同属这一进程的 GPU 外部占用，一起记进预算源。
+        _photo.AdditionalFootprint = () => _photoMaterial.FootprintBytes;
 
-        _fileBar = new AndroidBarScrim(activity);
+        _fileBar = new AndroidBarScrim(activity, _photoMaterial);
         AddView(_fileBar);
         _fileDivider = new View(activity);
         _fileDivider.SetBackgroundColor(AndroidUiTheme.Divider);
         AddView(_fileDivider);
-        _controlBackground = new AndroidBarScrim(activity);
+        _controlBackground = new AndroidBarScrim(activity, _photoMaterial);
         AddView(_controlBackground);
         _controlDivider = new View(activity);
         _controlDivider.SetBackgroundColor(AndroidUiTheme.Divider);
@@ -251,7 +270,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         AddView(_filmstrip);
         _filmstrip.RateRequested += OnRateRequested;
         _filmstrip.PopupHost = this;
-        _controlBar = new AndroidControlBar(activity, main);
+        _controlBar = new AndroidControlBar(activity, main, _photoMaterial);
         _controlBar.Wire(Execute, rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); },
             ShowExifTools, OpenRatingPopupFromControlBar);
         _controlScrollHost = new AndroidControlBarScrollHost(activity, _controlBar);
@@ -275,10 +294,10 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         AddView(_similarityPane);
 #endif
 
-        _phoneTopBar = new AndroidBarScrim(activity);
-        _phoneBottomBar = new AndroidBarScrim(activity);
-        _phoneLeadingBar = new AndroidBarScrim(activity);
-        _phoneTrailingBar = new AndroidBarScrim(activity);
+        _phoneTopBar = new AndroidBarScrim(activity, _photoMaterial);
+        _phoneBottomBar = new AndroidBarScrim(activity, _photoMaterial);
+        _phoneLeadingBar = new AndroidBarScrim(activity, _photoMaterial);
+        _phoneTrailingBar = new AndroidBarScrim(activity, _photoMaterial);
         // 栏背景压在照片之上、所有内容之下：手机形态的筛选、胶片条、分析栏与按钮都在它们上层。
         foreach (var bar in new[] { _phoneTopBar, _phoneBottomBar, _phoneLeadingBar, _phoneTrailingBar })
         {
@@ -305,7 +324,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         _phoneRating.Popup = _ratingPopup;
         _phoneRating.Visibility = ViewStates.Gone;
         AddView(_phoneRating);
-        _phoneExif = new AndroidExifBlock(activity);
+        _phoneExif = new AndroidExifBlock(activity, _photoMaterial);
         _phoneExif.ExifActivated += ShowExifTools;
         _phoneExif.Visibility = ViewStates.Gone;
         AddView(_phoneExif);
@@ -436,6 +455,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         _photo.PresentationFailed += reason => ShowStatus(
             StatusMessages.PresentationFailed(_main.CurrentFile?.Name, reason), DesignTokens.MotionStatusToastDuration);
         _photo.SurfaceReady += OnSurfaceReady;
+        _photo.PresentationFrameRendered += OnPresentationFrameRendered;
         _photo.ViewportChanged += OnPhotoViewportChanged;
         _photo.SwipeRequested += direction => Execute(direction < 0 ? "Previous" : "Next");
         _photo.TapRequested += OnPhotoTapped;
@@ -624,8 +644,8 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     /// <summary>宽形态：共享分区 + 大档胶片 + 流式控制栏；手机形态专属槽位全部隐藏。</summary>
     private void LayoutWide(double widthDp, double heightDp, double density)
     {
-        // SHELL-11：主图视图在所有形态下铺满窗口，照片落在适应区内。
-        LayoutChild(_photoPane, new LayoutRect(0, 0, widthDp, heightDp), density);
+        // SHELL-11：主图视图在所有形态下铺满窗口，照片落在适应区内；照片层同样显式铺满窗口。
+        LayoutChild(_photoLayer, new LayoutRect(0, 0, widthDp, heightDp), density);
         HidePhoneLayers();
         bool row = _main.IsRowLayout;
         bool filmVisible = _main.IsThumbnailViewVisible;
@@ -774,7 +794,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     /// </summary>
     private void LayoutPhone(double widthDp, double heightDp, double density)
     {
-        LayoutChild(_photoPane, new LayoutRect(0, 0, widthDp, heightDp), density);
+        LayoutChild(_photoLayer, new LayoutRect(0, 0, widthDp, heightDp), density);
         bool portrait = _form == ScreenForm.PhonePortrait;
         double button = DesignTokens.ShellGlassButtonSize;
         double rowInset = DesignTokens.ShellPhoneRowInset;
@@ -1071,6 +1091,38 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     {
         _photoReady = true;
         if (_startPending || _main.CurrentFile != null) StartSession();
+    }
+
+    /// <summary>
+    /// 主图真的出了一帧：让照片层自己失效，迫使下一次遍历执行
+    /// <see cref="LayerBackdropLayout.DispatchDraw"/> 并重录子树，从而触发 <c>Recorded</c>；
+    /// 材质失效仍统一由 <see cref="OnPhotoLayerRecorded"/> 按渲染代际门控。只由真实帧驱动，不引入定时重绘。
+    /// </summary>
+    private void OnPresentationFrameRendered()
+    {
+        if (_disposed) return;
+        _photoLayer.Invalidate();
+    }
+
+    /// <summary>
+    /// 照片层重录完成：只有主图真的换了一帧才让全部材质失效。切图、缩放拖动与表面重建后的新帧都会推进
+    /// <see cref="AndroidPhotoView.RenderedFrames"/>，因此都能跟上；按代际去重则挡住「材质失效 → 材质重绘 →
+    /// 再次遍历」的自触发重绘，不引入额外的连续重绘。
+    /// </summary>
+    private void OnPhotoLayerRecorded(object? sender, EventArgs e)
+    {
+        if (_disposed) return;
+        int frames = _photo.RenderedFrames;
+        if (frames == _materialFrames) return;
+        _materialFrames = frames;
+        _fileBar.Invalidate();
+        _controlBackground.Invalidate();
+        _phoneTopBar.Invalidate();
+        _phoneBottomBar.Invalidate();
+        _phoneLeadingBar.Invalidate();
+        _phoneTrailingBar.Invalidate();
+        _phoneExif.Invalidate();
+        _controlBar.ExifBlock.Invalidate();
     }
 
     private void OnPhotoViewportChanged()
@@ -2110,6 +2162,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             _disposed = true;
             _main.FitToViewRequested -= OnFitToViewRequested;
             _photo.SurfaceReady -= OnSurfaceReady;
+            _photo.PresentationFrameRendered -= OnPresentationFrameRendered;
             _photo.ViewportChanged -= OnPhotoViewportChanged;
             _session.Changed -= OnSessionChanged;
             _session.Notice -= OnSessionNotice;
@@ -2139,7 +2192,10 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             _analysisPane.TileCountChanged -= RequestLayout;
             _analysisPane.DetailChanged -= UpdateDetailHighlight;
             _analysisPresenter.Dispose();
+            _photoLayer.Recorded -= OnPhotoLayerRecorded;
+            _photo.AdditionalFootprint = null;
             _photo.Dispose();
+            _photoLayer.Dispose();
             _navigationToken++;
             _navigationBitmap?.Dispose();
             _navigationBitmap = null;

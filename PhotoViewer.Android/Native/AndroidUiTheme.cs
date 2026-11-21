@@ -22,6 +22,12 @@ internal static class AndroidUiTheme
     internal static readonly Color BarOverlay = Layer(DesignTokens.ColorBarOverlayAndroid, DesignTokens.ShellBarOverlayOpacityAndroid);
     /// <summary>主屏按钮常态底材（TOOLBAR-10）：白色染色按 <c>shell.glass.button.tint.opacity@android</c> 叠色，不降低内容不透明度。</summary>
     internal static readonly Color GlassButtonFill = Layer(DesignTokens.ColorToolbarButtonTint, DesignTokens.ShellGlassButtonTintOpacityAndroid);
+    /// <summary>
+    /// 带衬底 EXIF 块叠在照片层模糊上的深灰色层（SHELL-12@android）：
+    /// <c>color.toolbar.block.background</c> 按 <c>shell.glass.android.exif.tint.opacity@android</c> 降低不透明度；
+    /// API 24–30 不取样，仍用不透明正式色层。
+    /// </summary>
+    internal static readonly Color ExifGlassTint = Layer(DesignTokens.ColorToolbarBlockBackground, DesignTokens.ShellGlassAndroidExifTintOpacity);
     /// <summary>分隔线。</summary>
     internal static readonly Color Divider = FromToken(DesignTokens.ColorDivider);
     /// <summary>控件底色（白 2/15，浮层与下拉等系统外观）。</summary>

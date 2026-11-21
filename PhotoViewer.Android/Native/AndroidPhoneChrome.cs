@@ -15,6 +15,7 @@ using AndroidX.CustomView.Widget;
 using Google.Android.Material.Button;
 using Google.Android.Material.Card;
 using Google.Android.Material.Shape;
+using PhotoViewer.Android.Backdrop;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Input;
 using PhotoViewer.Core.Platform;
@@ -25,23 +26,51 @@ using PhotoViewer.ViewModels.Settings;
 namespace PhotoViewer.Android.Native;
 
 /// <summary>
-/// 栏位背景：中性灰独立色层承载（SHELL-12）。Android 没有对「应用内主图上取样模糊」的公开接口
-/// （<c>RenderEffect</c> 只作用于视图自身内容、<c>Window</c> 背景模糊会连窗口后面的系统界面一起模糊），
-/// 因此这里只铺 <c>color.bar.overlay</c> 与 <c>shell.bar.overlay.opacity</c> 的同一色层，
-/// 不做截屏、PixelCopy、离屏拷贝或自绘模糊。
+/// 栏位背景材质（SHELL-12@android）：API 31 及以上从共享照片层取样（提饱和 → 模糊）再叠
+/// <c>color.bar.overlay@android</c> × <c>shell.bar.overlay.opacity@android</c> 的同一栏底色层；
+/// API 24–30 不取样，只画这层正式色层。产品路径不截屏、不用 <c>PixelCopy</c>、不做离屏拷贝。
 /// </summary>
 internal sealed class AndroidBarScrim : View
 {
-    /// <summary>建一个中性灰色层栏背景。</summary>
+    private readonly AndroidPhotoMaterial? _material;
+    private readonly int[] _location = new int[2];
+
+    /// <summary>建一个栏底材质视图。</summary>
     /// <param name="context">宿主上下文。</param>
-    public AndroidBarScrim(Context context) : base(context)
+    /// <param name="material">共享照片层材质；null 表示不取样，只画色层（检查与低版本路径）。</param>
+    public AndroidBarScrim(Context context, AndroidPhotoMaterial? material = null) : base(context)
     {
-        SetBackgroundColor(AndroidUiTheme.BarOverlay);
+        _material = material;
         ImportantForAccessibility = ImportantForAccessibility.No;
     }
 
-    /// <summary>栏底实际颜色（验收读取）。</summary>
-    internal Color ColorForChecks => Background is ColorDrawable drawable ? drawable.Color : Color.Transparent;
+    /// <summary>栏底色层的实际颜色（验收读取）：两种分级都铺这层同一色层。</summary>
+    internal Color ColorForChecks => AndroidUiTheme.BarOverlay;
+
+    /// <summary>本视图是否走真实照片层材质（验收读取；API 24–30 恒为 false）。</summary>
+    internal bool UsesPhotoMaterialForChecks => _material is { IsRealMaterial: true };
+
+    /// <summary>本视图实际取样的源（验收读取：与根视图照片层同一份 <see cref="IBackdrop"/>；不取样时为 null）。</summary>
+    internal IBackdrop? BackdropSourceForChecks => _material?.Source;
+
+    /// <summary>绘制栏底材质：先裁到自身边界，取样后叠色层，save/restore 成对。</summary>
+    /// <param name="canvas">画布。</param>
+    protected override void OnDraw(Canvas canvas)
+    {
+        base.OnDraw(canvas);
+        // 取样画的是整层，必须先裁到本视图边界；漏了会画到别处，且 Canvas 裁剪不会自动收回。
+        int save = canvas.Save();
+        try
+        {
+            canvas.ClipRect(0, 0, Width, Height);
+            _material?.Draw(canvas, BackdropDrawContext.ForView(this, _location));
+            canvas.DrawColor(AndroidUiTheme.BarOverlay);
+        }
+        finally
+        {
+            canvas.RestoreToCount(save);
+        }
+    }
 }
 
 /// <summary>
@@ -1015,14 +1044,21 @@ internal sealed class AndroidRatingControl : MaterialCardView
 
 /// <summary>
 /// EXIF 摘要块（TOOLBAR-05）：项目、内边距与整项裁剪取共享 <see cref="ExifBlockGeometry"/>；
-/// 横排为带衬底的块（<c>color.toolbar.block.background</c> 圆角底），竖排无衬底变体直接放在栏背景上，
-/// 容器宽度为项目固有宽、文字在容器内尾部截断。整块只有一个点按目标并直达 EXIF 详情（TOOLBAR-06）。
+/// 横排为带衬底的块，竖排无衬底变体直接放在栏背景上，容器宽度为项目固有宽、文字在容器内尾部截断。
+/// 衬底按平台分级：API 31 及以上取共享照片层真模糊再叠 <c>color.toolbar.block.background</c> ×
+/// <c>shell.glass.android.exif.tint.opacity@android</c>（圆角由本视图画布裁出）；API 24–30 保留
+/// <c>color.toolbar.block.background</c> 的不透明圆角衬底。无衬底变体始终完全透明、不取样。
+/// 整块只有一个点按目标并直达 EXIF 详情（TOOLBAR-06）。
 /// </summary>
 internal sealed class AndroidExifBlock : View
 {
     private readonly Paint _labelPaint;
     private readonly Paint _valuePaint;
     private readonly MaterialShapeDrawable _backdrop;
+    private readonly AndroidPhotoMaterial? _material;
+    private readonly int[] _location = new int[2];
+    private readonly Path _materialClip = new();
+    private readonly RectF _materialBounds = new();
     private IReadOnlyList<ExifDisplayEntry> _items = Array.Empty<ExifDisplayEntry>();
     private int _visibleCount;
     private bool _horizontal = true;
@@ -1033,8 +1069,10 @@ internal sealed class AndroidExifBlock : View
 
     /// <summary>建 EXIF 块。</summary>
     /// <param name="context">宿主上下文。</param>
-    public AndroidExifBlock(Context context) : base(context)
+    /// <param name="material">共享照片层材质；null 表示不取样，只用正式色层（检查路径）。</param>
+    public AndroidExifBlock(Context context, AndroidPhotoMaterial? material = null) : base(context)
     {
+        _material = material;
         _labelPaint = AndroidUiTheme.TextPaint(context, DesignTokens.ToolbarExifLabelFontSize, AndroidUiTheme.TextSecondary);
         _valuePaint = AndroidUiTheme.TextPaint(context, DesignTokens.ToolbarExifValueFontSize, AndroidUiTheme.TextPrimary, bold: true);
         var shape = new ShapeAppearanceModel.Builder()
@@ -1057,6 +1095,15 @@ internal sealed class AndroidExifBlock : View
     /// <summary>是否使用衬底（验收读取）。</summary>
     internal bool HasBackdropForChecks => !_bare;
 
+    /// <summary>叠在照片层模糊上的深灰色层（验收读取；API 24–30 不取样，改用不透明色层）。</summary>
+    internal Color MaterialTintForChecks => AndroidUiTheme.ExifGlassTint;
+
+    /// <summary>本视图是否走真实照片层材质（验收读取；无衬底变体与 API 24–30 恒为 false）。</summary>
+    internal bool UsesPhotoMaterialForChecks => !_bare && _material is { IsRealMaterial: true };
+
+    /// <summary>本视图实际取样的源（验收读取：与根视图照片层同一份 <see cref="IBackdrop"/>；不取样时为 null）。</summary>
+    internal IBackdrop? BackdropSourceForChecks => UsesPhotoMaterialForChecks ? _material?.Source : null;
+
     /// <summary>实际显示的项数（整项裁剪后）。</summary>
     internal int ShownItemCount => Math.Min(_items.Count, Math.Max(0, _visibleCount));
 
@@ -1071,7 +1118,8 @@ internal sealed class AndroidExifBlock : View
         _horizontal = horizontal;
         _bare = bare;
         _visibleCount = Math.Clamp(visibleCount, 0, items.Count);
-        Background = bare ? null : _backdrop;
+        // 真实材质时不能留不透明衬底，否则会挡住模糊；无衬底变体始终透明。
+        Background = bare || UsesPhotoMaterialForChecks ? null : _backdrop;
         Invalidate();
     }
 
@@ -1098,6 +1146,7 @@ internal sealed class AndroidExifBlock : View
         base.OnDraw(canvas);
         int shown = ShownItemCount;
         if (shown <= 0 || Width < 1 || Height < 1) return;
+        if (UsesPhotoMaterialForChecks) DrawPhotoMaterial(canvas);
         float density = (float)AndroidUiTheme.Density(Context!);
         // 无衬底纵排按「完整块」的固有高度计算项目，再只画放得下的前几项；
         // 若把已裁短的外框高度当整块高度，各项会被垂直压缩。
@@ -1127,6 +1176,29 @@ internal sealed class AndroidExifBlock : View
             AndroidUiTheme.DrawCentered(canvas, item.DisplayName, _labelPaint, centerX, labelBaseline, Math.Min(width, Width));
             AndroidUiTheme.DrawCentered(canvas, item.DisplayValue, _valuePaint, centerX, valueBaseline, Math.Min(width, Width));
             canvas.Restore();
+        }
+    }
+
+    /// <summary>
+    /// 带衬底变体的真实材质：按本视图圆角裁出照片层取样，再叠深灰色层。
+    /// 圆角只在本视图画布上裁，不传给共享取样绘制器——那会改写所有取样方共用的离屏效果层录制。
+    /// </summary>
+    private void DrawPhotoMaterial(Canvas canvas)
+    {
+        float radius = AndroidUiTheme.Dp(Context!, DesignTokens.ToolbarExifCornerRadius);
+        _materialBounds.Set(0, 0, Width, Height);
+        _materialClip.Reset();
+        _materialClip.AddRoundRect(_materialBounds, radius, radius, Path.Direction.Cw!);
+        int save = canvas.Save();
+        try
+        {
+            canvas.ClipPath(_materialClip);
+            _material?.Draw(canvas, BackdropDrawContext.ForView(this, _location));
+            canvas.DrawColor(AndroidUiTheme.ExifGlassTint);
+        }
+        finally
+        {
+            canvas.RestoreToCount(save);
         }
     }
 }

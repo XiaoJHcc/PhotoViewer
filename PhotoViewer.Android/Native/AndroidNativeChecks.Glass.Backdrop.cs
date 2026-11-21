@@ -12,15 +12,18 @@ using IOPath = System.IO.Path;
 namespace PhotoViewer.Android.Native;
 
 /// <summary>
-/// <c>pv-check glass</c> 的取样组（SAMPLE）与多层组（LAYERS）——阶段 0 技术验证，验收专用。
+/// <c>pv-check glass</c> 的取样组（SAMPLE）与多层组（LAYERS）——阶段 0 的迁移层机制检查（legacy），验收专用。
 /// </summary>
 /// <remarks>
 /// <list type="bullet">
-/// <item>SAMPLE：用「真实」<see cref="AndroidPhotoView"/> 放进 <c>LayerBackdropLayout</c>，栏底取样条按上游配方
-/// （<c>vibrancy</c> → <c>blur</c> 8dp）取样，验证切图/缩放后取样实时更新、画面确实被模糊，并记录心跳。</item>
-/// <item>LAYERS：三层嵌套（屏幕 → 场景 → 照片），验证按钮下方的照片、滚过的卡片与窗口内面板各取到「正确的层」像素。</item>
+/// <item>这两组只在显式点名 <c>pv-glass-stage sample|layers</c> 时运行，**不再作为产品材质验收证据**：
+/// 产品材质（栏底与带衬底 EXIF）的验收在 <c>product</c> 组，直接跑真实主屏的照片层与共享材质。</item>
+/// <item>SAMPLE：用「另建」的 <see cref="AndroidPhotoView"/> 放进临时 <see cref="LayerBackdropLayout"/>，
+/// 栏底取样条按上游配方（<c>vibrancy</c> → <c>blur</c> 8dp）取样，验证切图/缩放后取样实时更新、画面确实被模糊，并记录心跳。</item>
+/// <item>LAYERS：三层嵌套（屏幕 → 场景 → 照片），验证按钮下方的照片、滚过的卡片与窗口内面板各取到「正确的层」像素；
+/// 三层属于阶段 3 范围，阶段 2 不据此下产品结论。</item>
 /// <item>阶段 0 只验取样与平台效果：不做 AGSL 折射、着色器高光、G2 形状与按压弹簧（属阶段 3）。</item>
-/// <item>检查 UI 只在本次运行期间装配，<c>using</c> 收尾整体拆除；两组的入口由 <c>glass</c> 宿主调用，产品路径不引用。</item>
+/// <item>检查 UI 只在本次运行期间装配，<c>using</c> 收尾整体拆除；产品路径不引用。</item>
 /// <item>无法自动判定的观感项写 <c>NOTE</c>，不计入 PASS/FAIL，也不拿相邻读数冒充通过。</item>
 /// </list>
 /// </remarks>
@@ -36,7 +39,8 @@ internal static partial class AndroidNativeChecks
     private const double GlassBackdropHeartbeatBudgetMs = 250;
 
     /// <summary>
-    /// SAMPLE 入口：异常收在本组内，不连带后面的 LAYERS 组（宿主按顺序直接调用本方法）。
+    /// SAMPLE 入口（legacy 机制检查，只在显式点名 <c>sample</c> 时运行）：异常收在本组内，
+    /// 不连带后面的 LAYERS 组（宿主按顺序直接调用本方法）。产品材质验收在 <c>product</c> 组。
     /// </summary>
     private static async Task RunGlassSampleChecksAsync()
     {
@@ -57,6 +61,9 @@ internal static partial class AndroidNativeChecks
     private static async Task RunGlassSampleChecksCoreAsync()
     {
         var activity = _activity ?? throw new InvalidOperationException("glass 取样检查缺少宿主 Activity");
+        GlassBackdropNote("glass 取样组定位",
+            "legacy 迁移层机制检查：挂临时舞台、另建原型主图，只在显式点名 sample 时运行；"
+            + "产品材质（栏底与带衬底 EXIF）的验收在 product 组，本组结论不作为产品验收证据");
         GlassBackdropNote("glass 平台分级", BackdropCapabilities.Describe());
 
         if (BackdropCapabilities.Tier == BackdropTier.ColorLayer)
@@ -235,7 +242,8 @@ internal static partial class AndroidNativeChecks
     }
 
     /// <summary>
-    /// LAYERS 入口：异常收在本组内，报告里记一条 FAIL 后正常返回。
+    /// LAYERS 入口（legacy 机制检查，只在显式点名 <c>layers</c> 时运行）：异常收在本组内，报告里记一条 FAIL 后正常返回。
+    /// 三层取样属阶段 3，阶段 2 不据此下产品结论。
     /// </summary>
     private static async Task RunGlassLayersChecksAsync()
     {
@@ -257,6 +265,9 @@ internal static partial class AndroidNativeChecks
     private static async Task RunGlassLayersChecksCoreAsync()
     {
         var activity = _activity ?? throw new InvalidOperationException("glass 多层检查缺少宿主 Activity");
+        GlassBackdropNote("glass 多层组定位",
+            "legacy 迁移层机制检查：三层嵌套属阶段 3 范围，只在显式点名 layers 时运行；"
+            + "阶段 2 的产品材质结论只取 product 组");
         GlassBackdropNote("glass 平台分级", BackdropCapabilities.Describe());
 
         if (BackdropCapabilities.Tier == BackdropTier.ColorLayer)

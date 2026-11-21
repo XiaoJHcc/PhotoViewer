@@ -154,10 +154,11 @@ internal sealed class AndroidControlBar : FrameLayout
     /// <summary>构建控制栏。</summary>
     /// <param name="context">宿主上下文。</param>
     /// <param name="main">共享主 VM。</param>
-    public AndroidControlBar(Context context, MainViewModel main) : base(context)
+    /// <param name="material">共享照片层材质（带衬底 EXIF 块取样用）；null 表示只用正式色层。</param>
+    public AndroidControlBar(Context context, MainViewModel main, AndroidPhotoMaterial? material = null) : base(context)
     {
         _main = main;
-        _exifView = new AndroidExifBlock(context);
+        _exifView = new AndroidExifBlock(context, material);
         _exifView.ExifActivated += () => _openTools?.Invoke();
         _exifView.Visibility = ViewStates.Gone;
         AddView(_exifView);

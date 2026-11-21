@@ -16,6 +16,17 @@ internal static class AndroidShellPreferences
     private const string ShowControlsKey = "PhotoViewer.Native.ShowControls";
     private const string ShowExifKey = "PhotoViewer.Native.ShowExif";
 
+    /// <summary>当前偏好存储名（默认为用户档；验收模式可切到隔离档）。</summary>
+    private static string _preferenceName = PreferenceName;
+
+    /// <summary>
+    /// 切到隔离档：验收/压测换用独立的 SharedPreferences，栏位显隐等界面偏好不读也不覆盖用户档，
+    /// 每轮从默认值（全部显示）起跑。必须在根视图读取栏位显隐之前调用。
+    /// </summary>
+    /// <param name="profile">档名；空值恢复用户档。</param>
+    internal static void UseIsolatedProfile(string profile)
+        => _preferenceName = string.IsNullOrWhiteSpace(profile) ? PreferenceName : PreferenceName + "." + profile;
+
     /// <summary>读取文件栏显隐。</summary>
     /// <returns>已存值；未存过时为 true（默认显示）。</returns>
     internal static bool LoadShowFilm() => Load(ShowFilmKey);
@@ -81,7 +92,7 @@ internal static class AndroidShellPreferences
     private static void Save(string key, bool value) => SaveBool(key, value);
 
     private static ISharedPreferences? Preferences()
-        => Application.Context.GetSharedPreferences(PreferenceName, FileCreationMode.Private);
+        => Application.Context.GetSharedPreferences(_preferenceName, FileCreationMode.Private);
 }
 
 /// <summary>
