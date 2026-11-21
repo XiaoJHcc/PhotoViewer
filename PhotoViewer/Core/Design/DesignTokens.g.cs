@@ -641,8 +641,10 @@ public static class DesignTokens
     public const double ShellAnalysisDividerThickness = 1.0;
     /// <summary>shell.bar.acrylic.luminosityOpacityMax（ratio） SHELL-12：Windows 主窗口交换链应用内亚克力的亮度层不透明度上限。使用主题原值和上限中较低者；不改变色调、噪点、回退或模糊。</summary>
     public const double ShellBarAcrylicLuminosityOpacityMax = 0.8;
-    /// <summary>shell.bar.blur.radius（pt） SHELL-12：窗口内栏位背景模糊半径。</summary>
+    /// <summary>shell.bar.blur.radius（pt） SHELL-12：窗口内栏位背景模糊半径；Android 为栏底与带衬底 EXIF 取样的照片层模糊半径。</summary>
     public const double ShellBarBlurRadius = 30.0;
+    /// <summary>shell.bar.blur.radius@android（pt）：android 平台差异值（见 Design/platforms.md）。</summary>
+    public const double ShellBarBlurRadiusAndroid = 8.0;
     /// <summary>shell.bar.blur.radius@macos（pt）：macos 平台差异值（见 Design/platforms.md）。</summary>
     public const double ShellBarBlurRadiusMac = 30.0;
     /// <summary>shell.bar.overlay.opacity（ratio） SHELL-12：主屏栏底独立色层的不透明度；基准值供 Web。</summary>
@@ -657,6 +659,10 @@ public static class DesignTokens
     public const double ShellFilebarContentWidth = 116.0;
     /// <summary>shell.filter.leadingInset（pt） SHELL-02：Windows 与 macOS 列布局筛选条首控件顶边让位 = shell.titlebar.height + filter.margin（避开标题栏与窗口控件）；iOS/Android 使用真实安全区与普通 filter.margin。行布局整组居中，Android 仅在自然宽度溢出时前导起排并滚动。</summary>
     public const double ShellFilterLeadingInset = 42.0;
+    /// <summary>shell.glass.android.bar.vibrancy.saturation（ratio） SHELL-12：Android 栏底与带衬底 EXIF 的照片层取样提饱和倍数（vibrancy），在模糊之前应用。</summary>
+    public const double ShellGlassAndroidBarVibrancySaturation = 1.5;
+    /// <summary>shell.glass.android.exif.tint.opacity（ratio） TOOLBAR-05：Android API 31+ 照片层模糊衬底上的 EXIF 深灰色层不透明度，叠在 color.toolbar.block.background 上；API 24–30 不取样，仍用不透明正式色层。0.80 为首版校准起点，后续只能凭纯黑 / 50% 灰 / 纯白三色实测调整。</summary>
+    public const double ShellGlassAndroidExifTintOpacity = 0.8;
     /// <summary>shell.glass.button.size（pt） SHELL-08：圆玻璃按钮与合体按钮每段的边长；同时保证 44×44 的最小命中区。</summary>
     public const double ShellGlassButtonSize = 44.0;
     /// <summary>shell.glass.button.tint.opacity（ratio） TOOLBAR-10：主屏按钮常态底材染色的不透明度，不降低按钮内容不透明度；基准值供 Web。</summary>
