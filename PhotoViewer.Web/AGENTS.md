@@ -35,7 +35,7 @@ src/
     edition.js          # 版本能力（EDITION-01/02/03）：standard 无 DINO 与相似聚类
     tokens.js           # 按平台配置档取令牌（缺令牌立即抛错）
     clock.js            # 可注入的时间源与定时器（单测用假时钟）
-    settings.js         # 设置模型默认值（只取 spec/settings.md 中影响主屏的项）
+    settings.js         # 设置模型默认值（含宽/手机形态命令默认）与手机命令选择（SETTINGS-08）
     library.js          # 合成照片库
     filter.js           # 同名合并、格式、星级筛选、排序、暂留、锚点翻页
     rating.js           # 星级来源模型：内嵌/已有 sidecar 来源、组级冲突、筛选投影与写入预检
@@ -53,7 +53,7 @@ src/
       partition.js      # 宽形态行/列与手机竖/横分区、适应区、材质与分隔线
       filterbar.js      # FILTER-04/07@web 宽形态三段/单胶囊、手机竖屏两图标按钮与横屏 88 合体、AI 开关
       film.js / card.js # 两档胶片卡片与列表文档；位置/滚动业务仍取 filmscroll.js
-      controlbar.js     # EXIF→评分→命令、44 按钮、评分恒 224 展开态、竖排 EXIF 无衬底 52、手机固定槽位
+      controlbar.js     # EXIF→评分→命令、44 按钮、评分恒 224 展开态、竖排 EXIF 无衬底 52、手机可选命令合体（0–3）
       analysis.js       # 瓦片等边长与独立/工具区相邻交叉轴
       similarity.js     # 相似面板让位（大档卡片）
       ratingpopover.js  # 星级来源浮窗

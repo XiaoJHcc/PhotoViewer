@@ -79,8 +79,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private iOSMenuButton _phoneFilterSegment = null!;
     private iOSMenuButton _phoneMoreSegment = null!;
     private iOSGlassButtonGroup _phoneNavigation = null!;
-    private iOSGlassButtonGroup _phoneFitEnhance = null!;
-    private UIButton _phoneEnhanceSegment = null!;
+    private iOSPhoneCommandGroup _phoneCommands = null!;
     private iOSRatingControl _phoneRating = null!;
     private iOSExifBlock _phoneExif = null!;
     private iOSGlassContainer _phoneGlass = null!;
@@ -266,8 +265,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
     internal iOSGlassButtonGroup PhoneFilterMoreGroup => _phoneFilterMore;
     /// <summary>手机形态上下张合体。</summary>
     internal iOSGlassButtonGroup PhoneNavigationGroup => _phoneNavigation;
-    /// <summary>手机形态缩放适应/雾天增强合体。</summary>
-    internal iOSGlassButtonGroup PhoneFitEnhanceGroup => _phoneFitEnhance;
+    /// <summary>手机形态可选命令组（零至三段，竖屏横向、横屏纵向）。</summary>
+    internal iOSPhoneCommandGroup PhoneCommandsGroup => _phoneCommands;
     /// <summary>手机形态星级控件（与宽形态控制栏共用同一实现）。</summary>
     internal iOSRatingControl PhoneRatingControl => _phoneRating;
     /// <summary>手机形态 EXIF 块（验收读取项数、标签与几何）。</summary>
@@ -287,8 +286,12 @@ internal sealed class iOSNativeRootViewController : UIViewController
     internal FilmSideMeasure FilmSide { get; private set; }
     internal CGRect FilmEntryBandFrame { get; private set; }
     internal CGRect ControlBandFrame => new(
-        _notchOnLeft ? (double)_stage.Bounds.Width - ToolRegionGeometry.Padding - DesignTokens.ShellGlassButtonSize : ToolRegionGeometry.Padding,
-        0, DesignTokens.ShellGlassButtonSize, _stage.Bounds.Height);
+        _notchOnLeft ? (double)_stage.Bounds.Width - ToolRegionGeometry.Padding - ControlContentSize : ToolRegionGeometry.Padding,
+        0, ControlContentSize, _stage.Bounds.Height);
+
+    /// <summary>横屏控制列的内容宽：可选命令与圆按钮取较大边长（iOS 两者同为 44）。</summary>
+    private static double ControlContentSize => Math.Max(DesignTokens.ShellGlassButtonSize, DesignTokens.ShellPhoneCommandSize);
+
     /// <summary>更多菜单展开时取用的主图菜单子项（与主图长按菜单同一入口）。</summary>
     /// <returns>主图菜单的顶层子项。</returns>
     internal UIMenuElement[] PhotoMenuItems() => BuildPhotoMenu().Menu.Children;
@@ -986,6 +989,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
         var (exifWidth, exifHeight) = portrait
             ? ExifBlockGeometry.Size(enabledExif.Count, horizontal: true)
             : ExifBlockGeometry.Size(enabledExif.Count, horizontal: false, bare: true);
+        // 生效命令先由共享解析：槽位数量与按钮内容必须同源，横竖切换只改排布方向。
+        var phoneCommands = ResolvePhoneCommands();
+        SyncPhoneCommands(phoneCommands);
         PhoneLayoutInput Input(EdgeInsets lead, EdgeInsets control) => new(
             Landscape: !portrait,
             NotchOnLeft: _notchOnLeft,
@@ -1012,7 +1018,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
             EdgeMargin: DesignTokens.ShellPhoneEdgeMargin,
             RowInset: rowInset,
             GroupGap: DesignTokens.ShellGlassGroupGap,
-            ShowRating: _main.Settings.ShowRating);
+            ShowRating: _main.Settings.ShowRating,
+            CommandCount: phoneCommands.Length,
+            CommandButtonSize: DesignTokens.ShellPhoneCommandSize);
 
         // 先按系统安全区搭一份输入：贴角带的探测位置只取决于窗口、安全区与显隐（不依赖带本身）。
         var provisional = Input(plain, plain);
@@ -1144,10 +1152,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
         iOSViewGeometry.SetRectIfNeeded(_phoneNavigation, ToFrame(slots.Navigation));
         _phoneNavigation.LayoutIfNeeded();
 
-        _phoneFitEnhance.Vertical = !portrait;
-        _phoneFitEnhance.Hidden = !Has(slots.FitEnhance);
-        iOSViewGeometry.SetRectIfNeeded(_phoneFitEnhance, ToFrame(slots.FitEnhance));
-        _phoneFitEnhance.LayoutIfNeeded();
+        _phoneCommands.Vertical = !portrait;
+        _phoneCommands.Hidden = !Has(slots.Commands);
+        iOSViewGeometry.SetRectIfNeeded(_phoneCommands, ToFrame(slots.Commands));
+        _phoneCommands.LayoutIfNeeded();
 
         // 显示评分关闭时共享几何移除槽位，其余内容按可见分组排布。
         _phoneRating.Horizontal = portrait;
@@ -1173,7 +1181,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _phoneMore.Hidden = true;
         _phoneFilterMore.Hidden = true;
         _phoneNavigation.Hidden = true;
-        _phoneFitEnhance.Hidden = true;
+        _phoneCommands.Hidden = true;
         _phoneRating.Hidden = true;
         _phoneExif.Hidden = true;
     }
@@ -1352,7 +1360,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
                 hotkey.SecondaryHotkey == null ? null : hotkey.SecondaryHotkeyText);
     }
 
-    /// <summary>建立手机形态的固定操作控件：单圆筛选/更多、横屏合体、上下张、缩放增强、星级控件（同一玻璃容器内）与 EXIF 块。</summary>
+    /// <summary>建立手机形态的操作控件：单圆筛选/更多、横屏合体、上下张、可选命令组、星级控件（同一玻璃容器内）与 EXIF 块。</summary>
     /// <param name="host">主屏舞台。</param>
     private void BuildPhoneControls(UIView host)
     {
@@ -1374,10 +1382,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _phoneNavigation.Add(AppleSymbolNames.ForCommand("Previous")!, CommandLabel("Previous"), () => Execute("Previous"));
         _phoneNavigation.Add(AppleSymbolNames.ForCommand("Next")!, CommandLabel("Next"), () => Execute("Next"));
 
-        _phoneFitEnhance = new iOSGlassButtonGroup();
-        _phoneFitEnhance.Add(AppleSymbolNames.ForCommand("Fit")!, CommandLabel("Fit"), () => Execute("Fit"));
-        _phoneEnhanceSegment = _phoneFitEnhance.Add(
-            AppleSymbolNames.ForCommand("ToggleEnhance")!, CommandLabel("ToggleEnhance"), () => Execute("ToggleEnhance"));
+        _phoneCommands = new iOSPhoneCommandGroup { SegmentLength = DesignTokens.ShellPhoneCommandSize };
 
         _phoneRating = new iOSRatingControl();
         _phoneExif = new iOSExifBlock { Tapped = ShowExifTools };
@@ -1385,7 +1390,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         // 全部玻璃控件放进同一个玻璃容器：同一取样区域渲染，按压放大时与相邻玻璃按系统液态效果融合。
         // EXIF 块是模糊材质，不进玻璃容器。
         _phoneGlass = new iOSGlassContainer(DesignTokens.ShellGlassContainerSpacing);
-        foreach (var view in new UIView[] { _phoneFilterGlass, _phoneMore, _phoneFilterMore, _phoneNavigation, _phoneFitEnhance, _phoneRating })
+        foreach (var view in new UIView[] { _phoneFilterGlass, _phoneMore, _phoneFilterMore, _phoneNavigation, _phoneCommands, _phoneRating })
         {
             view.Hidden = true;
             _phoneGlass.ContentView.AddSubview(view);
@@ -1422,11 +1427,30 @@ internal sealed class iOSNativeRootViewController : UIViewController
         UIDeferredMenuElement.CreateUncached(completion => completion(PhotoMenuItems())),
     });
 
-    /// <summary>雾天增强开关的强调态：开启时该段用系统强调色，关闭回默认前景色。</summary>
+    /// <summary>雾天增强开关的强调态：开启时承载该命令的按钮用系统强调色，关闭回默认前景色；不改变几何与命中区。</summary>
     private void UpdatePhoneEnhanceState()
     {
         if (!_phoneControlsBuilt) return;
-        iOSGlassButtons.SetEmphasized(_phoneEnhanceSegment, _session.IsEnhanced, View!.TintColor ?? UIColor.SystemBlue);
+        _phoneCommands.SetEmphasized("ToggleEnhance", _session.IsEnhanced, View!.TintColor ?? UIColor.SystemBlue);
+    }
+
+    /// <summary>手机形态生效命令：勾选顺序经共享 <c>PhoneControlCommands</c> 解析（跳过未勾选项，组合开关开启时跳过独立上下张，最多三项）。</summary>
+    /// <returns>生效命令标识，顺序即排布顺序。</returns>
+    private string[] ResolvePhoneCommands()
+        => PhoneControlCommands.Resolve(
+            _main.ControlVM.EnabledControls.Select(hotkey => hotkey.Command),
+            _main.Settings.ShowNavigationButtons);
+
+    /// <summary>同步手机可选命令组：按钮按命令复用，读屏名称含实际绑定，无照片时除打开文件外禁用。</summary>
+    /// <param name="commands">生效命令标识。</param>
+    private void SyncPhoneCommands(IReadOnlyList<string> commands)
+    {
+        if (!_phoneControlsBuilt) return;
+        _phoneCommands.Sync(commands, CommandLabel,
+            command => string.Equals(command, "Open", StringComparison.Ordinal) || _main.CurrentFile != null,
+            Execute);
+        // 新建或换回的命令按钮没有上一轮的强调态：按当前增强状态补一次（只改内容，不碰几何）。
+        UpdatePhoneEnhanceState();
     }
 
     /// <summary>摆好主图区的空态提示、错误详情与导航图（设置入口已由长按上下文菜单承担）。</summary>

@@ -15,7 +15,8 @@ namespace PhotoViewer.Android.Native;
 /// <summary>
 /// 设置页可勾选可排序表（SETTINGS-15）：RecyclerView + ItemTouchHelper 拖拽，
 /// 行尾把手是拖动载体；把手轻点打开「上移/下移」菜单，作为不拖拽的等价入口（SETTINGS-13）。
-/// 表自身不滚动，高度由行数决定，滚动交给设置页。
+/// 表自身不滚动，高度由行数决定，滚动交给设置页。SETTINGS-17 的「上一张/下一张」也用本表承载，
+/// 但它是只有一行的独立卡片、不显示把手，排序只发生在完整命令表内。
 /// </summary>
 internal sealed class AndroidSettingsReorderList : RecyclerView
 {
@@ -88,6 +89,24 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
     /// <summary>重新绑定所有行（外设连接变化或录制状态变化，不重建页面）。</summary>
     internal void NotifyAllRowsChanged() => _adapter.NotifyDataSetChanged();
 
+    /// <summary>验收：点按指定行的勾选框，走真实的 CheckedChange 与工作副本写回路径。</summary>
+    /// <param name="position">行位置。</param>
+    /// <returns>行已实现并派发点按时 true。</returns>
+    internal bool ToggleCheckForChecks(int position)
+    {
+        if (position < 0 || position >= _count()) return false;
+        for (int index = 0; index < ChildCount; index++)
+        {
+            if (GetChildAt(index) is RowView row && GetChildAdapterPosition(row) == position
+                && row.Width > 0)
+            {
+                row.ToggleCheckForChecks();
+                return true;
+            }
+        }
+        return false;
+    }
+
     /// <summary>读取指定行真实视图的绑定可见性与读屏文本（验收使用）。</summary>
     internal RowSnapshot? SnapshotForChecks(int position)
     {
@@ -131,7 +150,10 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
         bool IconVisible,
         string IconSymbol,
         int CheckToIconGap,
-        int IconToTitleGap);
+        int IconToTitleGap,
+        bool CheckInactive,
+        double CheckAlpha,
+        bool HandleVisible);
 
     /// <summary>行布局快照（验收）：行高、勾选字形对齐、图标语义与文本容纳；仅供验收断言。</summary>
     internal readonly record struct RowLayoutSnapshot(
@@ -150,7 +172,9 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
         bool TitleEllipsized,
         bool SubtitleEllipsized,
         bool PrimaryChipEllipsized,
-        bool SecondaryChipEllipsized);
+        bool SecondaryChipEllipsized,
+        bool CheckInactive,
+        double CheckAlpha);
 
     private static string HotkeyBinding(string text, bool conflict) => conflict ? $"{text}（冲突）" : text;
 
@@ -176,6 +200,8 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
         {
             if (args.Item?.ItemId == 0) MoveRow(position, position - 1);
             else if (args.Item?.ItemId == 1) MoveRow(position, position + 1);
+            // SETTINGS-08：手机形态可排序表的未生效勾号随新顺序即时重算。
+            NotifyAllRowsChanged();
         };
         menu.Show();
     }
@@ -187,9 +213,10 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
             Action<bool> setChecked, string? accessibilityDescription = null,
             SettingsViewModel.HotkeyItem? hotkey = null, Func<bool>? recordingEnabled = null,
             Action<bool>? beginRecording = null, Action<bool>? clearBinding = null,
-            Func<bool, bool>? isRecording = null, bool showHandle = true)
+            Func<bool, bool>? isRecording = null, bool showHandle = true, Func<bool>? inactiveCheck = null)
         {
             ShowHandle = showHandle;
+            InactiveCheck = inactiveCheck;
             Title = title;
             Subtitle = subtitle;
             GetChecked = getChecked;
@@ -219,6 +246,8 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
         internal Func<bool, bool>? IsRecording { get; }
         /// <summary>是否显示行尾排序把手；单项开关行（上一张/下一张）为 false。</summary>
         internal bool ShowHandle { get; }
+        /// <summary>已勾选但当前形态下不生效（手机形态仅淡化勾号，行与勾选仍可操作）。</summary>
+        internal Func<bool>? InactiveCheck { get; }
     }
 
     /// <summary>设配器：行数取工作副本，内容在绑定时读取。</summary>
@@ -255,6 +284,7 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
     {
         private readonly AndroidSettingsReorderList _owner;
         private readonly MaterialCheckBox _check;
+        private readonly global::Android.Content.Res.ColorStateList? _defaultCheckTint;
         private readonly AndroidCommandIconView _icon;
         private readonly LinearLayout _column;
         private readonly TextView _title;
@@ -292,6 +322,7 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
             var line = new LinearLayout(context) { Orientation = Orientation.Horizontal };
             line.SetGravity(GravityFlags.CenterVertical);
             _check = new MaterialCheckBox(context);
+            _defaultCheckTint = _check.ButtonTintList;
             _check.CheckedChange += (_, args) =>
             {
                 if (_binding) return;
@@ -429,6 +460,13 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
             _binding = true;
             _check.Checked = item.GetChecked();
             _binding = false;
+            // SETTINGS-08：手机形态勾选但未在控制栏生效的命令只淡化勾号（浅灰白、低不透明度），
+            // 行、把手与勾选操作照常可用；读屏在 UpdateDescription 里区分实际显示状态。
+            bool inactive = item.GetChecked() && (item.InactiveCheck?.Invoke() ?? false);
+            _check.Alpha = inactive ? (float)DesignTokens.SettingsPhoneInactiveCheckOpacity : 1f;
+            _check.ButtonTintList = inactive
+                ? global::Android.Content.Res.ColorStateList.ValueOf(AndroidUiTheme.TextPrimary)
+                : _defaultCheckTint;
             // SETTINGS-15：快捷键行只有显示键鼠绑定控件时才按标准行高；纯触控与 EXIF 表保持单行紧凑，
             // 文件格式行带扩展名副文本，直接按标准行高。
             ApplyRowMetrics(compact: item.Hotkey != null
@@ -504,6 +542,8 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
             if (_item == null) return;
             string description = _item.AccessibilityDescription
                 ?? $"{_item.Title}，{(_item.GetChecked() ? "已启用" : "未启用")}";
+            if (_item.GetChecked() && _item.InactiveCheck?.Invoke() == true)
+                description += "，未在手机控制栏显示";
             bool editable = _item.RecordingEnabled?.Invoke() ?? false;
             if (editable && _item.Hotkey is { } hotkey)
             {
@@ -521,6 +561,7 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
         internal RowSnapshot Snapshot()
         {
             bool bindings = _bindings.Visibility == ViewStates.Visible;
+            bool inactive = (_item?.GetChecked() ?? false) && (_item?.InactiveCheck?.Invoke() ?? false);
             return new RowSnapshot(bindings, _subtitle.Visibility == ViewStates.Visible,
                 _subtitle.Text ?? string.Empty, ContentDescription ?? string.Empty,
                 _primaryChip.Text ?? string.Empty, _secondaryChip.Text ?? string.Empty,
@@ -528,20 +569,27 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
                 _icon.Visibility == ViewStates.Visible,
                 _icon.Symbol,
                 _icon.Left - _check.Right,
-                _column.Left - _icon.Right);
+                _column.Left - _icon.Right,
+                inactive, _check.Alpha,
+                _handle.Visibility == ViewStates.Visible);
         }
+
+        /// <summary>验收：点按勾选框，走与用户点按相同的写回路径。</summary>
+        internal void ToggleCheckForChecks() => _check.PerformClick();
 
         /// <summary>行布局快照（验收）：行高、勾选字形对齐、图标语义与文本容纳。</summary>
         internal RowLayoutSnapshot LayoutSnapshot()
         {
             int glyph = (int)AndroidUiTheme.Dp(Context!, CheckBoxGlyphSizeDp);
+            bool inactive = (_item?.GetChecked() ?? false) && (_item?.InactiveCheck?.Invoke() ?? false);
             return new RowLayoutSnapshot(Height, MinimumHeight, _check.Width,
                 ((View)_check.Parent!).Left + _check.Left + Math.Max(0, (_check.Width - glyph) / 2),
                 _icon.Visibility == ViewStates.Visible, _icon.Symbol, _icon.RatingDigit, _icon.SolidGlyph,
                 _icon.FontSizeSp, _icon.GlyphTextSizePx, _icon.ImportantForAccessibility == ImportantForAccessibility.No,
                 _subtitle.Visibility == ViewStates.Visible,
                 _title.Ellipsize != null, _subtitle.Ellipsize != null,
-                _primaryChip.Ellipsize != null, _secondaryChip.Ellipsize != null);
+                _primaryChip.Ellipsize != null, _secondaryChip.Ellipsize != null,
+                inactive, _check.Alpha);
         }
     }
 
@@ -591,6 +639,13 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
         }
 
         public override void OnSwiped(RecyclerView.ViewHolder viewHolder, int direction) { }
+
+        // SETTINGS-08：拖拽结束按最终顺序重算手机形态的未生效勾号；拖动过程中不打断 ItemTouchHelper。
+        public override void ClearView(RecyclerView recyclerView, RecyclerView.ViewHolder viewHolder)
+        {
+            base.ClearView(recyclerView, viewHolder);
+            recyclerView.Post(_owner.NotifyAllRowsChanged);
+        }
 
         // SETTINGS-15：拖动只由行尾把手触发，整行长按不误触。
         public override bool IsLongPressDragEnabled => false;

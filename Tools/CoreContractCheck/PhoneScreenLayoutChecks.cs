@@ -115,6 +115,35 @@ internal static class PhoneScreenLayoutChecks
         RunLeadBandIsolationChecks(c, landscape: true);
         RunNarrowCardChecks(c);
         RunFilmSideColumnChecks(c);
+        RunOptionalCommands(c);
+    }
+
+    private static void RunOptionalCommands(Checks c)
+    {
+        var portrait = Input(PortraitSizes[0], false, true, true, true, false, false, true, false)
+            with { CommandButtonSize = 48 };
+        var landscape = Input(LandscapeSizes[0], true, true, true, true, true, true, true, true)
+            with { CommandButtonSize = 48 };
+        foreach (int count in new[] { 0, 1, 2, 3, 4 })
+        {
+            double length = Math.Min(count, 3) * 48;
+            var row = PhoneScreenLayout.Compute(portrait with { CommandCount = count });
+            var column = PhoneScreenLayout.Compute(landscape with { CommandCount = count });
+            var mirror = PhoneScreenLayout.Compute(landscape with { CommandCount = count, NotchOnLeft = false });
+            c.Equal($"SHELL-08 可选命令长度 x{count}", length, row.Commands.Width);
+            c.Equal($"SHELL-09 可选命令长度 x{count}", length, column.Commands.Height);
+            if (count == 0)
+                c.Equal("没有可选命令也没有尾部组距", 390 - ControlLeft(PortraitSizes[0]), row.Rating.MaxX);
+            else
+            {
+                c.Equal($"Android 可选命令占 48dp x{count}", 48d, column.Commands.Width);
+                c.Equal($"可选命令与评分同轴 x{count}", column.Rating.X + 22, column.Commands.X + 24);
+                c.Equal($"可选命令横屏镜像 x{count}", landscape.Width - column.Commands.MaxX, mirror.Commands.X);
+            }
+        }
+        var empty = PhoneScreenLayout.Compute(portrait with { ShowRating = false, ShowNavigation = false, CommandCount = 0 });
+        var hidden = PhoneScreenLayout.Compute(portrait with { ControlVisible = false });
+        c.Equal("空控制行不占胶片栏高度", hidden.Filmstrip, empty.Filmstrip);
     }
 
     private static void RunGrid(Checks c, SizeCase size, bool landscape)
@@ -362,7 +391,7 @@ internal static class PhoneScreenLayoutChecks
             expectedTop = Has(layout.TopBar) ? layout.TopBar.MaxY : rowBottom + RowInset;
             expectedRight = input.Safe.Right;
             expectedBottom = Has(layout.BottomBar) ? input.Height - layout.BottomBar.Y
-                : input.ControlVisible ? input.Height - (layout.FitEnhance.Y - RowInset)
+                : input.ControlVisible ? input.Height - (layout.Commands.Y - RowInset)
                 : 0;
         }
 
@@ -433,7 +462,7 @@ internal static class PhoneScreenLayoutChecks
         // 底行可见时胶片条下缘直接落在底行上缘，共享层不再让出第二份行内间距；
         // 底行隐藏时贴 Home 指示条余量给出的下缘。
         double expectedFilmBottom = input.ControlVisible
-            ? layout.FitEnhance.Y
+            ? layout.Commands.Y
             : input.Height - BottomGap(input);
         if (!Near(filmstrip.MaxY, expectedFilmBottom))
             problems.Add(label + $"竖屏胶片条下缘 {filmstrip.MaxY:0.##}，应为 {expectedFilmBottom:0.##}");
@@ -522,7 +551,7 @@ internal static class PhoneScreenLayoutChecks
         if (Has(layout.Rating) != (input.ControlVisible && input.ShowRating))
             problems.Add(label + "星级存在性与控制栏开关/评分显示不一致");
 
-        if (Has(layout.FitEnhance) != input.ControlVisible)
+        if (Has(layout.Commands) != input.ControlVisible)
             problems.Add(label + "缩放增强存在性与控制栏开关不一致");
 
         if (input.Landscape)
@@ -692,17 +721,17 @@ internal static class PhoneScreenLayoutChecks
         // 控制区（EXIF 可见项 + 星级 + 两按钮）同轴、整组在可用纵向区间居中，星级槽位封顶展开态固有长度。
         double columnTop = Math.Max(input.Safe.Top, input.ControlBand.Top) + ToolPadding;
         double columnBottom = input.Height - Math.Max(input.Safe.Bottom, input.ControlBand.Bottom) - ToolPadding;
-        if (Has(layout.Rating) && Has(layout.FitEnhance))
+        if (Has(layout.Rating) && Has(layout.Commands))
         {
             double groupTop = Has(layout.Exif) ? layout.Exif.Y : layout.Rating.Y;
-            if (!Near(groupTop - columnTop, columnBottom - layout.FitEnhance.MaxY)
-                || groupTop < columnTop - Epsilon || layout.FitEnhance.MaxY > columnBottom + Epsilon)
+            if (!Near(groupTop - columnTop, columnBottom - layout.Commands.MaxY)
+                || groupTop < columnTop - Epsilon || layout.Commands.MaxY > columnBottom + Epsilon)
             {
-                problems.Add(label + "横屏控制栏整组未在可用纵向区间居中 " + RectText(layout.FitEnhance));
+                problems.Add(label + "横屏控制栏整组未在可用纵向区间居中 " + RectText(layout.Commands));
             }
 
             if ((Has(layout.Exif) && layout.Exif.MaxY > layout.Rating.Y + Epsilon)
-                || layout.Rating.MaxY > layout.FitEnhance.Y + Epsilon)
+                || layout.Rating.MaxY > layout.Commands.Y + Epsilon)
                 problems.Add(label + "横屏控制列次序应为 EXIF → 星级 → 缩放增强 " + RectText(layout.Rating));
             if (layout.Rating.Height > RatingControlGeometry.ExpandedLength + Epsilon)
                 problems.Add(label + $"横屏星级槽位 {layout.Rating.Height:0.##} 超过展开态固有长度");
@@ -728,20 +757,20 @@ internal static class PhoneScreenLayoutChecks
 
         if (!Near(layout.Exif.Width, LandscapeExifWidth(input)))
             problems.Add(label + "横屏 EXIF 无衬底列宽应取固有项宽且不超过按钮与两侧边距之和 " + RectText(layout.Exif));
-        if (!Near(layout.Exif.X + layout.Exif.Width / 2, layout.FitEnhance.X + ButtonSize / 2))
+        if (!Near(layout.Exif.X + layout.Exif.Width / 2, layout.Commands.X + ButtonSize / 2))
             problems.Add(label + "横屏 EXIF 列未与按钮同中轴");
         if (Has(layout.Rating) && layout.Exif.MaxY > layout.Rating.Y + Epsilon)
             problems.Add(label + "横屏 EXIF 列压到星级 " + RectText(layout.Exif));
 
         // 控制按钮列外缘距窗口缘一份工具区内边距，且不避让对称安全内缩。
-        if (!Near(layout.FitEnhance.MaxX, input.Width - ToolPadding)
-            || (Has(layout.Rating) && !Near(layout.Rating.MaxX, layout.FitEnhance.MaxX)))
+        if (!Near(layout.Commands.MaxX, input.Width - ToolPadding)
+            || (Has(layout.Rating) && !Near(layout.Rating.MaxX, layout.Commands.MaxX)))
         {
-            problems.Add(label + "控制列外缘应距窗口缘工具区内边距 " + RectText(layout.FitEnhance));
+            problems.Add(label + "控制列外缘应距窗口缘工具区内边距 " + RectText(layout.Commands));
         }
 
-        if (layout.FitEnhance.X < safe.Left - Epsilon)
-            problems.Add(label + "控制列越出刘海侧安全区 " + RectText(layout.FitEnhance));
+        if (layout.Commands.X < safe.Left - Epsilon)
+            problems.Add(label + "控制列越出刘海侧安全区 " + RectText(layout.Commands));
     }
 
     /// <summary>
@@ -798,7 +827,7 @@ internal static class PhoneScreenLayoutChecks
             ("EXIF", layout.Exif, mirrored.Exif),
             ("上下张", layout.Navigation, mirrored.Navigation),
             ("星级", layout.Rating, mirrored.Rating),
-            ("缩放增强", layout.FitEnhance, mirrored.FitEnhance),
+            ("缩放增强", layout.Commands, mirrored.Commands),
             ("胶片条", layout.Filmstrip, mirrored.Filmstrip),
             ("分析栏", layout.Analysis, mirrored.Analysis),
             ("刘海侧栏", layout.LeadingBar, mirrored.LeadingBar),
@@ -853,10 +882,10 @@ internal static class PhoneScreenLayoutChecks
 
             var filled = Has(withNavigation.Rating)
                 && Near(withNavigation.Rating.X, withNavigation.Navigation.MaxX + GroupGap)
-                && Near(withNavigation.Rating.MaxX, withNavigation.FitEnhance.X - GroupGap)
+                && Near(withNavigation.Rating.MaxX, withNavigation.Commands.X - GroupGap)
                 && Has(withoutNavigation.Rating)
                 && Near(withoutNavigation.Rating.X, controlLeft)
-                && Near(withoutNavigation.Rating.MaxX, withoutNavigation.FitEnhance.X - GroupGap);
+                && Near(withoutNavigation.Rating.MaxX, withoutNavigation.Commands.X - GroupGap);
 
             c.True(size.Name + " 竖屏星级填满两侧按钮之间", filled,
                 $"有上下张 {RectText(withNavigation.Rating)}，无上下张 {RectText(withoutNavigation.Rating)}");
@@ -881,10 +910,10 @@ internal static class PhoneScreenLayoutChecks
 
             SameRect(problems, "上下张（胶片栏关闭）", layout.Navigation, noFilm.Navigation);
             SameRect(problems, "星级（胶片栏关闭）", layout.Rating, noFilm.Rating);
-            SameRect(problems, "缩放增强（胶片栏关闭）", layout.FitEnhance, noFilm.FitEnhance);
+            SameRect(problems, "缩放增强（胶片栏关闭）", layout.Commands, noFilm.Commands);
             SameRect(problems, "上下张（EXIF 关闭）", layout.Navigation, noExif.Navigation);
             SameRect(problems, "星级（EXIF 关闭）", layout.Rating, noExif.Rating);
-            SameRect(problems, "缩放增强（EXIF 关闭）", layout.FitEnhance, noExif.FitEnhance);
+            SameRect(problems, "缩放增强（EXIF 关闭）", layout.Commands, noExif.Commands);
 
             c.True(size.Name + " 竖屏底行几何不随胶片栏与 EXIF 开关变化",
                 problems.Count == 0, Detail(problems));
@@ -906,7 +935,7 @@ internal static class PhoneScreenLayoutChecks
 
             foreach (var (name, other) in new[] { ("胶片栏关闭", noFilm), ("上下张关闭", noNavigation), ("两者都关闭", noBoth) })
             {
-                SameRect(problems, "缩放增强（" + name + "）", layout.FitEnhance, other.FitEnhance);
+                SameRect(problems, "缩放增强（" + name + "）", layout.Commands, other.Commands);
                 SameRect(problems, "星级（" + name + "）", layout.Rating, other.Rating);
                 SameRect(problems, "EXIF（" + name + "）", layout.Exif, other.Exif);
                 SameRect(problems, "控制栏背景（" + name + "）", layout.TrailingBar, other.TrailingBar);
@@ -920,7 +949,7 @@ internal static class PhoneScreenLayoutChecks
 
             c.True(size.Name + " 横屏分析栏紧贴控制区栏缘并铺满控制栏背景左缘",
                 Near(layout.Analysis.X, layout.TrailingBar.X)
-                    && Near(layout.Analysis.MaxX, layout.FitEnhance.X)
+                    && Near(layout.Analysis.MaxX, layout.Commands.X)
                     && Near(layout.TrailingBar.MaxX, size.Width)
                     && Near(layout.TrailingBar.Y, 0)
                     && Near(layout.TrailingBar.MaxY, size.Height),
@@ -928,15 +957,15 @@ internal static class PhoneScreenLayoutChecks
                 + $"背景 {RectText(layout.TrailingBar)}，EXIF {RectText(layout.Exif)}");
 
             c.True(size.Name + " 横屏控制列外缘距窗口缘一份工具区内边距且星级不短于紧凑态最短长度",
-                Near(layout.FitEnhance.MaxX, size.Width - ToolPadding)
+                Near(layout.Commands.MaxX, size.Width - ToolPadding)
                     && Near(layout.Rating.MaxX, size.Width - ToolPadding)
                     && layout.Rating.Height >= RatingControlGeometry.CompactMinLength - Epsilon,
-                $"增强 {RectText(layout.FitEnhance)}，星级 {RectText(layout.Rating)}");
+                $"增强 {RectText(layout.Commands)}，星级 {RectText(layout.Rating)}");
 
             var noExif = PhoneScreenLayout.Compute(input with { ExifVisible = false });
             c.True(size.Name + " 横屏无 EXIF 时控制栏背景改从分析栏左缘起画、分析栏贴控制按钮列缘",
                 !Has(noExif.Exif)
-                    && Near(noExif.Analysis.MaxX, noExif.FitEnhance.X)
+                    && Near(noExif.Analysis.MaxX, noExif.Commands.X)
                     && Near(noExif.TrailingBar.X, noExif.Analysis.X)
                     && Near(noExif.TrailingBar.MaxX, size.Width)
                     && Near(noExif.TrailingBar.MaxY, size.Height),
@@ -945,9 +974,9 @@ internal static class PhoneScreenLayoutChecks
             // EXIF 开关不改变控制列宽：无衬底容器按固有项宽与按钮同轴，只收起那一列并让整组重新居中。
             c.True(size.Name + " 横屏 EXIF 开关不改变控制列宽（分析栏、星级列、右栏背景与主图避让）",
                 Near(layout.Exif.Width, LandscapeExifWidth(input))
-                    && Near(layout.Exif.X + layout.Exif.Width / 2, layout.FitEnhance.X + ButtonSize / 2)
-                    && Near(layout.FitEnhance.X, noExif.FitEnhance.X)
-                    && Near(layout.FitEnhance.Width, noExif.FitEnhance.Width)
+                    && Near(layout.Exif.X + layout.Exif.Width / 2, layout.Commands.X + ButtonSize / 2)
+                    && Near(layout.Commands.X, noExif.Commands.X)
+                    && Near(layout.Commands.Width, noExif.Commands.Width)
                     && SameRectQuiet(layout.Analysis, noExif.Analysis)
                     && SameRectQuiet(layout.TrailingBar, noExif.TrailingBar)
                     && Near(layout.Rating.X, noExif.Rating.X) && Near(layout.Rating.MaxX, noExif.Rating.MaxX)
@@ -957,20 +986,20 @@ internal static class PhoneScreenLayoutChecks
 
             var noAnalysis = PhoneScreenLayout.Compute(input with { AnalysisVisible = false });
             c.True(size.Name + " 横屏分析开关只改变控制区前导内边距，不移动按钮列或避让口径",
-                Near(noAnalysis.FitEnhance.X, layout.FitEnhance.X)
+                Near(noAnalysis.Commands.X, layout.Commands.X)
                     && Near(noAnalysis.Rating.X, layout.Rating.X)
                     && Near(noAnalysis.Exif.X, layout.Exif.X)
                     && Near(noAnalysis.TrailingBar.X,
                         size.Width - ControlRegionWidth(input with { AnalysisVisible = false }))
                     && Near(noAnalysis.PhotoAvoidance.Right,
                         ControlRegionWidth(input with { AnalysisVisible = false })),
-                $"按钮列 {layout.FitEnhance.X:0.##}/{noAnalysis.FitEnhance.X:0.##}，"
+                $"按钮列 {layout.Commands.X:0.##}/{noAnalysis.Commands.X:0.##}，"
                 + $"栏背景 {RectText(layout.TrailingBar)} / {RectText(noAnalysis.TrailingBar)}，"
                 + $"避让右 {layout.PhotoAvoidance.Right:0.##} / {noAnalysis.PhotoAvoidance.Right:0.##}");
 
             var noControl = PhoneScreenLayout.Compute(input with { ControlVisible = false });
             c.True(size.Name + " 横屏控制栏关闭时星级与 EXIF 一起消失、分析栏贴窗口外缘且右栏背景仍铺满",
-                !Has(noControl.Rating) && !Has(noControl.Exif) && !Has(noControl.FitEnhance)
+                !Has(noControl.Rating) && !Has(noControl.Exif) && !Has(noControl.Commands)
                     && Near(noControl.Analysis.MaxX, size.Width)
                     && Near(noControl.Analysis.X, size.Width - AnalysisCross)
                     && Near(noControl.TrailingBar.X, noControl.Analysis.X)
@@ -1004,37 +1033,37 @@ internal static class PhoneScreenLayoutChecks
                 RatingControlGeometry.ExpandedLength,
                 Math.Max(0, columnBottom - columnTop - ToolGroupSpacing - ButtonSize * 2));
             double topMargin = layout.Rating.Y - columnTop;
-            double bottomMargin = columnBottom - layout.FitEnhance.MaxY;
+            double bottomMargin = columnBottom - layout.Commands.MaxY;
 
             c.True(size.Name + " 横屏无 EXIF 长列：星级封顶 224、整组居中，封顶后末端不贴底",
                 Near(layout.Rating.Height, expected)
                     && layout.Rating.Height <= RatingControlGeometry.ExpandedLength + Epsilon
                     && Near(topMargin, bottomMargin) && topMargin >= -Epsilon
                     && (expected < RatingControlGeometry.ExpandedLength - Epsilon || bottomMargin > Epsilon),
-                $"星级 {RectText(layout.Rating)}，增强 {RectText(layout.FitEnhance)}，"
+                $"星级 {RectText(layout.Rating)}，增强 {RectText(layout.Commands)}，"
                 + $"上/下余量 {topMargin:0.##}/{bottomMargin:0.##}，期望槽位 {expected:0.##}");
 
             c.True(size.Name + " 横屏无 EXIF 长列：刘海两向镜像纵向口径一致",
-                Near(layout.FitEnhance.Y, mirrored.FitEnhance.Y)
+                Near(layout.Commands.Y, mirrored.Commands.Y)
                     && Near(layout.Rating.Height, mirrored.Rating.Height)
                     && Near(size.Width - mirrored.Rating.MaxX, layout.Rating.X)
                     && Near(size.Width - mirrored.Rating.X, layout.Rating.MaxX),
-                $"左 {RectText(layout.Rating)} / 增强 {RectText(layout.FitEnhance)}，"
-                + $"右 {RectText(mirrored.Rating)} / 增强 {RectText(mirrored.FitEnhance)}");
+                $"左 {RectText(layout.Rating)} / 增强 {RectText(layout.Commands)}，"
+                + $"右 {RectText(mirrored.Rating)} / 增强 {RectText(mirrored.Commands)}");
 
             // EXIF 开关：无衬底列按固有项宽与按钮同轴，整组随 EXIF 出现与否重新居中。
             var withExif = PhoneScreenLayout.Compute(input with { ExifVisible = true });
             double exifTopMargin = withExif.Exif.Y - columnTop;
-            double exifBottomMargin = columnBottom - withExif.FitEnhance.MaxY;
+            double exifBottomMargin = columnBottom - withExif.Commands.MaxY;
             c.True(size.Name + " 横屏 EXIF 开关保持同轴、整组重新居中",
                 Has(withExif.Exif)
                     && Near(withExif.Exif.Width, LandscapeExifWidth(input))
-                    && Near(withExif.Exif.X + withExif.Exif.Width / 2, withExif.FitEnhance.X + ButtonSize / 2)
+                    && Near(withExif.Exif.X + withExif.Exif.Width / 2, withExif.Commands.X + ButtonSize / 2)
                     && Near(withExif.Rating.X, layout.Rating.X)
                     && Near(withExif.Rating.MaxX, layout.Rating.MaxX)
                     && Near(exifTopMargin, exifBottomMargin),
                 $"EXIF {RectText(withExif.Exif)}，星级 {RectText(withExif.Rating)}，"
-                + $"增强 {RectText(withExif.FitEnhance)}，上/下余量 {exifTopMargin:0.##}/{exifBottomMargin:0.##}");
+                + $"增强 {RectText(withExif.Commands)}，上/下余量 {exifTopMargin:0.##}/{exifBottomMargin:0.##}");
 
             var cornerProblems = new List<string>();
             foreach (double corner in new[] { 6d, 20d, 26d, 34d })
@@ -1045,9 +1074,9 @@ internal static class PhoneScreenLayoutChecks
                 });
                 double bottom = size.Height - corner - ToolPadding;
                 double top = cornered.Rating.Y - columnTop;
-                double margin = bottom - cornered.FitEnhance.MaxY;
-                if (cornered.FitEnhance.MaxY > bottom + Epsilon)
-                    cornerProblems.Add($"圆角 {corner:0.##} 时末端 {cornered.FitEnhance.MaxY:0.##} 越出区间 {bottom:0.##}");
+                double margin = bottom - cornered.Commands.MaxY;
+                if (cornered.Commands.MaxY > bottom + Epsilon)
+                    cornerProblems.Add($"圆角 {corner:0.##} 时末端 {cornered.Commands.MaxY:0.##} 越出区间 {bottom:0.##}");
                 if (!Near(top, margin))
                     cornerProblems.Add($"圆角 {corner:0.##} 时上/下余量 {top:0.##}/{margin:0.##} 不居中");
             }
@@ -1074,12 +1103,12 @@ internal static class PhoneScreenLayoutChecks
             double rowBottom = layout.Filter.MaxY;
             var problems = new List<string>();
 
-            if (!Near(layout.Filmstrip.MaxY, layout.FitEnhance.Y))
+            if (!Near(layout.Filmstrip.MaxY, layout.Commands.Y))
             {
-                problems.Add($"胶片条下缘 {layout.Filmstrip.MaxY:0.##} 应等于底行上缘 {layout.FitEnhance.Y:0.##}");
+                problems.Add($"胶片条下缘 {layout.Filmstrip.MaxY:0.##} 应等于底行上缘 {layout.Commands.Y:0.##}");
             }
 
-            if (!Near(layout.FitEnhance.Y - (layout.Filmstrip.MaxY - PortraitCardTrail), PortraitCardTrail))
+            if (!Near(layout.Commands.Y - (layout.Filmstrip.MaxY - PortraitCardTrail), PortraitCardTrail))
                 problems.Add("胶片条与底行之间应只隔卡片交叉轴内边距一份");
             if (!Near(PortraitCardTrail, RowInset))
                 problems.Add($"卡片交叉轴内边距 {PortraitCardTrail} 与行内间距 {RowInset} 不同");
@@ -1141,7 +1170,7 @@ internal static class PhoneScreenLayoutChecks
             if (!Near(noControl.FilmstripPadding.Left, RowInset)
                 || !Near(noControl.FilmstripPadding.Right, RowInset))
                 matrix.Add("控制栏关闭不应改变胶片条两端留白");
-            if (Has(noControl.Navigation) || Has(noControl.Rating) || Has(noControl.FitEnhance))
+            if (Has(noControl.Navigation) || Has(noControl.Rating) || Has(noControl.Commands))
                 matrix.Add("控制栏关闭时底行元素应全部消失");
             if (!Has(noControl.BottomBar) || !Near(noControl.BottomBar.Y, noControl.Filmstrip.Y)
                 || !Near(noControl.BottomBar.MaxY, size.Height))
@@ -1155,17 +1184,17 @@ internal static class PhoneScreenLayoutChecks
                 || !Near(noExif.TopBar.MaxY, noExif.Analysis.MaxY))
                 matrix.Add("无 EXIF 时分析栏仍应紧贴顶行下缘且顶栏覆盖到分析栏下缘");
 
-            if (!Has(pureControl.Rating) || !Has(pureControl.FitEnhance)
+            if (!Has(pureControl.Rating) || !Has(pureControl.Commands)
                 || Has(pureControl.Analysis) || Has(pureControl.TopBar))
                 matrix.Add("纯控制栏不应有分析栏与顶栏背景");
             if (!Near(pureControl.PhotoAvoidance.Top, pureControl.Filter.MaxY + RowInset))
                 matrix.Add("纯控制栏时主图上避让应取顶行下缘 + 行内间距");
 
-            if (!Near(widened.Filmstrip.MaxY, widened.FitEnhance.Y)
+            if (!Near(widened.Filmstrip.MaxY, widened.Commands.Y)
                 || !Near(widened.FilmstripPadding.Left, RowInset)
                 || !Near(widened.FilmstripPadding.Right, RowInset))
                 matrix.Add("底行贴角带加宽后胶片条应贴行移动而两端留白不变");
-            if (widened.FitEnhance.Y >= layout.FitEnhance.Y - Epsilon)
+            if (widened.Commands.Y >= layout.Commands.Y - Epsilon)
                 matrix.Add("底行贴角带加宽后底行上缘应随之上移");
             if (!Near(widened.Analysis.Y, rowBottom)
                 || !Near(widened.Analysis.Y, widened.Filter.MaxY))
@@ -1304,8 +1333,8 @@ internal static class PhoneScreenLayoutChecks
         c.True("横屏 874×402 裁剪后星级仍保住紧凑态最短长度且整组刚好填满可用区间",
             six.Rating.Height >= RatingControlGeometry.CompactMinLength - Epsilon
                 && Near(six.Exif.Y, 28)
-                && Near(six.FitEnhance.MaxY, size.Height - size.ControlBand.Bottom - ToolPadding),
-            $"星级高 {six.Rating.Height:0.##}，EXIF 上缘 {six.Exif.Y:0.##}，结束 {six.FitEnhance.MaxY:0.##}");
+                && Near(six.Commands.MaxY, size.Height - size.ControlBand.Bottom - ToolPadding),
+            $"星级高 {six.Rating.Height:0.##}，EXIF 上缘 {six.Exif.Y:0.##}，结束 {six.Commands.MaxY:0.##}");
 
         var shortSize = LandscapeSizes.Single(caseSize => caseSize.Name == "1024×320");
         var shortLayout = ExifLayout(shortSize, 4);
@@ -1371,7 +1400,7 @@ internal static class PhoneScreenLayoutChecks
             if (!Has(shown.Rating)) problems.Add("评分开启时应有星级槽");
             if (Has(hidden.Rating)) problems.Add("评分关闭时不应保留星级槽 " + RectText(hidden.Rating));
             SameRect(problems, "上下张（评分关闭）", shown.Navigation, hidden.Navigation);
-            SameRect(problems, "缩放增强（评分关闭）", shown.FitEnhance, hidden.FitEnhance);
+            SameRect(problems, "缩放增强（评分关闭）", shown.Commands, hidden.Commands);
             SameRect(problems, "EXIF（评分关闭）", shown.Exif, hidden.Exif);
             SameRect(problems, "胶片条（评分关闭）", shown.Filmstrip, hidden.Filmstrip);
             SameRect(problems, "分析栏（评分关闭）", shown.Analysis, hidden.Analysis);
@@ -1402,14 +1431,14 @@ internal static class PhoneScreenLayoutChecks
             if (Has(hidden.Exif))
             {
                 // EXIF 与命令之间只剩一组间距，整组仍在可用区间居中。
-                if (!Near(hidden.Exif.MaxY + ToolGroupSpacing, hidden.FitEnhance.Y))
+                if (!Near(hidden.Exif.MaxY + ToolGroupSpacing, hidden.Commands.Y))
                     problems.Add($"EXIF 与命令之间应只有一组间距 {ToolGroupSpacing}，"
-                        + $"实际 {(hidden.FitEnhance.Y - hidden.Exif.MaxY):0.##}");
-                if (!Near(hidden.Exif.Y - columnTop, columnBottom - hidden.FitEnhance.MaxY))
+                        + $"实际 {(hidden.Commands.Y - hidden.Exif.MaxY):0.##}");
+                if (!Near(hidden.Exif.Y - columnTop, columnBottom - hidden.Commands.MaxY))
                     problems.Add("评分关闭后 EXIF 与命令整组未在可用区间居中");
             }
 
-            if (!Near(hidden.FitEnhance.X, shown.FitEnhance.X)
+            if (!Near(hidden.Commands.X, shown.Commands.X)
                 || !Near(hidden.Exif.X, shown.Exif.X)
                 || !Near(hidden.Analysis.X, shown.Analysis.X)
                 || !Near(hidden.Analysis.Width, shown.Analysis.Width)
@@ -1424,9 +1453,9 @@ internal static class PhoneScreenLayoutChecks
 
             if (Has(mirrored.Rating))
                 problems.Add("刘海在右且评分关闭时不应有星级槽");
-            var expectedMirror = new LayoutRect(size.Width - hidden.FitEnhance.X - hidden.FitEnhance.Width,
-                hidden.FitEnhance.Y, hidden.FitEnhance.Width, hidden.FitEnhance.Height);
-            if (!NearRect(expectedMirror, mirrored.FitEnhance))
+            var expectedMirror = new LayoutRect(size.Width - hidden.Commands.X - hidden.Commands.Width,
+                hidden.Commands.Y, hidden.Commands.Width, hidden.Commands.Height);
+            if (!NearRect(expectedMirror, mirrored.Commands))
                 problems.Add("刘海在右且评分关闭时命令组未镜像");
             if (!Near(mirrored.PhotoAvoidance.Right, hidden.PhotoAvoidance.Left)
                 || !Near(mirrored.Analysis.X, size.Width - hidden.Analysis.MaxX))
@@ -1446,10 +1475,10 @@ internal static class PhoneScreenLayoutChecks
         c.True("横屏 874×402 六项 EXIF：关闭评分后从三项升到六项、只剩一组间距且星级槽消失",
             releaseShown.ExifItems == 3 && releaseHidden.ExifItems == 6
                 && !Has(releaseHidden.Rating)
-                && Near(releaseHidden.Exif.MaxY + ToolGroupSpacing, releaseHidden.FitEnhance.Y)
+                && Near(releaseHidden.Exif.MaxY + ToolGroupSpacing, releaseHidden.Commands.Y)
                 && Near(releaseHidden.Exif.X, releaseShown.Exif.X),
             $"显示项 {releaseShown.ExifItems} → {releaseHidden.ExifItems}，"
-            + $"EXIF {RectText(releaseHidden.Exif)}，增强 {RectText(releaseHidden.FitEnhance)}");
+            + $"EXIF {RectText(releaseHidden.Exif)}，增强 {RectText(releaseHidden.Commands)}");
     }
 
     private static void RunProbeChecks(Checks c)
@@ -1487,12 +1516,12 @@ internal static class PhoneScreenLayoutChecks
                         PhoneScreenLayout.LeadStripWidth(input))
                     && Near(strip, 54)
                     && Near(PhoneScreenLayout.ControlStripWidth(input with { ExifVisible = false }), strip)
-                    && Near(size.Width - strip, layout.FitEnhance.X)
+                    && Near(size.Width - strip, layout.Commands.X)
                     && (!Has(layout.Exif)
-                        || Near(layout.Exif.X + layout.Exif.Width / 2, layout.FitEnhance.X + ButtonSize / 2))
+                        || Near(layout.Exif.X + layout.Exif.Width / 2, layout.Commands.X + ButtonSize / 2))
                     && Near(standaloneStrip, 64)
                     && Near(size.Width - standaloneStrip, standalone.TrailingBar.X)
-                    && Near(standalone.TrailingBar.X + ToolPadding, standalone.FitEnhance.X),
+                    && Near(standalone.TrailingBar.X + ToolPadding, standalone.Commands.X),
                 $"刘海列 {PhoneScreenLayout.LeadStripWidth(input):0.##}，"
                 + $"胶片栏关闭后 {PhoneScreenLayout.LeadStripWidth(input with { FilmVisible = false }):0.##}，"
                 + $"关闭胶片栏后入口右缘 {ear.FilterMoreGroup.MaxX:0.##}，"
@@ -1522,13 +1551,13 @@ internal static class PhoneScreenLayoutChecks
 
         c.True("iPhone 17 竖屏 402×874：底行压进 Home 指示条余量、底距 26",
             Near(portraitLayout.Navigation.Y, 804)
-                && Near(portrait.Height - portraitLayout.FitEnhance.MaxY, 26),
-            $"上下张 {RectText(portraitLayout.Navigation)}，增强 {RectText(portraitLayout.FitEnhance)}");
+                && Near(portrait.Height - portraitLayout.Commands.MaxY, 26),
+            $"上下张 {RectText(portraitLayout.Navigation)}，增强 {RectText(portraitLayout.Commands)}");
 
         c.True("iPhone 17 竖屏 402×874：底行两端距窗口缘 22.33（贴角带 6.33 + 边距 16）",
             Near(portraitLayout.Navigation.X, 22.33)
-                && Near(portrait.Width - portraitLayout.FitEnhance.MaxX, 22.33),
-            $"上下张 {RectText(portraitLayout.Navigation)}，增强 {RectText(portraitLayout.FitEnhance)}");
+                && Near(portrait.Width - portraitLayout.Commands.MaxX, 22.33),
+            $"上下张 {RectText(portraitLayout.Navigation)}，增强 {RectText(portraitLayout.Commands)}");
 
         c.True("iPhone 17 竖屏 402×874：顶行 EXIF 在筛选与更多之间等分压缩到 190",
             Near(portraitLayout.Exif.X, 144) && Near(portraitLayout.Exif.Width, 190)
@@ -1547,7 +1576,7 @@ internal static class PhoneScreenLayoutChecks
 
         c.True("iPhone 17 竖屏 402×874：胶片条 712..804 贴底行、两端留白 8、底栏自 712 铺到窗口下缘",
             Near(portraitLayout.Filmstrip.Y, 712) && Near(portraitLayout.Filmstrip.MaxY, 804)
-                && Near(portraitLayout.Filmstrip.MaxY, portraitLayout.FitEnhance.Y)
+                && Near(portraitLayout.Filmstrip.MaxY, portraitLayout.Commands.Y)
                 && Near(portraitLayout.FilmstripPadding.Left, RowInset)
                 && Near(portraitLayout.FilmstripPadding.Right, RowInset)
                 && Near(portraitLayout.BottomBar.Y, 712)
@@ -1572,16 +1601,16 @@ internal static class PhoneScreenLayoutChecks
             $"分析 {RectText(landscapeLayout.Analysis)}，栏背景 {RectText(landscapeLayout.TrailingBar)}");
 
         c.True("iPhone 17 横屏 874×402：控制列外缘距窗口右缘一份工具区内边距（864）",
-            Near(landscapeLayout.FitEnhance.MaxX, 864)
+            Near(landscapeLayout.Commands.MaxX, 864)
                 && Near(landscapeLayout.Rating.MaxX, 864),
-            $"增强 {RectText(landscapeLayout.FitEnhance)}");
+            $"增强 {RectText(landscapeLayout.Commands)}");
 
         c.True("iPhone 17 横屏 874×402：控制区自上而下 EXIF 28/星级 150/增强 284，星级 124",
             Near(landscapeLayout.Exif.Y, 28) && Near(landscapeLayout.Rating.Y, 150)
-                && Near(landscapeLayout.Rating.Height, 124) && Near(landscapeLayout.FitEnhance.Y, 284)
-                && Near(landscapeLayout.FitEnhance.Height, 88),
+                && Near(landscapeLayout.Rating.Height, 124) && Near(landscapeLayout.Commands.Y, 284)
+                && Near(landscapeLayout.Commands.Height, 88),
             $"EXIF {RectText(landscapeLayout.Exif)}，星级 {RectText(landscapeLayout.Rating)}，"
-            + $"增强 {RectText(landscapeLayout.FitEnhance)}");
+            + $"增强 {RectText(landscapeLayout.Commands)}");
 
         c.True("iPhone 17 横屏 874×402：EXIF 无衬底列取固有项宽 52 并与按钮同轴、无额外内外边距",
             Near(landscapeLayout.Exif.Width, DesignTokens.ToolbarExifItemWidth)
@@ -1591,10 +1620,10 @@ internal static class PhoneScreenLayoutChecks
             $"EXIF {RectText(landscapeLayout.Exif)}，显示项 {landscapeLayout.ExifItems}");
 
         c.True("iPhone 17 横屏 874×402：分析栏与控制区共边（接缝 8 在分析区末端内）",
-            Near(landscapeLayout.Analysis.MaxX, landscapeLayout.FitEnhance.X)
+            Near(landscapeLayout.Analysis.MaxX, landscapeLayout.Commands.X)
                 && Near(landscapeLayout.Analysis.Width, AnalysisCross)
                 && Near(landscapeLayout.Analysis.MaxX, 874 - 54),
-            $"分析 {RectText(landscapeLayout.Analysis)}，增强 {RectText(landscapeLayout.FitEnhance)}");
+            $"分析 {RectText(landscapeLayout.Analysis)}，增强 {RectText(landscapeLayout.Commands)}");
 
         c.True("iPhone 17 横屏 874×402：卡片贴刘海安全区 62（胶片条 54 + 内边距 8）",
             Near(landscapeLayout.Filmstrip.X, 54)
@@ -1657,7 +1686,7 @@ internal static class PhoneScreenLayoutChecks
                 if (!Near(PhoneScreenLayout.LeadStripWidth(widened), PhoneScreenLayout.LeadStripWidth(input)))
                     problems.Add("贴角带加大不应改变刘海侧列宽");
 
-                SameRect(problems, "缩放增强", baseline.FitEnhance, layout.FitEnhance);
+                SameRect(problems, "缩放增强", baseline.Commands, layout.Commands);
                 SameRect(problems, "星级", baseline.Rating, layout.Rating);
                 SameRect(problems, "EXIF", baseline.Exif, layout.Exif);
                 SameRect(problems, "分析栏", baseline.Analysis, layout.Analysis);
@@ -1684,7 +1713,7 @@ internal static class PhoneScreenLayoutChecks
                 SameRect(problems, "更多", baseline.More, layout.More);
                 SameRect(problems, "上下张", baseline.Navigation, layout.Navigation);
                 SameRect(problems, "星级", baseline.Rating, layout.Rating);
-                SameRect(problems, "缩放增强", baseline.FitEnhance, layout.FitEnhance);
+                SameRect(problems, "缩放增强", baseline.Commands, layout.Commands);
                 SameRect(problems, "分析栏", baseline.Analysis, layout.Analysis);
                 SameRect(problems, "顶栏", baseline.TopBar, layout.TopBar);
                 SameRect(problems, "胶片条", baseline.Filmstrip, layout.Filmstrip);
@@ -1971,7 +2000,8 @@ internal static class PhoneScreenLayoutChecks
             ButtonSize: ButtonSize,
             EdgeMargin: EdgeMargin,
             RowInset: RowInset,
-            GroupGap: GroupGap);
+            GroupGap: GroupGap,
+            CommandCount: 2);
     }
 
     private static double ControlLeft(SizeCase size)
@@ -2021,7 +2051,7 @@ internal static class PhoneScreenLayoutChecks
         ("EXIF", layout.Exif, false),
         ("上下张", layout.Navigation, true),
         ("星级", layout.Rating, false),
-        ("缩放增强", layout.FitEnhance, true),
+        ("缩放增强", layout.Commands, true),
     ];
 
     private static (string Name, LayoutRect Rect, bool IsButton)[] Elements(in PhoneLayout layout) =>
@@ -2031,7 +2061,7 @@ internal static class PhoneScreenLayoutChecks
         ("EXIF", layout.Exif, false),
         ("上下张", layout.Navigation, true),
         ("星级", layout.Rating, false),
-        ("缩放增强", layout.FitEnhance, true),
+        ("缩放增强", layout.Commands, true),
         ("分析栏", layout.Analysis, false),
     ];
 
@@ -2040,7 +2070,7 @@ internal static class PhoneScreenLayoutChecks
     [
         ("EXIF", layout.Exif),
         ("星级", layout.Rating),
-        ("缩放增强", layout.FitEnhance),
+        ("缩放增强", layout.Commands),
     ];
 
     private static LayoutRect[] Bars(in PhoneLayout layout) =>

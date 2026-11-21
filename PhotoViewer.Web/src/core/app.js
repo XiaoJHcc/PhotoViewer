@@ -24,8 +24,8 @@ import { AnalysisPresenter } from "./analysis.js";
 import { DisabledSimilarityPanel, SimilarityPanel } from "./similarity.js";
 import { editionCapabilities, normalizeEdition } from "./edition.js";
 import { CommandMap, KeyDispatcher, WheelInterpreter, gestureFromMouse, gestureText, tooltipText, WHEEL_PIXEL_NOTCH } from "./input.js";
-import { defaultSettings } from "./settings.js";
-import { computeLayout, approximateTextWidth } from "./layout/index.js";
+import { defaultSettings, phoneCommandSelection, commandDefaultDisplay } from "./settings.js";
+import { computeLayout, approximateTextWidth, resolveScreenForm } from "./layout/index.js";
 import { formatExifDetail, formatExifValue } from "./exifformat.js";
 
 const SETTINGS_KEY = "PhotoViewer.Settings";
@@ -188,6 +188,7 @@ class MainApp {
         this._store = store ?? NULL_STORE;
 
         this._settings = this._loadSettings(settings);
+        this._commandDefaultsForm = null;
         this._window = { width: 0, height: 0 };
         this._safeArea = { top: 0, right: 0, bottom: 0, left: 0, source: "env" };
         this._panes = {
@@ -870,6 +871,7 @@ class MainApp {
 
     updateSettings(patch) {
         if (!patch || typeof patch !== "object") return false;
+        if (Array.isArray(patch.hotkeys)) this._commandDefaultsConfigured = true;
         // EDITION-06：标准版只提交可编辑的 CV 开关与通用设置，隐藏的 DINO/相似值原样保留。
         let nextPatch = patch;
         if (!this._capabilities.dino || !this._capabilities.similarity) {
@@ -1207,11 +1209,39 @@ class MainApp {
             exifCount: toolbar.exif.length,
             showRating: this._settings.showRating,
             commandCount: toolbar.commands.length,
+            phoneCommandCount: toolbar.phoneCommands.length,
             analysisTileCount: this._analysis.tiles().length,
         };
     }
 
+    _resolveCommandDefaults() {
+        if (this._window.width <= 0) return;
+        // SETTINGS-08：同一壳在宽/手机形态下都能跑，命令表默认勾选随实际形态取；已有设置文档
+        // 或显式传入的命令配置不在此改写。
+        const form = resolveScreenForm({
+            width: this._window.width,
+            height: this._window.height,
+            layoutMode: this._settings.layoutMode,
+        });
+        const next = form.form === "phone" ? "phone" : "wide";
+        if (this._commandDefaultsForm === next) return;
+        this._commandDefaultsForm = next;
+        if (this._commandDefaultsConfigured) return;
+        this._settings = {
+            ...this._settings,
+            hotkeys: this._settings.hotkeys.map((row) => ({
+                ...row,
+                display: commandDefaultDisplay(next, row.command),
+            })),
+        };
+        this._commandMap?.setHotkeys(this._settings.hotkeys);
+        this._pendingRegions.add("settings");
+        this._pendingRegions.add("toolbar");
+        this._state = null;
+    }
+
     _recomputeLayout() {
+        this._resolveCommandDefaults();
         this._layout = computeLayout(this._scene(), {
             t: this._t,
             profile: this._profile,
@@ -1250,23 +1280,26 @@ class MainApp {
             // RATING-04：组级冲突时 0 号槽位换成警示三角。
             conflict: Boolean(card && hasRatingConflict(card)),
         };
-        // TOOLBAR-04：命令列表完全取设置的显示项与顺序，不写死第二份列表。
-        const commands = this._settings.hotkeys
-            .filter((row) => row.display)
-            .map((row) => {
-                const item = {
-                    command: row.command,
-                    name: row.name,
-                    enabled: row.command === "Open" || Boolean(photo),
-                    tooltip: tooltipText(row.command, row.name, this._commandMap, {
-                        apple: this._settings.appleKeyboard,
-                    }),
-                };
-                if (row.command === "ToggleAnalysisView") item.active = this._panes.analysis;
-                if (row.command === "ToggleEnhance") item.active = Boolean(this._sessionSnap.enhance);
-                return item;
-            });
-        return { exif, rating, commands };
+        // TOOLBAR-04：宽形态命令列表取设置的显示项与顺序；手机形态按 SETTINGS-08 再筛一次。
+        const commandItem = (row) => {
+            const item = {
+                command: row.command,
+                name: row.name,
+                enabled: row.command === "Open" || Boolean(photo),
+                tooltip: tooltipText(row.command, row.name, this._commandMap, {
+                    apple: this._settings.appleKeyboard,
+                }),
+            };
+            if (row.command === "ToggleAnalysisView") item.active = this._panes.analysis;
+            if (row.command === "ToggleEnhance") item.active = Boolean(this._sessionSnap.enhance);
+            return item;
+        };
+        const commands = this._settings.hotkeys.filter((row) => row.display).map(commandItem);
+        const phoneCommands = phoneCommandSelection(
+            this._settings.hotkeys,
+            this._settings.showNavigationButtons !== false,
+        ).map(commandItem);
+        return { exif, rating, commands, phoneCommands };
     }
 
     _buildState() {
@@ -1474,6 +1507,11 @@ class MainApp {
         } catch {
             raw = null;
         }
+        // 设置文档里已有命令表（勾选/顺序/绑定）即视为显式配置，不再套用形态默认。
+        this._commandDefaultsConfigured = Boolean(
+            (raw && Array.isArray(raw.hotkeys))
+            || (overrides && typeof overrides === "object" && Array.isArray(overrides.hotkeys)),
+        );
         let settings = normalizeSettings(raw);
         if (overrides && typeof overrides === "object") {
             settings = normalizeSettings({ ...settings, ...overrides }, settings);
@@ -1483,10 +1521,15 @@ class MainApp {
 
     _persistSettings() {
         try {
-            const settings = {
-                ...this._settings,
-                hotkeys: this._settings.hotkeys.map(({ command, display, primary, secondary }) => ({ command, display, primary, secondary })),
-            };
+            const settings = { ...this._settings };
+            // SETTINGS-08：命令表未由用户改动时不写入文档，重新打开按实际形态取默认；显式配置照常保留。
+            if (this._commandDefaultsConfigured) {
+                settings.hotkeys = this._settings.hotkeys.map(
+                    ({ command, display, primary, secondary }) => ({ command, display, primary, secondary }),
+                );
+            } else {
+                delete settings.hotkeys;
+            }
             this._write(SETTINGS_KEY, JSON.stringify(settings));
         } catch {
             // SETTINGS-05：持久化失败不得清空设置文档或阻断主屏。

@@ -10,6 +10,7 @@ import { resolveScreenForm, normalizeSafeArea } from "./form.js";
 import { computePanes } from "./partition.js";
 import { filterGeometry, filterBarHeight } from "./filterbar.js";
 import { computeControlBar, computePhoneControl, ratingMainLength } from "./controlbar.js";
+import { PHONE_COMMAND_LIMIT } from "../settings.js";
 import { filmGeometry, filmTierSizes } from "./film.js";
 import { cardFrames, cardNodes } from "./card.js";
 import { analysisGeometry } from "./analysis.js";
@@ -39,6 +40,7 @@ export function computeLayout(scene, { t, profile = "web", measureText = approxi
     const photoCount = scene.photoCount ?? 0;
     const exifCount = scene.exifCount ?? 0;
     const commandCount = scene.commandCount ?? 0;
+    const phoneCommandCount = Math.max(0, Math.min(PHONE_COMMAND_LIMIT, scene.phoneCommandCount ?? commandCount));
     const tileCount = scene.analysisTileCount ?? 6;
 
     const filterBandHeight = filterBarHeight(t);
@@ -105,13 +107,17 @@ export function computeLayout(scene, { t, profile = "web", measureText = approxi
         }, t)
         : null;
 
+    // SHELL-08：底行没有内容（上下张、评分、可选命令都为空）时不预留按钮行。
+    const portraitRowVisible = form.form === "phone" && phoneOrientation === "portrait"
+        ? showControlbar && (showNavigation || (scene.showRating ?? true) || phoneCommandCount > 0)
+        : false;
     const phoneLandscapeControlCross = form.form === "phone" && phoneOrientation === "landscape" && showControlbar
         ? button + (showAnalysis ? 0 : t("toolbar.padding")) + t("toolbar.padding")
         : 0;
     const controlCross = form.form === "wide"
         ? (showControlbar ? wideControl.paneCross : 0)
-        : phoneOrientation === "portrait" && showControlbar
-            ? button
+        : phoneOrientation === "portrait"
+            ? (portraitRowVisible ? button : 0)
             : phoneLandscapeControlCross;
 
     const analysis = computeAnalysis({
@@ -129,7 +135,9 @@ export function computeLayout(scene, { t, profile = "web", measureText = approxi
         height,
         safe,
         showFilmbar,
-        showControlbar,
+        showControlbar: form.form === "phone" && phoneOrientation === "portrait"
+            ? portraitRowVisible
+            : showControlbar,
         showAnalysis,
         controlCross,
         analysisCross: analysis.cross,
@@ -192,21 +200,15 @@ export function computeLayout(scene, { t, profile = "web", measureText = approxi
             exifCount,
             showRating: scene.showRating ?? true,
             showNavigation: navVisible,
+            commandCount: phoneCommandCount,
             controlLeft: portraitControlLeft,
             controlRight: portraitControlRight,
             crossNear: phoneOrientation === "landscape" && showControlbar
                 ? (safe.notchSide === "right" || !showAnalysis ? t("toolbar.padding") : 0)
                 : 0,
         }, t);
-    if (control && control.mode === "phone" && !showControlbar) {
-        if (phoneOrientation === "portrait") {
-            control.slots = {};
-        } else {
-            delete control.slots.exif;
-            delete control.slots.rating;
-            delete control.slots.fit;
-            delete control.slots.enhance;
-        }
+    if (control && control.mode === "phone" && !(phoneOrientation === "portrait" ? portraitRowVisible : showControlbar)) {
+        control.slots = {};
         control.document = { x: 0, y: 0, w: 0, h: 0 };
     }
     if (control && control.mode === "wide" && !showControlbar) {
@@ -446,7 +448,7 @@ function computeFilm(spec, t) {
 function computePhoneSlots(spec, t) {
     const {
         orientation, width, height, panes, exifVisible, exifCount,
-        showRating, showNavigation, crossNear, controlLeft, controlRight,
+        showRating, showNavigation, commandCount, crossNear, controlLeft, controlRight,
     } = spec;
     if (orientation === "portrait") {
         const layout = computePhoneControl({
@@ -458,6 +460,7 @@ function computePhoneSlots(spec, t) {
             exifCount: 0,
             showRating,
             showNavigation,
+            commandCount,
         }, t);
         layout.origin = { x: panes.controlPane.x, y: panes.controlPane.y };
         return layout;
@@ -469,17 +472,28 @@ function computePhoneSlots(spec, t) {
         exifCount: exifVisible ? exifCount : 0,
         showRating,
         showNavigation: false,
+        commandCount,
     }, t);
     const originX = panes.controlPane.x;
+    const shift = (slot, offset) => {
+        slot.x += offset;
+        if (slot.visual) slot.visual.x += offset;
+    };
     if (crossNear) {
-        for (const slot of Object.values(layout.slots)) {
-            slot.x += crossNear;
-            if (slot.visual) slot.visual.x += crossNear;
+        for (const [name, slot] of Object.entries(layout.slots)) {
+            if (name === "commandSegments") continue;
+            shift(slot, crossNear);
+        }
+        if (layout.slots.commandSegments) {
+            for (const segment of layout.slots.commandSegments) segment.x += crossNear;
         }
     }
-    for (const slot of Object.values(layout.slots)) {
-        slot.x += originX;
-        if (slot.visual) slot.visual.x += originX;
+    for (const [name, slot] of Object.entries(layout.slots)) {
+        if (name === "commandSegments") continue;
+        shift(slot, originX);
+    }
+    if (layout.slots.commandSegments) {
+        for (const segment of layout.slots.commandSegments) segment.x += originX;
     }
     layout.origin = { x: 0, y: 0 };
     return layout;
@@ -697,7 +711,7 @@ function collectNodes(spec) {
             nodes.controlDocument = rect(control.document);
             const origin = control.origin ?? { x: 0, y: 0 };
             for (const [name, slot] of Object.entries(control.slots)) {
-                if (name === "exif") continue;
+                if (name === "exif" || name === "commandSegments") continue;
                 if (!slot) continue;
                 nodes[`control.${name}`] = [
                     origin.x + slot.x,
@@ -714,6 +728,14 @@ function collectNodes(spec) {
                     ];
                 }
             }
+            control.slots.commandSegments?.forEach((segment) => {
+                nodes[`control.command${segment.index}`] = [
+                    origin.x + segment.x,
+                    origin.y + segment.y,
+                    segment.w,
+                    segment.h,
+                ];
+            });
         }
     }
     if (analysis) {

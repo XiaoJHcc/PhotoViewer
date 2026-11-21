@@ -64,14 +64,14 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     private readonly TextView _enhanceBusy;
     private readonly TextView _statusLabel;
     private readonly AndroidNavigationOverlay _navigation;
-    // 手机形态槽位：栏背景、筛选/更多、上下张、星级、缩放增强合体与 EXIF 块。
+    // 手机形态槽位：栏背景、筛选/更多、上下张、星级、可选命令组与 EXIF 块。
     private readonly AndroidBarScrim _phoneTopBar;
     private readonly AndroidBarScrim _phoneBottomBar;
     private readonly AndroidBarScrim _phoneLeadingBar;
     private readonly AndroidBarScrim _phoneTrailingBar;
     private readonly AndroidGlassButton _phoneMoreButton;
     private readonly AndroidGlassCombo _phoneNavigation;
-    private readonly AndroidGlassCombo _phoneFitEnhance;
+    private readonly AndroidGlassCombo _phoneCommands;
     private readonly AndroidRatingControl _phoneRating;
     private readonly AndroidExifBlock _phoneExif;
     private PopupWindow? _photoMenu;
@@ -140,8 +140,8 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     internal AndroidGlassButton PhoneMoreButton => _phoneMoreButton;
     /// <summary>手机上下张合体。</summary>
     internal AndroidGlassCombo PhoneNavigation => _phoneNavigation;
-    /// <summary>手机缩放适应/雾天增强合体。</summary>
-    internal AndroidGlassCombo PhoneFitEnhance => _phoneFitEnhance;
+    /// <summary>手机可选命令组（按设置生效顺序的 1–3 段独立按钮）。</summary>
+    internal AndroidGlassCombo PhoneCommands => _phoneCommands;
     /// <summary>手机星级控件。</summary>
     internal AndroidRatingControl PhoneRating => _phoneRating;
     /// <summary>手机 EXIF 块。</summary>
@@ -271,12 +271,10 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         _phoneNavigation.Second.Click += (_, _) => Execute("Next");
         _phoneNavigation.Visibility = ViewStates.Gone;
         AddView(_phoneNavigation);
-        _phoneFitEnhance = new AndroidGlassCombo(activity, AndroidUiTheme.IconGlyph(DesignTokens.IconCommandFit), "缩放适应",
-            AndroidUiTheme.IconGlyph(DesignTokens.IconCommandToggleEnhance), "雾天增强");
-        _phoneFitEnhance.First.Click += (_, _) => Execute("Fit");
-        _phoneFitEnhance.Second.Click += (_, _) => Execute("ToggleEnhance");
-        _phoneFitEnhance.Visibility = ViewStates.Gone;
-        AddView(_phoneFitEnhance);
+        _phoneCommands = new AndroidGlassCombo(activity);
+        _phoneCommands.CommandActivated += Execute;
+        _phoneCommands.Visibility = ViewStates.Gone;
+        AddView(_phoneCommands);
         _phoneRating = new AndroidRatingControl(activity);
         _phoneRating.RateRequested += rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); };
         _phoneRating.PopupRequested += OpenRatingPopupFromPhone;
@@ -717,6 +715,8 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             ? ExifBlockGeometry.Size(enabledExif.Count, horizontal: true)
             : ExifBlockGeometry.Size(enabledExif.Count, horizontal: false, bare: true);
         var corners = _windowInsets.Corners;
+        // SETTINGS-08 / TOOLBAR-04：手机可选命令组按用户勾选顺序跳过上下张后取前三，按钮 48dp。
+        var commandSegments = BuildPhoneCommandSegments();
         PhoneLayoutInput Input(EdgeInsets lead, EdgeInsets control) => new(
             Landscape: !portrait,
             NotchOnLeft: _notchOnLeft,
@@ -743,7 +743,9 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             EdgeMargin: DesignTokens.ShellPhoneEdgeMargin,
             RowInset: rowInset,
             GroupGap: DesignTokens.ShellGlassGroupGap,
-            ShowRating: _main.Settings.ShowRating);
+            ShowRating: _main.Settings.ShowRating,
+            CommandCount: commandSegments.Count,
+            CommandButtonSize: DesignTokens.ShellPhoneCommandSizeAndroid);
 
         // SHELL-10：系统安全区与屏幕圆角是两种独立避让。先只按安全区排出各贴角元素的实际位置，
         // 再按元素外形（44 高胶囊与圆按钮的半圆端）在该位置求圆角避让线，与安全区取较大者交回共享几何。
@@ -758,7 +760,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
                 Math.Max(plain.Left, AndroidWindowInsets.CornerInset(corners.TopLeft, rowTop, shape)),
                 plain.Top,
                 Math.Max(plain.Right, AndroidWindowInsets.CornerInset(corners.TopRight, rowTop, shape)), 0);
-            var bottomRow = Has(placed.FitEnhance) ? placed.FitEnhance : placed.Rating;
+            var bottomRow = Has(placed.Commands) ? placed.Commands : placed.Rating;
             double rowBottom = Has(bottomRow)
                 ? Math.Max(0, heightDp - bottomRow.MaxY)
                 : Math.Max(plain.Bottom - rowInset, rowInset);
@@ -874,9 +876,10 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         _phoneNavigation.Visibility = Has(slots.Navigation) ? ViewStates.Visible : ViewStates.Gone;
         if (Has(slots.Navigation)) LayoutChild(_phoneNavigation, slots.Navigation, density);
 
-        _phoneFitEnhance.SetVertical(!portrait);
-        _phoneFitEnhance.Visibility = Has(slots.FitEnhance) ? ViewStates.Visible : ViewStates.Gone;
-        if (Has(slots.FitEnhance)) LayoutChild(_phoneFitEnhance, slots.FitEnhance, density);
+        _phoneCommands.SetVertical(!portrait);
+        _phoneCommands.SetSegments(commandSegments);
+        _phoneCommands.Visibility = Has(slots.Commands) ? ViewStates.Visible : ViewStates.Gone;
+        if (Has(slots.Commands)) LayoutChild(_phoneCommands, slots.Commands, density);
 
         bool ratingShown = Has(slots.Rating) && _main.Settings.ShowRating;
         _phoneRating.Visibility = ratingShown ? ViewStates.Visible : ViewStates.Gone;
@@ -913,7 +916,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         _phoneTrailingBar.Visibility = ViewStates.Gone;
         _phoneMoreButton.Visibility = ViewStates.Gone;
         _phoneNavigation.Visibility = ViewStates.Gone;
-        _phoneFitEnhance.Visibility = ViewStates.Gone;
+        _phoneCommands.Visibility = ViewStates.Gone;
         _phoneRating.Visibility = ViewStates.Gone;
         _phoneExif.Visibility = ViewStates.Gone;
     }
@@ -1370,6 +1373,25 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     {
         CloseRatingPopup();
         _main.OpenExifToolsWindow();
+    }
+
+    /// <summary>
+    /// SETTINGS-08 / TOOLBAR-04：手机可选命令组按实际勾选顺序跳过上下张后取前三；
+    /// 字形、读屏名称与可用性沿用控制栏同一命令语义，点按直接执行原命令。
+    /// </summary>
+    /// <returns>按生效顺序排列的胶囊段。</returns>
+    private List<GlassComboSegment> BuildPhoneCommandSegments()
+    {
+        var enabled = _main.ControlVM.EnabledControls.ToList();
+        var commands = PhoneControlCommands.Resolve(
+            enabled.Select(item => item.Command), _main.Settings.ShowNavigationButtons);
+        var segments = new List<GlassComboSegment>(commands.Length);
+        foreach (var command in commands)
+        {
+            var hotkey = enabled.Find(item => item.Command == command);
+            if (hotkey != null) segments.Add(AndroidControlBar.CommandSegment(_main, hotkey));
+        }
+        return segments;
     }
 
     /// <summary>执行共享命令：主图相关走原生视口，其余走共享命令 VM。</summary>

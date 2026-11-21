@@ -238,7 +238,7 @@
     overflow: visible;
 }
 
-/* SHELL-08/09/12：手机上一张/下一张与缩放/增强是同一胶囊宿主内的两段，不是两颗独立圆按钮。 */
+/* SHELL-08/09：手机上一张/下一张与可选命令共用胶囊宿主，每段是独立动作按钮而非分段选择控件。 */
 .pv-control-capsule {
     position: absolute;
     box-sizing: border-box;

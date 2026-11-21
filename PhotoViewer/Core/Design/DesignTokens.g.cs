@@ -635,6 +635,8 @@ public static class DesignTokens
     public const double SettingsAndroidSheetHeightRatio = 0.85;
     /// <summary>settings.android.sheet.peekRatio（ratio） SETTINGS-04：Android 设置与工具半屏浮层默认收起后的可见高度占屏高比例；初始状态为收起，标题上拖扩大到 settings.android.sheet.heightRatio，下滑关闭。</summary>
     public const double SettingsAndroidSheetPeekRatio = 0.5;
+    /// <summary>settings.phone.inactiveCheck.opacity（ratio） SETTINGS-08：手机形态未在控制栏生效的勾选标记不透明度。</summary>
+    public const double SettingsPhoneInactiveCheckOpacity = 0.2;
     /// <summary>shell.analysis.divider.thickness（pt） ANALYSIS-01：分析栏朝主图一侧的分隔线厚度。</summary>
     public const double ShellAnalysisDividerThickness = 1.0;
     /// <summary>shell.bar.acrylic.luminosityOpacityMax（ratio） SHELL-12：Windows 主窗口交换链应用内亚克力的亮度层不透明度上限。使用主题原值和上限中较低者；不改变色调、噪点、回退或模糊。</summary>
@@ -669,6 +671,10 @@ public static class DesignTokens
     public const double ShellGlassContainerSpacing = 8.0;
     /// <summary>shell.glass.group.gap（pt） SHELL-08：相邻按钮组（筛选、星级、缩放适应等）之间的间距。</summary>
     public const double ShellGlassGroupGap = 8.0;
+    /// <summary>shell.phone.command.size（pt） SHELL-08：手机形态可选命令胶囊的单段触控边长（Android 为 dp）。</summary>
+    public const double ShellPhoneCommandSize = 44.0;
+    /// <summary>shell.phone.command.size@android（pt）：android 平台差异值（见 Design/platforms.md）。</summary>
+    public const double ShellPhoneCommandSizeAndroid = 48.0;
     /// <summary>shell.phone.edgeMargin（pt） SHELL-08：手机竖屏顶部行、底部行与耳区的边缘距离；横屏入口取 filter.margin，工具区取 toolbar.padding。</summary>
     public const double ShellPhoneEdgeMargin = 16.0;
     /// <summary>shell.phone.rowInset（pt） SHELL-11：手机形态行到安全区/栏缘的间距，也是栏背景超出元素的余量。</summary>

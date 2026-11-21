@@ -234,3 +234,26 @@ internal sealed class iOSGlassContainer : UIVisualEffectView
         return null;
     }
 }
+
+/// <summary>
+/// 评分快捷命令的星心数字（TOOLBAR-04）：半粗、取按钮底色，叠在实心星中心；不拦点击，读屏名称仍由按钮承担。
+/// 宽形态控制栏与手机形态可选命令组共用。
+/// </summary>
+internal sealed class iOSRatingDigitLabel : UILabel
+{
+    /// <summary>按令牌字号与按钮底色创建居中的只读数字标签。</summary>
+    /// <param name="digit">星数（1–5）。</param>
+    /// <param name="buttonSize">命令按钮边长。</param>
+    internal iOSRatingDigitLabel(string digit, double buttonSize) : base(CGRect.Empty)
+    {
+        Text = digit;
+        Font = UIFont.SystemFontOfSize((nfloat)DesignTokens.ToolbarRatingDigitFontSize, UIFontWeight.Semibold);
+        TextColor = iOSColors.FromToken(DesignTokens.ColorToolbarCommandBackground);
+        TextAlignment = UITextAlignment.Center;
+        BackgroundColor = UIColor.Clear;
+        UserInteractionEnabled = false;
+        AccessibilityElementsHidden = true;
+        SizeToFit();
+        Center = new CGPoint(buttonSize / 2, buttonSize / 2);
+    }
+}

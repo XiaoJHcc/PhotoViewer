@@ -1068,12 +1068,18 @@ internal static class iOSNativeRatingControlCheck
 
                 control.TrackBegan(capsule);
                 if (!popup.IsOpen) throw new InvalidOperationException("切图检查：弹窗未打开");
-                _main.FileVM.ThumbnailList.MoveCurrent(1);
+                // 代表照片可能在筛选顺序的任一端：向有邻居的一侧切图，再按相反方向切回。
+                var files = _main.FileVM.ThumbnailList.FilteredFiles;
+                int currentIndex = files.IndexOf(file);
+                if (currentIndex < 0 || files.Count < 2)
+                    throw new InvalidOperationException($"切图检查需要至少两张照片（索引 {currentIndex}，共 {files.Count}）");
+                int step = currentIndex + 1 < files.Count ? 1 : -1;
+                _main.FileVM.ThumbnailList.MoveCurrent(step);
                 await WaitAsync(() => !popup.IsOpen, "切图收起弹窗");
                 var moved = _main.CurrentFile;
                 if (moved != null && ReferenceEquals(moved, file))
-                    throw new InvalidOperationException("MoveCurrent(1) 没有切换当前照片");
-                _main.FileVM.ThumbnailList.MoveCurrent(-1);
+                    throw new InvalidOperationException($"MoveCurrent({step}) 没有切换当前照片");
+                _main.FileVM.ThumbnailList.MoveCurrent(-step);
                 await WaitAsync(() => ReferenceEquals(_main.CurrentFile, file), "切回原照片");
                 await SettleAsync();
 
@@ -1693,6 +1699,39 @@ internal static class iOSNativeRatingControlCheck
 
         #region iPhone：手机槽位与真实旋转
 
+        /// <summary>
+        /// TOOLBAR-04／SETTINGS-08：手机可选命令组显示共享解析出的生效命令（默认勾选多于三项时也按顺序取前三），
+        /// 每段为独立系统按钮、边长取 <c>shell.phone.command.size</c>、读屏名称含命令与实际绑定。
+        /// </summary>
+        /// <param name="scope">报告范围名。</param>
+        private void VerifyPhoneCommandGroup(string scope)
+        {
+            var input = _root.PhoneSlotsInput;
+            var expected = PhoneControlCommands.Resolve(
+                _main.ControlVM.EnabledControls.Select(hotkey => hotkey.Command), input.ShowNavigation);
+            if (!input.ControlVisible)
+                throw new InvalidOperationException($"{scope} 控制栏应可见");
+            var bar = _root.PhoneCommandsGroup;
+            if (bar.Hidden || bar.Buttons.Count != expected.Length)
+                throw new InvalidOperationException(
+                    $"{scope} 可选命令按钮 {bar.Buttons.Count} 段（Hidden={bar.Hidden}）≠ 共享生效命令 {expected.Length} 项");
+            double size = DesignTokens.ShellPhoneCommandSize;
+            for (int index = 0; index < expected.Length; index++)
+            {
+                if (!bar.Commands.TryGetValue(expected[index], out var button)
+                    || !ReferenceEquals(button, bar.Buttons[index]))
+                    throw new InvalidOperationException($"{scope} 第 {index + 1} 段不是共享生效命令 {expected[index]}");
+                if (button.Hidden || string.IsNullOrEmpty(button.AccessibilityLabel))
+                    throw new InvalidOperationException($"{scope} 命令 {expected[index]} 不可见或缺少读屏名称");
+                if (Math.Abs((double)button.Bounds.Width - size) > Tolerance
+                    || Math.Abs((double)button.Bounds.Height - size) > Tolerance)
+                    throw new InvalidOperationException(
+                        $"{scope} 命令 {expected[index]} 尺寸 {Rect(button.Bounds)} ≠ {size:0.#} 点见方");
+            }
+            _lines.Add($"PASS TOOLBAR-04 {scope}：手机可选命令组显示共享生效命令 [{string.Join(",", expected)}]" +
+                $"（{expected.Length} 段、每段 {size:0.#} 点见方、读屏名称含命令与绑定）");
+        }
+
         /// <summary>iPhone：竖屏紧凑/展开两态在真实底行控件上跑 5–7 / 2–4，横屏两种刘海方向核对控制列与弹窗方向。</summary>
         /// <returns>任务。</returns>
         private async Task VerifyPhoneAsync()
@@ -1703,14 +1742,15 @@ internal static class iOSNativeRatingControlCheck
             var phone = _root.PhoneRatingControl;
             var file = _representative;
             await OpenFileAsync(file);
+            VerifyPhoneCommandGroup("竖屏默认命令");
             var popup = _root.RatingPopup;
 
             // 竖屏 · 上下张开启 → 槽位放不下 → 紧凑
             await UiDispatcher.InvokeAsync(() => _main.Settings.ShowNavigationButtons = true);
             await SettleAsync();
-            // SHELL-09「显示评分」关闭：竖屏只移除评分槽，导航组与增强组位置不另重排（横屏释放长度给 EXIF 另行核对）。
+            // SHELL-09「显示评分」关闭：竖屏只移除评分槽，导航组与可选命令组位置不另重排（横屏释放长度给 EXIF 另行核对）。
             var navigationBefore = _root.PhoneSlots.Navigation;
-            var fitEnhanceBefore = _root.PhoneSlots.FitEnhance;
+            var commandsBefore = _root.PhoneSlots.Commands;
             await UiDispatcher.InvokeAsync(() => _main.Settings.ShowRating = false);
             await SettleAsync();
             await WaitAsync(() => !Has(_root.PhoneSlots.Rating) && phone.Hidden, "显示评分关闭移除竖屏评分槽");
@@ -1718,15 +1758,15 @@ internal static class iOSNativeRatingControlCheck
                 throw new InvalidOperationException("显示评分关闭后竖屏仍保留评分槽或控件");
             if (_root.PhoneSlotsInput.ShowRating)
                 throw new InvalidOperationException("显示评分关闭后槽位输入 ShowRating 仍为 true");
-            if (_root.PhoneSlots.Navigation != navigationBefore || _root.PhoneSlots.FitEnhance != fitEnhanceBefore)
+            if (_root.PhoneSlots.Navigation != navigationBefore || _root.PhoneSlots.Commands != commandsBefore)
                 throw new InvalidOperationException(
-                    $"显示评分关闭改变了竖屏左右组位置：导航 {Rect(_root.PhoneSlots.Navigation)} / 增强 {Rect(_root.PhoneSlots.FitEnhance)}");
+                    $"显示评分关闭改变了竖屏左右组位置：导航 {Rect(_root.PhoneSlots.Navigation)} / 命令 {Rect(_root.PhoneSlots.Commands)}");
             await UiDispatcher.InvokeAsync(() => _main.Settings.ShowRating = true);
             await SettleAsync();
             await WaitAsync(() => Has(_root.PhoneSlots.Rating) && !phone.Hidden, "显示评分恢复竖屏评分槽");
             if (!Has(_root.PhoneSlots.Rating) || phone.Hidden)
                 throw new InvalidOperationException("显示评分恢复后竖屏评分槽未还原");
-            _lines.Add("PASS SHELL-09 显示评分关闭（竖屏）：评分槽为空、控件隐藏，导航组与增强组位置不变，恢复后槽位还原");
+            _lines.Add("PASS SHELL-09 显示评分关闭（竖屏）：评分槽为空、控件隐藏，导航组与可选命令组位置不变，恢复后槽位还原");
             var slot = _root.PhoneSlots.Rating;
             if (slot.Width >= RatingControlGeometry.ExpandedLength)
                 throw new InvalidOperationException($"竖屏开启上下张后星级槽位 {slot.Width:0.#} 仍放得下展开长度 224");
@@ -1803,17 +1843,35 @@ internal static class iOSNativeRatingControlCheck
             _lines.Add($"PASS RATING-07 手机竖屏紧凑：上下张开启时槽位 {slot.Width:0.#} → 紧凑态；起手打开单条目弹窗（Up、" +
                 "面板在胶囊上方且安全区内），点弹窗 2 号星写回 2、滑动到 5 号写回 5、越出取消带 0 次写回并收起弹窗");
 
-            // 竖屏 · 上下张关闭 → 槽位放得下 → 展开
+            // 竖屏 · 上下张关闭：默认勾选命令多于三项时，独立上一张/下一张补位进入可选命令组，
+            // 先扣除可选命令组的占宽，再按剩余槽位判定星级形态。
             await UiDispatcher.InvokeAsync(() => _main.Settings.ShowNavigationButtons = false);
+            await SettleAsync();
+            VerifyPhoneCommandGroup("竖屏关闭上下张");
+            slot = _root.PhoneSlots.Rating;
+            int defaultCommands = PhoneControlCommands.Resolve(
+                _main.ControlVM.EnabledControls.Select(hotkey => hotkey.Command), showNavigationButtons: false).Length;
+            if (phone.Form != RatingControlGeometry.ResolveForm(slot.Width))
+                throw new InvalidOperationException(
+                    $"竖屏关闭上下张后槽位 {slot.Width:0.#} 的形态 {phone.Form} 与 ResolveForm 不一致");
+            _lines.Add($"PASS SHELL-08 竖屏关闭上下张：共享生效命令 {defaultCommands} 项占宽后星级槽位 {slot.Width:0.#} → {phone.Form}");
+
+            // 覆盖展开态：临时只保留一项命令，让星级槽位放得下展开长度；本段结束后恢复原勾选。
+            var commandDisplay = _main.Settings.Hotkeys.Select(hotkey => (Hotkey: hotkey, hotkey.IsDisplay)).ToArray();
+            await UiDispatcher.InvokeAsync(() =>
+            {
+                foreach (var hotkey in _main.Settings.Hotkeys) hotkey.IsDisplay = false;
+                _main.Settings.Hotkeys.First(hotkey => hotkey.Command == "Exchange").IsDisplay = true;
+            });
             await SettleAsync();
             slot = _root.PhoneSlots.Rating;
             if (slot.Width < RatingControlGeometry.ExpandedLength)
-                throw new InvalidOperationException($"竖屏关闭上下张后星级槽位 {slot.Width:0.#} 仍放不下展开长度 224");
+                throw new InvalidOperationException($"竖屏只保留一项命令后星级槽位 {slot.Width:0.#} 仍放不下展开长度 224");
             if (phone.Form != RatingControlGeometry.ResolveForm(slot.Width))
                 throw new InvalidOperationException(
                     $"竖屏展开槽位 {slot.Width:0.#} 的形态 {phone.Form} 与 ResolveForm 不一致");
             if (phone.Form != RatingControlForm.Expanded)
-                throw new InvalidOperationException($"竖屏关闭上下张时控件形态为 {phone.Form} ≠ Expanded");
+                throw new InvalidOperationException($"竖屏只保留一项命令时控件形态为 {phone.Form} ≠ Expanded");
             var capsuleFrame = phone.CapsuleFrame;
             if (Math.Abs(capsuleFrame.Width - RatingControlGeometry.ExpandedLength) > Tolerance
                 || Math.Abs(capsuleFrame.X - (slot.Width - RatingControlGeometry.ExpandedLength) / 2) > Tolerance)
@@ -1863,8 +1921,13 @@ internal static class iOSNativeRatingControlCheck
             row.TrackEnded(outPoint);
             if (_commits.Count != expandedCancel)
                 throw new InvalidOperationException("手机竖屏展开越出取消带后仍写回星级");
-            _lines.Add($"PASS RATING-07 手机竖屏展开：上下张关闭时槽位 {slot.Width:0.#} → 展开态、胶囊 224 居中；" +
+            _lines.Add($"PASS RATING-07 手机竖屏展开：只保留一项命令时槽位 {slot.Width:0.#} → 展开态、胶囊 224 居中；" +
                 $"点 4 号写回 4、滑 1→{string.Join("→", previews)} 后抬手写回 4、越出取消带 0 次写回");
+            await UiDispatcher.InvokeAsync(() =>
+            {
+                foreach (var (hotkey, display) in commandDisplay) hotkey.IsDisplay = display;
+            });
+            await SettleAsync();
 
             // 冲突来源弹窗（竖屏快照）
             var fixture = _conflict ?? throw new InvalidOperationException("缺少冲突夹具");
@@ -1894,6 +1957,7 @@ internal static class iOSNativeRatingControlCheck
             await SettleAsync();
             if (_root.Form != ScreenForm.PhoneLandscape || !_root.NotchOnLeft)
                 throw new InvalidOperationException($"横屏（刘海在左）形态 {_root.Form}、刘海在左={_root.NotchOnLeft}");
+            VerifyPhoneCommandGroup("横屏默认命令");
             await VerifyLandscapeControlAsync(fixture, RatingPopupDirection.Left, "rating-landscape-notch-left",
                 "rating-landscape-popup", suite: "横屏刘海在左");
 
@@ -2029,16 +2093,19 @@ internal static class iOSNativeRatingControlCheck
             if (!Has(hiddenSlots.Exif) || hiddenSlots.ExifItems < baselineExifItems)
                 throw new InvalidOperationException(
                     $"{suite} 显示评分关闭未把长度释放给 EXIF：{hiddenSlots.ExifItems}/{baselineExifItems} 项");
-            if (Math.Abs(hiddenSlots.FitEnhance.Y - (hiddenSlots.Exif.MaxY + ToolRegionGeometry.GroupSpacing)) > Tolerance)
+            LayoutRect hiddenNext = Has(hiddenSlots.Commands) ? hiddenSlots.Commands : default;
+            if (Has(hiddenNext)
+                && Math.Abs(hiddenNext.Y - (hiddenSlots.Exif.MaxY + ToolRegionGeometry.GroupSpacing)) > Tolerance)
                 throw new InvalidOperationException(
-                    $"{suite} 显示评分关闭后 EXIF 未直接接命令组：增强 Y {hiddenSlots.FitEnhance.Y:0.#}，EXIF 末端 {hiddenSlots.Exif.MaxY:0.#}");
+                    $"{suite} 显示评分关闭后 EXIF 未直接接命令组：命令 Y {hiddenNext.Y:0.#}，EXIF 末端 {hiddenSlots.Exif.MaxY:0.#}");
             double hiddenTop = Math.Max(hiddenInput.Safe.Top, hiddenInput.ControlBand.Top) + ToolRegionGeometry.Padding;
             double hiddenBottom = (double)_root.Stage.Bounds.Height
                 - Math.Max(hiddenInput.Safe.Bottom, hiddenInput.ControlBand.Bottom) - ToolRegionGeometry.Padding;
-            if (Math.Abs((hiddenSlots.Exif.Y - hiddenTop) - (hiddenBottom - hiddenSlots.FitEnhance.MaxY)) > Tolerance)
+            double hiddenLastBottom = Has(hiddenNext) ? hiddenNext.MaxY : hiddenSlots.Exif.MaxY;
+            if (Math.Abs((hiddenSlots.Exif.Y - hiddenTop) - (hiddenBottom - hiddenLastBottom)) > Tolerance)
                 throw new InvalidOperationException(
                     $"{suite} 显示评分关闭后整组未重新居中：上余量 {hiddenSlots.Exif.Y - hiddenTop:0.#}，"
-                    + $"下余量 {hiddenBottom - hiddenSlots.FitEnhance.MaxY:0.#}");
+                    + $"下余量 {hiddenBottom - hiddenLastBottom:0.#}");
             await UiDispatcher.InvokeAsync(() => _main.Settings.ShowRating = true);
             await SettleAsync();
             await WaitAsync(() => Has(_root.PhoneSlots.Rating) && !phone.Hidden, $"{suite} 显示评分恢复竖排评分槽");
@@ -2059,18 +2126,20 @@ internal static class iOSNativeRatingControlCheck
             double columnBottom = (double)_root.Stage.Bounds.Height
                 - Math.Max(controlInput.Safe.Bottom, controlInput.ControlBand.Bottom) - ToolRegionGeometry.Padding;
             double columnLength = Math.Max(0, columnBottom - columnTop);
+            double commandLength = controlInput.CommandCount * controlInput.CommandButtonSize;
             double expectedSlot = Math.Min(RatingControlGeometry.ExpandedLength,
-                Math.Max(0, columnLength - ToolRegionGeometry.GroupSpacing - controlInput.ButtonSize * 2));
+                Math.Max(0, columnLength - (commandLength > 0 ? ToolRegionGeometry.GroupSpacing : 0) - commandLength));
             if (Math.Abs(slot.Height - expectedSlot) > Tolerance)
                 throw new InvalidOperationException(
                     $"{suite} EXIF 关闭后星级槽位高 {slot.Height:0.#} ≠ 剩余长度封顶 {expectedSlot:0.#}"
-                    + $"（可用纵向区间 {columnLength:0.#}）");
-            var fitEnhance = _root.PhoneSlots.FitEnhance;
-            if (Math.Abs(slot.X - fitEnhance.X) > Tolerance)
+                    + $"（可用纵向区间 {columnLength:0.#}，命令组 {commandLength:0.#}）");
+            var commands = _root.PhoneSlots.Commands;
+            var columnOwner = Has(commands) ? commands : slot;
+            if (Math.Abs(slot.X - columnOwner.X) > Tolerance)
                 throw new InvalidOperationException(
-                    $"{suite} EXIF 关闭后星级与缩放增强不在同一列：{slot.X:0.#} vs {fitEnhance.X:0.#}");
+                    $"{suite} EXIF 关闭后星级与命令组不在同一列：{slot.X:0.#} vs {columnOwner.X:0.#}");
             double topMargin = slot.Y - columnTop;
-            double bottomMargin = columnBottom - fitEnhance.MaxY;
+            double bottomMargin = columnBottom - columnOwner.MaxY;
             if (Math.Abs(topMargin - bottomMargin) > Tolerance || topMargin < -Tolerance)
                 throw new InvalidOperationException(
                     $"{suite} EXIF 关闭后整组未在可用纵向区间居中：上余量 {topMargin:0.#}，下余量 {bottomMargin:0.#}");

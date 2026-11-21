@@ -118,6 +118,12 @@ public static class SettingsCatalog
             definition.PrimaryGesture,
             definition.SecondaryGesture)).ToImmutableArray();
 
+    public static ImmutableArray<HotkeySetting> DefaultMobileHotkeys { get; } =
+        DefaultHotkeys.Select(setting => setting with
+        {
+            IsDisplay = setting.CommandId is "Previous" or "Next" or "Exchange" or "Fit" or "ToggleAnalysisView" or "ToggleEnhance",
+        }).ToImmutableArray();
+
     private static readonly IReadOnlyDictionary<string, FileFormatDefinition> FileFormatsById =
         FileFormats.ToDictionary(definition => definition.Id, StringComparer.Ordinal);
 

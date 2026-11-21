@@ -8,6 +8,7 @@ using Android.Views;
 using Android.Widget;
 using Google.Android.Material.BottomSheet;
 using PhotoViewer.Core.Design;
+using PhotoViewer.Core.Settings;
 using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.Android.Native;
@@ -123,17 +124,59 @@ internal static partial class AndroidNativeChecks
         AndroidInputDevices.SetChecksOverride(false, false);
         await Task.Delay(350);
         bool phoneControl = _root!.Form != ScreenForm.Wide;
+        // SETTINGS-08/17：控制页只有一个标题「控制栏功能」，标题下是两张独立真实卡片：
+        // 第一张只放组合开关，第二张紧接放完整命令表且不占标题行。
+        var navSection = sheet.NavigationSectionForChecks;
+        var commandSection = sheet.CommandSectionForChecks;
+        int expectedCommands = sheet.Settings.Hotkeys.Count;
+        var navigationCard = navSection is ViewGroup navStack && navStack.ChildCount == 2
+            ? navStack.GetChildAt(1) as AndroidSettingsReorderList
+            : null;
+        var commandCard = commandSection is ViewGroup commandStack && commandStack.ChildCount == 1
+            ? commandStack.GetChildAt(0) as AndroidSettingsReorderList
+            : null;
+        Check("settings 控制页两张独立卡片只保留一个标题",
+            navigationCard != null && commandCard != null && !ReferenceEquals(navigationCard, commandCard)
+            && navSection is ViewGroup navGroup
+            && navGroup.GetChildAt(0) is TextView navTitle && navTitle.Text == "控制栏功能"
+            && sheet.NavigationSectionTitleForChecks() == "控制栏功能"
+            && sheet.CommandSectionTitleForChecks() == string.Empty,
+            $"navChildren={(navSection as ViewGroup)?.ChildCount ?? -1}"
+                + $" navTitle=\"{sheet.NavigationSectionTitleForChecks()}\""
+                + $" commandChildren={(commandSection as ViewGroup)?.ChildCount ?? -1}"
+                + $" commandTitle=\"{sheet.CommandSectionTitleForChecks()}\"");
+        Check("settings 第二张卡片无标题占位且沿用标准分组间距",
+            navSection is { Height: > 0 } navBox && commandSection is { Height: > 0 } commandBox
+            && navBox.Visibility == ViewStates.Visible && commandBox.Visibility == ViewStates.Visible
+            && commandBox.Top == navBox.Bottom
+            && commandBox.PaddingTop > 0
+            && commandCard != null && commandCard.Top == commandBox.PaddingTop
+            && sheet.NavigationRowCountForChecks == 1
+            && sheet.OptionalCommandRowCountForChecks == expectedCommands
+            && sheet.HotkeyRowSnapshotForChecks(expectedCommands) == null,
+            $"navTop={navSection?.Top} navH={navSection?.Height} navRows={sheet.NavigationRowCountForChecks}"
+                + $" commandTop={commandSection?.Top} commandPad={commandSection?.PaddingTop}"
+                + $" commandCardTop={commandCard?.Top}"
+                + $" commandRows={sheet.OptionalCommandRowCountForChecks}/{expectedCommands}");
+        Check("settings 组合开关行无排序把手、命令行保留把手",
+            sheet.NavigationRowSnapshotForChecks() is { HandleVisible: false } navRow
+            && navRow.AccessibilityText.Contains("上一张/下一张")
+            && sheet.HotkeyRowSnapshotForChecks(0) is { HandleVisible: true },
+            $"navRow={sheet.NavigationRowSnapshotForChecks()?.HandleVisible}"
+                + $" commandRow={sheet.HotkeyRowSnapshotForChecks(0)?.HandleVisible}");
         if (phoneControl)
         {
-            // SETTINGS-08/17：手机形态控制页只有布局模式与「上一张/下一张」，不展示宽命令表。
+            // SETTINGS-08/17：手机形态同样显示独立上下张开关与完整可排序命令表；
+            // 已勾选但未进入可选命令组的行只淡化勾号，并由读屏区分实际显示状态。
             var navLayout = sheet.NavigationRowLayoutForChecks();
             var navSnapshot = sheet.NavigationRowSnapshotForChecks();
             var phoneMode = sheet.Settings.LayoutModes.FirstOrDefault(
                 item => item.Value == PhotoViewer.Core.Settings.LayoutMode.Phone);
-            Check("settings 手机控制页仅上下张",
-                sheet.PhoneControlListForChecks && sheet.ControlRowCountForChecks == 1
-                && sheet.HotkeyRowLayoutForChecks(0) == null,
-                $"phoneOnly={sheet.PhoneControlListForChecks} rows={sheet.ControlRowCountForChecks}");
+            var settings = sheet.Settings;
+            Check("settings 手机控制页完整命令表",
+                sheet.OptionalCommandRowCountForChecks == settings.Hotkeys.Count
+                && sheet.HotkeyRowLayoutForChecks(0) != null,
+                $"rows={sheet.OptionalCommandRowCountForChecks} expected={settings.Hotkeys.Count}");
             Check("settings 手机上下张为 Material 勾选行",
                 navLayout is { } nav && nav.MinHeight == compactRow
                 && navSnapshot is { } snapshot && snapshot.AccessibilityText.Contains("上一张/下一张"),
@@ -141,6 +184,67 @@ internal static partial class AndroidNativeChecks
             Check("settings 手机布局说明复用 LayoutModes",
                 phoneMode != null && sheet.LayoutModeDescriptionForChecks() == phoneMode.Description,
                 $"actual=\"{sheet.LayoutModeDescriptionForChecks()}\" expected=\"{phoneMode?.Description}\"");
+
+            var savedDisplay = settings.Hotkeys.Select(item => item.IsDisplay).ToArray();
+            bool savedNavigation = settings.ShowNavigationButtons;
+            try
+            {
+                settings.ShowNavigationButtons = true;
+                for (int index = 0; index < settings.Hotkeys.Count; index++)
+                    settings.Hotkeys[index].IsDisplay = settings.Hotkeys[index].Command
+                        is "Previous" or "Next" or "Exchange" or "Fit" or "ToggleAnalysisView" or "ToggleEnhance";
+                sheet.RefreshControlRowsForChecks();
+                await Task.Delay(350);
+                var resolved = PhoneControlCommands.Resolve(
+                    settings.Hotkeys.Where(item => item.IsDisplay).Select(item => item.Command), true);
+                bool marked = true;
+                string detail = string.Empty;
+                for (int index = 0; index < settings.Hotkeys.Count; index++)
+                {
+                    var item = settings.Hotkeys[index];
+                    bool expected = item.IsDisplay && !resolved.Contains(item.Command, StringComparer.Ordinal);
+                    var row = sheet.HotkeyRowSnapshotForChecks(index);
+                    bool actual = row is { CheckInactive: true }
+                        && row.Value.CheckAlpha <= DesignTokens.SettingsPhoneInactiveCheckOpacity + .01;
+                    if (expected != actual) marked = false;
+                    if (expected && row is { } value && !value.AccessibilityText.Contains("未在手机控制栏显示"))
+                        marked = false;
+                    detail += $"{item.Command}:{expected}/{actual} ";
+                }
+                Check("settings 手机勾选未生效项淡化勾号并读屏区分", marked, detail);
+
+                // 关闭组合上下张后上一张/下一张进入可选命令组，原第三项起移出：实时排序/勾选刷新。
+                settings.ShowNavigationButtons = false;
+                sheet.RefreshControlRowsForChecks();
+                await Task.Delay(350);
+                var navOff = sheet.HotkeyRowSnapshotForChecks(HotkeyIndexOf(settings.Hotkeys, "Previous"));
+                var fitOff = sheet.HotkeyRowSnapshotForChecks(HotkeyIndexOf(settings.Hotkeys, "Fit"));
+                Check("settings 手机组合开关改变生效项即时刷新",
+                    navOff is { CheckInactive: false } && fitOff is { CheckInactive: true },
+                    $"previousInactive={navOff?.CheckInactive} fitInactive={fitOff?.CheckInactive}");
+
+                // 点按组合开关行的真实勾选框：写回工作副本并即时刷新可选命令表的未生效勾号。
+                settings.ShowNavigationButtons = true;
+                sheet.RefreshControlRowsForChecks();
+                await Task.Delay(200);
+                bool navCheckedBefore = settings.ShowNavigationButtons;
+                bool toggled = sheet.ToggleNavigationCheckForChecks();
+                await Task.Delay(350);
+                var previousAfterToggle = sheet.HotkeyRowSnapshotForChecks(HotkeyIndexOf(settings.Hotkeys, "Previous"));
+                Check("settings 点按组合开关写回并刷新可选列表",
+                    toggled && settings.ShowNavigationButtons == !navCheckedBefore
+                    && previousAfterToggle is { CheckInactive: false },
+                    $"toggled={toggled} value={settings.ShowNavigationButtons}"
+                        + $" previousInactive={previousAfterToggle?.CheckInactive}");
+            }
+            finally
+            {
+                settings.ShowNavigationButtons = savedNavigation;
+                for (int index = 0; index < settings.Hotkeys.Count; index++)
+                    settings.Hotkeys[index].IsDisplay = savedDisplay[index];
+                sheet.RefreshControlRowsForChecks();
+                await Task.Delay(250);
+            }
         }
         else
         {

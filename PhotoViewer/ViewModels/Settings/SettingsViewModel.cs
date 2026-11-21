@@ -54,7 +54,8 @@ public partial class SettingsViewModel : ReactiveObject, IDisposable
             SettingsDefaults.CreateDefault(
                 new DefaultPerformanceBudget(),
                 OperatingSystem.IsMacOS() || OperatingSystem.IsIOS(),
-                BitmapLoader.AutomaticCacheLimit),
+                BitmapLoader.AutomaticCacheLimit,
+                mobileControls: OperatingSystem.IsIOS() || OperatingSystem.IsAndroid()),
             new InMemorySettingsStore(),
             applyRuntimeSettings: false,
             repository: null,

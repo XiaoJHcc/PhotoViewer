@@ -11,7 +11,8 @@
 | 文件 | 模块 | 职责 |
 |---|---|---|
 | [AppSettings.cs](AppSettings.cs) | 不可变设置快照 | `sealed record`，所有集合为 `ImmutableArray`，修改通过 `with` 生成新快照；`ContentEquals` 按字段内容比较，作为“是否需要写盘”的判据。字段只含行为设置，不含面板展开态等视图状态。 |
-| [SettingsCatalog.cs](SettingsCatalog.cs) | 目录与派生元数据 | 文件格式、EXIF 字段与命令目录，以及它们的默认表；命令名、提示、图标、扩展名按 id 派生，历史展示字段不进入设置文档。 |
+| [SettingsCatalog.cs](SettingsCatalog.cs) | 目录与派生元数据 | 文件格式、EXIF 字段与命令目录，以及它们的默认表（移动端有独立的控制栏默认勾选）；命令名、提示、图标、扩展名按 id 派生，历史展示字段不进入设置文档。 |
+| [PhoneControlCommands.cs](PhoneControlCommands.cs) | 手机控制栏命令 | 控制页与手机栏共用的有效命令投影：跳过被组合上下张覆盖的单项，按勾选顺序最多三项。 |
 | [SettingsDefaults.cs](SettingsDefaults.cs) | 首次运行默认值 | 按 `IPerformanceBudget` 推导缓存内存/张数与解码并发；预载份数按推荐张数换算（30 张基准为 10 / 5 / 5，更少时同比例收敛并受张数 ÷ 3 约束）；自动口径（iPad / Android）的预载上限固定 10。 |
 | [SettingsDocumentCodec.cs](SettingsDocumentCodec.cs) | 文档编解码与归一化 | `schemaVersion = 2` 的读取/序列化；缺字段取默认值，未知字段与未知 id 忽略，三张表按 id 合并并保留用户顺序，数值按范围夹取；缓存张数 1–400、缓存内存 512–32768 MB、滚动预载延时 100–2000 ms（步进 100）的范围常量供工作副本输入共用，延时的输入与文档读写统一走 `NormalizeVisibleCenterDelayMs`（按最近刻度归一，正中间向上取整）。`AnalysisImmediateCompute` 持久化即时 DINO，`AnalysisImmediateCvCompute` 持久化即时 CV；旧文档缺少 CV 字段时继承原组合值，字段一旦存在即独立读写。版本缺失或 `< 2` 判旧版、`> 2` 判未来版本，两者都不做迁移。 |
 | [SettingsDocumentDto.cs](SettingsDocumentDto.cs) / [SettingsDocumentJsonContext.cs](SettingsDocumentJsonContext.cs) | 文档 DTO 与源生成上下文 | 可空字段只表示 JSON 中缺失；序列化走源生成，避免反射。 |

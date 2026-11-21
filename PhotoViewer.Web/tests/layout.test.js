@@ -33,6 +33,7 @@ const scene = {
     exifCount: 4,
     showRating: true,
     commandCount: 6,
+    phoneCommandCount: 3,
     analysisTileCount: 6,
     hasPhoto: true,
 };
@@ -291,13 +292,16 @@ test("SHELL-08：手机竖屏顶行/分析/胶片/底行与 44 槽位", () => {
     assert.deepEqual(phone.control.slots.next, { x: 60, y: 0, w: 44, h: 44 });
     const { children: phoneRatingChildren, ...phoneRatingSlot } = phone.control.slots.rating;
     assert.deepEqual(phoneRatingSlot, {
-        x: 112, y: 0, w: 166, h: 44, compact: true,
-        visual: { x: 112, y: 0, w: 166, h: 44 },
+        x: 112, y: 0, w: 122, h: 44, compact: true,
+        visual: { x: 112, y: 0, w: 122, h: 44 },
     });
     assert.equal(phoneRatingChildren.length, 6);
-    assert.deepEqual(phone.control.slots.fit, { x: 286, y: 0, w: 44, h: 44 });
+    assert.deepEqual(phone.control.slots.command, { x: 242, y: 0, w: 132, h: 44 });
+    assert.deepEqual(phone.control.slots.commandSegments.map((segment) => segment.x), [242, 286, 330]);
     assert.deepEqual(phone.nodes["control.previous"], [16, 774, 44, 44]);
-    assert.deepEqual(phone.nodes["control.fit"], [286, 774, 44, 44]);
+    assert.deepEqual(phone.nodes["control.command"], [242, 774, 132, 44]);
+    assert.deepEqual(phone.nodes["control.command0"], [242, 774, 44, 44]);
+    assert.deepEqual(phone.nodes["control.command2"], [330, 774, 44, 44]);
     assert.deepEqual(phone.materials.map((entry) => entry.kind), ["top", "bottom"]);
 });
 
@@ -321,8 +325,8 @@ test("SHELL-08：竖屏开关各管各栏，竖屏无 AI 开关", () => {
     assert.equal(noNav.control.slots.previous, undefined);
     const { children: noNavChildren, ...noNavSlot } = noNav.control.slots.rating;
     assert.deepEqual(noNavSlot, {
-        x: 16, y: 0, w: 262, h: 44, compact: false,
-        visual: { x: 35, y: 0, w: 224, h: 44 },
+        x: 16, y: 0, w: 218, h: 44, compact: true,
+        visual: { x: 16, y: 0, w: 218, h: 44 },
     });
     assert.equal(noNavChildren.length, 6);
     const noAnalysis = layout({ ...base, showAnalysis: false });
@@ -331,6 +335,22 @@ test("SHELL-08：竖屏开关各管各栏，竖屏无 AI 开关", () => {
     const noExifTop = layout({ ...base, showExif: false, showAnalysis: false });
     assert.equal(noExifTop.filter.entry.y, 16, "无 EXIF 时筛选未上移到刘海两旁");
     assert.equal(noExifTop.panes.fitRect.y, 68);
+
+    const cleared = layout({ ...base, phoneCommandCount: 0 });
+    assert.equal(cleared.control.slots.command, undefined, "清空命令后仍留槽位");
+    assert.equal(cleared.control.slots.commandSegments, undefined, "清空命令后仍留分段");
+    const { children: clearedChildren, ...clearedSlot } = cleared.control.slots.rating;
+    assert.deepEqual(clearedSlot, {
+        x: 112, y: 0, w: 262, h: 44, compact: false,
+        visual: { x: 131, y: 0, w: 224, h: 44 },
+    }, "清空命令后评分未吸收让出的宽度与组距");
+    assert.equal(clearedChildren.length, 6);
+    assert.equal(cleared.panes.fitRect.h, layout({ ...base }).panes.fitRect.h, "底行高度随命令数变化");
+
+    const emptyRow = layout({ ...base, phoneCommandCount: 0, showNavigation: false, showRating: false });
+    assert.deepEqual(emptyRow.control.slots, {}, "底行无内容时仍留槽位");
+    assert.equal(emptyRow.panes.bottomRow, null, "底行无内容时仍预留按钮行");
+    assert.equal(emptyRow.panes.fitRect.h, 552, "底行无内容时适应区未向下延伸");
 });
 
 test("SHELL-01/10：上下布局竖屏避让底部安全区，横屏不为手势条留位", () => {
@@ -366,21 +386,21 @@ test("SHELL-09：手机横屏刘海侧列、88 合体、无衬底 EXIF 与镜像
     assert.deepEqual(landscape.panes.controlPane, { x: 790, y: 0, w: 54, h: 390 });
     assert.deepEqual(landscape.panes.fitRect, { x: 132, y: 0, w: 585, h: 390 });
     assert.equal(landscape.exif.variant, "bare");
-    assert.deepEqual(landscape.exif.frame, { x: 786, y: 10, w: 52, h: 150 });
+    assert.deepEqual(landscape.exif.frame, { x: 786, y: 10, w: 52, h: 112 });
     assert.equal(landscape.control.slots.exif.w, t("toolbar.exif.item.width"));
     assert.equal(landscape.exif.items[0].w, t("toolbar.exif.item.width"));
     assert.equal(landscape.control.slots.exif.x + landscape.control.slots.exif.w / 2,
-        landscape.control.slots.fit.x + t("shell.glass.button.size") / 2, "横屏 EXIF 容器未与按钮列同轴");
+        landscape.control.slots.command.x + t("shell.phone.command.size") / 2, "横屏 EXIF 容器未与命令列同轴");
     assert.equal(landscape.panes.controlPane.w, t("shell.glass.button.size") + t("toolbar.padding"));
     const { children: landscapeChildren, ...landscapeSlot } = landscape.control.slots.rating;
     assert.deepEqual(landscapeSlot, {
-        x: 790, y: 170, w: 44, h: 112, compact: true,
-        visual: { x: 790, y: 170, w: 44, h: 112 },
+        x: 790, y: 132, w: 44, h: 106, compact: true,
+        visual: { x: 790, y: 132, w: 44, h: 106 },
     });
     assert.equal(landscapeChildren.length, 6);
-    assert.deepEqual(landscape.control.slots.fit, { x: 790, y: 292, w: 44, h: 44 });
-    assert.deepEqual(landscape.control.slots.enhance, { x: 790, y: 336, w: 44, h: 44 });
-    assert.deepEqual(landscape.nodes["control.fit"], [790, 292, 44, 44]);
+    assert.deepEqual(landscape.control.slots.command, { x: 790, y: 248, w: 44, h: 132 });
+    assert.deepEqual(landscape.control.slots.commandSegments.map((segment) => segment.y), [248, 292, 336]);
+    assert.deepEqual(landscape.nodes["control.command"], [790, 248, 44, 132]);
     assert.equal(landscape.materials[0].kind, "side");
 
     const mirrored = layout({
@@ -399,15 +419,15 @@ test("SHELL-09：手机横屏刘海侧列、88 合体、无衬底 EXIF 与镜像
     assert.deepEqual(mirrored.film.items[0], { x: 8, y: 64, w: 64, h: 76 });
     const { children: mirroredChildren, ...mirroredSlot } = mirrored.control.slots.rating;
     assert.deepEqual(mirroredSlot, {
-        x: 10, y: 170, w: 44, h: 112, compact: true,
-        visual: { x: 10, y: 170, w: 44, h: 112 },
+        x: 10, y: 132, w: 44, h: 106, compact: true,
+        visual: { x: 10, y: 132, w: 44, h: 106 },
     });
     assert.equal(mirroredChildren.length, 6);
-    assert.deepEqual(mirrored.control.slots.fit, { x: 10, y: 292, w: 44, h: 44 });
-    assert.deepEqual(mirrored.exif.frame, { x: 6, y: 10, w: 52, h: 150 });
+    assert.deepEqual(mirrored.control.slots.command, { x: 10, y: 248, w: 44, h: 132 });
+    assert.deepEqual(mirrored.exif.frame, { x: 6, y: 10, w: 52, h: 112 });
     assert.equal(mirrored.exif.frame.x + mirrored.exif.frame.w / 2,
-        mirrored.control.slots.fit.x + t("shell.glass.button.size") / 2, "镜像后 EXIF 容器未与按钮列同轴");
-    assert.deepEqual(mirrored.nodes["control.fit"], [10, 292, 44, 44]);
+        mirrored.control.slots.command.x + t("shell.phone.command.size") / 2, "镜像后 EXIF 容器未与命令列同轴");
+    assert.deepEqual(mirrored.nodes["control.command"], [10, 248, 44, 132]);
     assert.equal(mirrored.analysis.tiles[0].x, 8, "镜像后接缝未换到控制栏一侧");
     assert.equal(landscape.analysis.tiles[0].x, 10, "非镜像分析瓦片未留朝主图内边距");
 });
@@ -605,7 +625,9 @@ test("SHELL-08/10：竖屏适应区与底行使用左右安全区，底距压入
     assert.deepEqual(phone.filter.entry, { x: 36, y: 59, w: 44, h: 44 });
     assert.deepEqual(phone.filter.more, { x: 300, y: 59, w: 44, h: 44 });
     assert.deepEqual(phone.control.slots.previous, { x: 36, y: 0, w: 44, h: 44 });
-    assert.deepEqual(phone.control.slots.fit, { x: 256, y: 0, w: 44, h: 44 });
+    assert.deepEqual(phone.control.slots.command, { x: 212, y: 0, w: 132, h: 44 });
+    assert.equal(phone.control.slots.rating.x, 132);
+    assert.equal(phone.control.slots.rating.w, 72);
     assert.equal(phone.panes.bottomRow.y, 764);
 });
 
@@ -615,17 +637,15 @@ test("SHELL-09：横屏关闭评分释放 rating 保留位，EXIF 整项裁剪�
         safeArea: { left: 59 }, showAnalysis: true, showRating: false,
     });
     assert.equal(noRating.control.slots.rating, undefined);
-    assert.deepEqual(noRating.control.slots.exif, { x: 786, y: 71, w: 52, h: 150, items: noRating.control.slots.exif.items });
-    assert.deepEqual(noRating.control.slots.fit, { x: 790, y: 231, w: 44, h: 44 });
-    assert.deepEqual(noRating.control.slots.enhance, { x: 790, y: 275, w: 44, h: 44 });
+    assert.deepEqual(noRating.control.slots.exif, { x: 786, y: 49, w: 52, h: 150, items: noRating.control.slots.exif.items });
+    assert.deepEqual(noRating.control.slots.command, { x: 790, y: 209, w: 44, h: 132 });
 
     const noRatingShort = layout({
         layoutMode: "phone", width: 844, height: 250,
         safeArea: { left: 59 }, showAnalysis: true, showRating: false,
     });
-    assert.equal(noRatingShort.control.slots.exif.items.length, 3, "关闭评分后 EXIF 未获得释放的空间");
-    assert.deepEqual(noRatingShort.control.slots.fit, { x: 790, y: 142, w: 44, h: 44 });
-    assert.deepEqual(noRatingShort.control.slots.enhance, { x: 790, y: 186, w: 44, h: 44 });
+    assert.equal(noRatingShort.control.slots.exif.items.length, 2, "关闭评分后 EXIF 未获得释放的空间");
+    assert.deepEqual(noRatingShort.control.slots.command, { x: 790, y: 101, w: 44, h: 132 });
 
     const short = layout({
         layoutMode: "phone", width: 844, height: 250,
@@ -634,12 +654,13 @@ test("SHELL-09：横屏关闭评分释放 rating 保留位，EXIF 整项裁剪�
     assert.equal(short.exif.visible, false);
     const { children: shortChildren, ...shortSlot } = short.control.slots.rating;
     assert.deepEqual(shortSlot, {
-        x: 790, y: 10, w: 44, h: 132, compact: true,
-        visual: { x: 790, y: 10, w: 44, h: 132 },
+        x: 790, y: 10, w: 44, h: 88, compact: true,
+        visual: { x: 790, y: 10, w: 44, h: 88 },
     });
     assert.equal(shortChildren.length, 6);
-    assert.deepEqual(short.control.slots.fit, { x: 790, y: 152, w: 44, h: 44 });
-    assert.deepEqual(short.control.slots.enhance, { x: 790, y: 196, w: 44, h: 44 });
+    assert.deepEqual(short.control.slots.command, { x: 790, y: 108, w: 44, h: 132 });
+    assert.ok(short.control.slots.rating.y + short.control.slots.rating.h
+        <= short.control.slots.command.y, "评分槽与命令槽重叠");
 
     const controlOff = layout({
         layoutMode: "phone", width: 844, height: 390,
@@ -659,11 +680,12 @@ test("SHELL-09：横屏关闭评分释放 rating 保留位，EXIF 整项裁剪�
         layoutMode: "phone", width: 844, height: 120,
         safeArea: { left: 59 }, showAnalysis: true,
     });
-    const { rating, fit, enhance } = tiny.control.slots;
-    assert.equal(rating.h, 2);
+    const { rating, command, commandSegments } = tiny.control.slots;
+    assert.equal(rating.h, 0);
     assert.equal(rating.compact, true);
-    assert.ok(rating.y + rating.h <= fit.y, "评分槽与上下张/缩放槽重叠");
-    assert.equal(fit.y + fit.h, enhance.y, "缩放/增强两段之间出现组距");
+    assert.ok(rating.y + rating.h <= command.y, "评分槽与命令槽重叠");
+    assert.deepEqual(commandSegments.map((segment) => segment.y - command.y), [0, 44, 88],
+        "命令段之间出现组距或未从上到下排列");
 });
 
 test("FILTER-07/TOOLBAR-05@mac：mac 配置档只在列布局首控件让位与窗口装饰上与默认档不同", () => {

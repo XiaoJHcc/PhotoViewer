@@ -56,6 +56,7 @@ const base = {
     exifCount: 4,
     showRating: true,
     commandCount: 6,
+    phoneCommandCount: 3,
     analysisTileCount: standard ? 5 : 6,
     hasPhoto: true,
 };

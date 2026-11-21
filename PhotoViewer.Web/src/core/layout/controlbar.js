@@ -1,9 +1,11 @@
 /**
  * 控制栏几何（TOOLBAR-01/02/03/05/08、RATING-07、SHELL-08/09/12）。
  * 宽形态：EXIF → 评分 → 命令，44 点按钮，整组换行/换列、居中、溢出滚动；mac 配置档评分恒为展开态。
- * 手机形态：固定槽位，不换行/不换列/不滚动；展开态评分 224、紧凑态 88、厚 44。
+ * 手机形态：槽位随生效命令（0–3）变化，不换行/不换列/不滚动；展开态评分 224、紧凑态按剩余宽度、厚 44。
  * 矩形相对控制栏宿主；EXIF 块内项相对块。
  */
+
+import { PHONE_COMMAND_LIMIT } from "../settings.js";
 
 export const RATING_COUNT = 6;
 
@@ -25,6 +27,10 @@ export function exifItemHeight(t) {
 
 export function compactRatingLength(t) {
     return t("rating.compact.minLength");
+}
+
+export function phoneCommandLength(count, t) {
+    return count > 0 ? count * t("shell.phone.command.size") : 0;
 }
 
 export function exifMainLength(kind, count, axis, t) {
@@ -251,12 +257,16 @@ export function computePhoneControl(spec, t) {
         exifCount = 0,
         showRating = true,
         showNavigation = true,
+        commandCount: requestedCommands = 0,
     } = spec;
     const button = glass(t);
+    const commandSize = t("shell.phone.command.size");
     const gap = t("shell.glass.group.gap");
     const compactMin = compactRatingLength(t);
     const expanded = ratingMainLength(t);
     const pairLength = button * 2;
+    const commandCount = Math.max(0, Math.min(PHONE_COMMAND_LIMIT, requestedCommands));
+    const commandLength = phoneCommandLength(commandCount, t);
 
     if (orientation === "portrait") {
         const slots = {};
@@ -265,9 +275,22 @@ export function computePhoneControl(spec, t) {
             slots.previous = { x: controlLeft, y: 0, w: button, h: button };
             slots.next = { x: controlLeft + button, y: 0, w: button, h: button };
         }
+        if (commandCount > 0) {
+            // SHELL-08：可选命令合体靠右，段与段共用一个胶囊；无命令时不留槽位与组距。
+            const commandX = width - controlRight - commandLength;
+            const commandY = (button - commandSize) / 2;
+            slots.command = { x: commandX, y: commandY, w: commandLength, h: commandSize };
+            slots.commandSegments = Array.from({ length: commandCount }, (_, index) => ({
+                index,
+                x: commandX + index * commandSize,
+                y: commandY,
+                w: commandSize,
+                h: commandSize,
+            }));
+        }
         const ratingStart = showNav ? controlLeft + pairLength + gap : controlLeft;
-        const rightStart = width - controlRight - pairLength;
-        const slotWidth = Math.max(0, rightStart - gap - ratingStart);
+        const rightStart = width - controlRight - commandLength;
+        const slotWidth = Math.max(0, rightStart - (commandCount > 0 ? gap : 0) - ratingStart);
         if (showRating) {
             const compact = slotWidth < expanded;
             const visualWidth = compact ? slotWidth : expanded;
@@ -286,8 +309,6 @@ export function computePhoneControl(spec, t) {
                 children: ratingChildFrames("horizontal", t, { compact, length: visualWidth }),
             };
         }
-        slots.fit = { x: rightStart, y: 0, w: button, h: button };
-        slots.enhance = { x: rightStart + button, y: 0, w: button, h: button };
         return {
             mode: "phone",
             orientation,
@@ -307,18 +328,19 @@ export function computePhoneControl(spec, t) {
     // TOOLBAR-05：无衬底透明容器以按钮列中轴居中，宽取整项宽但不超出按钮加两侧边距。
     const exifCross = Math.min(exifItemWidth(t), button + t("toolbar.padding") * 2);
     const exifX = (button - exifCross) / 2;
-    // TOOLBAR-02：仅显示评分时为评分保留紧凑最短长度；关闭评分时这份保留与对应组距一起释放。
+    // TOOLBAR-02：仅显示评分时为评分保留紧凑最短长度；关闭评分或没有命令时对应保留与组距一起释放。
     const reservedRating = showRating ? compactMin : 0;
-    const baseGroups = 1 + (showRating ? 1 : 0);
-    const exifBudget = inner - pairLength - reservedRating - groupSpacing * baseGroups;
+    const commandGroups = commandCount > 0 ? 1 : 0;
+    const baseGroups = commandGroups + (showRating ? 1 : 0);
+    const exifBudget = inner - commandLength - reservedRating - groupSpacing * baseGroups;
     let exifVisible = 0;
     if (exifCount > 0 && exifBudget >= itemHeight) {
         exifVisible = Math.min(exifCount, Math.floor((exifBudget + itemSpacing) / itemStep));
     }
     const exifLength = exifVisible > 0 ? exifVisible * itemHeight + (exifVisible - 1) * itemSpacing : 0;
-    const groupCount = (exifVisible > 0 ? 1 : 0) + (showRating ? 1 : 0) + 1;
+    const groupCount = (exifVisible > 0 ? 1 : 0) + (showRating ? 1 : 0) + commandGroups;
     const spacingTotal = groupSpacing * Math.max(0, groupCount - 1);
-    const ratingAvailable = inner - exifLength - pairLength - spacingTotal;
+    const ratingAvailable = inner - exifLength - commandLength - spacingTotal;
     const ratingHeight = showRating ? Math.min(expanded, Math.max(0, ratingAvailable)) : 0;
     const entries = [];
     if (exifVisible > 0) {
@@ -335,7 +357,8 @@ export function computePhoneControl(spec, t) {
         });
     }
     if (showRating) entries.push({ kind: "rating", h: ratingHeight, compact: ratingHeight < expanded });
-    entries.push({ kind: "pair", h: pairLength });
+    // SHELL-09：可选命令竖排合体在控制列末端，顺序从上到下，零项时整组移除。
+    if (commandCount > 0) entries.push({ kind: "command", h: commandLength });
     verticalStack(entries, height, t);
     for (const entry of entries) {
         if (entry.kind === "exif") {
@@ -350,9 +373,16 @@ export function computePhoneControl(spec, t) {
                 visual: { x: 0, y: entry.y, w: button, h: entry.h },
                 children: ratingChildFrames("vertical", t, { compact: entry.compact, length: entry.h }),
             };
-        } else {
-            slots.fit = { x: 0, y: entry.y, w: button, h: button };
-            slots.enhance = { x: 0, y: entry.y + button, w: button, h: button };
+        } else if (entry.kind === "command") {
+            const commandX = (button - commandSize) / 2;
+            slots.command = { x: commandX, y: entry.y, w: commandSize, h: commandLength };
+            slots.commandSegments = Array.from({ length: commandCount }, (_, index) => ({
+                index,
+                x: commandX,
+                y: entry.y + index * commandSize,
+                w: commandSize,
+                h: commandSize,
+            }));
         }
     }
     return {

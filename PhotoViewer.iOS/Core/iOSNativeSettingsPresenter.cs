@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
 using Foundation;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.ViewModels.Settings;
 using UIKit;
@@ -1338,9 +1339,9 @@ internal sealed class iOSNativeExifSettingsViewController : iOSNativeSettingsFor
 }
 
 /// <summary>
-/// iOS 原生控制设置页：布局模式、控制栏功能与键盘映射。
-/// 宽形态命令行与 Mac 单行布局一致；手机形态只列上一张/下一张，沿用蓝色勾选、图标与文字，
-/// 不提供排序或快捷键编辑。宽形态连接键盘或鼠标后就地出现主/次绑定按钮。
+/// iOS 原生控制设置页：布局模式、控制栏功能（上下张开关与命令表两张卡片）与键盘映射。
+/// 宽形态命令行与 Mac 单行布局一致；手机形态的命令表同样完整保留勾选与排序，
+/// 不提供绑定编辑或键盘映射。宽形态连接键盘或鼠标后就地出现主/次绑定按钮。
 /// </summary>
 internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettingsFormViewController
 {
@@ -1351,7 +1352,7 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
     private iOSNativeEmbeddedCheckableReorderListView<SettingsViewModel.HotkeyItem>? _hotkeys;
     private iOSNativeEmbeddedCheckableReorderListView<string>? _navigationList;
     private UIView? _mapping;
-    /// <summary>本次内容构建时的形态（手机形态只保留上下张开关，隐藏快捷键编辑）。</summary>
+    /// <summary>本次内容构建时的形态（手机形态隐藏快捷键编辑与键盘映射）。</summary>
     private bool _phoneForm;
     /// <summary>布局模式订阅是否已挂接（页面重新载入时不重复订阅）。</summary>
     private bool _layoutModeHooked;
@@ -1369,10 +1370,10 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
     /// <summary>快捷键录制器（行内按钮与验收共用）。</summary>
     internal iOSHotkeyRecorder Recorder => _recorder;
 
-    /// <summary>宽形态控制栏命令列表（验收读取真实单元格）。</summary>
+    /// <summary>宽形态控制栏命令表（验收读取真实单元格）。</summary>
     internal iOSNativeEmbeddedCheckableReorderListView<SettingsViewModel.HotkeyItem>? HotkeyList => _hotkeys;
 
-    /// <summary>上一张/下一张显示开关列表（手机形态为控制栏功能的唯一一项）。</summary>
+    /// <summary>「控制栏功能」区的上一张/下一张开关列表（独立一张卡片，单项无排序）。</summary>
     internal iOSNativeEmbeddedCheckableReorderListView<string>? NavigationList => _navigationList;
 
     /// <summary>键盘映射分组（验收读取可见性）。</summary>
@@ -1397,18 +1398,19 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
             titleSelector: item => item,
             subtitleSelector: _ => null,
             isEnabledGetter: _ => Settings.ShowNavigationButtons,
-            isEnabledSetter: (_, value) => Settings.ShowNavigationButtons = value,
+            isEnabledSetter: (_, value) =>
+            {
+                Settings.ShowNavigationButtons = value;
+                // 组合开关决定独立上下张是否进入可选命令组：勾号的生效态立刻重算。
+                if (_phoneForm) _hotkeys?.RefreshInPlace();
+            },
             moveAction: (_, _) => { },
             rowHeight: iOSNativeSettingsMetrics.ListRowHeight,
             cellStyle: UITableViewCellStyle.Default,
             leadingIconSelector: _ => SymbolIcon(NavigationIconSymbol),
             showsReorderControls: false);
-        if (_phoneForm)
-        {
-            contentStack.AddArrangedSubview(CreateSection("控制栏功能", null, _navigationList));
-            RefreshCapabilities();
-            return;
-        }
+        // SETTINGS-08：上下张组合开关与可勾选排序的命令表各占一张卡片，只有第一张带「控制栏功能」标题，第二张不建标题行。
+        // 宽形态所有勾选命令按顺序生效；手机形态由共享 PhoneControlCommands 解析生效项，未生效项只淡化勾号。
         _hotkeys = new iOSNativeEmbeddedCheckableReorderListView<SettingsViewModel.HotkeyItem>(
             itemsProvider: () => Settings.Hotkeys,
             titleSelector: item => item.Name,
@@ -1418,9 +1420,23 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
             moveAction: Settings.MoveHotkey,
             rowHeight: iOSNativeSettingsMetrics.ListRowHeight,
             cellStyle: UITableViewCellStyle.Default,
-            trailingAccessorySelector: BindingButtons,
-            leadingIconSelector: CommandIcon);
-        contentStack.AddArrangedSubview(CreateSection("控制栏功能", null, _navigationList, _hotkeys));
+            trailingAccessorySelector: _phoneForm
+                ? null
+                : (Func<SettingsViewModel.HotkeyItem, UIView?>?)BindingButtons,
+            leadingIconSelector: CommandIcon,
+            isCheckmarkActiveSelector: _phoneForm
+                ? (Func<SettingsViewModel.HotkeyItem, bool>?)IsPhoneCommandActive
+                : null,
+            accessibilityValueSelector: _phoneForm
+                ? (Func<SettingsViewModel.HotkeyItem, string?>?)PhoneCommandAccessibilityValue
+                : null);
+        contentStack.AddArrangedSubview(CreateSection("控制栏功能", null, _navigationList));
+        contentStack.AddArrangedSubview(CreateSection("", null, _hotkeys));
+        if (_phoneForm)
+        {
+            RefreshCapabilities();
+            return;
+        }
 
         var rows = new List<UIView>
         {
@@ -1433,6 +1449,26 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
         contentStack.AddArrangedSubview(_mapping);
         RefreshCapabilities();
     }
+
+    /// <summary>
+    /// 手机形态下该命令是否实际显示在控制栏：唯一来源是共享 <see cref="PhoneControlCommands.Resolve"/>
+    /// （跳过未勾选项、组合开关开启时跳过独立上下张、最多三项），设置页不复制筛选规则。
+    /// </summary>
+    /// <param name="item">命令表行。</param>
+    /// <returns>已勾选且实际生效时为 true。</returns>
+    private bool IsPhoneCommandActive(SettingsViewModel.HotkeyItem item)
+        => PhoneControlCommands.Resolve(
+                Settings.Hotkeys.Where(hotkey => hotkey.IsDisplay).Select(hotkey => hotkey.Command),
+                Settings.ShowNavigationButtons)
+            .Contains(item.Command, StringComparer.Ordinal);
+
+    /// <summary>手机形态命令行的读屏值：区分已勾选、已勾选但未在控制栏显示、未勾选。</summary>
+    /// <param name="item">命令表行。</param>
+    /// <returns>读屏值；宽形态不设置。</returns>
+    private string PhoneCommandAccessibilityValue(SettingsViewModel.HotkeyItem item)
+        => item.IsDisplay
+            ? (IsPhoneCommandActive(item) ? "已勾选" : "已勾选，未在手机控制栏显示")
+            : "未勾选";
 
     /// <summary>布局模式在页内改成「手机」或改回宽形态时，按新形态重建分组（工作副本，不影响主屏）。</summary>
     /// <param name="sender">事件源（工作副本）。</param>
@@ -1453,7 +1489,7 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
         Settings.PropertyChanged += OnLayoutModeChanged;
     }
 
-    /// <summary>控制栏功能的命令图标：取命令目录登记的同一条 SF Symbols，与控制栏按钮同一语义。</summary>
+    /// <summary>命令表的命令图标：取命令目录登记的同一条 SF Symbols，与控制栏按钮同一语义。</summary>
     private static UIImage? CommandIcon(SettingsViewModel.HotkeyItem item) => CommandIcon(item.Command);
 
     private static UIImage? CommandIcon(string command)
@@ -1463,7 +1499,7 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
         => symbol == null
             ? null
             : UIImage.GetSystemImage(symbol)?.ApplyConfiguration(
-                UIImageSymbolConfiguration.Create((nfloat)PhotoViewer.Core.Design.DesignTokens.ToolbarCommandGlyphFontSize));
+                UIImageSymbolConfiguration.Create((nfloat)DesignTokens.ToolbarCommandGlyphFontSize));
 
     /// <summary>每行的主/次快捷键按钮组：外设连接时创建或复用，纯触控返回 null 表示不显示。</summary>
     internal iOSHotkeyBindingButtons? BindingButtons(SettingsViewModel.HotkeyItem item)
@@ -1703,7 +1739,7 @@ internal sealed class iOSNativeAiSettingsViewController : iOSNativeSettingsFormV
 /// </summary>
 internal static class iOSNativeSettingsMetrics
 {
-    /// <summary>控制栏功能与 EXIF 显示表共用的标准行高（SETTINGS-01@ios / SETTINGS-08）。</summary>
+    /// <summary>控制栏命令表与 EXIF 显示表共用的标准行高（SETTINGS-01@ios / SETTINGS-08）。</summary>
     internal const double ListRowHeight = 52;
 
     /// <summary>把右内边距推到表格宽度之外，使最后一行不留下卡片底缘的描边。</summary>
@@ -1756,7 +1792,8 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListView<TItem> : UIView
         Action<TItem>? detailAction = null,
         Func<TItem, UIView?>? trailingAccessorySelector = null,
         Func<TItem, UIImage?>? leadingIconSelector = null,
-        bool showsReorderControls = true)
+        bool showsReorderControls = true,
+        Func<TItem, bool>? isCheckmarkActiveSelector = null)
     {
         _itemsProvider = itemsProvider;
 
@@ -1791,7 +1828,8 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListView<TItem> : UIView
             detailAction,
             trailingAccessorySelector,
             leadingIconSelector,
-            showsReorderControls);
+            showsReorderControls,
+            isCheckmarkActiveSelector);
         _tableView.Source = _source;
 
         AddSubview(_tableView);
@@ -1868,6 +1906,7 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListSource<TItem> : UITab
     private readonly Func<TItem, UIView?>? _trailingAccessorySelector;
     private readonly Func<TItem, UIImage?>? _leadingIconSelector;
     private readonly bool _showsReorderControls;
+    private readonly Func<TItem, bool>? _isCheckmarkActiveSelector;
 
     /// <summary>
     /// 初始化列表数据源。
@@ -1889,7 +1928,8 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListSource<TItem> : UITab
         Action<TItem>? detailAction,
         Func<TItem, UIView?>? trailingAccessorySelector,
         Func<TItem, UIImage?>? leadingIconSelector,
-        bool showsReorderControls)
+        bool showsReorderControls,
+        Func<TItem, bool>? isCheckmarkActiveSelector)
     {
         _itemsProvider = itemsProvider;
         _titleSelector = titleSelector;
@@ -1908,6 +1948,7 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListSource<TItem> : UITab
         _trailingAccessorySelector = trailingAccessorySelector;
         _leadingIconSelector = leadingIconSelector;
         _showsReorderControls = showsReorderControls;
+        _isCheckmarkActiveSelector = isCheckmarkActiveSelector;
     }
 
     /// <summary>指定项的行高。</summary>
@@ -1958,7 +1999,8 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListSource<TItem> : UITab
             isEnabled: _isEnabledGetter(item),
             attributedSubtitle: showsSubtitle ? _attributedSubtitleSelector?.Invoke(item) : null,
             accessibilityValue: _accessibilityValueSelector?.Invoke(item),
-            icon: _leadingIconSelector?.Invoke(item));
+            icon: _leadingIconSelector?.Invoke(item),
+            checkmarkActive: _isCheckmarkActiveSelector?.Invoke(item) ?? true);
         cell.ShowsReorderControl = _showsReorderControls;
         cell.BackgroundColor = UIColor.Clear;
         cell.EditingAccessory = _showsDetailButton?.Invoke(item) == true
@@ -2055,10 +2097,10 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
     private NSLayoutConstraint[] _accessoryConstraints = [];
     private UIView? _trailingAccessory;
 
-    /// <summary>行尾附加控件（控制栏功能行的主/次快捷键按钮组；验收读取）。</summary>
+    /// <summary>行尾附加控件（命令表行的主/次快捷键按钮组；验收读取）。</summary>
     internal UIView? TrailingAccessory => _trailingAccessory;
 
-    /// <summary>命令行图标（控制栏功能列表；验收读取可见性与图像）。</summary>
+    /// <summary>命令行图标（命令表；验收读取可见性与图像）。</summary>
     internal UIImageView LeadingIconView => _iconView;
 
     /// <summary>标题标签（验收读取）。</summary>
@@ -2069,6 +2111,9 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
 
     /// <summary>勾选标记（验收读取）。</summary>
     internal UIImageView CheckmarkView => _checkmarkView;
+
+    /// <summary>勾选是否在当前形态实际生效；false 表示已勾选但未在手机控制栏显示（只淡化勾号）。</summary>
+    internal bool CheckmarkActive { get; private set; } = true;
 
     /// <summary>
     /// 初始化列表单元格。
@@ -2162,7 +2207,7 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
     }
 
     /// <summary>
-    /// 设置或移除行尾附加控件（控制栏功能行的主/次快捷键按钮组），标题在附加控件前尾部截断。
+    /// 设置或移除行尾附加控件（命令表行的主/次快捷键按钮组），标题在附加控件前尾部截断。
     /// </summary>
     /// <param name="accessory">附加控件；null 表示纯触控列表，不显示任何行尾控件。</param>
     internal void SetTrailingAccessory(UIView? accessory)
@@ -2205,10 +2250,12 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
     /// <param name="subtitle">副标题。</param>
     /// <param name="isEnabled">是否启用。</param>
     /// <param name="attributedSubtitle">带样式副标题（优先于纯文本）。</param>
-    /// <param name="accessibilityValue">读屏值；null 时取副标题文本。</param>
-    /// <param name="icon">命令行图标（控制栏功能列表）；null 表示该行没有图标。</param>
+    /// <param name="accessibilityValue">读屏值；null 不额外设置（行标题与副标题仍由单元格文本提供）。</param>
+    /// <param name="icon">命令行图标（命令表）；null 表示该行没有图标。</param>
+    /// <param name="checkmarkActive">勾选是否在当前形态生效；false 时只淡化勾号，行操作照常可用。</param>
     public void Configure(string title, string? subtitle, bool isEnabled,
-        NSAttributedString? attributedSubtitle = null, string? accessibilityValue = null, UIImage? icon = null)
+        NSAttributedString? attributedSubtitle = null, string? accessibilityValue = null, UIImage? icon = null,
+        bool checkmarkActive = true)
     {
         _titleLabel.Text = title;
         bool hasIcon = icon != null;
@@ -2248,6 +2295,12 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
         }
 
         _checkmarkView.Hidden = !isEnabled;
-        AccessibilityValue = hasSubtitle ? accessibilityValue : null;
+        CheckmarkActive = isEnabled && checkmarkActive;
+        // SETTINGS-08：已勾选但未在手机控制栏生效的命令只淡化勾号（浅灰白、低不透明度）；
+        // 行、图标、文字、拖拽把手与勾选操作照常可用。
+        _checkmarkView.TintColor = isEnabled && !checkmarkActive
+            ? UIColor.FromWhiteAlpha((nfloat)1, (nfloat)DesignTokens.SettingsPhoneInactiveCheckOpacity)
+            : UIColor.SystemBlue;
+        AccessibilityValue = accessibilityValue;
     }
 }

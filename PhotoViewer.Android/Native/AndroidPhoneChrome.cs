@@ -274,17 +274,46 @@ internal sealed class AndroidGlassButton : MaterialButton
     }
 }
 
+/// <summary>胶囊内一段：字形、读屏名称、命令标识与可用性。</summary>
+/// <param name="Glyph">uicons 字形或 <c>U+</c> 码位令牌。</param>
+/// <param name="Description">读屏名称（与宽形态命令同源）。</param>
+/// <param name="Command">共享命令标识；null 表示纯动作段（筛选/更多、上下张）。</param>
+/// <param name="Enabled">是否可用（无照片时除打开文件外禁用）。</param>
+/// <param name="Solid">评分快捷命令的实心星底。</param>
+/// <param name="Number">评分快捷命令叠在星形中心的数字。</param>
+internal readonly record struct GlassComboSegment(
+    string Glyph,
+    string Description,
+    string? Command = null,
+    bool Enabled = true,
+    bool Solid = false,
+    string? Number = null);
+
 /// <summary>
-/// 两段玻璃合体按钮（SHELL-08、SHELL-09）：Material <see cref="MaterialCardView"/> 胶囊容器承载材质，
-/// 内部两段透明底的 <see cref="AndroidGlassButton"/>，胶囊只由容器一层绘制，不画分隔线；
-/// 段各自 44×44、读屏各有一项，镜像时只交换两段的位置。
+/// 同胶囊玻璃按钮组（SHELL-08、SHELL-09）：Material <see cref="MaterialCardView"/> 胶囊容器承载材质，
+/// 内部一至三段透明底的 <see cref="AndroidGlassButton"/>，胶囊只由容器一层绘制，不画分隔线；
+/// 每段是独立可聚焦、可点按、带读屏名称的动作按钮（不是分段选择控件），镜像时只交换段的视觉顺序。
+/// 筛选/更多与上下张为固定两段，手机可选命令组按生效命令动态 1–3 段。
 /// </summary>
 internal sealed class AndroidGlassCombo : MaterialCardView
 {
-    private readonly AndroidGlassButton _first;
-    private readonly AndroidGlassButton _second;
+    private readonly List<AndroidGlassButton> _segments = [];
+    private readonly List<string> _segmentKeys = [];
     private bool _vertical;
     private bool _mirrored;
+
+    /// <summary>建空胶囊容器（手机可选命令组按生效命令填段）。</summary>
+    /// <param name="context">宿主上下文。</param>
+    public AndroidGlassCombo(Context context) : base(context)
+    {
+        CardElevation = 0;
+        StrokeWidth = 0;
+        SetCardBackgroundColor(AndroidUiTheme.GlassButtonFill);
+        SetContentPadding(0, 0, 0, 0);
+        Clickable = false;
+        SetClipChildren(true);
+        ClipToOutline = true;
+    }
 
     /// <summary>建两段合体按钮。</summary>
     /// <param name="context">宿主上下文。</param>
@@ -293,35 +322,31 @@ internal sealed class AndroidGlassCombo : MaterialCardView
     /// <param name="secondGlyph">后段字形。</param>
     /// <param name="secondDescription">后段读屏名称。</param>
     public AndroidGlassCombo(Context context, string firstGlyph, string firstDescription,
-        string secondGlyph, string secondDescription) : base(context)
+        string secondGlyph, string secondDescription) : this(context)
     {
-        Radius = (float)AndroidUiTheme.Dp(context, Size / 2);
-        CardElevation = 0;
-        StrokeWidth = 0;
-        SetCardBackgroundColor(AndroidUiTheme.GlassButtonFill);
-        SetContentPadding(0, 0, 0, 0);
-        Clickable = false;
-        _first = new AndroidGlassButton(context, firstGlyph, firstDescription);
-        _second = new AndroidGlassButton(context, secondGlyph, secondDescription);
-        foreach (var button in new[] { _first, _second })
-        {
-            button.UseTransparentFill();
-            AddView(button);
-        }
-        SetClipChildren(true);
-        ClipToOutline = true;
+        SetSegments([new GlassComboSegment(firstGlyph, firstDescription),
+            new GlassComboSegment(secondGlyph, secondDescription)]);
     }
 
-    /// <summary>两段合体的边长（dp）：两枚玻璃按钮。</summary>
+    /// <summary>两段合体（筛选/更多、上下张）的边长（dp）。</summary>
     internal static double Size => AndroidGlassButton.Size * 2;
 
+    /// <summary>命令段被点按时触发（参数为共享命令标识）。</summary>
+    internal event Action<string>? CommandActivated;
+
     /// <summary>前段按钮（验收读屏/命中用）。</summary>
-    internal AndroidGlassButton First => _first;
+    internal AndroidGlassButton First => _segments[0];
 
     /// <summary>后段按钮。</summary>
-    internal AndroidGlassButton Second => _second;
+    internal AndroidGlassButton Second => _segments[1];
 
-    /// <summary>是否竖排（横屏控制栏的缩放/增强合体）。</summary>
+    /// <summary>当前段数（验收读取）。</summary>
+    internal int SegmentCount => _segments.Count;
+
+    /// <summary>全部段按钮（验收读取）。</summary>
+    internal IReadOnlyList<AndroidGlassButton> SegmentsForChecks => _segments;
+
+    /// <summary>是否竖排（横屏控制栏的命令组）。</summary>
     internal bool Vertical => _vertical;
 
     /// <summary>横排时前段是否落在容器末端（刘海在右的手机横屏镜像）。</summary>
@@ -330,7 +355,7 @@ internal sealed class AndroidGlassCombo : MaterialCardView
     /// <summary>胶囊容器实际底色（验收读取）。</summary>
     internal Color FillColorForChecks => new(CardBackgroundColor?.DefaultColor ?? 0);
 
-    /// <summary>设置排布方向：横排两段左右相接，竖排两段上下相接。</summary>
+    /// <summary>设置排布方向：横排各段左右相接，竖排各段上下相接。</summary>
     /// <param name="vertical">是否竖排。</param>
     internal void SetVertical(bool vertical)
     {
@@ -339,7 +364,7 @@ internal sealed class AndroidGlassCombo : MaterialCardView
         RequestLayout();
     }
 
-    /// <summary>设置横排镜像：前段落在容器末端，与镜像后的真实槽位一致。</summary>
+    /// <summary>设置横排镜像：各段整体反向排布，与镜像后的真实槽位一致。</summary>
     /// <param name="mirrored">是否镜像。</param>
     internal void SetMirrored(bool mirrored)
     {
@@ -348,7 +373,67 @@ internal sealed class AndroidGlassCombo : MaterialCardView
         RequestLayout();
     }
 
-    /// <summary>两段各占一半；镜像只改变视觉顺序。</summary>
+    /// <summary>
+    /// 按顺序设置各段：命令标识、字形与叠字决定是否重建子按钮，读屏名称与可用性每次就地更新。
+    /// 段数变化时不残留旧按钮。
+    /// </summary>
+    /// <param name="segments">从上到下/从左到右的段。</param>
+    internal void SetSegments(IReadOnlyList<GlassComboSegment> segments)
+    {
+        bool rebuild = segments.Count != _segments.Count;
+        if (!rebuild)
+        {
+            for (int index = 0; index < segments.Count; index++)
+                if (_segmentKeys[index] != SegmentKey(segments[index])) rebuild = true;
+        }
+        if (rebuild)
+        {
+            foreach (var button in _segments)
+            {
+                RemoveView(button);
+                button.Dispose();
+            }
+            _segments.Clear();
+            _segmentKeys.Clear();
+            foreach (var segment in segments)
+            {
+                var button = new AndroidGlassButton(Context!, segment.Glyph, segment.Description,
+                    solid: segment.Solid, number: segment.Number);
+                string? command = segment.Command;
+                button.UseTransparentFill();
+                button.Click += (_, _) =>
+                {
+                    if (button.Enabled && command != null) CommandActivated?.Invoke(command);
+                };
+                AddView(button);
+                _segments.Add(button);
+                _segmentKeys.Add(SegmentKey(segment));
+            }
+        }
+        bool changed = rebuild;
+        for (int index = 0; index < segments.Count; index++)
+        {
+            var button = _segments[index];
+            if (button.ContentDescription != segments[index].Description)
+            {
+                button.ContentDescription = segments[index].Description;
+                changed = true;
+            }
+            if (button.Enabled != segments[index].Enabled)
+            {
+                button.Enabled = segments[index].Enabled;
+                changed = true;
+            }
+        }
+        if (!changed) return;
+        RequestLayout();
+        Invalidate();
+    }
+
+    private static string SegmentKey(in GlassComboSegment segment)
+        => $"{segment.Command}|{segment.Glyph}|{segment.Solid}|{segment.Number}";
+
+    /// <summary>各段等分容器的轴长；镜像只改变视觉顺序。</summary>
     /// <param name="changed">是否变化。</param>
     /// <param name="l">左。</param>
     /// <param name="t">上。</param>
@@ -356,37 +441,34 @@ internal sealed class AndroidGlassCombo : MaterialCardView
     /// <param name="b">下。</param>
     protected override void OnLayout(bool changed, int l, int t, int r, int b)
     {
-        int width = r - l, height = b - t;
+        int width = r - l, height = b - t, count = _segments.Count;
+        if (count == 0) return;
         if (_vertical)
         {
-            int half = height / 2;
-            _first.Layout(0, 0, width, half);
-            _second.Layout(0, half, width, height);
+            for (int index = 0; index < count; index++)
+                _segments[index].Layout(0, index * height / count, width, (index + 1) * height / count);
             return;
         }
-        int firstWidth = width / 2;
-        if (_mirrored)
+        for (int position = 0; position < count; position++)
         {
-            _second.Layout(0, 0, firstWidth, height);
-            _first.Layout(firstWidth, 0, width, height);
-        }
-        else
-        {
-            _first.Layout(0, 0, firstWidth, height);
-            _second.Layout(firstWidth, 0, width, height);
+            var button = _mirrored ? _segments[count - 1 - position] : _segments[position];
+            button.Layout(position * width / count, 0, (position + 1) * width / count, height);
         }
     }
 
-    /// <summary>两段各自精确测量为一半容器尺寸，不参与内容撑开。</summary>
+    /// <summary>各段精确测量为等分容器尺寸，不参与内容撑开；圆角取实际交叉轴的一半。</summary>
     /// <param name="widthMeasureSpec">宽约束。</param>
     /// <param name="heightMeasureSpec">高约束。</param>
     protected override void OnMeasure(int widthMeasureSpec, int heightMeasureSpec)
     {
         int width = MeasureSpec.GetSize(widthMeasureSpec), height = MeasureSpec.GetSize(heightMeasureSpec);
         SetMeasuredDimension(width, height);
-        int childWidth = _vertical ? width : width / 2;
-        int childHeight = _vertical ? height / 2 : height;
-        foreach (var button in new[] { _first, _second })
+        float radius = Math.Min(width, height) / 2f;
+        if (Math.Abs(Radius - radius) > .5f) Radius = radius;
+        int count = Math.Max(1, _segments.Count);
+        int childWidth = _vertical ? width : width / count;
+        int childHeight = _vertical ? height / count : height;
+        foreach (var button in _segments)
             button.Measure(MeasureSpec.MakeMeasureSpec(childWidth, MeasureSpecMode.Exactly),
                 MeasureSpec.MakeMeasureSpec(childHeight, MeasureSpecMode.Exactly));
     }

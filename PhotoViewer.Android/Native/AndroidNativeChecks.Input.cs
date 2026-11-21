@@ -9,6 +9,7 @@ using Android.Views;
 using PhotoViewer.Android.Core;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Input;
+using PhotoViewer.Core.Settings;
 using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Settings;
 using IOPath = System.IO.Path;
@@ -274,13 +275,20 @@ internal static partial class AndroidNativeChecks
         if (root.Form != ScreenForm.Wide)
         {
             var nav = root.PhoneNavigation;
-            var fit = root.PhoneFitEnhance;
+            var commandGroup = root.PhoneCommands;
             var rating = root.PhoneRating;
+            var enabled = main.ControlVM.EnabledControls.ToList();
+            var expectedIds = PhoneControlCommands.Resolve(
+                enabled.Select(item => item.Command), main.Settings.ShowNavigationButtons);
+            var segmentNames = enabled.Where(item => expectedIds.Contains(item.Command, StringComparer.Ordinal))
+                .Select(ExpectedCommandName).ToList();
             bool slots = nav.Visibility == ViewStates.Visible
-                && fit.Visibility == ViewStates.Visible
+                && commandGroup.Visibility == (segmentNames.Count > 0 ? ViewStates.Visible : ViewStates.Gone)
                 && rating.Visibility == (main.Settings.ShowRating ? ViewStates.Visible : ViewStates.Gone);
             bool names = nav.First.ContentDescription == "上一张" && nav.Second.ContentDescription == "下一张"
-                && fit.First.ContentDescription == "缩放适应" && fit.Second.ContentDescription == "雾天增强";
+                && commandGroup.SegmentsForChecks.Count == segmentNames.Count
+                && commandGroup.SegmentsForChecks.Select(button => button.ContentDescription ?? "")
+                    .SequenceEqual(segmentNames);
             var ratingRects = new List<Rect>();
             for (int value = 1; value <= 5; value++) ratingRects.Add(rating.SlotRectPx(value));
             bool cluster = rating.Form == RatingControlForm.Compact
@@ -288,9 +296,42 @@ internal static partial class AndroidNativeChecks
                     && rect.Left >= 0 && rect.Top >= 0 && rect.Right <= rating.Width && rect.Bottom <= rating.Height)
                 && ratingRects.Select(rect => $"{rect.Left},{rect.Top}").Distinct().Count() == 5;
             bool noZero = main.CurrentFile?.HasRatingConflict == true || rating.SlotRectPx(0).Width() == 0;
-            Check("TOOLBAR-11 手机固定槽位与紧凑星簇", slots && names && cluster && noZero,
-                $"slots={slots} names={names} form={rating.Form} rects={string.Join("/", ratingRects.Select(r => $"{r.Left},{r.Top}"))} "
+            Check("TOOLBAR-11 手机槽位命令与紧凑星簇", slots && names && cluster && noZero,
+                $"slots={slots} names={names} commandSegments={commandGroup.SegmentsForChecks.Count}/{segmentNames.Count} "
+                + $"expected=[{string.Join(" | ", segmentNames)}] "
+                + $"actual=[{string.Join(" | ", commandGroup.SegmentsForChecks.Select(button => button.ContentDescription))}] "
+                + $"form={rating.Form} rects={string.Join("/", ratingRects.Select(r => $"{r.Left},{r.Top}"))} "
                 + $"zero={rating.SlotRectPx(0)} conflict={main.CurrentFile?.HasRatingConflict}");
+
+            // TOOLBAR-04：可选命令段是真实动作按钮，点按直接执行原命令。作用域内只勾选「缩放适应」，验证后恢复配置与视口。
+            var hotkeys = main.Settings.Hotkeys;
+            var savedDisplay = hotkeys.Select(item => item.IsDisplay).ToArray();
+            bool savedNavigation = main.Settings.ShowNavigationButtons;
+            bool savedFit = root.Photo.IsFit;
+            try
+            {
+                main.Settings.ShowNavigationButtons = false;
+                foreach (var item in hotkeys) item.IsDisplay = item.Command == "Fit";
+                await WaitLayoutAsync(root);
+                bool single = root.PhoneCommands.SegmentCount == 1
+                    && root.PhoneCommands.SegmentsForChecks[0].ContentDescription is { } text
+                    && text.StartsWith("缩放适应", StringComparison.Ordinal);
+                if (single)
+                {
+                    root.PhoneCommands.SegmentsForChecks[0].PerformClick();
+                    await Task.Delay(400);
+                }
+                Check("TOOLBAR-04 手机可选命令段点按执行原命令", single && root.Photo.IsFit != savedFit,
+                    $"segments={root.PhoneCommands.SegmentCount} fit={savedFit}->{root.Photo.IsFit}");
+            }
+            finally
+            {
+                main.Settings.ShowNavigationButtons = savedNavigation;
+                for (int index = 0; index < hotkeys.Count; index++)
+                    hotkeys[index].IsDisplay = savedDisplay[index];
+                await WaitLayoutAsync(root);
+                if (root.Photo.IsFit != savedFit) root.Execute("Fit");
+            }
             return;
         }
         var nodes = root.ControlBar.NodesForChecks();

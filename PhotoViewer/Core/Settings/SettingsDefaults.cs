@@ -22,10 +22,12 @@ public static class SettingsDefaults
     /// <param name="budget">平台性能预算源。</param>
     /// <param name="appleKeyboard">是否默认启用苹果键盘映射。</param>
     /// <param name="automaticCacheLimit">缓存容量是否由平台实测预算自动决定（iPad / Android 自动口径）。</param>
+    /// <param name="mobileControls">是否使用移动端控制栏默认勾选。</param>
     public static AppSettings CreateDefault(
         IPerformanceBudget budget,
         bool appleKeyboard,
-        bool automaticCacheLimit = false)
+        bool automaticCacheLimit = false,
+        bool mobileControls = false)
     {
         ArgumentNullException.ThrowIfNull(budget);
 
@@ -74,7 +76,7 @@ public static class SettingsDefaults
             SameNameAsOnePhoto = true,
             FileFormats = SettingsCatalog.DefaultFileFormats,
             ExifFields = SettingsCatalog.DefaultExifFields,
-            Hotkeys = SettingsCatalog.DefaultHotkeys,
+            Hotkeys = mobileControls ? SettingsCatalog.DefaultMobileHotkeys : SettingsCatalog.DefaultHotkeys,
             UseAppleKeyboard = appleKeyboard,
             MapCommandTarget = AppleMappingTarget.Ctrl,
             MapOptionTarget = AppleMappingTarget.Alt,

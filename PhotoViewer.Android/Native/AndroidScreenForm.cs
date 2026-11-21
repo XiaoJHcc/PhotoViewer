@@ -116,7 +116,7 @@ internal static class AndroidScreenForm
         double delta = input.Safe.Top - slots.Filter.Y;
         return new PhoneLayout(
             Shift(slots.Filter, delta), Shift(slots.More, delta), slots.FilterMoreGroup, Shift(slots.Exif, delta),
-            slots.ExifItems, slots.Navigation, slots.Rating, slots.FitEnhance, slots.Filmstrip, Shift(slots.Analysis, delta),
+            slots.ExifItems, slots.Navigation, slots.Rating, slots.Commands, slots.Filmstrip, Shift(slots.Analysis, delta),
             new LayoutRect(slots.TopBar.X, slots.TopBar.Y, slots.TopBar.Width, slots.TopBar.Height + delta),
             slots.BottomBar, slots.LeadingBar, slots.TrailingBar,
             new EdgeInsets(slots.PhotoAvoidance.Left, slots.PhotoAvoidance.Top + delta,

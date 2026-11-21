@@ -167,7 +167,7 @@ internal sealed class iOSToolbarView : UIView
                 double size = ToolbarFlowLayout.CommandSize;
                 button.Frame = new CGRect(0, 0, size, size);
                 if (ratingCommand && !clearRating)
-                    button.AddSubview(new RatingDigitLabel(hotkey.Command[9..], ToolbarFlowLayout.CommandSize));
+                    button.AddSubview(new iOSRatingDigitLabel(hotkey.Command[9..], ToolbarFlowLayout.CommandSize));
                 _glass.ContentView.AddSubview(button);
             }
             button.AccessibilityLabel = CommandAccessibilityLabel(hotkey);
@@ -390,29 +390,5 @@ internal sealed class iOSToolbarView : UIView
     {
         if (disposing) ClearGroups();
         base.Dispose(disposing);
-    }
-
-    /// <summary>
-    /// 评分快捷命令星形内叠的数字：9 点半粗、颜色取命令按钮底色，居中叠在按钮上（TOOLBAR-04）。
-    /// 不接收触摸，点击数字仍落到按钮本身。
-    /// </summary>
-    private sealed class RatingDigitLabel : UILabel
-    {
-        /// <summary>按令牌字号与按钮底色创建居中的只读数字标签。</summary>
-        /// <param name="digit">星数（1–5）。</param>
-        /// <param name="buttonSize">命令按钮边长。</param>
-        internal RatingDigitLabel(string digit, double buttonSize) : base(CGRect.Empty)
-        {
-            Text = digit;
-            Font = UIFont.SystemFontOfSize((nfloat)DesignTokens.ToolbarRatingDigitFontSize, UIFontWeight.Semibold);
-            TextColor = iOSColors.FromToken(DesignTokens.ColorToolbarCommandBackground);
-            TextAlignment = UITextAlignment.Center;
-            BackgroundColor = UIColor.Clear;
-            UserInteractionEnabled = false;
-            // 数字只是图标的一部分：读屏名称仍由按钮的「评分 N 星 + 绑定」承担。
-            AccessibilityElementsHidden = true;
-            SizeToFit();
-            Center = new CGPoint(buttonSize / 2, buttonSize / 2);
-        }
     }
 }

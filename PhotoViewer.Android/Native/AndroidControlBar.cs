@@ -236,14 +236,11 @@ internal sealed class AndroidControlBar : FrameLayout
         var commands = new List<Child>();
         foreach (var hotkey in _main.ControlVM.EnabledControls)
         {
-            bool ratingCommand = hotkey.Command.StartsWith("SetRating", StringComparison.Ordinal);
-            string? number = ratingCommand ? hotkey.Command[9..] : null;
-            string glyph = ratingCommand
-                ? (number == "0" ? AndroidUiTheme.IconGlyph(DesignTokens.IconClear)
-                    : AndroidUiTheme.IconGlyph(DesignTokens.IconStarFilled))
-                : hotkey.DisplaySymbol ?? string.Empty;
-            string description = BindingText(hotkey);
-            bool enabled = hotkey.Command == "Open" || _main.CurrentFile != null;
+            bool ratingCommand = IsRatingCommand(hotkey.Command);
+            string? number = RatingNumber(hotkey.Command);
+            string glyph = CommandGlyph(hotkey);
+            string description = CommandDescription(hotkey);
+            bool enabled = IsCommandEnabled(_main, hotkey.Command);
             commands.Add(new Child
             {
                 Command = hotkey.Command,
@@ -296,8 +293,55 @@ internal sealed class AndroidControlBar : FrameLayout
     /// </summary>
     /// <param name="hotkey">共享快捷键项。</param>
     /// <returns>读屏文本。</returns>
-    private static string BindingText(SettingsViewModel.HotkeyItem hotkey)
-        => CommandTooltipText.Format(hotkey.Name, hotkey.PrimaryHotkey?.ToDisplayString(), hotkey.SecondaryHotkey?.ToDisplayString());
+    internal static string CommandDescription(SettingsViewModel.HotkeyItem hotkey)
+        => CommandTooltipText.Format(hotkey.Name, hotkey.PrimaryHotkey?.ToDisplayString(),
+            hotkey.SecondaryHotkey?.ToDisplayString());
+
+    /// <summary>是否评分快捷命令（<c>SetRating0</c>–<c>SetRating5</c>）。</summary>
+    /// <param name="command">共享命令标识。</param>
+    /// <returns>评分命令返回 true。</returns>
+    internal static bool IsRatingCommand(string command)
+        => command.StartsWith("SetRating", StringComparison.Ordinal);
+
+    /// <summary>评分快捷命令的星级（1–5 叠数字，"0" 表示清零叉、不叠数字；非评分命令为 null）。</summary>
+    /// <param name="command">共享命令标识。</param>
+    /// <returns>星级数字或 null。</returns>
+    internal static string? RatingNumber(string command)
+        => IsRatingCommand(command) ? command[9..] : null;
+
+    /// <summary>
+    /// 命令实际绘制的字形（TOOLBAR-04）：评分 1–5 为实心星、0 为零清叉，其余取共享命令目录的
+    /// <see cref="SettingsViewModel.HotkeyItem.DisplaySymbol"/>；控制栏与手机可选命令组共用同一语义。
+    /// </summary>
+    /// <param name="hotkey">共享快捷键项。</param>
+    /// <returns>uicons 字形。</returns>
+    internal static string CommandGlyph(SettingsViewModel.HotkeyItem hotkey)
+    {
+        if (!IsRatingCommand(hotkey.Command)) return hotkey.DisplaySymbol ?? string.Empty;
+        return RatingNumber(hotkey.Command) == "0"
+            ? AndroidUiTheme.IconGlyph(DesignTokens.IconClear)
+            : AndroidUiTheme.IconGlyph(DesignTokens.IconStarFilled);
+    }
+
+    /// <summary>命令可用性（TOOLBAR-04：无照片时除打开文件外全部禁用）。</summary>
+    /// <param name="main">主 VM。</param>
+    /// <param name="command">共享命令标识。</param>
+    /// <returns>命令可用返回 true。</returns>
+    internal static bool IsCommandEnabled(MainViewModel main, string command)
+        => command == "Open" || main.CurrentFile != null;
+
+    /// <summary>
+    /// 命令在控制栏与手机可选命令组中的呈现：字形、读屏名称、可用性与评分叠字同源。
+    /// </summary>
+    /// <param name="main">主 VM。</param>
+    /// <param name="hotkey">共享快捷键项。</param>
+    /// <returns>胶囊段模型。</returns>
+    internal static GlassComboSegment CommandSegment(MainViewModel main, SettingsViewModel.HotkeyItem hotkey)
+    {
+        string? number = RatingNumber(hotkey.Command);
+        return new GlassComboSegment(CommandGlyph(hotkey), CommandDescription(hotkey), hotkey.Command,
+            IsCommandEnabled(main, hotkey.Command), IsRatingCommand(hotkey.Command) && number != "0", number);
+    }
 
     /// <summary>量文档主轴/交叉轴长度（dp）；行布局主轴为宽、列布局主轴为高。</summary>
     /// <param name="horizontal">是否行布局。</param>

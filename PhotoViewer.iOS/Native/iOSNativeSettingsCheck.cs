@@ -212,8 +212,8 @@ internal static class iOSNativeSettingsCheck
     }
 
     /// <summary>
-    /// SETTINGS-08：EXIF 显示表与控制栏功能表使用一致的标准行高；只有控制栏功能行带命令图标。
-    /// 手机形态控制栏功能只列上一张/下一张，另核 EXIF 显示表的行高、无图标与末行分隔线。
+    /// SETTINGS-08：EXIF 显示表与控制栏命令表使用一致的标准行高；只有命令表行带命令图标。
+    /// 手机形态另核 EXIF 显示表的行高、无图标与末行分隔线。
     /// </summary>
     private static async Task VerifyExifListMatchesControlRowHeightAsync(
         iOSNativeSettingsRootViewController root, List<string> lines, bool phoneForm)
@@ -239,8 +239,8 @@ internal static class iOSNativeSettingsCheck
                 throw new InvalidOperationException($"EXIF 显示表最后一行仍有底缘分隔线：{last.SeparatorInset}");
         });
         lines.Add(phoneForm
-            ? $"PASS SETTINGS-08/17 行高：EXIF 显示表为 {iOSNativeSettingsMetrics.ListRowHeight} 点标准行高、不带命令图标、末行无底缘分隔线（手机形态控制栏功能只列上一张/下一张）"
-            : $"PASS SETTINGS-08 行高一致：控制栏功能与 EXIF 显示表同为 {iOSNativeSettingsMetrics.ListRowHeight} 点标准行高；命令图标只出现在控制栏功能行，两表末行均无底缘分隔线");
+            ? $"PASS SETTINGS-08/17 行高：EXIF 显示表为 {iOSNativeSettingsMetrics.ListRowHeight} 点标准行高、不带命令图标、末行无底缘分隔线（手机形态命令表沿用同一标准行高）"
+            : $"PASS SETTINGS-08 行高一致：控制栏命令表与 EXIF 显示表同为 {iOSNativeSettingsMetrics.ListRowHeight} 点标准行高；命令图标只出现在命令表行，两表末行均无底缘分隔线");
         await UiDispatcher.InvokeAsync(() => root.NavigationController!.PopViewController(false));
         await WaitForPage<iOSNativeSettingsRootViewController>(root);
     }
@@ -472,17 +472,20 @@ internal static class iOSNativeSettingsCheck
 
     /// <summary>
     /// 手机形态控制页保留布局位置与控制栏功能；iPhone 的布局只有「手机」一项。
-    /// 控制栏功能只列「上一张/下一张」，蓝色勾选、图标与文字沿用命令列表，无排序把手或快捷键编辑。
+    /// 「控制栏功能」标题下为上下张开关卡片，紧接一张不带标题的完整可勾选排序命令表卡片：
+    /// 手机形态不显示绑定编辑与键盘映射，已勾选但未生效的命令只淡化勾号；组合开关与勾选/排序后立即重算。
     /// </summary>
     private static async Task VerifyPhoneControlPageAsync(iOSNativeControlSettingsViewController page,
         SettingsViewModel settings, List<string> lines)
     {
+        var originalDisplay = settings.Hotkeys.Select(item => (Item: item, item.IsDisplay)).ToArray();
+        bool originalNavigation = settings.ShowNavigationButtons;
         await UiDispatcher.InvokeAsync(() =>
         {
             page.View!.LayoutIfNeeded();
             var labels = Descendants(page.View).OfType<UILabel>().Select(label => label.Text ?? string.Empty).ToArray();
-            if (page.HotkeyList != null)
-                throw new InvalidOperationException("手机形态仍创建宽形态命令勾选排序列表");
+            if (page.HotkeyList == null)
+                throw new InvalidOperationException("手机形态未创建可勾选排序的命令表");
             if (page.KeyboardMappingSection != null)
                 throw new InvalidOperationException("手机形态仍创建键盘映射分组");
             foreach (string required in new[] { "边栏布局位置", "控制栏功能" })
@@ -492,7 +495,7 @@ internal static class iOSNativeSettingsCheck
                 if (labels.Contains(hidden, StringComparer.Ordinal))
                     throw new InvalidOperationException($"手机形态仍显示旧控件「{hidden}」");
             if (Descendants(page.View).OfType<UISwitch>().Any())
-                throw new InvalidOperationException("上下张仍使用独立开关行，未并入控制栏功能列表");
+                throw new InvalidOperationException("上下张应使用勾选行，而不是系统开关控件");
 
             var picker = Descendants(page.View).OfType<iOSLayoutModePicker>().Single();
             var layoutTable = picker.Subviews.OfType<UITableView>().Single();
@@ -511,20 +514,159 @@ internal static class iOSNativeSettingsCheck
                         $"labels={string.Join("|", Descendants(modeCell).OfType<UILabel>().Select(label => label.Text))}");
             }
 
-            var list = VerifyNavigationRow(page, settings);
-            bool before = settings.ShowNavigationButtons;
-            list.TableView.Source!.RowSelected(list.TableView, NSIndexPath.FromRowSection(0, 0));
-            if (settings.ShowNavigationButtons == before)
-                throw new InvalidOperationException("点选「上一张/下一张」列表行未写工作副本");
-            list.TableView.Source.RowSelected(list.TableView, NSIndexPath.FromRowSection(0, 0));
-            if (settings.ShowNavigationButtons != before)
-                throw new InvalidOperationException("恢复「上一张/下一张」勾选失败");
+            var navigation = VerifyNavigationRow(page, settings);
+            VerifySplitCards(page);
+            var list = page.HotkeyList!;
+            list.TableView.LayoutIfNeeded();
+            if ((int)list.TableView.NumberOfRowsInSection(0) != settings.Hotkeys.Count)
+                throw new InvalidOperationException(
+                    $"手机形态命令表 {list.TableView.NumberOfRowsInSection(0)} 行 ≠ 命令 {settings.Hotkeys.Count}");
+            foreach (var cell in list.TableView.VisibleCells.OfType<iOSNativeEmbeddedCheckableReorderCell>())
+            {
+                if (cell.TrailingAccessory != null || Descendants(cell).OfType<UIButton>().Any(button => !button.Hidden))
+                    throw new InvalidOperationException("手机形态命令表仍显示快捷键绑定按钮");
+                if (!cell.ShowsReorderControl)
+                    throw new InvalidOperationException($"手机形态命令行 {cell.TitleLabel.Text} 缺少拖拽排序把手");
+                if (string.IsNullOrEmpty(cell.AccessibilityValue))
+                    throw new InvalidOperationException($"手机形态命令行 {cell.TitleLabel.Text} 读屏值未区分勾选与实际显示");
+            }
+
+            // 让至少四个非上下张命令处于勾选态：手机形态最多显示三项，第四项只淡化勾号。
+            var candidates = settings.Hotkeys
+                .Where(item => item.Command is not ("Previous" or "Next"))
+                .Take(4).ToArray();
+            if (candidates.Length < 4)
+                throw new InvalidOperationException("命令目录不足以核对手机形态的未生效勾号");
+            foreach (var candidate in candidates) candidate.IsDisplay = true;
+            page.RefreshHotkeyRows();
+            page.View.LayoutIfNeeded();
+            var inactive = settings.Hotkeys.IndexOf(candidates[3]);
+            var inactiveCell = list.TableView.CellAt(NSIndexPath.FromRowSection(inactive, 0))
+                as iOSNativeEmbeddedCheckableReorderCell
+                ?? throw new InvalidOperationException("未生成未生效命令的真实单元格");
+            var expectedTint = UIColor.FromWhiteAlpha((nfloat)1, (nfloat)PhotoViewer.Core.Design.DesignTokens.SettingsPhoneInactiveCheckOpacity);
+            if (inactiveCell.CheckmarkView.Hidden || inactiveCell.CheckmarkActive)
+                throw new InvalidOperationException("已勾选但未生效的命令勾号未标记为淡化态");
+            if (!(inactiveCell.CheckmarkView.TintColor?.IsEqual(expectedTint) ?? false))
+                throw new InvalidOperationException(
+                    $"未生效勾号不是浅灰白低不透明度：{inactiveCell.CheckmarkView.TintColor}");
+            if (inactiveCell.AccessibilityValue?.Contains("未在手机控制栏显示", StringComparison.Ordinal) != true)
+                throw new InvalidOperationException($"未生效命令读屏值未说明实际显示状态：{inactiveCell.AccessibilityValue}");
+
+            // 组合开关关闭后，勾选的独立上一张立刻进入生效集合（勾号恢复蓝色）。
+            var previous = settings.Hotkeys.First(item => item.Command == "Previous");
+            previous.IsDisplay = true;
+            settings.ShowNavigationButtons = true;
+            page.RefreshHotkeyRows();
+            var previousRow = settings.Hotkeys.IndexOf(previous);
+            var previousCell = list.TableView.CellAt(NSIndexPath.FromRowSection(previousRow, 0))
+                as iOSNativeEmbeddedCheckableReorderCell
+                ?? throw new InvalidOperationException("未生成上一张命令的真实单元格");
+            if (previousCell.CheckmarkActive)
+                throw new InvalidOperationException("组合开关开启时独立上一张仍标记为生效");
+            navigation.TableView.Source!.RowSelected(navigation.TableView, NSIndexPath.FromRowSection(0, 0));
+            if (settings.ShowNavigationButtons)
+                throw new InvalidOperationException("点选组合开关行未关闭显示上下张");
+            page.View.LayoutIfNeeded();
+            previousCell = list.TableView.CellAt(NSIndexPath.FromRowSection(previousRow, 0))
+                as iOSNativeEmbeddedCheckableReorderCell
+                ?? throw new InvalidOperationException("组合开关关闭后上一张命令单元格消失");
+            if (!previousCell.CheckmarkActive || !(previousCell.CheckmarkView.TintColor?.IsEqual(UIColor.SystemBlue) ?? false))
+                throw new InvalidOperationException("组合开关关闭后独立上一张未即时进入生效集合");
+            settings.ShowNavigationButtons = true;
+            page.RefreshHotkeyRows();
+
+            // 点行勾选与拖拽排序写工作副本（同一列表实现，手机形态保留把手）。
+            bool displayed = candidates[0].IsDisplay;
+            list.TableView.Source!.RowSelected(list.TableView, NSIndexPath.FromRowSection(settings.Hotkeys.IndexOf(candidates[0]), 0));
+            if (candidates[0].IsDisplay == displayed)
+                throw new InvalidOperationException("点行未切换命令勾选");
+            list.TableView.Source.RowSelected(list.TableView, NSIndexPath.FromRowSection(settings.Hotkeys.IndexOf(candidates[0]), 0));
+            if (candidates[0].IsDisplay != displayed) throw new InvalidOperationException("恢复命令勾选失败");
+            var second = settings.Hotkeys[1];
+            list.TableView.Source.MoveRow(list.TableView, NSIndexPath.FromRowSection(1, 0), NSIndexPath.FromRowSection(0, 0));
+            if (!ReferenceEquals(settings.Hotkeys[0], second)) throw new InvalidOperationException("拖拽排序未写工作副本");
+            list.TableView.Source.MoveRow(list.TableView, NSIndexPath.FromRowSection(1, 0), NSIndexPath.FromRowSection(0, 0));
         });
-        lines.Add($"PASS SETTINGS-08/17 手机形态控制页：保留边栏布局位置（{(iOSNativeControlSettingsViewController.IsPhoneDevice ? "仅单选「手机」" : "保留全部选项以便切回")}），" +
-            "控制栏功能只列「上一张/下一张」，蓝色勾选、图标、文字与标准行高一致，无排序把手；点行真实切换，快捷键编辑不显示");
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            foreach (var (item, display) in originalDisplay) item.IsDisplay = display;
+            settings.ShowNavigationButtons = originalNavigation;
+            page.RefreshHotkeyRows();
+        });
+        lines.Add("PASS SETTINGS-08/17 手机形态控制页：保留边栏布局位置（" +
+            (iOSNativeControlSettingsViewController.IsPhoneDevice ? "仅单选「手机」" : "保留全部选项以便切回") +
+            "），唯一「控制栏功能」标题下上下张开关与命令表各一张卡片、无第二个标题且按标准分组间距相邻；未生效勾号浅灰白低不透明度并说明读屏状态，" +
+            "组合开关/勾选/排序即时重算，快捷键编辑与键盘映射不显示");
     }
 
-    /// <summary>核对上一张/下一张在控制栏功能里的单行列表样式。</summary>
+    /// <summary>
+    /// SETTINGS-08/17：上下张组合开关与命令表各占一张真实卡片，共用唯一的「控制栏功能」标题。
+    /// 标题只在第一张卡片之上；第二张卡片不带标题、说明或占位行，两张卡片按页面分组间距直接相邻。
+    /// </summary>
+    /// <param name="page">控制设置页。</param>
+    private static void VerifySplitCards(iOSNativeControlSettingsViewController page)
+    {
+        var navigationList = page.NavigationList
+            ?? throw new InvalidOperationException("控制页缺少上一张/下一张列表");
+        var hotkeyList = page.HotkeyList
+            ?? throw new InvalidOperationException("控制页缺少命令表");
+        var navigationSection = SectionStackOf(navigationList);
+        var hotkeySection = SectionStackOf(hotkeyList);
+        if (ReferenceEquals(navigationSection, hotkeySection))
+            throw new InvalidOperationException("上一张/下一张与命令表仍共用同一张卡片");
+        if (navigationSection.Superview is not UIStackView content
+            || !ReferenceEquals(content, hotkeySection.Superview))
+            throw new InvalidOperationException("两张卡片未挂在同一页面主内容栈");
+        var sections = content.ArrangedSubviews;
+        int navigationIndex = Array.IndexOf(sections, navigationSection);
+        int hotkeyIndex = Array.IndexOf(sections, hotkeySection);
+        if (navigationIndex < 0 || hotkeyIndex <= navigationIndex)
+            throw new InvalidOperationException(
+                $"上下张卡片须排在命令表卡片之前：{navigationIndex}/{hotkeyIndex}");
+        if (hotkeyIndex - navigationIndex != 1)
+            throw new InvalidOperationException("两张卡片之间夹了其他分组");
+
+        var navigationViews = navigationSection.ArrangedSubviews;
+        if (navigationViews.Length != 2 || navigationViews[0] is not UILabel title || title.Text != "控制栏功能")
+            throw new InvalidOperationException("第一张卡片不是「控制栏功能」标题 + 卡片");
+        var navigationCard = navigationViews[1];
+        if (!HoldsSingleRow(navigationCard, navigationList))
+            throw new InvalidOperationException("上下张卡片混入了其他行");
+        var hotkeyViews = hotkeySection.ArrangedSubviews;
+        if (hotkeyViews.Length != 1 || hotkeyViews[0] is not UIView hotkeyCard || ReferenceEquals(hotkeyCard, navigationCard))
+            throw new InvalidOperationException("命令表卡片保留了第二个标题或说明行");
+        if (!HoldsSingleRow(hotkeyCard, hotkeyList))
+            throw new InvalidOperationException("命令表卡片混入了其他行");
+
+        if (Descendants(page.View).OfType<UILabel>().Count(label => label.Text == "控制栏功能") != 1)
+            throw new InvalidOperationException("控制页不是唯一的「控制栏功能」标题");
+        navigationSection.LayoutIfNeeded();
+        hotkeySection.LayoutIfNeeded();
+        var firstCard = navigationCard.ConvertRectToView(navigationCard.Bounds, content);
+        var secondCard = hotkeyCard.ConvertRectToView(hotkeyCard.Bounds, content);
+        double gap = (double)(secondCard.Y - firstCard.GetMaxY());
+        if (Math.Abs(gap - (double)content.Spacing) > .5)
+            throw new InvalidOperationException($"两张卡片间距不是页面分组间距：{gap}/{content.Spacing}");
+    }
+
+    /// <summary>卡片里只盛放指定的那一行列表。</summary>
+    private static bool HoldsSingleRow(UIView card, UIView row)
+    {
+        var rows = card.Subviews.OfType<UIStackView>().Single().ArrangedSubviews;
+        return rows.Length == 1 && ReferenceEquals(rows[0], row);
+    }
+
+    /// <summary>列表所在的页面分组栈（直接挂在滚动内容栈下的一级分组）。</summary>
+    private static UIStackView SectionStackOf(UIView row)
+    {
+        for (UIView? node = row; node?.Superview != null; node = node.Superview)
+            if (node is UIStackView section && section.Superview is UIStackView { Superview: UIScrollView })
+                return section;
+        throw new InvalidOperationException("列表未挂在页面分组卡片内");
+    }
+
+    /// <summary>核对上一张/下一张在「控制栏功能」标题下的单行列表样式。</summary>
     private static iOSNativeEmbeddedCheckableReorderListView<string> VerifyNavigationRow(
         iOSNativeControlSettingsViewController page, SettingsViewModel settings)
     {
@@ -543,13 +685,13 @@ internal static class iOSNativeSettingsCheck
         if (cell.ShowsReorderControl || list.TableView.Source.CanMoveRow(list.TableView, NSIndexPath.FromRowSection(0, 0)))
             throw new InvalidOperationException("上一张/下一张单项列表仍显示或允许拖拽排序");
         if (Math.Abs((double)cell.Bounds.Height - iOSNativeSettingsMetrics.ListRowHeight) > .5)
-            throw new InvalidOperationException("上一张/下一张行高与控制栏功能列表不一致");
+            throw new InvalidOperationException("上一张/下一张行高与命令表不一致");
         return list;
     }
 
     /// <summary>
-    /// 宽形态切到「手机」后，命令排序与键盘映射整组隐藏，控制栏功能只留上一张/下一张；
-    /// 切回宽形态后原配置恢复。
+    /// 宽形态切到「手机」后，键盘映射整组隐藏，命令表保留勾选与排序但去掉绑定编辑；
+    /// 切回宽形态后键盘映射与原配置恢复。
     /// </summary>
     private static async Task VerifyPhoneFormRebuildAsync(iOSNativeControlSettingsViewController page,
         SettingsViewModel settings, List<string> lines)
@@ -560,25 +702,33 @@ internal static class iOSNativeSettingsCheck
         await UiDispatcher.InvokeAsync(() =>
         {
             page.View!.LayoutIfNeeded();
-            if (page.HotkeyList != null || page.KeyboardMappingSection != null)
-                throw new InvalidOperationException("选了「手机」布局后仍保留宽形态命令排序或键盘映射");
-            VerifyNavigationRow(page, settings);
+            if (page.HotkeyList == null)
+                throw new InvalidOperationException("选了「手机」布局后丢失命令勾选排序表");
+            if (page.KeyboardMappingSection != null)
+                throw new InvalidOperationException("选了「手机」布局后仍保留键盘映射");
+            if (page.NavigationList == null)
+                throw new InvalidOperationException("选了「手机」布局后缺少上下张组合开关");
+            VerifySplitCards(page);
+            foreach (var cell in page.HotkeyList.TableView.VisibleCells.OfType<iOSNativeEmbeddedCheckableReorderCell>())
+                if (cell.TrailingAccessory != null)
+                    throw new InvalidOperationException("手机布局的命令行仍显示快捷键绑定按钮");
         });
         await UiDispatcher.InvokeAsync(() => settings.LayoutMode = mode);
         await Task.Delay(150);
         await UiDispatcher.InvokeAsync(() =>
         {
             if (page.HotkeyList == null || page.KeyboardMappingSection == null)
-                throw new InvalidOperationException("切回宽形态后控制页未恢复控制栏功能/键盘映射分组");
+                throw new InvalidOperationException("切回宽形态后控制页未恢复命令表/键盘映射分组");
             VerifyNavigationRow(page, settings);
+            VerifySplitCards(page);
         });
-        lines.Add("PASS SETTINGS-08 形态切换：选「手机」后命令排序与键盘映射隐藏，控制栏功能只留上一张/下一张；切回宽形态原配置恢复");
+        lines.Add("PASS SETTINGS-08 形态切换：选「手机」后键盘映射隐藏，唯一「控制栏功能」标题下仍为上下张与命令表两张卡片，命令表保留勾选排序但去掉绑定编辑；切回宽形态原配置与映射恢复");
     }
 
-    /// <summary>控制栏功能列表：纯触控只留勾选/名称/排序，外设连接后同一行就地出现主/次绑定按钮。</summary>
+    /// <summary>控制栏命令表：纯触控只留勾选/名称/排序，外设连接后同一行就地出现主/次绑定按钮。</summary>
     private static async Task VerifyListPresentationAsync(iOSNativeControlSettingsViewController page, SettingsViewModel settings, List<string> lines)
     {
-        var list = page.HotkeyList ?? throw new InvalidOperationException("控制栏功能列表未创建");
+        var list = page.HotkeyList ?? throw new InvalidOperationException("命令表未创建");
         await UiDispatcher.InvokeAsync(() =>
         {
             page.View!.LayoutIfNeeded();
@@ -588,8 +738,9 @@ internal static class iOSNativeSettingsCheck
                 throw new InvalidOperationException("控制页布局分组标题不是“边栏布局位置”");
             if (labels.Contains("布局模式"))
                 throw new InvalidOperationException("控制页仍用旧分组标题“布局模式”");
-            // SETTINGS-17：宽形态也把上下张放进控制栏功能，单项无排序把手。
+            // SETTINGS-17：宽形态同样在唯一「控制栏功能」标题下放上下张卡片与紧接的命令表卡片。
             VerifyNavigationRow(page, settings);
+            VerifySplitCards(page);
             var picker = Descendants(page.View).OfType<iOSLayoutModePicker>().Single();
             var table = picker.Subviews.OfType<UITableView>().Single();
             if (Math.Abs((double)(table.ContentSize.Height - picker.Bounds.Height)) > 1)
@@ -634,7 +785,7 @@ internal static class iOSNativeSettingsCheck
                 if (cell.TitleLabel.Text != item.Name || !cell.ShowsReorderControl || cell.CheckmarkView.Hidden == item.IsDisplay)
                     throw new InvalidOperationException("行未保留名称/勾选/排序");
                 if (Math.Abs((double)cell.Bounds.Height - iOSNativeSettingsMetrics.ListRowHeight) > .5)
-                    throw new InvalidOperationException($"控制栏功能行不是标准行高 {iOSNativeSettingsMetrics.ListRowHeight}：{cell.Bounds.Height}");
+                    throw new InvalidOperationException($"命令表行不是标准行高 {iOSNativeSettingsMetrics.ListRowHeight}：{cell.Bounds.Height}");
                 VerifyCommandIcon(cell, item);
                 if (cell.EditingAccessory != UITableViewCellAccessory.None)
                     throw new InvalidOperationException("行尾不应再有 ⓘ 详情入口");
@@ -691,22 +842,22 @@ internal static class iOSNativeSettingsCheck
             list.TableView.Source.MoveRow(list.TableView, NSIndexPath.FromRowSection(1, 0), NSIndexPath.FromRowSection(0, 0));
             int rows = (int)list.TableView.NumberOfRowsInSection(0);
             var last = list.TableView.CellAt(NSIndexPath.FromRowSection(rows - 1, 0))
-                ?? throw new InvalidOperationException("控制栏功能表末行未生成");
+                ?? throw new InvalidOperationException("命令表末行未生成");
             if ((double)last.SeparatorInset.Right <= (double)list.TableView.Bounds.Width)
-                throw new InvalidOperationException($"控制栏功能表最后一行仍有底缘分隔线：{last.SeparatorInset}");
+                throw new InvalidOperationException($"命令表最后一行仍有底缘分隔线：{last.SeparatorInset}");
         });
         lines.Add("NOTE 行内绑定按钮几何：" + BindingFrameNote);
-        lines.Add($"PASS INPUT-13 控制栏功能列表：纯触控仅勾选/命令图标/名称/排序、标题居中、标准行高 {iOSNativeSettingsMetrics.ListRowHeight}、末行无底缘分隔线、无绑定按钮与AX；键盘或鼠标注入后同一cell就地出现两个108×28主/次绑定按钮（垂直居中、不压名称与拖拽手柄、标题取自同一格式化）；滚动位置与草稿不变；点行勾选、拖拽排序写副本");
+        lines.Add($"PASS INPUT-13 控制栏命令表：唯一「控制栏功能」标题下，上下张卡片与命令表卡片相邻且无第二个标题、纯触控仅勾选/命令图标/名称/排序、标题居中、标准行高 {iOSNativeSettingsMetrics.ListRowHeight}、末行无底缘分隔线、无绑定按钮与AX；键盘或鼠标注入后同一cell就地出现两个108×28主/次绑定按钮（垂直居中、不压名称与拖拽手柄、标题取自同一格式化）；滚动位置与草稿不变；点行勾选、拖拽排序写副本");
     }
 
-    /// <summary>控制栏功能行的命令图标：与命令目录/控制栏按钮同一 SF Symbols，几何不压名称。</summary>
+    /// <summary>命令表行的命令图标：与命令目录/控制栏按钮同一 SF Symbols，几何不压名称。</summary>
     /// <param name="cell">真实单元格。</param>
     /// <param name="item">快捷键项。</param>
     private static void VerifyCommandIcon(iOSNativeEmbeddedCheckableReorderCell cell, SettingsViewModel.HotkeyItem item)
     {
         var icon = cell.LeadingIconView;
         if (icon.Hidden || icon.Image == null)
-            throw new InvalidOperationException($"控制栏功能行缺少命令图标：{item.Command}");
+            throw new InvalidOperationException($"命令表行缺少命令图标：{item.Command}");
         icon.LayoutIfNeeded();
         var frame = icon.ConvertRectToView(icon.Bounds, cell);
         var title = cell.TitleLabel.ConvertRectToView(cell.TitleLabel.Bounds, cell);
@@ -770,7 +921,7 @@ internal static class iOSNativeSettingsCheck
         var originalPrimary = item.PrimaryHotkey;
         var originalSecondary = item.SecondaryHotkey;
         var recorder = page.Recorder;
-        var list = page.HotkeyList ?? throw new InvalidOperationException("控制栏功能列表未创建");
+        var list = page.HotkeyList ?? throw new InvalidOperationException("命令表未创建");
         await UiDispatcher.InvokeAsync(() =>
         {
             page.Capabilities.Inject(true, false);

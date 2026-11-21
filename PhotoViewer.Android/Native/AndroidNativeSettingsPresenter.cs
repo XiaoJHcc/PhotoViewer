@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
+using System.Linq;
 using System.Threading;
 using Android.App;
 using Android.Content;
@@ -191,9 +192,8 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     private bool _refreshingDynamicTexts;
     private string _page = "root";
     private bool _closed;
+    private AndroidSettingsReorderList? _navigationList;
     private AndroidSettingsReorderList? _hotkeyList;
-    private bool _hotkeyPhoneOnly;
-    private int _hotkeyRowOffset;
     private AndroidSettingsReorderList? _formatList;
     private AndroidSettingsReorderList? _exifList;
     private SettingsViewModel.HotkeyItem? _recordingItem;
@@ -202,6 +202,8 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     private View? _scaleAddRow;
     private View? _previewSwitchSection;
     private View? _layoutSection;
+    private View? _navigationSection;
+    private View? _commandSection;
     private readonly Dictionary<SettingsViewModel.ScalePreset, ScaleRowView> _scaleRows = [];
     private bool _committingScalePresets;
 
@@ -378,6 +380,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         CommitScalePresets();
         if (page != "control") CancelRecording();
         _page = page;
+        _navigationList = null;
         _hotkeyList = null;
         _formatList = null;
         _exifList = null;
@@ -385,6 +388,8 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         _scaleAddRow = null;
         _previewSwitchSection = null;
         _layoutSection = null;
+        _navigationSection = null;
+        _commandSection = null;
         _scaleRows.Clear();
         _content.RemoveAllViews();
         _dynamicTexts.Clear();
@@ -549,46 +554,82 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     }
 
     /// <summary>
-    /// 控制页：布局模式与控制栏功能。手机形态只列 SETTINGS-17 的「上一张/下一张」单项，
-    /// 宽形态把它与可排序命令放在同一分组（命令配置与已持久化绑定保留）。
+    /// 控制页：布局模式（SETTINGS-08）后沿用唯一标题「控制栏功能」：标题下第一张卡片只放
+    /// 「上一张/下一张」组合开关，紧接一张无标题卡片放完整可排序命令表（沿用标准分组间距）。
+    /// 两者是各自独立的列表，组合开关不参与命令排序，也不显示拖拽把手。
+    /// 手机形态不裁减命令表，只把已勾选但未进入可选命令组的勾号淡化并由读屏区分（SETTINGS-08）。
     /// </summary>
     private void BuildControlPage()
     {
         _layoutSection = Section("边栏布局位置",
             NavigationRow("布局模式", CurrentLayoutModeDescription(), CurrentLayoutModeName(), ShowLayoutModePicker));
         Add(_content, _layoutSection);
+        // SETTINGS-08 / INPUT-13：快捷键编辑只在宽形态按外设能力显示；手机形态保留已持久化绑定但不提供编辑。
         bool phoneForm = AndroidScreenForm.IsPhoneForm(_activity, Settings.LayoutMode);
-        _hotkeyPhoneOnly = phoneForm;
-        _hotkeyRowOffset = phoneForm ? 0 : 1;
-        var navigationItem = new AndroidSettingsReorderList.SettingsReorderItem(
-            "上一张/下一张", null, () => Settings.ShowNavigationButtons,
-            value => Settings.ShowNavigationButtons = value, showHandle: false);
+        // SETTINGS-17：组合开关独自一张卡片，沿用同一 Material 勾选行，无排序把手、不可拖动。
+        var navigation = new AndroidSettingsReorderList(_activity,
+            () => 1,
+            _ => new AndroidSettingsReorderList.SettingsReorderItem(
+                "上一张/下一张", null, () => Settings.ShowNavigationButtons,
+                value =>
+                {
+                    Settings.ShowNavigationButtons = value;
+                    RefreshControlRows();
+                }, showHandle: false),
+            (_, _) => { });
+        _navigationList = navigation;
+        _navigationSection = SectionView("控制栏功能", navigation);
+        Add(_content, _navigationSection);
+        // SETTINGS-08：完整命令表紧接同一标题下的第二张无标题卡片，排序只作用于命令行，不可能越过组合开关。
         var hotkeys = new AndroidSettingsReorderList(_activity,
-            () => phoneForm ? 1 : Settings.Hotkeys.Count + 1,
+            () => Settings.Hotkeys.Count,
             index =>
             {
-                if (phoneForm || index == 0) return navigationItem;
-                var item = Settings.Hotkeys[index - 1];
+                var item = Settings.Hotkeys[index];
                 var captured = item;
                 // SETTINGS-01 / INPUT-13：有键盘/鼠标/触控板时提供完整主/次绑定、录制与清空；
                 // 仅直接触控时由行退回只读摘要，命令显隐与排序不变。
                 return new AndroidSettingsReorderList.SettingsReorderItem(
                     item.Name, null,
-                    () => item.IsDisplay, value => item.IsDisplay = value,
+                    () => item.IsDisplay,
+                    value =>
+                    {
+                        item.IsDisplay = value;
+                        RefreshControlRows();
+                    },
                     hotkey: item,
-                    recordingEnabled: () => AndroidInputDevices.HasBindingDevice,
+                    recordingEnabled: () => !phoneForm && AndroidInputDevices.HasBindingDevice,
                     beginRecording: primary => BeginRecording(captured, primary),
                     clearBinding: primary => ClearBinding(captured, primary),
-                    isRecording: primary => ReferenceEquals(_recordingItem, captured) && _recordingPrimary == primary);
+                    isRecording: primary => ReferenceEquals(_recordingItem, captured) && _recordingPrimary == primary,
+                    inactiveCheck: () => IsIneffectivePhoneCommand(captured.Command));
             },
-            (from, to) =>
-            {
-                // 固定开关项不参与命令排序；宽形态命令表从它后面一行开始。
-                if (from < _hotkeyRowOffset || to < _hotkeyRowOffset) return;
-                Settings.MoveHotkey(from - _hotkeyRowOffset, to - _hotkeyRowOffset);
-            });
+            (from, to) => Settings.MoveHotkey(from, to));
         _hotkeyList = hotkeys;
-        Add(_content, SectionView("控制栏功能", hotkeys));
+        _commandSection = SectionView(null, hotkeys);
+        Add(_content, _commandSection);
+    }
+
+    /// <summary>
+    /// SETTINGS-08：手机形态下已勾选但未进入可选命令组的命令（组合开关开启时的上一张/下一张与第四项起）；
+    /// 只用于淡化勾号与读屏区分，不改勾选值，行、把手与勾选操作照常可用。
+    /// </summary>
+    /// <param name="command">共享命令标识。</param>
+    /// <returns>当前形态下不生效返回 true。</returns>
+    private bool IsIneffectivePhoneCommand(string command)
+    {
+        if (!AndroidScreenForm.IsPhoneForm(_activity, Settings.LayoutMode)) return false;
+        var resolved = PhoneControlCommands.Resolve(
+            Settings.Hotkeys.Where(item => item.IsDisplay).Select(item => item.Command),
+            Settings.ShowNavigationButtons);
+        return !resolved.Contains(command, StringComparer.Ordinal);
+    }
+
+    /// <summary>勾选、排序或组合开关变化后按新顺序重算手机形态的未生效勾号（宽形态无淡化态，不重绑）。</summary>
+    private void RefreshControlRows()
+    {
+        if (!AndroidScreenForm.IsPhoneForm(_activity, Settings.LayoutMode)) return;
+        _hotkeyList?.Post(() => _hotkeyList?.NotifyAllRowsChanged());
     }
 
     /// <summary>进入主/次绑定录制态；同一时间只有一行在录制。</summary>
@@ -970,8 +1011,23 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     /// <summary>验收：当前布局模式显示名（手机设备恒为「手机」）。</summary>
     internal string LayoutModeNameForChecks() => CurrentLayoutModeName();
 
-    /// <summary>验收：控制页控制栏功能列表的可见行数。</summary>
-    internal int ControlRowCountForChecks => _hotkeyList?.RowCount ?? 0;
+    /// <summary>验收：控制页命令表（第二张无标题卡片）的可见行数。</summary>
+    internal int OptionalCommandRowCountForChecks => _hotkeyList?.RowCount ?? 0;
+
+    /// <summary>验收：控制页「控制栏功能」组合开关卡片的可见行数（固定 1 行）。</summary>
+    internal int NavigationRowCountForChecks => _navigationList?.RowCount ?? 0;
+
+    /// <summary>验收：「控制栏功能」组合开关卡片（标题与位置断言用）。</summary>
+    internal View? NavigationSectionForChecks => _navigationSection;
+
+    /// <summary>验收：第二张无标题命令表卡片（子视图与位置断言用）。</summary>
+    internal View? CommandSectionForChecks => _commandSection;
+
+    /// <summary>验收：「控制栏功能」卡片标题。</summary>
+    internal string NavigationSectionTitleForChecks() => SectionTitleText(_navigationSection);
+
+    /// <summary>验收：第二张卡片的标题文本（无标题模式应为空串）。</summary>
+    internal string CommandSectionTitleForChecks() => SectionTitleText(_commandSection);
 
     /// <summary>验收：控制页布局分组的可见标题（分组不带标题时为空串）。</summary>
     internal string LayoutSectionTitleForChecks() => SectionTitleText(_layoutSection);
@@ -1005,24 +1061,28 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
             ? text.Text ?? string.Empty
             : string.Empty;
 
-    /// <summary>验收：读取指定快捷键行真实视图的可见性与读屏文本（手机形态只有开关项，返回 null）。</summary>
+    /// <summary>验收：读取命令表指定行的真实视图状态（索引即工作副本命令顺序）。</summary>
     internal AndroidSettingsReorderList.RowSnapshot? HotkeyRowSnapshotForChecks(int index)
-        => _hotkeyPhoneOnly ? null : _hotkeyList?.SnapshotForChecks(index + _hotkeyRowOffset);
+        => _hotkeyList?.SnapshotForChecks(index);
 
-    /// <summary>验收：快捷键行的布局快照（行高、勾选对齐、图标语义；手机形态只有开关项，返回 null）。</summary>
+    /// <summary>验收：命令行的布局快照（行高、勾选对齐、图标语义；索引即工作副本命令顺序）。</summary>
     internal AndroidSettingsReorderList.RowLayoutSnapshot? HotkeyRowLayoutForChecks(int index)
-        => _hotkeyPhoneOnly ? null : _hotkeyList?.LayoutForChecks(index + _hotkeyRowOffset);
+        => _hotkeyList?.LayoutForChecks(index);
 
-    /// <summary>验收：控制页控制栏功能列表当前是否只列「上一张/下一张」。</summary>
-    internal bool PhoneControlListForChecks => _hotkeyPhoneOnly;
+    /// <summary>验收：按新工作副本重绑定控制页各行（勾选/排序/组合开关的实时刷新路径）。</summary>
+    internal void RefreshControlRowsForChecks() => RefreshControlRows();
 
-    /// <summary>验收：上一张/下一张开关行的布局快照（手机形态为第 0 行，宽形态为第 0 行）。</summary>
+    /// <summary>验收：点按组合开关行的真实勾选框，走与用户相同的工作副本写回与可选列表刷新路径。</summary>
+    internal bool ToggleNavigationCheckForChecks()
+        => _navigationList?.ToggleCheckForChecks(0) ?? false;
+
+    /// <summary>验收：上一张/下一张组合开关行的布局快照（独立卡片，第 0 行）。</summary>
     internal AndroidSettingsReorderList.RowLayoutSnapshot? NavigationRowLayoutForChecks()
-        => _hotkeyList?.LayoutForChecks(0);
+        => _navigationList?.LayoutForChecks(0);
 
-    /// <summary>验收：上一张/下一张开关行的快照。</summary>
+    /// <summary>验收：上一张/下一张组合开关行的快照。</summary>
     internal AndroidSettingsReorderList.RowSnapshot? NavigationRowSnapshotForChecks()
-        => _hotkeyList?.SnapshotForChecks(0);
+        => _navigationList?.SnapshotForChecks(0);
 
     /// <summary>验收：支持的文件格式行的布局快照。</summary>
     internal AndroidSettingsReorderList.RowLayoutSnapshot? FormatRowLayoutForChecks(int index)

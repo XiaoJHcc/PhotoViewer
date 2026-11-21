@@ -70,7 +70,8 @@ public sealed class SettingsRepository
         bool automaticCacheLimit = false)
         : this(
             store,
-            SettingsDefaults.CreateDefault(budget, appleKeyboard, automaticCacheLimit),
+            SettingsDefaults.CreateDefault(budget, appleKeyboard, automaticCacheLimit,
+                mobileControls: OperatingSystem.IsIOS() || OperatingSystem.IsAndroid()),
             automaticCacheLimit)
     {
     }

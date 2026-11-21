@@ -26,7 +26,7 @@ namespace PhotoViewer.iOS.Native;
 /// 上下张与栏背景，header/nav/卡片外框同落 `FilmSideGeometry` 的内容末端，入口带为 header 实际 x + 整高），
 /// 胶片条全高下穿与首末卡各停靠一次（横屏首卡 header 下缘 + 10、末卡 nav 上缘 − 10 或无 nav 时的圆角 + 10），
 /// EXIF 块（竖屏带衬底整块、横屏无衬底固有项宽容器且只显示放得下的前几项、文字不出容器）、
-/// 横屏控制栏（外缘工具区内边距 10、次序 EXIF→星级→缩放增强、整组在可用纵向区间居中、星级封顶展开态固有长度、
+/// 横屏控制栏（外缘工具区内边距 10、次序 EXIF→星级→可选命令、整组在可用纵向区间居中、星级封顶展开态固有长度、
 /// EXIF 开关不改变列宽、几何与胶片栏/上下张/分析栏开关无关、显示评分关闭不留空槽并把长度释放给 EXIF）、
 /// 横屏镜像、手机竖屏分析栏贴顶行（瓦片再下移一份行内间距、无分隔线）与
 /// 胶片条直贴底行、手机横屏右栏单块连续材质（分析栏/EXIF 出现规则、控制栏关闭贴外缘、接缝归分析框末端 8 点）、
@@ -95,6 +95,8 @@ internal static class iOSNativeFormCheck
     private static PhoneLayout? controlColumnSlots;
     /// <summary>横屏关闭「显示评分」时的控制栏槽位，供显示评分时的 EXIF 容量对比。</summary>
     private static PhoneLayout? ratingHiddenSlots;
+    /// <summary>横屏控制栏基准组合（胶片栏/上下张/EXIF 全开）的生效命令数，供开关关闭态比对。</summary>
+    private static int controlColumnCommandCount;
     /// <summary>筛选菜单写回只做一次（其余组合只核对菜单结构）。</summary>
     private static bool filterMutationChecked;
 
@@ -192,7 +194,7 @@ internal static class iOSNativeFormCheck
                     VerifyGeometry(root, main, scope);
                     VerifyFilters(root, scope);
                     VerifyMenus(root, main, scope);
-                    if (IsLandscapeForm(root) && combo.Control) VerifyControlBar(root, combo, scope);
+                    if (IsLandscapeForm(root) && combo.Control) VerifyControlBar(root, main, combo, scope);
                     if (config.Kind == SetupKind.Split && combo.Name == "all")
                         VerifySplitStage(root, config, scope);
                     lines.Add($"PASS {scope}：形态/槽位/避让/可见性/命中区/圆角安全区/胶片条两端/筛选与更多常驻/菜单结构通过" +
@@ -610,7 +612,7 @@ internal static class iOSNativeFormCheck
             ("Exif", slots.Exif, root.PhoneExifBlock),
             ("Navigation", slots.Navigation, root.PhoneNavigationGroup),
             ("Rating", slots.Rating, root.PhoneRatingControl),
-            ("FitEnhance", slots.FitEnhance, root.PhoneFitEnhanceGroup),
+            ("Commands", slots.Commands, root.PhoneCommandsGroup),
             ("Filmstrip", slots.Filmstrip, root.Filmstrip),
             ("Analysis", slots.Analysis, root.AnalysisPane),
             ("TopBar", slots.TopBar, bars.Top),
@@ -648,6 +650,8 @@ internal static class iOSNativeFormCheck
                 throw new InvalidOperationException($"{scope} 筛选圆按钮未覆盖外层玻璃槽位");
         }
 
+        VerifyPhoneCommands(root, main, slots, scope);
+
         // 分析栏、控制栏与手机右栏共用同一个工具区宿主：背景几何恒为共享槽位的分析/控制并集，不随显隐变化。
         if (!ReferenceEquals(root.ToolBackgroundView, root.ControlBackgroundView)
             || !ReferenceEquals(root.AnalysisBarBackground, root.ToolBackgroundView)
@@ -667,6 +671,72 @@ internal static class iOSNativeFormCheck
         }
 
         VerifyPhoneExif(root, main, slots, portrait, scope);
+    }
+
+    /// <summary>
+    /// 手机可选命令组（SHELL-08／SHELL-09／TOOLBAR-04）：生效项来自共享 <see cref="PhoneControlCommands.Resolve"/>，
+    /// 零项整组隐藏、一项为圆形、两至三项共用胶囊；竖屏从左到右、横屏从上到下，每段为 <c>shell.phone.command.size</c> 见方，
+    /// 按钮实例集合与顺序和共享解析一致，有照片时全部可执行。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="slots">当前手机槽位。</param>
+    /// <param name="scope">报告范围名。</param>
+    private static void VerifyPhoneCommands(iOSNativeRootViewController root, MainViewModel main, PhoneLayout slots, string scope)
+    {
+        var input = root.PhoneSlotsInput;
+        var expected = PhoneControlCommands.Resolve(
+            main.ControlVM.EnabledControls.Select(hotkey => hotkey.Command), input.ShowNavigation);
+        if (input.CommandCount != expected.Length)
+            throw new InvalidOperationException(
+                $"{scope} 槽位输入命令数 {input.CommandCount} ≠ 共享生效命令 {expected.Length}");
+        var bar = root.PhoneCommandsGroup;
+        // 可选命令属于控制栏：控制栏隐藏时整组随栏位收起，即使设置里仍有勾选命令。
+        if (!input.ControlVisible)
+        {
+            if (Has(slots.Commands) || !bar.Hidden)
+                throw new InvalidOperationException(
+                    $"{scope} 控制栏关闭时仍显示可选命令：槽位 {Rect(slots.Commands)}，Hidden={bar.Hidden}");
+            return;
+        }
+        if (expected.Length == 0)
+        {
+            if (Has(slots.Commands) || !bar.Hidden || bar.Buttons.Count != 0 || bar.Commands.Count != 0)
+                throw new InvalidOperationException(
+                    $"{scope} 零项命令仍保留槽位或按钮：槽位 {Rect(slots.Commands)}，按钮 {bar.Buttons.Count}");
+            return;
+        }
+        if (bar.Hidden)
+            throw new InvalidOperationException($"{scope} 有 {expected.Length} 项生效命令却隐藏了命令组");
+        if (bar.Buttons.Count != expected.Length || bar.Commands.Count != expected.Length)
+            throw new InvalidOperationException(
+                $"{scope} 命令按钮 {bar.Buttons.Count} 个 ≠ 生效命令 {expected.Length} 项");
+        double size = input.CommandButtonSize;
+        bool portrait = root.Form == ScreenForm.PhonePortrait;
+        double mainLength = portrait ? slots.Commands.Width : slots.Commands.Height;
+        if (Math.Abs(mainLength - expected.Length * size) > Tolerance)
+            throw new InvalidOperationException(
+                $"{scope} 命令组主轴 {mainLength:0.#} ≠ {expected.Length} × {size:0.#}");
+        for (int index = 0; index < expected.Length; index++)
+        {
+            if (!bar.Commands.TryGetValue(expected[index], out var button)
+                || !ReferenceEquals(button, bar.Buttons[index]))
+                throw new InvalidOperationException(
+                    $"{scope} 第 {index + 1} 段不是共享生效命令 {expected[index]}");
+            if (!IsVisible(root, button) || button.Hidden)
+                throw new InvalidOperationException($"{scope} 命令 {expected[index]} 不可见");
+            if (string.IsNullOrEmpty(button.AccessibilityLabel))
+                throw new InvalidOperationException($"{scope} 命令 {expected[index]} 缺少读屏名称");
+            if (main.CurrentFile != null && !button.Enabled)
+                throw new InvalidOperationException($"{scope} 有当前照片时命令 {expected[index]} 仍被禁用");
+            var frame = FrameInStage(root, button);
+            double expectedX = portrait ? (double)slots.Commands.X + index * size : (double)slots.Commands.X;
+            double expectedY = portrait ? (double)slots.Commands.Y : (double)slots.Commands.Y + index * size;
+            if (Math.Abs((double)frame.X - expectedX) > Tolerance || Math.Abs((double)frame.Y - expectedY) > Tolerance
+                || Math.Abs((double)frame.Width - size) > Tolerance || Math.Abs((double)frame.Height - size) > Tolerance)
+                throw new InvalidOperationException(
+                    $"{scope} 命令 {expected[index]} 段 {CGRect(frame)} 未按 {size:0.#} 见方沿{(portrait ? "横" : "纵")}向并列");
+        }
     }
 
     /// <summary>
@@ -822,10 +892,15 @@ internal static class iOSNativeFormCheck
                     $"{scope} 分析框末端 {slots.Analysis.MaxX:0.##} 未与控制区前缘 {controlEdge:0.##} 相接（不应重叠或留缝）");
             if (input.ControlVisible)
             {
-                double contentOuter = input.NotchOnLeft ? stageWidth - slots.FitEnhance.MaxX : slots.FitEnhance.X;
-                if (Math.Abs(contentOuter - ToolRegionGeometry.Padding) > Tolerance)
-                    throw new InvalidOperationException(
-                        $"{scope} 控制内容外缘距窗口缘 {contentOuter:0.##} ≠ 工具区内边距 {ToolRegionGeometry.Padding:0.##}");
+                // 控制内容外缘取最靠窗口缘的可见行：可选命令组在末端，其次星级；两者都没有时 EXIF 单独居中，不核对外缘。
+                var outer = Has(slots.Commands) ? slots.Commands : Has(slots.Rating) ? slots.Rating : default;
+                if (Has(outer))
+                {
+                    double contentOuter = input.NotchOnLeft ? stageWidth - outer.MaxX : outer.X;
+                    if (Math.Abs(contentOuter - ToolRegionGeometry.Padding) > Tolerance)
+                        throw new InvalidOperationException(
+                            $"{scope} 控制内容外缘距窗口缘 {contentOuter:0.##} ≠ 工具区内边距 {ToolRegionGeometry.Padding:0.##}");
+                }
             }
             if (analysis && !input.ControlVisible)
             {
@@ -904,16 +979,18 @@ internal static class iOSNativeFormCheck
 
         // 圆角仍生效：真实圆角收紧控制列的可用纵向区间，整组不会落到比零圆角更靠下的位置。
         var slots = root.PhoneSlots;
-        if (controlBottom > ToolRegionGeometry.Padding + Tolerance && Has(slots.FitEnhance))
+        double BottomOf(PhoneLayout layout)
+            => Has(layout.Commands) ? layout.Commands.MaxY : Has(layout.Rating) ? layout.Rating.MaxY : layout.Exif.MaxY;
+        if (controlBottom > ToolRegionGeometry.Padding + Tolerance && BottomOf(slots) > 0)
         {
             var flat = PhoneScreenLayout.Compute(input with
             {
                 ControlBand = input.ControlBand with { Bottom = 0 },
             });
-            if (!((double)slots.FitEnhance.MaxY < (double)flat.FitEnhance.MaxY - 1e-6))
+            if (!(BottomOf(slots) < BottomOf(flat) - 1e-6))
                 throw new InvalidOperationException(
-                    $"{scope} 真实圆角距离 {controlBottom:0.#} 未收紧控制列：增强末端 {slots.FitEnhance.MaxY:0.#}"
-                    + $" / 零圆角 {flat.FitEnhance.MaxY:0.#}（增强 {Rect(slots.FitEnhance)}）");
+                    $"{scope} 真实圆角距离 {controlBottom:0.#} 未收紧控制列：末端 {BottomOf(slots):0.#}"
+                    + $" / 零圆角 {BottomOf(flat):0.#}（命令 {Rect(slots.Commands)}，星级 {Rect(slots.Rating)}）");
         }
     }
 
@@ -952,7 +1029,7 @@ internal static class iOSNativeFormCheck
             throw new InvalidOperationException(
                 $"{scope} 横屏分析栏分隔线未在朝主图一侧：X {pane.DividerX:0.#} ≠ {expectedDividerX:0.#}（刘海在左={input.NotchOnLeft}）");
 
-        double controlLeft = input.Width - ToolRegionGeometry.Padding - input.ButtonSize;
+        double controlLeft = input.Width - ToolRegionGeometry.Padding - PhoneScreenLayout.ControlContentWidth(input);
         foreach (var view in tiles)
         {
             var actual = FrameInStage(root, view);
@@ -1066,10 +1143,12 @@ internal static class iOSNativeFormCheck
             if (Math.Abs(slots.Exif.Height - expectedHeight) > Tolerance)
                 throw new InvalidOperationException(
                     $"{scope} 横屏 EXIF 列高 {slots.Exif.Height:0.#} ≠ {slots.ExifItems} 项整项高 {expectedHeight:0.#}");
-            if (input.ShowRating
-                && Math.Abs(slots.Rating.Y - (slots.Exif.MaxY + ToolRegionGeometry.GroupSpacing)) > Tolerance)
+            // 次序：EXIF → 星级（显示评分时）→ 可选命令；相邻两组之间恒有一道组间距。
+            var afterExif = Has(slots.Rating) ? slots.Rating : slots.Commands;
+            if (Has(afterExif)
+                && Math.Abs(afterExif.Y - (slots.Exif.MaxY + ToolRegionGeometry.GroupSpacing)) > Tolerance)
                 throw new InvalidOperationException(
-                    $"{scope} 横屏 EXIF 列与星级之间不是组间距：EXIF 末端 {slots.Exif.MaxY:0.#}，星级 Y {slots.Rating.Y:0.#}");
+                    $"{scope} 横屏 EXIF 列与下一组之间不是组间距：EXIF 末端 {slots.Exif.MaxY:0.#}，下一组 Y {afterExif.Y:0.#}");
             if (slots.ExifItems < enabledExif.Count)
             {
                 // 裁剪规则仍是「先保星级紧凑态最短长度」：再加一项就必须把星级压到最短长度以下。
@@ -1077,9 +1156,10 @@ internal static class iOSNativeFormCheck
                 double columnBottom = (double)root.Stage.Bounds.Height
                     - Math.Max(input.Safe.Bottom, input.ControlBand.Bottom) - ToolRegionGeometry.Padding;
                 double nextHeight = (slots.ExifItems + 1) * pitch - ExifBlockGeometry.ItemSpacing;
-                int gaps = input.ShowRating ? 2 : 1;
+                double commandLength = input.CommandCount * input.CommandButtonSize;
+                int gaps = input.ShowRating && commandLength > 0 ? 2 : input.ShowRating || commandLength > 0 ? 1 : 0;
                 double roomForRating = columnBottom - columnTop - nextHeight
-                    - ToolRegionGeometry.GroupSpacing * gaps - input.ButtonSize * 2;
+                    - ToolRegionGeometry.GroupSpacing * gaps - commandLength;
                 if (input.ShowRating && roomForRating >= input.RatingMinLength - Tolerance)
                     throw new InvalidOperationException(
                         $"{scope} 横屏 EXIF 还能再放一项（星级仍剩 {roomForRating:0.#} ≥ {input.RatingMinLength:0.#}）");
@@ -1091,7 +1171,7 @@ internal static class iOSNativeFormCheck
     /// 圆角与刘海安全区：按每个可见手机控件的舞台矩形分别探测水平、垂直两种安全区布局区域——
     /// 探测到的相对内边距就是该带必须保持的窗口缘距离，核对控件自身到对应舞台边的距离不小于它。
     /// 例外只落在设计明确要求的贴边侧：横屏刘海侧按钮列（筛选/更多合体组、上下张）允许刘海侧贴近，
-    /// 下巴侧控制栏（缩放增强、星级、EXIF）允许下巴侧贴近；竖屏无 EXIF 时筛选与更多伸进刘海/灵动岛两旁的
+    /// 下巴侧控制栏（可选命令、星级、EXIF）允许下巴侧贴近；竖屏无 EXIF 时筛选与更多伸进刘海/灵动岛两旁的
     /// 显示区（上缘贴安全区、两侧贴耳区），只有下缘仍按该带安全区核对。
     /// 横屏下缘只按该控件位置上<b>原生圆角适应</b>核对（主屏不为底部手势条保留安全区，圆角读数不论大小都保留）；
     /// 竖屏下缘仍按安全区（含 Home 指示条）。
@@ -1116,7 +1196,7 @@ internal static class iOSNativeFormCheck
             targets.Add(("Filter", root.PhoneFilterButton, ears));
             targets.Add(("More", root.PhoneMoreButton, ears));
             targets.Add(("Navigation", root.PhoneNavigationGroup, string.Empty));
-            targets.Add(("FitEnhance", root.PhoneFitEnhanceGroup, string.Empty));
+            targets.Add(("Commands", root.PhoneCommandsGroup, string.Empty));
             targets.Add(("Rating", root.PhoneRatingControl, string.Empty));
             targets.Add(("Exif", root.PhoneExifBlock, string.Empty));
         }
@@ -1126,7 +1206,7 @@ internal static class iOSNativeFormCheck
             string chinSide = root.NotchOnLeft ? "Right" : "Left";
             targets.Add(("FilterMore", root.PhoneFilterMoreGroup, notchSide));
             targets.Add(("Navigation", root.PhoneNavigationGroup, notchSide));
-            targets.Add(("FitEnhance", root.PhoneFitEnhanceGroup, chinSide + ",Top,Bottom"));
+            targets.Add(("Commands", root.PhoneCommandsGroup, chinSide + ",Top,Bottom"));
             targets.Add(("Rating", root.PhoneRatingControl, chinSide));
             targets.Add(("Exif", root.PhoneExifBlock, chinSide));
         }
@@ -1583,7 +1663,7 @@ internal static class iOSNativeFormCheck
             Add("Exif", root.PhoneExifBlock);
             Add("Navigation", root.PhoneNavigationGroup);
             Add("Rating", root.PhoneRatingControl);
-            Add("FitEnhance", root.PhoneFitEnhanceGroup);
+            Add("Commands", root.PhoneCommandsGroup);
             Add("Filmstrip", root.Filmstrip);
             Add("Analysis", root.AnalysisPane);
         }
@@ -1646,7 +1726,6 @@ internal static class iOSNativeFormCheck
         {
             ("FilterMore", root.PhoneFilterMoreGroup),
             ("Navigation", root.PhoneNavigationGroup),
-            ("FitEnhance", root.PhoneFitEnhanceGroup),
         };
         foreach (var (name, group) in groups)
         {
@@ -1654,6 +1733,10 @@ internal static class iOSNativeFormCheck
                 throw new InvalidOperationException($"{scope} {name} 横排合体组未使用单一系统玻璃背景");
             for (int index = 0; index < group.Buttons.Count; index++) buttons.Add(($"{name}[{index}]", group.Buttons[index]));
         }
+        if (!root.PhoneCommandsGroup.UsesSharedGlass)
+            throw new InvalidOperationException($"{scope} 可选命令组未使用单一系统玻璃背景");
+        for (int index = 0; index < root.PhoneCommandsGroup.Buttons.Count; index++)
+            buttons.Add(($"Commands[{index}]", root.PhoneCommandsGroup.Buttons[index]));
         foreach (var (name, button) in buttons)
         {
             if (!IsVisible(root, button)) continue;
@@ -1749,66 +1832,110 @@ internal static class iOSNativeFormCheck
 
     /// <summary>
     /// 横屏下巴侧控制栏（桌面式）：内容外缘距下巴窗口缘一份工具区内边距 <c>toolbar.padding</c>（10，不避让系统对称安全内缩），
-    /// 自上而下为 EXIF 列 → 星级控件 → 缩放适应/雾天增强竖排合体，EXIF 与按钮同一中轴（无衬底容器使用固有项宽、
+    /// 自上而下为 EXIF 列 → 星级控件 → 可选命令竖排合体，EXIF 与按钮同一中轴（无衬底容器使用固有项宽、
     /// 且不超过按钮与两侧边距之和）；上下张不在控制栏内。整组在原生圆角适应后的可用纵向区间居中，星级槽位封顶展开态固有长度，
-    /// 末端按钮不固定在底边。
-    /// 几何与胶片栏、上下张、分析栏开关无关（作废"旋转保持一致"），EXIF 开关只收起那一列并让整组重新居中、不改变列宽。
+    /// 末端按钮不固定在底边。可选命令组长度随生效项数变化，零项时不留槽位或组间距；组合开关切换会让独立上下张进出
+    /// 可选命令组，因此控制栏几何随之变化，其余栏位/分析开关不改变它。
     /// </summary>
     /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM（生效命令与设置）。</param>
     /// <param name="combo">当前组合。</param>
     /// <param name="scope">报告范围名。</param>
-    private static void VerifyControlBar(iOSNativeRootViewController root, Combo combo, string scope)
+    private static void VerifyControlBar(iOSNativeRootViewController root, MainViewModel main, Combo combo, string scope)
     {
         var slots = root.PhoneSlots;
         var input = root.PhoneSlotsInput;
-        if (!Has(slots.FitEnhance) || (combo.Rating && !Has(slots.Rating)))
-            throw new InvalidOperationException($"{scope} 控制栏可见时缺少缩放增强或星级槽位");
-        if (!combo.Rating && Has(slots.Rating))
-            throw new InvalidOperationException($"{scope} 显示评分关闭后仍保留评分空槽 {Rect(slots.Rating)}");
-        // 工具区外边距：内容距下巴窗口缘一份 toolbar.padding（10），控制区宽另含独立时的前导 10。
-        double chinEdge = root.NotchOnLeft ? root.Stage.Bounds.Width - slots.FitEnhance.MaxX : slots.FitEnhance.X;
-        if (Math.Abs(chinEdge - ToolRegionGeometry.Padding) > Tolerance)
+        if (combo.Rating != Has(slots.Rating))
             throw new InvalidOperationException(
-                $"{scope} 控制栏内容距下巴窗口缘 {chinEdge:0.#} ≠ 工具区内边距 {ToolRegionGeometry.Padding:0.#}");
-        double chinSafe = root.NotchOnLeft ? input.Safe.Right : input.Safe.Left;
-        if (chinSafe > ToolRegionGeometry.Padding + Tolerance && chinEdge >= chinSafe - Tolerance)
+                $"{scope} 评分槽位 {Rect(slots.Rating)} 与显示评分 {combo.Rating} 不符");
+        var expectedCommands = PhoneControlCommands.Resolve(
+            main.ControlVM.EnabledControls.Select(hotkey => hotkey.Command), input.ShowNavigation);
+        if (input.CommandCount != expectedCommands.Length)
             throw new InvalidOperationException(
-                $"{scope} 控制栏仍避让对称安全内缩：外缘 {chinEdge:0.#}，安全区 {chinSafe:0.#}");
-        if (combo.Rating)
+                $"{scope} 槽位输入命令数 {input.CommandCount} ≠ 共享生效命令 {expectedCommands.Length}");
+        if (Has(slots.Commands) != (expectedCommands.Length > 0))
+            throw new InvalidOperationException(
+                $"{scope} 可选命令槽位 {Rect(slots.Commands)} 与生效命令 {expectedCommands.Length} 项不符");
+        if (root.PhoneCommandsGroup.Commands.Count != expectedCommands.Length
+            || expectedCommands.Any(command => !root.PhoneCommandsGroup.Commands.ContainsKey(command)))
+            throw new InvalidOperationException(
+                $"{scope} 可选命令按钮 [{string.Join(",", root.PhoneCommandsGroup.Commands.Keys)}] " +
+                $"≠ 共享生效命令 [{string.Join(",", expectedCommands)}]");
+        for (int index = 0; index < expectedCommands.Length; index++)
         {
-            if (Math.Abs(slots.Rating.X - slots.FitEnhance.X) > Tolerance)
+            if (!ReferenceEquals(root.PhoneCommandsGroup.Buttons[index],
+                root.PhoneCommandsGroup.Commands[expectedCommands[index]]))
                 throw new InvalidOperationException(
-                    $"{scope} 星级与缩放增强不在同一列：{slots.Rating.X:0.#} vs {slots.FitEnhance.X:0.#}");
+                    $"{scope} 可选命令第 {index + 1} 段不是 {expectedCommands[index]}（排布顺序与共享解析不一致）");
         }
-        double axis = slots.FitEnhance.X + input.ButtonSize / 2;
+        double commandLength = input.CommandCount * input.CommandButtonSize;
+        if (input.CommandCount > 0)
+        {
+            double mainLength = input.Landscape ? slots.Commands.Height : slots.Commands.Width;
+            if (Math.Abs(mainLength - commandLength) > Tolerance)
+                throw new InvalidOperationException(
+                    $"{scope} 可选命令组主轴 {mainLength:0.#} ≠ {input.CommandCount} × {input.CommandButtonSize:0.#}");
+            for (int index = 0; index < root.PhoneCommandsGroup.Buttons.Count; index++)
+            {
+                var button = root.PhoneCommandsGroup.Buttons[index];
+                if (!IsVisible(root, button))
+                    throw new InvalidOperationException($"{scope} 可选命令第 {index + 1} 段不可见");
+                var frame = FrameInStage(root, button);
+                double expectedMain = (double)slots.Commands.Y + index * input.CommandButtonSize;
+                if (Math.Abs((double)frame.Y - expectedMain) > Tolerance
+                    || Math.Abs((double)frame.Height - input.CommandButtonSize) > Tolerance
+                    || Math.Abs((double)frame.Width - input.CommandButtonSize) > Tolerance)
+                    throw new InvalidOperationException(
+                        $"{scope} 可选命令第 {index + 1} 段 {CGRect(frame)} 未按 {input.CommandButtonSize:0.#} 步长纵排");
+                if (button.Enabled != (expectedCommands[index] == "Open" || main.CurrentFile != null))
+                    throw new InvalidOperationException(
+                        $"{scope} 可选命令 {expectedCommands[index]} 可用态与无照片禁用规则不符");
+            }
+        }
+        // 工具区外边距：内容距下巴窗口缘一份 toolbar.padding（10），控制区宽另含独立时的前导 10。
+        var outer = Has(slots.Commands) ? slots.Commands : Has(slots.Rating) ? slots.Rating : slots.Exif;
+        if (!Has(outer))
+            throw new InvalidOperationException($"{scope} 控制栏可见时没有任何内容槽位");
+        if (Has(slots.Commands) || Has(slots.Rating))
+        {
+            var columnRect = Has(slots.Commands) ? slots.Commands : slots.Rating;
+            double chinEdge = root.NotchOnLeft ? root.Stage.Bounds.Width - columnRect.MaxX : columnRect.X;
+            if (Math.Abs(chinEdge - ToolRegionGeometry.Padding) > Tolerance)
+                throw new InvalidOperationException(
+                    $"{scope} 控制栏内容距下巴窗口缘 {chinEdge:0.#} ≠ 工具区内边距 {ToolRegionGeometry.Padding:0.#}");
+            double chinSafe = root.NotchOnLeft ? input.Safe.Right : input.Safe.Left;
+            if (chinSafe > ToolRegionGeometry.Padding + Tolerance && chinEdge >= chinSafe - Tolerance)
+                throw new InvalidOperationException(
+                    $"{scope} 控制栏仍避让对称安全内缩：外缘 {chinEdge:0.#}，安全区 {chinSafe:0.#}");
+        }
+        if (combo.Rating && Has(slots.Commands) && Math.Abs(slots.Rating.X - slots.Commands.X) > Tolerance)
+            throw new InvalidOperationException(
+                $"{scope} 星级与按钮列不在同一 X：{slots.Rating.X:0.#} vs {slots.Commands.X:0.#}");
+        double axis = Has(slots.Commands) ? slots.Commands.X + input.CommandButtonSize / 2
+            : Has(slots.Rating) ? slots.Rating.X + input.ButtonSize / 2
+            : slots.Exif.X + slots.Exif.Width / 2;
         if (Has(slots.Exif) && Math.Abs(slots.Exif.X + slots.Exif.Width / 2 - axis) > Tolerance)
             throw new InvalidOperationException(
                 $"{scope} EXIF 列中轴 {slots.Exif.X + slots.Exif.Width / 2:0.#} ≠ 按钮中轴 {axis:0.#}");
         if (Has(slots.Exif) && Math.Abs(slots.Exif.Width - input.ExifWidth) > Tolerance)
             throw new InvalidOperationException(
                 $"{scope} 横屏无衬底 EXIF 列宽 {slots.Exif.Width:0.#} ≠ 固有项宽 {input.ExifWidth:0.#}（无额外内外边距）");
-        // 次序：EXIF（放得下时）→ 星级（显示评分时）→ 缩放增强，项间为组间距；评分关闭时 EXIF 直接接增强，长度释放。
-        double ratingTop = Has(slots.Exif) ? slots.Exif.MaxY + ToolRegionGeometry.GroupSpacing : double.NaN;
-        if (combo.Rating)
-        {
-            if (Has(slots.Exif) && Math.Abs(slots.Rating.Y - ratingTop) > Tolerance)
-                throw new InvalidOperationException(
-                    $"{scope} 星级未紧接 EXIF 列：星级 Y {slots.Rating.Y:0.#} ≠ {ratingTop:0.#}");
-            if (Math.Abs(slots.FitEnhance.Y - (slots.Rating.MaxY + ToolRegionGeometry.GroupSpacing)) > Tolerance)
-                throw new InvalidOperationException(
-                    $"{scope} 缩放增强未紧接星级：Y {slots.FitEnhance.Y:0.#} ≠ 星级末端 {slots.Rating.MaxY:0.#} + {ToolRegionGeometry.GroupSpacing:0.#}");
-        }
-        else if (Has(slots.Exif) && Math.Abs(slots.FitEnhance.Y - (slots.Exif.MaxY + ToolRegionGeometry.GroupSpacing)) > Tolerance)
-        {
+        // 次序：EXIF（放得下时）→ 星级（显示评分时）→ 可选命令，项间为组间距；评分关闭时 EXIF 直接接命令组。
+        if (combo.Rating && Has(slots.Exif)
+            && Math.Abs(slots.Rating.Y - (slots.Exif.MaxY + ToolRegionGeometry.GroupSpacing)) > Tolerance)
             throw new InvalidOperationException(
-                $"{scope} 评分关闭后 EXIF 未直接接缩放增强：增强 Y {slots.FitEnhance.Y:0.#} ≠ EXIF 末端 {slots.Exif.MaxY:0.#} + {ToolRegionGeometry.GroupSpacing:0.#}");
-        }
+                $"{scope} 星级未紧接 EXIF 列：星级 Y {slots.Rating.Y:0.#} ≠ EXIF 末端 {slots.Exif.MaxY:0.#} + {ToolRegionGeometry.GroupSpacing:0.#}");
+        double commandsTop = Has(slots.Rating) ? slots.Rating.MaxY : Has(slots.Exif) ? slots.Exif.MaxY : double.NaN;
+        if (Has(slots.Commands) && !double.IsNaN(commandsTop)
+            && Math.Abs(slots.Commands.Y - (commandsTop + ToolRegionGeometry.GroupSpacing)) > Tolerance)
+            throw new InvalidOperationException(
+                $"{scope} 可选命令未紧接上一组：命令 Y {slots.Commands.Y:0.#} ≠ {commandsTop:0.#} + {ToolRegionGeometry.GroupSpacing:0.#}");
         if (Has(slots.Navigation))
         {
             var navigation = ToCGRect(slots.Navigation);
             foreach (var (name, target) in new (string, LayoutRect)[]
             {
-                ("缩放增强", slots.FitEnhance), ("星级", slots.Rating), ("EXIF", slots.Exif),
+                ("可选命令", slots.Commands), ("星级", slots.Rating), ("EXIF", slots.Exif),
             })
             {
                 if (Has(target) && Intersects(navigation, ToCGRect(target)))
@@ -1818,19 +1945,20 @@ internal static class iOSNativeFormCheck
         if (!Has(slots.Exif) && !Has(slots.Analysis) && Has(slots.TrailingBar))
             throw new InvalidOperationException(
                 $"{scope} 无 EXIF 且无分析栏时仍绘制工具区背景 {Rect(slots.TrailingBar)}（应透明）");
-        // 整组居中：EXIF（放得下时）/星级/两按钮同轴，上下余量相等，末端按钮不固定在底边。
+        // 整组居中：EXIF（放得下时）/星级/命令同轴，上下余量相等，末端按钮不固定在底边。
         double columnTop = Math.Max(input.Safe.Top, input.ControlBand.Top) + ToolRegionGeometry.Padding;
         double columnBottom = (double)root.Stage.Bounds.Height
             - Math.Max(input.Safe.Bottom, input.ControlBand.Bottom) - ToolRegionGeometry.Padding;
         double columnLength = Math.Max(0, columnBottom - columnTop);
-        double groupTop = Has(slots.Exif) ? slots.Exif.Y : combo.Rating ? slots.Rating.Y : slots.FitEnhance.Y;
+        double groupTop = Has(slots.Exif) ? slots.Exif.Y : combo.Rating ? slots.Rating.Y : slots.Commands.Y;
+        var bottomSlot = Has(slots.Commands) ? slots.Commands : combo.Rating ? slots.Rating : slots.Exif;
         double topMargin = groupTop - columnTop;
-        double bottomMargin = columnBottom - slots.FitEnhance.MaxY;
+        double bottomMargin = columnBottom - bottomSlot.MaxY;
         if (Math.Abs(topMargin - bottomMargin) > Tolerance || topMargin < -Tolerance)
             throw new InvalidOperationException(
                 $"{scope} 控制栏整组未在可用纵向区间居中：上余量 {topMargin:0.#}，下余量 {bottomMargin:0.#}"
                 + $"（列 {columnTop:0.#}..{columnBottom:0.#}，EXIF {Rect(slots.Exif)}，星级 {Rect(slots.Rating)}，"
-                + $"增强 {Rect(slots.FitEnhance)}）");
+                + $"命令 {Rect(slots.Commands)}）");
         if (combo.Rating)
         {
             if (slots.Rating.Height > RatingControlGeometry.ExpandedLength + Tolerance)
@@ -1839,13 +1967,14 @@ internal static class iOSNativeFormCheck
             if (!Has(slots.Exif))
             {
                 double expected = Math.Min(RatingControlGeometry.ExpandedLength,
-                    Math.Max(0, columnLength - ToolRegionGeometry.GroupSpacing - input.ButtonSize * 2));
+                    Math.Max(0, columnLength - (input.CommandCount > 0 ? ToolRegionGeometry.GroupSpacing : 0) - commandLength));
                 if (Math.Abs(slots.Rating.Height - expected) > Tolerance)
                     throw new InvalidOperationException(
-                        $"{scope} 无 EXIF 时星级槽位 {slots.Rating.Height:0.#} ≠ 剩余长度封顶 {expected:0.#}");
+                        $"{scope} 无 EXIF 时星级槽位 {slots.Rating.Height:0.#} ≠ 剩余长度封顶 {expected:0.#}"
+                        + $"（可用 {columnLength:0.#}，命令 {commandLength:0.#}）");
                 // 星级被封顶后多出的余量留在整组两端：末端按钮因此不贴列底。
                 if (expected >= RatingControlGeometry.ExpandedLength - Tolerance
-                    && columnLength - expected - ToolRegionGeometry.GroupSpacing - input.ButtonSize * 2 > Tolerance
+                    && columnLength - expected - (input.CommandCount > 0 ? ToolRegionGeometry.GroupSpacing : 0) - commandLength > Tolerance
                     && bottomMargin < Tolerance)
                 {
                     throw new InvalidOperationException(
@@ -1861,6 +1990,7 @@ internal static class iOSNativeFormCheck
         if (combo.Name == "all")
         {
             controlColumnSlots = slots;
+            controlColumnCommandCount = input.CommandCount;
             if (ratingHiddenSlots is { } hidden)
             {
                 // 评分关闭释放评分槽与一道组间距：同样可用区里 EXIF 至少能放同样多项，且上面已核对整组重新居中。
@@ -1872,10 +2002,23 @@ internal static class iOSNativeFormCheck
         }
         if (controlColumnSlots is not { } reference)
             throw new InvalidOperationException($"{scope} 缺少 EXIF 全开时的控制栏基准");
-        // 胶片栏/上下张/分析栏开关不改变控制栏几何；EXIF 开关收起那一列并让整组重新居中，几何随之改变。
-        if (Has(slots.Exif) == Has(reference.Exif) && !SameRect(reference.FitEnhance, slots.FitEnhance))
+        // 组合开关会让独立上下张进出命令组（生效项数变化），该组合允许控制列内容重排；其余开关不改变命令组。
+        bool sameCommands = input.CommandCount == controlColumnCommandCount;
+        if (!sameCommands)
+        {
+            if (input.ShowNavigation)
+                throw new InvalidOperationException(
+                    $"{scope} 组合开关开启时生效命令数仍变化：{controlColumnCommandCount} → {input.CommandCount}");
+            return;
+        }
+        // 胶片栏/分析栏开关不改变控制栏几何；EXIF 开关收起那一列并让整组重新居中，几何随之改变。
+        bool sameExif = Has(slots.Exif) == Has(reference.Exif);
+        if (sameExif && Has(slots.Commands) && !SameRect(reference.Commands, slots.Commands))
             throw new InvalidOperationException(
-                $"{scope} 缩放增强几何随开关变化：{Rect(reference.FitEnhance)} → {Rect(slots.FitEnhance)}");
+                $"{scope} 可选命令组几何随开关变化：{Rect(reference.Commands)} → {Rect(slots.Commands)}");
+        if (sameExif && !SameRect(reference.Rating, slots.Rating))
+            throw new InvalidOperationException(
+                $"{scope} 星级几何随开关变化：{Rect(reference.Rating)} → {Rect(slots.Rating)}");
         if (!Has(slots.Exif))
         {
             // EXIF 开关只收起那一列，不改变控制列宽：无衬底容器与按钮等宽同轴（44）。
@@ -1887,16 +2030,19 @@ internal static class iOSNativeFormCheck
             if (Has(slots.Analysis))
             {
                 // 分析框末端即控制区前缘（接缝归分析框末端，不重叠也不留缝）。
-                double seam = input.NotchOnLeft ? slots.FitEnhance.X - slots.Analysis.MaxX : slots.Analysis.X - slots.FitEnhance.MaxX;
+                double stripNear = input.NotchOnLeft
+                    ? input.Width - ToolRegionGeometry.ControlWidth(input.ButtonSize, joinedToAnalysis: true)
+                    : ToolRegionGeometry.ControlWidth(input.ButtonSize, joinedToAnalysis: true);
+                double seam = input.NotchOnLeft ? stripNear - slots.Analysis.MaxX : slots.Analysis.X - stripNear;
                 if (Math.Abs(seam) > Tolerance)
                     throw new InvalidOperationException(
-                        $"{scope} 分析框与控制区之间出现 {seam:0.#} 点缝/重叠：分析 {Rect(slots.Analysis)}，增强 {Rect(slots.FitEnhance)}");
+                        $"{scope} 分析框与控制区之间出现 {seam:0.#} 点缝/重叠：分析 {Rect(slots.Analysis)}，控制区前缘 {stripNear:0.#}");
             }
         }
         if (Has(slots.Exif) && combo.Rating
             && (!SameRect(reference.Rating, slots.Rating) || !SameRect(reference.Exif, slots.Exif)))
             throw new InvalidOperationException(
-                $"{scope} 控制栏几何随胶片栏/上下张开关变化：Rating {Rect(reference.Rating)}→{Rect(slots.Rating)}，" +
+                $"{scope} 控制栏几何随胶片栏/分析栏开关变化：Rating {Rect(reference.Rating)}→{Rect(slots.Rating)}，" +
                 $"Exif {Rect(reference.Exif)}→{Rect(slots.Exif)}");
         // 入口组常驻且不随任何开关移动：胶片栏/上下张/分析栏切换只改列表、上下张与控制列，header 固定在末端锚点上。
         if (Has(reference.FilterMoreGroup) && !SameRect(reference.FilterMoreGroup, slots.FilterMoreGroup))
@@ -2203,7 +2349,7 @@ internal static class iOSNativeFormCheck
             ("Filter", left.Filter, right.Filter), ("More", left.More, right.More),
             ("FilterMoreGroup", left.FilterMoreGroup, right.FilterMoreGroup), ("Exif", left.Exif, right.Exif),
             ("Navigation", left.Navigation, right.Navigation), ("Rating", left.Rating, right.Rating),
-            ("FitEnhance", left.FitEnhance, right.FitEnhance), ("Filmstrip", left.Filmstrip, right.Filmstrip),
+            ("Commands", left.Commands, right.Commands), ("Filmstrip", left.Filmstrip, right.Filmstrip),
             ("Analysis", left.Analysis, right.Analysis), ("TopBar", left.TopBar, right.TopBar),
             ("BottomBar", left.BottomBar, right.BottomBar), ("LeadingBar", left.LeadingBar, right.LeadingBar),
             ("TrailingBar", left.TrailingBar, right.TrailingBar),

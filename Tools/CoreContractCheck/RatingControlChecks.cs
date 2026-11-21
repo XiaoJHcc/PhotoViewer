@@ -501,7 +501,8 @@ internal static class RatingControlChecks
             ButtonSize: DesignTokens.ShellGlassButtonSize,
             EdgeMargin: DesignTokens.ShellPhoneEdgeMargin,
             RowInset: DesignTokens.ShellPhoneRowInset,
-            GroupGap: DesignTokens.ShellGlassGroupGap);
+            GroupGap: DesignTokens.ShellGlassGroupGap,
+            CommandCount: 2);
 
         foreach (bool showNavigation in new[] { true, false })
         {

@@ -760,26 +760,46 @@ internal static class iOSNativeInputCheck
     /// <summary>
     /// 设置写回传播：从主图菜单真实弹出设置页，改写工作副本后经关闭回写路径应用，
     /// 逐项核对布局模式、控制栏命令显隐/顺序、快捷键重绑、评分与 EXIF 分组，以及文件格式筛选反映到胶片栏。
+    /// 手机形态另核对命令勾选/排序与组合开关经共享解析反映到可选命令组。
     /// </summary>
     private static async Task VerifySettingsPropagationAsync(iOSNativeRootViewController root, MainViewModel main, List<string> lines)
     {
         var list = main.FileVM.ThumbnailList;
         if (root.Form != ScreenForm.Wide)
         {
-            // 手机形态（SETTINGS-08、SETTINGS-17）：控制栏功能只列「上一张/下一张」，关闭回写后主屏即时重排；
-            // 宽形态命令与快捷键编辑不显示，已持久化绑定不改写且照常派发。
+            // 手机形态（SETTINGS-08、SETTINGS-17）：「控制栏功能」标题下先是上下张开关卡片，紧接不带标题的完整命令表卡片，勾选与排序经共享
+            // PhoneControlCommands 生效到可选命令组；快捷键编辑不显示，已持久化绑定不改写且照常派发。
             var phone = await OpenSettingsAsync(root, lines);
             await iOSNativeSettingsCheck.RunAsync(root, phone, lines);
-            await UiDispatcher.InvokeAsync(() => phone.Session.WorkingSettings.ShowNavigationButtons = false);
+            var working = phone.Session.WorkingSettings;
+            var zoomIn = working.Hotkeys.First(hotkey => hotkey.Command == "ZoomInPreset");
+            await UiDispatcher.InvokeAsync(() =>
+            {
+                zoomIn.IsDisplay = true;
+                working.MoveHotkey(working.Hotkeys.IndexOf(zoomIn), 0);
+            });
             if (root.TryExecuteKey(79, 0)) throw new InvalidOperationException("INPUT-01：设置页展示期间仍派发了照片快捷键");
             await ApplyAndDismissSettingsAsync(root, phone);
+            await WaitAsync(() => root.PhoneCommandsGroup.Commands.ContainsKey("ZoomInPreset")
+                && root.PhoneCommandsGroup.Buttons.Count > 0
+                && ReferenceEquals(root.PhoneCommandsGroup.Buttons[0], root.PhoneCommandsGroup.Commands["ZoomInPreset"]),
+                "手机形态命令勾选与排序传播");
+            lines.Add("PASS 设置写回①（手机形态）：命令表勾选/排序回写后可选命令组即时按共享解析重排（ZoomInPreset 置顶）");
+            var reopen = await OpenSettingsAsync(root, lines);
+            await UiDispatcher.InvokeAsync(() => reopen.Session.WorkingSettings.ShowNavigationButtons = false);
+            await ApplyAndDismissSettingsAsync(root, reopen);
             await WaitAsync(() => !main.Settings.ShowNavigationButtons && root.PhoneNavigationGroup.Hidden,
                 "显示上下张按钮关闭传播");
             await SettleAsync(root);
-            lines.Add("PASS 设置写回①（手机形态）：取消勾选「上一张/下一张」→ 主屏上下张合体即时收起；命令与绑定配置未改写");
-            var reopen = await OpenSettingsAsync(root, lines);
-            await UiDispatcher.InvokeAsync(() => reopen.Session.WorkingSettings.ShowNavigationButtons = true);
-            await ApplyAndDismissSettingsAsync(root, reopen);
+            var expectedOff = PhotoViewer.Core.Settings.PhoneControlCommands.Resolve(
+                main.ControlVM.EnabledControls.Select(hotkey => hotkey.Command), showNavigationButtons: false);
+            if (root.PhoneCommandsGroup.Buttons.Count != expectedOff.Length)
+                throw new InvalidOperationException(
+                    $"关闭组合开关后命令组 {root.PhoneCommandsGroup.Buttons.Count} 段 ≠ 共享解析 {expectedOff.Length} 项");
+            lines.Add("PASS 设置写回①（手机形态）：取消勾选「上一张/下一张」→ 主屏上下张合体即时收起，独立上下张按设置进入命令组");
+            var again = await OpenSettingsAsync(root, lines);
+            await UiDispatcher.InvokeAsync(() => again.Session.WorkingSettings.ShowNavigationButtons = true);
+            await ApplyAndDismissSettingsAsync(root, again);
             await WaitAsync(() => main.Settings.ShowNavigationButtons && !root.PhoneNavigationGroup.Hidden,
                 "显示上下张按钮打开传播");
             await UiDispatcher.InvokeAsync(() => list.SelectImageCommand(list.FilteredFiles[0]));
@@ -807,7 +827,7 @@ internal static class iOSNativeInputCheck
 
     /// <summary>
     /// 宽形态设置写回：布局模式、控制栏命令显隐与顺序、快捷键重绑、评分与 EXIF 分组显隐，以及控制栏重建幂等性。
-    /// 手机形态不暴露这些编辑入口，改由 <see cref="VerifySettingsPropagationAsync"/> 的手机分支核对隐藏规则与既有绑定。
+    /// 手机形态改由 <see cref="VerifySettingsPropagationAsync"/> 的手机分支核对命令表传播、绑定保留与快捷键编辑隐藏。
     /// </summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="main">共享主 VM。</param>

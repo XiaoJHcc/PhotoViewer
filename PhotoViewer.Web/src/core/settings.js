@@ -30,6 +30,13 @@ export const EXIF_ITEMS = Object.freeze([
     { id: "flash", label: "闪光灯", enabled: false },
 ]);
 
+export const PHONE_COMMAND_LIMIT = 3;
+
+// SETTINGS-08：移动端默认在命令表中勾选这六项，沿用目录顺序；宽形态沿用各自原有默认。
+export const PHONE_COMMAND_DEFAULTS = Object.freeze([
+    "Previous", "Next", "Exchange", "Fit", "ToggleAnalysisView", "ToggleEnhance",
+]);
+
 export const HOTKEYS = Object.freeze([
     { command: "Open", name: "打开文件", display: false, primary: "Ctrl+KeyN", secondary: "Ctrl+KeyO" },
     { command: "Previous", name: "上一张", display: true, primary: "ArrowLeft", secondary: "WheelUp" },
@@ -50,7 +57,16 @@ export const HOTKEYS = Object.freeze([
     { command: "SetRating5", name: "评分 5 星", display: false, primary: "Digit5", secondary: "Numpad5" },
 ]);
 
-export function defaultSettings() {
+const WIDE_COMMAND_DISPLAY = new Map(HOTKEYS.map((row) => [row.command, row.display]));
+
+/** SETTINGS-08：按形态取命令目录的默认勾选；宽形态沿用目录原有默认。 */
+export function commandDefaultDisplay(form, command) {
+    return form === "phone"
+        ? PHONE_COMMAND_DEFAULTS.includes(command)
+        : WIDE_COMMAND_DISPLAY.get(command) ?? false;
+}
+
+export function defaultSettings({ form = "wide" } = {}) {
     return {
         layoutMode: "auto",
         showZoomIndicator: true,
@@ -61,7 +77,7 @@ export function defaultSettings() {
         sameNameAsOne: true,
         formats: FORMATS.map((f) => ({ ...f, exts: [...f.exts] })),
         exifItems: EXIF_ITEMS.map((e) => ({ ...e })),
-        hotkeys: HOTKEYS.map((h) => ({ ...h })),
+        hotkeys: HOTKEYS.map((h) => ({ ...h, display: commandDefaultDisplay(form, h.command) })),
         appleKeyboard: isApplePlatform(),
         similarityThreshold: 0.85,
         similarityMaxResults: 8,
@@ -70,6 +86,18 @@ export function defaultSettings() {
         analysisImmediateCvCompute: false,
         similarityPanelExpanded: false,
     };
+}
+
+/**
+ * SETTINGS-08：手机形态的实际命令。先按设置顺序取已勾选项，组合式上下张开启时跳过独立的
+ * 上一张/下一张，再取前三个；宽形态不走这里，全部勾选项按顺序生效。
+ */
+export function phoneCommandSelection(hotkeys, showNavigationButtons) {
+    const skipNavigation = showNavigationButtons !== false;
+    return hotkeys
+        .filter((row) => row.display)
+        .filter((row) => !skipNavigation || (row.command !== "Previous" && row.command !== "Next"))
+        .slice(0, PHONE_COMMAND_LIMIT);
 }
 
 export function isApplePlatform() {

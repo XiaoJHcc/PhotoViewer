@@ -14,6 +14,7 @@ using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Input;
+using PhotoViewer.Core.Settings;
 using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
@@ -406,11 +407,17 @@ internal static partial class AndroidNativeChecks
         {
             if (root.Form != ScreenForm.Wide)
             {
-                // SETTINGS-08/17：手机形态只保留布局模式与「上一张/下一张」单项，宽命令排序与快捷键编辑不显示。
+                // SETTINGS-08/17：手机形态同样显示独立上下张开关与完整可排序命令表；
+                // 已勾选但未进入可选命令组的行只淡化勾号（读屏区分），行与勾选操作照常可用。
                 sheet.ShowPageForChecks("control");
                 await System.Threading.Tasks.Task.Delay(300);
-                Check("手机控制页只列上下张", sheet.PhoneControlListForChecks && sheet.ControlRowCountForChecks == 1,
-                    $"phoneOnly={sheet.PhoneControlListForChecks} rows={sheet.ControlRowCountForChecks} "
+                var settings = sheet.Settings;
+                Check("手机控制页完整命令表",
+                    sheet.OptionalCommandRowCountForChecks == settings.Hotkeys.Count
+                    && sheet.NavigationRowCountForChecks == 1
+                    && sheet.HotkeyRowSnapshotForChecks(0) != null,
+                    $"rows={sheet.OptionalCommandRowCountForChecks} expected={settings.Hotkeys.Count}"
+                    + $" navRows={sheet.NavigationRowCountForChecks} "
                     + $"page={sheet.Page} form={root.Form} mode={sheet.LayoutModeNameForChecks()} "
                     + $"desc={sheet.LayoutModeDescriptionForChecks()}");
                 Check("手机布局模式显示为手机", sheet.LayoutModeNameForChecks() == "手机",
@@ -424,10 +431,26 @@ internal static partial class AndroidNativeChecks
                 Check("上下张行单行紧凑行高",
                     navRow is { } layout && Math.Abs(layout.MinHeight - compactRow) <= 1,
                     navRow is { } nav ? $"minHeight={nav.MinHeight}px expected={compactRow}px" : "row=null");
-                Check("手机不显示宽命令排序/快捷键编辑", sheet.HotkeyRowSnapshotForChecks(0) == null,
-                    "HotkeyRowSnapshotForChecks(0)=null");
+                var resolved = PhoneControlCommands.Resolve(
+                    settings.Hotkeys.Where(item => item.IsDisplay).Select(item => item.Command),
+                    settings.ShowNavigationButtons);
+                bool inactiveConsistent = true;
+                string inactiveDetail = string.Empty;
+                for (int index = 0; index < settings.Hotkeys.Count; index++)
+                {
+                    var item = settings.Hotkeys[index];
+                    bool expected = item.IsDisplay && !resolved.Contains(item.Command, StringComparer.Ordinal);
+                    var row = sheet.HotkeyRowSnapshotForChecks(index);
+                    if (row is not { } actual || actual.CheckInactive != expected) inactiveConsistent = false;
+                    if (expected && row is { } text && !text.AccessibilityText.Contains("未在手机控制栏显示"))
+                        inactiveConsistent = false;
+                    inactiveDetail += $"{item.Command}:{expected}/{row?.CheckInactive} ";
+                }
+                Check("手机勾选未生效项淡化勾号且读屏区分", inactiveConsistent, inactiveDetail);
+                await RunSettingsEditionChecksAsync(sheet);
                 sheet.ShowPageForChecks("root");
                 await System.Threading.Tasks.Task.Delay(150);
+                await RunSettingsExperienceChecksAsync(sheet);
             }
             else
             {

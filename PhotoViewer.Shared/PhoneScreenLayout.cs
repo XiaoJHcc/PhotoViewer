@@ -1,3 +1,5 @@
+using PhotoViewer.Core.Settings;
+
 namespace PhotoViewer.Shared;
 
 /// <summary>四边内边距（逻辑点）：避开栏位与按钮后的主图适应区相对窗口四边的间距。</summary>
@@ -34,7 +36,9 @@ public readonly record struct EdgeInsets(double Left, double Top, double Right, 
 /// <param name="EdgeMargin">竖屏行沿带方向到窗口缘（或贴角带）的边距；手机横屏两侧工具区改用一份工具区内边距。</param>
 /// <param name="RowInset">行内间距：无实物遮挡边上行与窗口缘的最小距离、栏背景超出元素的余量与主图距栏缘的避让口径；横屏刘海侧列不使用它。</param>
 /// <param name="GroupGap">竖屏底行相邻按钮组之间的间距。</param>
-/// <param name="ShowRating">是否显示星级控件：关闭时竖屏不保留评分槽，横屏释放星级占位（含最短长度与组间距）。</param>
+/// <param name="ShowRating">是否显示星级控件。</param>
+/// <param name="CommandCount">实际生效的可选命令数。</param>
+/// <param name="CommandButtonSize">可选命令每段边长；为 0 时使用 <paramref name="ButtonSize"/>。</param>
 public readonly record struct PhoneLayoutInput(
     bool Landscape,
     bool NotchOnLeft,
@@ -61,7 +65,9 @@ public readonly record struct PhoneLayoutInput(
     double EdgeMargin,
     double RowInset,
     double GroupGap,
-    bool ShowRating = true);
+    bool ShowRating = true,
+    int CommandCount = 0,
+    double CommandButtonSize = 0);
 
 /// <summary>手机形态槽位结果；空槽位宽高为 0，栏背景宽或高为 0 表示不绘制。</summary>
 /// <param name="Filter">筛选控件：竖屏在顶行前导侧；横屏为刘海侧 88 合体按钮的筛选段（常驻，不随胶片栏开关拆分）。</param>
@@ -71,7 +77,7 @@ public readonly record struct PhoneLayoutInput(
 /// <param name="ExifItems">实际显示的 EXIF 项数（横屏放不下时裁掉末尾项）；不显示时为 0。</param>
 /// <param name="Navigation">上一张/下一张合体按钮。</param>
 /// <param name="Rating">星级控件。</param>
-/// <param name="FitEnhance">缩放适应/雾天增强合体按钮。</param>
+/// <param name="Commands">可选命令组（零至三个命令，零项为空）。</param>
 /// <param name="Filmstrip">胶片条：竖屏横贯整窗宽、横屏纵贯整窗高并靠主图侧收进列尾，卡片在末端留白处停靠。</param>
 /// <param name="Analysis">分析栏。</param>
 /// <param name="TopBar">竖屏顶栏背景。</param>
@@ -89,7 +95,7 @@ public readonly record struct PhoneLayout(
     int ExifItems,
     LayoutRect Navigation,
     LayoutRect Rating,
-    LayoutRect FitEnhance,
+    LayoutRect Commands,
     LayoutRect Filmstrip,
     LayoutRect Analysis,
     LayoutRect TopBar,
@@ -101,7 +107,7 @@ public readonly record struct PhoneLayout(
 
 /// <summary>
 /// 手机形态槽位几何（平台中立纯函数）：竖屏为顶行（筛选 / EXIF / 更多）、胶片条与底行；横屏为刘海侧列
-/// （筛选更多合体按钮、胶片条、上下张）与下巴侧控制栏（EXIF、星级、缩放增强自上而下），分析栏在控制栏内侧。
+/// （筛选更多合体按钮、胶片条、上下张）与下巴侧控制栏（EXIF、星级、可选命令自上而下），分析栏在控制栏内侧。
 /// 结果同时给出每个槽位矩形、胶片条内容留白与主图适应区的四边避让。
 /// <para>横屏刘海侧列靠主图侧右对齐：筛选 + 更多的 88 合体按钮、上下张与卡片外框的右缘统一落在由
 /// <see cref="FilmSideGeometry.Measure"/> 给出的 ContentTrailing 上，列宽再往外带一份卡片尾侧内边距。
@@ -110,7 +116,7 @@ public readonly record struct PhoneLayout(
 /// 竖屏底行按产品规则最多压入 Home 安全区一份行内间距，且不比本行两端更贴边；
 /// 横屏下巴侧的系统对称安全内缩不是实物遮挡，控制栏不避让它，横屏主屏也不为底部手势条保留安全区
 /// （调用方在横屏传 <c>Safe.Bottom = 0</c>；真实的屏幕圆角与刘海由 <c>LeadBand</c>／<c>ControlBand</c>
-/// 的贴角距离给出，不受这条规则影响）。横屏控制栏的 EXIF、星级与两段按钮同轴，整组在可用纵向区间居中；
+/// 的贴角距离给出，不受这条规则影响）。横屏控制栏的 EXIF、星级与可选命令同轴，整组在可用纵向区间居中；
 /// 星级槽位封顶展开态固有长度，多出的余量留在整组两端，末端按钮不固定在底边。</para>
 /// <para>横屏控制区与分析区共用一列工具区内边距（<see cref="ToolRegionGeometry"/>）：控制按钮外缘距窗口缘一份
 /// 工具区内边距，分析栏相邻时控制区省略前导内边距、接缝由分析栏末端持有；主图避让取完整组合区宽，
@@ -177,15 +183,19 @@ public static class PhoneScreenLayout
         => FilmSideGeometry.Measure(leadingSafe, input.FilmBand, input.FilmOuterPad, input.FilmOuterPad,
             input.ButtonSize * 2);
 
-    /// <summary>
-    /// 横屏控制栏从下巴侧窗口缘起算的宽度：即实际控制区宽（内容 + 尾随内边距 + 与相邻分析栏共边时省略的前导内边距）。
-    /// EXIF 无衬底列使用固有项宽居中（不超过按钮与两侧边距之和），列宽只由按钮边长与分析栏邻接关系决定，EXIF 开关不改变它。
-    /// 上下贴角探测取实际控制内容列，不含区域内边距。
-    /// </summary>
-    /// <param name="input">槽位输入。</param>
-    /// <returns>控制区宽度（独立 64 / 相邻分析栏 54，按钮边长 44 时）。</returns>
+    private static int CommandCount(in PhoneLayoutInput input)
+        => Math.Clamp(input.CommandCount, 0, PhoneControlCommands.MaxCount);
+
+    private static double CommandSize(in PhoneLayoutInput input)
+        => input.CommandButtonSize > 0 ? input.CommandButtonSize : input.ButtonSize;
+
+    /// <summary>横屏控制区的内容宽度（不含工具区内边距），用于贴角探测与子控件落位。</summary>
+    public static double ControlContentWidth(in PhoneLayoutInput input)
+        => CommandCount(input) > 0 ? Math.Max(input.ButtonSize, CommandSize(input)) : input.ButtonSize;
+
+    /// <summary>横屏控制区从窗口缘起算的宽度，含工具区内边距。</summary>
     public static double ControlStripWidth(in PhoneLayoutInput input)
-        => ToolRegionGeometry.ControlWidth(input.ButtonSize, input.AnalysisVisible);
+        => ToolRegionGeometry.ControlWidth(ControlContentWidth(input), input.AnalysisVisible);
 
     private static PhoneLayout ComputePortrait(in PhoneLayoutInput input)
     {
@@ -231,28 +241,35 @@ public static class PhoneScreenLayout
         double bottomGap = Math.Max(
             Math.Max(safe.Bottom - inset, Math.Min(controlLeft, input.Width - controlRight)), inset);
         double bottomEdge = input.Height - bottomGap;
-        double bottomTop = bottomEdge - button;
+        int count = CommandCount(input);
+        double commandSize = CommandSize(input);
+        bool hasControls = input.ControlVisible && (input.ShowNavigation || input.ShowRating || count > 0);
+        double rowHeight = count > 0 ? Math.Max(button, commandSize) : button;
+        double bottomTop = bottomEdge - rowHeight;
+        double buttonY = bottomTop + (rowHeight - button) / 2;
 
         var navigation = default(LayoutRect);
         var rating = default(LayoutRect);
-        var fitEnhance = default(LayoutRect);
-        if (input.ControlVisible)
+        var commandsFrame = default(LayoutRect);
+        if (hasControls)
         {
             if (input.ShowNavigation)
-                navigation = Rect(controlLeft, bottomTop, button * 2, button);
+                navigation = Rect(controlLeft, buttonY, button * 2, button);
 
-            fitEnhance = Rect(controlRight - button * 2, bottomTop, button * 2, button);
+            if (count > 0)
+                commandsFrame = Rect(controlRight - commandSize * count, bottomTop + (rowHeight - commandSize) / 2,
+                    commandSize * count, commandSize);
 
             if (input.ShowRating)
             {
                 double ratingLeft = Has(navigation) ? navigation.MaxX + gap : controlLeft;
-                double ratingRight = fitEnhance.X - gap;
-                rating = Rect(ratingLeft, bottomTop, ratingRight - ratingLeft, button);
+                double ratingRight = Has(commandsFrame) ? commandsFrame.X - gap : controlRight;
+                rating = Rect(ratingLeft, buttonY, ratingRight - ratingLeft, button);
             }
         }
 
         var filmstrip = default(LayoutRect);
-        double filmBottom = input.ControlVisible ? bottomTop : bottomEdge;
+        double filmBottom = hasControls ? bottomTop : bottomEdge;
         if (input.FilmVisible)
             filmstrip = Rect(0, filmBottom - input.FilmBand, input.Width, input.FilmBand);
 
@@ -266,11 +283,11 @@ public static class PhoneScreenLayout
 
         double avoidBottom = Has(bottomBar)
             ? input.Height - bottomBar.Y
-            : input.ControlVisible ? input.Height - (bottomTop - inset) : 0;
+            : hasControls ? input.Height - (bottomTop - inset) : 0;
 
         return new PhoneLayout(
             filter, more, default, exif, Has(exif) ? input.ExifCount : 0,
-            navigation, rating, fitEnhance, filmstrip, analysis,
+            navigation, rating, commandsFrame, filmstrip, analysis,
             topBar, bottomBar, default, default,
             new EdgeInsets(safe.Left, avoidTop, safe.Right, avoidBottom),
             filmstripPadding);
@@ -312,21 +329,20 @@ public static class PhoneScreenLayout
         var exif = default(LayoutRect);
         int exifItems = 0;
         var rating = default(LayoutRect);
-        var fitEnhance = default(LayoutRect);
+        var commandsFrame = default(LayoutRect);
         var trailingBar = default(LayoutRect);
-        // 控制区宽由内容与是否邻接分析栏决定，EXIF/星级开关不改变它；分析栏截止到这条栏缘。
-        double controlEdge = input.Width - ToolRegionGeometry.ControlWidth(button, input.AnalysisVisible);
+        double controlEdge = input.Width - ControlStripWidth(input);
         if (input.ControlVisible)
         {
-            double buttonX = input.Width - ToolRegionGeometry.Padding - button;
-            double axis = buttonX + button / 2;
+            double axis = input.Width - ToolRegionGeometry.Padding - ControlContentWidth(input) / 2;
             double columnTop = Math.Max(safe.Top, control.Top) + ToolRegionGeometry.Padding;
             double columnBottom = input.Height - Math.Max(safe.Bottom, control.Bottom) - ToolRegionGeometry.Padding;
             double columnLength = Math.Max(0, columnBottom - columnTop);
-            double commands = button * 2;
+            double commandSize = CommandSize(input);
+            double commands = commandSize * CommandCount(input);
+            bool hasCommands = commands > 0;
             double ratingMin = input.ShowRating ? input.RatingMinLength : 0;
-            // 可见星级与命令组之间恒有一道组间距，EXIF 存在时再占一道。
-            double gaps = ToolRegionGeometry.GroupSpacing * (input.ShowRating ? 2 : 1);
+            double gaps = (input.ShowRating ? gap : 0) + (hasCommands ? gap : 0);
             double pitch = input.ExifCount > 0
                 ? (input.ExifHeight + input.ExifItemSpacing) / input.ExifCount
                 : 0;
@@ -340,29 +356,28 @@ public static class PhoneScreenLayout
             }
 
             double exifHeight = exifItems > 0 ? exifItems * pitch - input.ExifItemSpacing : 0;
-            double exifGap = exifHeight > 0 ? gap : 0;
-            // 星级槽位取剩余长度并封顶展开态固有长度：多出的余量留在整组两端，不把末端按钮推到底边。
+            // 星级使用剩余长度并封顶展开态固有长度，只有可见的组之间留间距。
             double ratingLength = input.ShowRating
-                ? Math.Min(
-                    RatingControlGeometry.ExpandedLength,
-                    Math.Max(0, columnLength - exifHeight - exifGap - gap - commands))
+                ? Math.Min(RatingControlGeometry.ExpandedLength,
+                    Math.Max(0, columnLength - exifHeight - (exifHeight > 0 ? gap : 0)
+                        - commands - (hasCommands ? gap : 0)))
                 : 0;
             bool ratingShown = ratingLength > 0;
-            double ratingGap = ratingShown ? gap : 0;
-            // 整组（EXIF 可见项 + 星级实际长度 + 两按钮）在可用纵向区间居中。
+            double exifGap = exifHeight > 0 && (ratingShown || hasCommands) ? gap : 0;
+            double ratingGap = ratingShown && hasCommands ? gap : 0;
             double total = exifHeight + exifGap + ratingLength + ratingGap + commands;
             double groupTop = ToolRegionGeometry.CenteredStart(columnTop, columnLength, total);
 
             if (exifHeight > 0)
             {
                 // 无衬底列按固有项宽居中，最大不超过按钮与两侧边距之和；开关不改变控制列宽。
-                double exifWidth = Math.Min(input.ExifWidth, button + ToolRegionGeometry.Padding * 2);
+                double exifWidth = Math.Min(input.ExifWidth, ControlContentWidth(input) + ToolRegionGeometry.Padding * 2);
                 exif = Rect(axis - exifWidth / 2, groupTop, exifWidth, exifHeight);
             }
 
             double ratingTop = groupTop + exifHeight + exifGap;
-            if (ratingShown) rating = Rect(buttonX, ratingTop, button, ratingLength);
-            fitEnhance = Rect(buttonX, ratingTop + ratingLength + ratingGap, button, commands);
+            if (ratingShown) rating = Rect(axis - button / 2, ratingTop, button, ratingLength);
+            commandsFrame = Rect(axis - commandSize / 2, ratingTop + ratingLength + ratingGap, commandSize, commands);
         }
 
         var analysis = default(LayoutRect);
@@ -384,7 +399,7 @@ public static class PhoneScreenLayout
             : 0;
 
         return new PhoneLayout(
-            filter, more, group, exif, exifItems, navigation, rating, fitEnhance, filmstrip, analysis,
+            filter, more, group, exif, exifItems, navigation, rating, commandsFrame, filmstrip, analysis,
                 default, default, leadingBar, trailingBar,
                 new EdgeInsets(avoidLeft, safe.Top, avoidRight, 0),
                 filmstripPadding);
@@ -407,7 +422,7 @@ public static class PhoneScreenLayout
             layout.ExifItems,
             MirrorRect(layout.Navigation, width),
         MirrorRect(layout.Rating, width),
-        MirrorRect(layout.FitEnhance, width),
+        MirrorRect(layout.Commands, width),
         MirrorRect(layout.Filmstrip, width),
             MirrorRect(layout.Analysis, width),
         MirrorRect(layout.TopBar, width),

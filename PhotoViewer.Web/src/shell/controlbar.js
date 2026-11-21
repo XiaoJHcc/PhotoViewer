@@ -85,14 +85,14 @@ export function mountControlBar(host, ctx) {
         role: "group",
         "aria-label": "上一张/下一张",
     });
-    const utilityCapsule = el("div", {
-        class: "pv-control-capsule is-utility",
+    const commandCapsule = el("div", {
+        class: "pv-control-capsule is-command",
         role: "group",
-        "aria-label": "缩放适应/雾天增强",
+        "aria-label": "命令",
     });
     navCapsule.hidden = true;
-    utilityCapsule.hidden = true;
-    phoneLayer.append(navCapsule, utilityCapsule);
+    commandCapsule.hidden = true;
+    phoneLayer.append(navCapsule, commandCapsule);
     scroll.append(documentLayer);
     documentLayer.append(exifHost);
     host.append(scroll, indicator, phoneLayer);
@@ -294,27 +294,37 @@ export function mountControlBar(host, ctx) {
         }
     }
 
-    function placeCapsule(capsule, first, second, commands, commandItem) {
-        const buttons = commands.map((command) => ensureCommand(command));
-        if (!first || !second) {
+    function capsuleRect(slots) {
+        if (!slots.length) return null;
+        const x = Math.min(...slots.map((slot) => slot.x));
+        const y = Math.min(...slots.map((slot) => slot.y));
+        const w = Math.max(...slots.map((slot) => slot.x + slot.w)) - x;
+        const h = Math.max(...slots.map((slot) => slot.y + slot.h)) - y;
+        return { x, y, w, h };
+    }
+
+    // SHELL-08/09：手机命令是同一胶囊里的独立动作按钮，按主轴顺序排列，不是分段选择控件。
+    function placeCapsule(capsule, slots, commands, axis, items) {
+        const rect = capsuleRect(slots);
+        if (!rect) {
             capsule.hidden = true;
-            for (const button of buttons) button.hidden = true;
+            for (const command of commands) ensureCommand(command).hidden = true;
             return;
         }
-        const x = Math.min(first.x, second.x);
-        const y = Math.min(first.y, second.y);
-        const w = Math.max(first.x + first.w, second.x + second.w) - x;
-        const h = Math.max(first.y + first.h, second.y + second.h) - y;
         capsule.hidden = false;
-        place(capsule, { x, y, w, h });
-        [first, second].forEach((slot, index) => {
-            const button = buttons[index];
+        place(capsule, rect);
+        const ordered = slots.slice().sort((a, b) => coordinateOf(axis, a) - coordinateOf(axis, b));
+        const buttons = commands.map((command) => ensureCommand(command));
+        for (const slot of ordered) {
+            const button = buttons[slot.index];
+            if (!button) continue;
             button.hidden = false;
             button.classList.add("is-capsule-segment");
             capsule.append(button);
-            place(button, { x: slot.x - x, y: slot.y - y, w: slot.w, h: slot.h });
-            updateCommandButton(button, commandItem(commands[index]));
-        });
+            place(button, { x: slot.x - rect.x, y: slot.y - rect.y, w: slot.w, h: slot.h });
+            updateCommandButton(button, items[slot.index]);
+        }
+        reorder(capsule, ordered.map((slot) => buttons[slot.index]).filter(Boolean));
     }
 
     function applyPhone(layout, state) {
@@ -327,22 +337,47 @@ export function mountControlBar(host, ctx) {
         if (exifHost.parentNode !== phoneLayer) phoneLayer.append(exifHost);
         const slots = layout.slots ?? {};
         const rating = state.toolbar.rating;
-        const commands = new Map(state.toolbar.commands.map((item) => [item.command, item]));
-        const commandItem = (command) => commands.get(command) ?? {
+        const configured = new Map(state.toolbar.commands.map((item) => [item.command, item]));
+        const commandItem = (command) => configured.get(command) ?? {
             command,
             name: app.settings.hotkeys.find((row) => row.command === command)?.name ?? command,
             enabled: command === "Open" || Boolean(state.photo),
             tooltip: commandTooltip(command),
         };
+        const phoneCommands = state.toolbar.phoneCommands ?? [];
         if (slots.rating && rating.visible) placeSlotRating(slots.rating, rating, layout.axis);
-        else groups.get("rating") && (groups.get("rating").hidden = true);
+        else if (groups.get("rating")) groups.get("rating").hidden = true;
         if (navCapsule.parentNode !== phoneLayer) phoneLayer.append(navCapsule);
-        if (utilityCapsule.parentNode !== phoneLayer) phoneLayer.append(utilityCapsule);
-        placeCapsule(navCapsule, slots.previous, slots.next, ["Previous", "Next"], commandItem);
-        placeCapsule(utilityCapsule, slots.fit, slots.enhance, ["Fit", "ToggleEnhance"], commandItem);
+        if (commandCapsule.parentNode !== phoneLayer) phoneLayer.append(commandCapsule);
+
+        if (slots.previous && slots.next) {
+            placeCapsule(navCapsule, [
+                { ...slots.previous, index: 0 },
+                { ...slots.next, index: 1 },
+            ], ["Previous", "Next"], "horizontal", [commandItem("Previous"), commandItem("Next")]);
+        } else {
+            placeCapsule(navCapsule, [], ["Previous", "Next"], "horizontal", []);
+        }
+
+        const commandSlots = slots.commandSegments ?? [];
+        const visible = phoneCommands.slice(0, commandSlots.length);
+        placeCapsule(
+            commandCapsule,
+            commandSlots,
+            visible.map((item) => item.command),
+            layout.axis,
+            visible,
+        );
+
+        const used = new Set(visible.map((item) => item.command));
+        if (!navCapsule.hidden) {
+            used.add("Previous");
+            used.add("Next");
+        }
         for (const [command, button] of commandButtons) {
-            if (["Previous", "Next", "Fit", "ToggleEnhance"].includes(command)) continue;
+            if (used.has(command)) continue;
             button.hidden = true;
+            button.classList.remove("is-capsule-segment");
         }
         for (const node of groups.values()) {
             if (node !== groups.get("rating")) node.hidden = true;
@@ -356,10 +391,8 @@ export function mountControlBar(host, ctx) {
         scroll.hidden = false;
         phoneLayer.hidden = true;
         navCapsule.hidden = true;
-        utilityCapsule.hidden = true;
-        for (const command of ["Previous", "Next", "Fit", "ToggleEnhance"]) {
-            commandButtons.get(command)?.classList.remove("is-capsule-segment");
-        }
+        commandCapsule.hidden = true;
+        for (const button of commandButtons.values()) button.classList.remove("is-capsule-segment");
         if (exifHost.parentNode !== documentLayer) documentLayer.append(exifHost);
         layoutRef = layout;
         const vertical = layout.axis === "vertical";

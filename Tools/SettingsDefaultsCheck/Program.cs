@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Reactive.Concurrency;
 using System.Reflection;
@@ -43,6 +44,7 @@ internal static class Program
 
         failed += await CheckFreshAsync(8192, 30);
         failed += await CheckFreshAsync(8192, 45);
+        failed += CheckMobileControls();
         failed += await CheckSavedAsync();
         failed += await CheckZeroRoundtripAsync();
         failed += await CheckVisibleCenterDelayAsync();
@@ -59,6 +61,27 @@ internal static class Program
 
         Console.WriteLine(failed == 0 ? "ALL PASS" : $"{failed} FAIL");
         return failed == 0 ? 0 : 1;
+    }
+
+    private static int CheckMobileControls()
+    {
+        var budget = new DefaultPerformanceBudget();
+        var mobile = SettingsDefaults.CreateDefault(budget, appleKeyboard: false, mobileControls: true);
+        var desktop = SettingsDefaults.CreateDefault(budget, appleKeyboard: false);
+        var checkedIds = mobile.Hotkeys.Where(item => item.IsDisplay).Select(item => item.CommandId).ToArray();
+        var reordered = mobile.Hotkeys.Reverse().ToImmutableArray();
+        var saved = mobile with { ShowNavigationButtons = false, Hotkeys = reordered };
+        var restored = SettingsDocumentCodec.Read(SettingsDocumentCodec.Serialize(saved), mobile).Settings;
+        bool passed = mobile.ShowNavigationButtons
+            && checkedIds.SequenceEqual(new[] { "Previous", "Next", "Exchange", "Fit", "ToggleAnalysisView", "ToggleEnhance" })
+            && PhoneControlCommands.Resolve(checkedIds, true).SequenceEqual(new[] { "Exchange", "Fit", "ToggleAnalysisView" })
+            && PhoneControlCommands.Resolve(checkedIds, false).SequenceEqual(new[] { "Previous", "Next", "Exchange" })
+            && PhoneControlCommands.Resolve(checkedIds.Reverse(), true).SequenceEqual(new[] { "ToggleEnhance", "ToggleAnalysisView", "Fit" })
+            && PhoneControlCommands.Resolve(new[] { "Previous", "Next" }, true).Length == 0
+            && desktop.Hotkeys.SequenceEqual(SettingsCatalog.DefaultHotkeys)
+            && restored is not null && saved.ContentEquals(restored);
+        Console.WriteLine($"{(passed ? "PASS" : "FAIL")} SETTINGS-08: 移动端默认勾选、前三个、组合上下张、用户排序往返");
+        return passed ? 0 : 1;
     }
 
     private static async Task<int> CheckFreshAsync(int physicalMB, int? countOverride)

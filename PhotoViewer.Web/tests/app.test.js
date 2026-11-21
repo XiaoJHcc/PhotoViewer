@@ -4,7 +4,7 @@ import { createTokens } from "../src/core/tokens.js";
 import { manualClock } from "../src/core/clock.js";
 import { createApp, normalizeSettings } from "../src/core/app.js";
 import { featuresFor } from "../src/core/features.js";
-import { defaultSettings } from "../src/core/settings.js";
+import { defaultSettings, phoneCommandSelection } from "../src/core/settings.js";
 
 const t = createTokens();
 const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -962,4 +962,109 @@ test("EDITION-03：两个即时计算开关独立持久化", () => {
     const second = harness({ storage });
     assert.equal(second.app.settings.analysisImmediateDinoCompute, true);
     assert.equal(second.app.settings.analysisImmediateCvCompute, true);
+});
+
+test("SETTINGS-08：移动端默认命令表勾选六项，宽形态默认不变", () => {
+    const wide = defaultSettings();
+    const phone = defaultSettings({ form: "phone" });
+    const checked = (settings) => settings.hotkeys.filter((row) => row.display).map((row) => row.command);
+    assert.deepEqual(checked(phone), ["Previous", "Next", "Exchange", "Fit", "ToggleAnalysisView", "ToggleEnhance"]);
+    assert.ok(checked(wide).includes("ZoomInPreset") && checked(wide).includes("ToggleEnhance"));
+    assert.equal(checked(wide).includes("ToggleAnalysisView"), false, "宽形态默认被移动端勾选改写");
+});
+
+test("SETTINGS-08：手机命令按设置顺序筛勾选、组合开关跳过独立上下张、最多三项", () => {
+    const rows = defaultSettings({ form: "phone" }).hotkeys;
+    const ids = (list) => list.map((row) => row.command);
+    assert.deepEqual(ids(phoneCommandSelection(rows, true)), ["Exchange", "Fit", "ToggleAnalysisView"]);
+    const all = rows.map((row) => ({ ...row, display: true }));
+    assert.deepEqual(ids(phoneCommandSelection(all, true)), ["Open", "Exchange", "Fit"]);
+    assert.deepEqual(ids(phoneCommandSelection(all, false)), ["Open", "Previous", "Next"]);
+    const reordered = [
+        all.find((row) => row.command === "ToggleEnhance"),
+        ...all.filter((row) => row.command !== "ToggleEnhance"),
+    ];
+    assert.deepEqual(ids(phoneCommandSelection(reordered, true)), ["ToggleEnhance", "Open", "Exchange"]);
+});
+
+test("SETTINGS-08：手机形态使用移动端默认；显式命令配置在两种形态通用且不被改写", () => {
+    const phone = harness({ width: 390, height: 844 });
+    const checked = (settings) => settings.hotkeys.filter((row) => row.display).map((row) => row.command);
+    assert.equal(phone.app.state.layout.form, "phone");
+    assert.deepEqual(checked(phone.app.settings), ["Previous", "Next", "Exchange", "Fit", "ToggleAnalysisView", "ToggleEnhance"]);
+    assert.deepEqual(
+        phone.app.state.toolbar.phoneCommands.map((item) => item.command),
+        ["Exchange", "Fit", "ToggleAnalysisView"],
+    );
+    assert.deepEqual(
+        phone.app.state.layout.control.slots.commandSegments.map((segment) => segment.w),
+        [44, 44, 44],
+    );
+
+    phone.app.toggleNavigation();
+    assert.deepEqual(
+        phone.app.state.toolbar.phoneCommands.map((item) => item.command),
+        ["Previous", "Next", "Exchange"],
+        "关闭组合式上下张后独立上一张/下一张未进入命令组",
+    );
+    assert.equal(phone.app.state.layout.control.slots.previous, undefined);
+
+    const storage = createStorage();
+    storage.set("PhotoViewer.Settings", JSON.stringify({
+        hotkeys: [
+            { command: "Next", display: true, primary: "ArrowRight", secondary: null },
+            { command: "Open", display: true, primary: "Ctrl+KeyN", secondary: null },
+        ],
+    }));
+    const explicitPhone = harness({ storage, width: 390, height: 844 });
+    const display = (app, command) => app.settings.hotkeys.find((row) => row.command === command).display;
+    assert.equal(display(explicitPhone.app, "Next"), true);
+    assert.equal(display(explicitPhone.app, "Open"), true);
+    assert.equal(display(explicitPhone.app, "ToggleAnalysisView"), false,
+        "已保存的命令配置被移动端默认覆盖");
+    assert.deepEqual(explicitPhone.app.state.toolbar.phoneCommands.map((item) => item.command),
+        ["Open", "Exchange", "Fit"], "组合开关开启时手机命令组未跳过独立的下一张");
+    const explicitWide = harness({ storage });
+    assert.deepEqual(explicitWide.app.state.toolbar.commands.slice(0, 2).map((item) => item.command),
+        ["Next", "Open"], "显式命令配置未在宽形态生效");
+
+    const switched = harness();
+    const wideChecked = checked(switched.app.settings);
+    switched.app.setWindowSize(390, 844);
+    assert.deepEqual(checked(switched.app.settings),
+        ["Previous", "Next", "Exchange", "Fit", "ToggleAnalysisView", "ToggleEnhance"],
+        "切到手机形态后未采用移动端默认勾选");
+    assert.deepEqual(
+        switched.app.state.toolbar.phoneCommands.map((item) => item.command),
+        ["Exchange", "Fit", "ToggleAnalysisView"],
+    );
+    switched.app.setWindowSize(1200, 850);
+    assert.deepEqual(checked(switched.app.settings), wideChecked, "回到宽形态后未恢复宽形态默认");
+
+    switched.app.setWindowSize(390, 844);
+    switched.app.updateSettings({ hotkeys: switched.app.settings.hotkeys.map((row) => (
+        row.command === "ToggleEnhance" ? { ...row, display: false } : { ...row }
+    )) });
+    switched.app.setWindowSize(1200, 850);
+    switched.app.setWindowSize(390, 844);
+    assert.equal(switched.app.settings.hotkeys.find((row) => row.command === "ToggleEnhance").display, false,
+        "显式命令配置被形态默认覆盖");
+});
+
+test("SETTINGS-08：未改动命令表时不持久化默认勾选，重开按实际形态重取", () => {
+    const storage = createStorage();
+    const first = harness({ storage });
+    first.app.updateSettings({ showRating: false });
+    const saved = JSON.parse(storage.get("PhotoViewer.Settings"));
+    assert.equal("hotkeys" in saved, false, "未改动的默认命令表被写入设置文档");
+
+    const phone = harness({ storage, width: 390, height: 844 });
+    const checked = phone.app.settings.hotkeys.filter((row) => row.display).map((row) => row.command);
+    assert.deepEqual(checked,
+        ["Previous", "Next", "Exchange", "Fit", "ToggleAnalysisView", "ToggleEnhance"],
+        "重开为手机形态后未重新采用移动端默认");
+    assert.deepEqual(
+        phone.app.state.toolbar.phoneCommands.map((item) => item.command),
+        ["Exchange", "Fit", "ToggleAnalysisView"],
+    );
 });

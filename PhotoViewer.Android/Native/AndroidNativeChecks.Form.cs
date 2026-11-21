@@ -64,13 +64,19 @@ internal static partial class AndroidNativeChecks
         if (root.Form != ScreenForm.Wide)
         {
             var nav = root.PhoneNavigation;
-            var fit = root.PhoneFitEnhance;
+            var commands = root.PhoneCommands;
             double button = DesignTokens.ShellGlassButtonSize * density;
-            Check("form 手机合体段 44×44", Near(nav.First.Width, button) && Near(nav.First.Height, button)
-                    && Near(nav.Second.Width, button) && Near(nav.Second.Height, button)
-                    && Near(fit.First.Width, button) && Near(fit.First.Height, button),
+            double command = DesignTokens.ShellPhoneCommandSizeAndroid * density;
+            var expectedCommands = PhoneControlCommands.Resolve(
+                main.ControlVM.EnabledControls.Select(item => item.Command), main.Settings.ShowNavigationButtons);
+            bool commandSizes = commands.SegmentCount == expectedCommands.Length
+                && commands.SegmentsForChecks.All(segment => Near(segment.Width, command) && Near(segment.Height, command));
+            Check("form 手机合体段 44×44、可选命令段 48×48",
+                Near(nav.First.Width, button) && Near(nav.First.Height, button)
+                && Near(nav.Second.Width, button) && Near(nav.Second.Height, button) && commandSizes,
                 $"nav={nav.Width}x{nav.Height} first={nav.First.Width}x{nav.First.Height} second={nav.Second.Width}x{nav.Second.Height} "
-                + $"fit={fit.Width}x{fit.Height} fitFirst={fit.First.Width}x{fit.First.Height}");
+                + $"commands={commands.SegmentCount}/{expectedCommands.Length} segments="
+                + string.Join("/", commands.SegmentsForChecks.Select(segment => $"{segment.Width}x{segment.Height}")));
         }
 
         if (root.Form != ScreenForm.Wide)
@@ -683,8 +689,8 @@ internal static partial class AndroidNativeChecks
         }
         Check($"{phase} 上下张合体字形居中",
             ComboGlyphsCentered(root.PhoneNavigation, density, out var navDetail), navDetail);
-        Check($"{phase} 缩放/增强合体字形居中",
-            ComboGlyphsCentered(root.PhoneFitEnhance, density, out var fitDetail), fitDetail);
+        Check($"{phase} 可选命令组字形居中",
+            ComboGlyphsCentered(root.PhoneCommands, density, out var commandDetail), commandDetail);
 
         Check($"{phase} 胶片条贯穿主轴", SameFrame(FrameOf(root.Filmstrip, root, density), slots.Filmstrip),
             $"actual={FrameOf(root.Filmstrip, root, density)} expected={slots.Filmstrip} tier={root.Filmstrip.Tier}");
@@ -707,9 +713,9 @@ internal static partial class AndroidNativeChecks
         if (Has(slots.Navigation))
             Check($"{phase} 上下张落位", SameFrame(FrameOf(root.PhoneNavigation, root, density), slots.Navigation),
                 $"actual={FrameOf(root.PhoneNavigation, root, density)} expected={slots.Navigation}");
-        if (Has(slots.FitEnhance))
-            Check($"{phase} 缩放/增强落位", SameFrame(FrameOf(root.PhoneFitEnhance, root, density), slots.FitEnhance),
-                $"actual={FrameOf(root.PhoneFitEnhance, root, density)} expected={slots.FitEnhance}");
+        if (Has(slots.Commands))
+            Check($"{phase} 可选命令组落位", SameFrame(FrameOf(root.PhoneCommands, root, density), slots.Commands),
+                $"actual={FrameOf(root.PhoneCommands, root, density)} expected={slots.Commands}");
         if (Has(slots.Rating) && main.Settings.ShowRating)
         {
             var rating = FrameOf(root.PhoneRating, root, density);
@@ -737,7 +743,7 @@ internal static partial class AndroidNativeChecks
             Check($"{phase} 手机玻璃控件同底且用同一状态层色板",
                 root.PhoneRating.FillColorForChecks == fill && rippleOk
                 && root.PhoneNavigation.FillColorForChecks == fill
-                && root.PhoneFitEnhance.FillColorForChecks == fill
+                && root.PhoneCommands.FillColorForChecks == fill
                 && (portrait
                     ? root.FilterBar.FilterButtonForChecks.FillColorForChecks == fill
                         && root.PhoneMoreButton.FillColorForChecks == fill
@@ -745,19 +751,19 @@ internal static partial class AndroidNativeChecks
                 && root.PhoneNavigation.First.FillColorForChecks == Color.Transparent,
                 $"rating={root.PhoneRating.FillColorForChecks} expected={fill} "
                 + $"filter={(portrait ? root.FilterBar.FilterButtonForChecks.FillColorForChecks.ToString() : root.FilterBar.ComboForChecks.FillColorForChecks.ToString())} "
-                + $"nav={root.PhoneNavigation.FillColorForChecks} fit={root.PhoneFitEnhance.FillColorForChecks} "
+                + $"nav={root.PhoneNavigation.FillColorForChecks} commands={root.PhoneCommands.FillColorForChecks} "
                 + $"stateLayer={pressedLayer} circles={circleDetail}");
         }
         if (Has(slots.Exif) && slots.ExifItems > 0)
             Check($"{phase} EXIF 块落位", SameFrame(FrameOf(root.PhoneExif, root, density), slots.Exif),
                 $"actual={FrameOf(root.PhoneExif, root, density)} expected={slots.Exif} items={slots.ExifItems} bare={!portrait}");
         Check($"{phase} 命中区 ≥44", HitTargetsAtLeast44(root, slots),
-            $"filter={slots.Filter} more={slots.More} rating={slots.Rating} fit={slots.FitEnhance} nav={slots.Navigation}");
+            $"filter={slots.Filter} more={slots.More} rating={slots.Rating} commands={slots.Commands} nav={slots.Navigation}");
     }
 
     private static bool HitTargetsAtLeast44(AndroidNativeRootView root, PhoneLayout slots)
     {
-        foreach (var rect in new[] { slots.Filter, slots.More, slots.Rating, slots.FitEnhance, slots.Navigation, slots.Exif })
+        foreach (var rect in new[] { slots.Filter, slots.More, slots.Rating, slots.Commands, slots.Navigation, slots.Exif })
         {
             if (!Has(rect)) continue;
             if (rect.Width < 43.4 || rect.Height < 43.4) return false;
@@ -767,13 +773,18 @@ internal static partial class AndroidNativeChecks
 
     private static bool Has(LayoutRect rect) => rect.Width > 0 && rect.Height > 0;
 
-    /// <summary>合体两段的字形墨迹中心与分段中心偏差 ≤0.5dp，且墨迹完整落在分段内。</summary>
+    /// <summary>胶囊内每段字形墨迹中心与分段中心偏差 ≤0.5dp，且墨迹完整落在分段内。</summary>
     private static bool ComboGlyphsCentered(AndroidGlassCombo combo, double density, out string detail)
     {
-        bool firstOk = ButtonGlyphCentered(combo.First, density, out var first);
-        bool secondOk = ButtonGlyphCentered(combo.Second, density, out var second);
-        detail = $"first={first} second={second} mirrored={combo.Mirrored}";
-        return firstOk && secondOk;
+        bool ok = combo.SegmentsForChecks.Count > 0;
+        var details = new List<string>(combo.SegmentsForChecks.Count);
+        foreach (var button in combo.SegmentsForChecks)
+        {
+            if (!ButtonGlyphCentered(button, density, out var segment)) ok = false;
+            details.Add(segment);
+        }
+        detail = $"segments={string.Join(" | ", details)} mirrored={combo.Mirrored}";
+        return ok;
     }
 
     /// <summary>单个圆按钮的字形墨迹中心与按钮中心偏差 ≤0.5dp，且完整落在按钮内。</summary>

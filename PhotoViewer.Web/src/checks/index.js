@@ -2306,11 +2306,13 @@ const CHECKS = [
     },
     {
         id: "SHELL-08",
-        title: "手机竖屏：顶行/分析/主图/胶片/底行、开关各管各栏、44 命中",
+        title: "手机竖屏：顶行/分析/主图/胶片/底行、可选命令随设置重算、44 命中",
         async run(shell, h) {
             const { app } = shell;
             const t = (name) => shell.t(name);
-            app.updateSettings({ layoutMode: "phone" });
+            const originalHotkeys = app.settings.hotkeys.map((row) => ({ ...row }));
+            const checkedAll = (display) => originalHotkeys.map((row) => ({ ...row, display }));
+            app.updateSettings({ layoutMode: "phone", hotkeys: checkedAll(true) });
             shell.setSafeArea({ top: 59, right: 0, bottom: 34, left: 0 });
             shell.setWindowSize(390, 844);
             await h.tick(120);
@@ -2321,31 +2323,97 @@ const CHECKS = [
             h.assert(layout.filter.more.x + layout.filter.more.w === 390 - t("shell.phone.edgeMargin"), "更多入口未贴右侧");
             h.assert(layout.nav.visible === false, "竖屏不应有刘海侧上下张");
             const slots = layout.control.slots;
-            h.assert(slots.previous && slots.next && slots.rating && slots.fit && slots.enhance, "竖屏底部行槽位不全");
+            h.assert(slots.previous && slots.next && slots.rating && slots.command, "竖屏底部行槽位不全");
             h.assert(slots.rating.h === 44 && slots.rating.w >= t("rating.compact.minLength"), "竖屏评分槽不符合 44 厚/紧凑下限");
             h.assert(layout.filter.toggle === null, "手机形态出现 AI 相似开关");
             const navCapsule = h.dom(".pv-control-capsule.is-nav");
-            const utilityCapsule = h.dom(".pv-control-capsule.is-utility");
+            const commandCapsule = h.dom(".pv-control-capsule.is-command");
             const capsuleStyle = getComputedStyle(navCapsule);
             const navRect = navCapsule.getBoundingClientRect();
-            const utilityRect = utilityCapsule.getBoundingClientRect();
             h.assert(Math.round(navRect.width) === 88 && Math.round(navRect.height) === 44,
                 `竖屏上下张合体 ${navRect.width}×${navRect.height}`);
-            h.assert(Math.round(utilityRect.width) === 88 && Math.round(utilityRect.height) === 44,
-                `竖屏缩放增强合体 ${utilityRect.width}×${utilityRect.height}`);
-            for (const capsule of [navCapsule, utilityCapsule]) {
-                const segments = [...capsule.querySelectorAll(".pv-control-command-button")];
-                h.assert(segments.length === 2, `合体段数 ${segments.length} ≠ 2`);
-                for (const segment of segments) {
-                    const rect = segment.getBoundingClientRect();
-                    h.assert(Math.round(rect.width) === 44 && Math.round(rect.height) === 44,
-                        `合体段 ${rect.width}×${rect.height}`);
-                    h.assert(getComputedStyle(segment).backgroundColor === "rgba(0, 0, 0, 0)", "合体段自绘底色");
-                    h.assert(getComputedStyle(segment).borderTopWidth === "0px", "合体段自绘描边");
-                }
-            }
             h.assert(capsuleStyle.backgroundColor !== "rgba(0, 0, 0, 0)", "胶囊宿主无背景");
             h.assert(capsuleStyle.overflow === "hidden", "胶囊宿主未裁切段");
+
+            const commandSize = t("shell.phone.command.size");
+            const phoneCommands = app.state.toolbar.phoneCommands.map((item) => item.command);
+            h.assert(phoneCommands.length === 3, `竖屏可选命令 ${phoneCommands.length} 项`);
+            const commandRect = commandCapsule.getBoundingClientRect();
+            h.assert(Math.round(commandRect.width) === 3 * commandSize && Math.round(commandRect.height) === 44,
+                `竖屏可选命令合体 ${commandRect.width}×${commandRect.height}`);
+            const navSegments = [...navCapsule.querySelectorAll(".pv-control-command-button")];
+            const commandSegments = [...commandCapsule.querySelectorAll(".pv-control-command-button")];
+            h.assert(navSegments.length === 2, `上下张合体段数 ${navSegments.length} ≠ 2`);
+            h.assert(commandSegments.length === phoneCommands.length, "可选命令合体段数与生效命令不符");
+            for (const segment of [...navSegments, ...commandSegments]) {
+                const rect = segment.getBoundingClientRect();
+                h.assert(Math.round(rect.width) === commandSize && Math.round(rect.height) === 44,
+                    `合体段 ${rect.width}×${rect.height}`);
+                h.assert(getComputedStyle(segment).backgroundColor === "rgba(0, 0, 0, 0)", "合体段自绘底色");
+                h.assert(getComputedStyle(segment).borderTopWidth === "0px", "合体段自绘描边");
+                h.assert(segment.tabIndex === 0 && segment.getAttribute("aria-label"), "合体段不是独立可聚焦动作按钮");
+            }
+            const commandOrder = commandSegments.map((segment) => segment.dataset.command);
+            h.deepEqual(commandOrder, phoneCommands, "竖屏可选命令不是从左到右按设置顺序");
+            h.assert(commandSegments.every((segment, index) => Math.abs(
+                segment.getBoundingClientRect().left - (commandRect.left + index * commandSize)) <= 1),
+            "竖屏可选命令段未在胶囊内按序等分");
+            h.assert(commandCapsule.getAttribute("role") === "group"
+                && commandCapsule.querySelector('[role="tab"], [role="radio"], [role="tablist"], [role="radiogroup"]') === null,
+            "可选命令被表达为互斥分段控件");
+
+            // SHELL-08：窗口变窄时命令组保持 44 段宽与右侧边距，收缩只发生在评分槽。
+            shell.setWindowSize(360, 844);
+            await h.tick(120);
+            const narrow = app.state.layout.control.slots;
+            h.assert(narrow.command.w === 3 * commandSize
+                && narrow.command.x + narrow.command.w === 360 - t("shell.phone.edgeMargin"),
+            "变窄后命令组宽度或右侧边距改变");
+            h.assert(narrow.rating.x + narrow.rating.w === narrow.command.x - t("shell.glass.group.gap"),
+                "变窄后评分槽未让到命令组前");
+            shell.setWindowSize(390, 844);
+            await h.tick(120);
+
+            // SETTINGS-08：清空命令后不留槽位与组距；单项为圆形；三项共用胶囊。
+            app.updateSettings({ hotkeys: checkedAll(false) });
+            await h.tick(120);
+            h.assert(app.state.layout.control.slots.command === undefined, "清空命令后仍留槽位");
+            h.assert(h.dom(".pv-control-capsule.is-command").hidden, "清空命令后胶囊仍可见");
+            const clearedRating = app.state.layout.control.slots.rating;
+            h.assert(clearedRating.w > slots.rating.w, "清空命令后评分未吸收让出的宽度");
+            app.toggleNavigation();
+            app.updateSettings({ showRating: false });
+            await h.tick(120);
+            h.assert(app.state.layout.panes.bottomRow === null, "底行无内容时仍预留按钮行");
+            h.assert(Object.keys(app.state.layout.control.slots).length === 0, "底行无内容时仍留槽位");
+            const emptyFit = app.state.layout.panes.fitRect;
+            h.assert(emptyFit.y + emptyFit.h > layout.panes.fitRect.y + layout.panes.fitRect.h,
+                "底行无内容时适应区未向下延伸");
+            app.toggleNavigation();
+            app.updateSettings({ showRating: true });
+            await h.tick(120);
+            app.updateSettings({ hotkeys: originalHotkeys.map((row) => (
+                row.command === "Exchange" ? { ...row, display: true } : { ...row, display: false }
+            )) });
+            await h.tick(120);
+            const single = h.dom(".pv-control-capsule.is-command").getBoundingClientRect();
+            h.assert(Math.round(single.width) === commandSize && Math.round(single.height) === 44,
+                `单项命令未成圆形 ${single.width}×${single.height}`);
+            app.updateSettings({ hotkeys: checkedAll(true) });
+            await h.tick(120);
+
+            // SETTINGS-08：组合开关关闭时独立上下张进入可选命令组，合体本身消失。
+            app.toggleNavigation();
+            await h.tick(120);
+            h.assert(h.dom(".pv-control-capsule.is-nav").hidden, "关闭组合式上下张后合体仍可见");
+            h.assert(app.state.layout.control.slots.previous === undefined, "关闭组合式上下张后仍留槽位");
+            const offCommands = app.state.toolbar.phoneCommands.map((item) => item.command);
+            h.assert(offCommands.includes("Previous") && offCommands.includes("Next"),
+                "组合开关关闭后独立上下张未进入命令组");
+            h.assert(offCommands.indexOf("Previous") < offCommands.indexOf("Next"),
+                "独立上下张未保持目录顺序");
+            app.toggleNavigation();
+            await h.tick(120);
 
             app.toggleFilmbar();
             await h.tick(80);
@@ -2363,7 +2431,7 @@ const CHECKS = [
             h.assert(app.state.layout.control.slots === undefined || app.state.layout.control.slots.rating === undefined,
                 "关闭控制栏后底部行仍占槽");
             h.assert(h.dom(".pv-control-capsule.is-nav").hidden
-                && h.dom(".pv-control-capsule.is-utility").hidden,
+                && h.dom(".pv-control-capsule.is-command").hidden,
                 "关闭控制栏后竖屏合体仍残留");
             app.toggleControlbar();
             app.toggleExif();
@@ -2372,16 +2440,21 @@ const CHECKS = [
             h.assert(app.state.layout.filter.entry !== null, "EXIF 开关误隐藏筛选入口");
             app.toggleExif();
             await h.tick(80);
+            app.updateSettings({ hotkeys: originalHotkeys });
             shell.setSafeArea(null);
         },
     },
     {
         id: "SHELL-09",
-        title: "手机横屏：刘海侧列/主图/分析/控制列，镜像与固定槽位",
+        title: "手机横屏：刘海侧列/主图/分析/控制列，可选命令竖排与镜像",
         async run(shell, h) {
             const { app } = shell;
             const t = (name) => shell.t(name);
-            app.updateSettings({ layoutMode: "phone" });
+            const originalHotkeys = app.settings.hotkeys.map((row) => ({ ...row }));
+            app.updateSettings({
+                layoutMode: "phone",
+                hotkeys: originalHotkeys.map((row) => ({ ...row, display: true })),
+            });
             if (!app.state.panes.analysis) app.toggleAnalysis();
             shell.setSafeArea({ top: 0, right: 0, bottom: 0, left: 59 });
             shell.setWindowSize(844, 390);
@@ -2393,35 +2466,59 @@ const CHECKS = [
             h.assert(layout.filter.toggle === null, "手机横屏出现 AI 相似开关");
             h.assert(layout.nav.visible === true, "横屏上下张缺失");
             h.assert(layout.panes.analysisPane.w > 0 && layout.panes.controlPane.w > 0, "分析/控制列缺失");
-            h.assert(layout.control.slots.exif && layout.control.slots.rating, "横屏控制列缺少 EXIF 或评分槽");
-            h.assert(layout.control.slots.exif.w === t("toolbar.exif.item.width"), "无衬底 EXIF 容器宽不是 52");
-            h.assert(Math.abs(layout.control.slots.exif.x + layout.control.slots.exif.w / 2
-                - (layout.control.slots.fit.x + t("shell.glass.button.size") / 2)) <= 0.01,
-            "无衬底 EXIF 容器未与按钮列同轴");
+            const slots = layout.control.slots;
+            h.assert(slots.exif && slots.rating && slots.command, "横屏控制列缺少 EXIF、评分或命令槽");
+            h.assert(slots.exif.w === t("toolbar.exif.item.width"), "无衬底 EXIF 容器宽不是 52");
+            h.assert(Math.abs(slots.exif.x + slots.exif.w / 2
+                - (slots.command.x + t("shell.phone.command.size") / 2)) <= 0.01,
+            "无衬底 EXIF 容器未与命令列同轴");
             h.assert(layout.panes.controlPane.w === t("shell.glass.button.size") + t("toolbar.padding"),
                 `横屏控制列宽 ${layout.panes.controlPane.w}`);
+            h.assert(slots.commandSegments.map((segment) => segment.w).every((width) => width === 44), "横屏命令段不是 44");
+            const phoneCommands = app.state.toolbar.phoneCommands.map((item) => item.command);
+            h.assert(phoneCommands.length === 3, `横屏可选命令 ${phoneCommands.length} 项`);
+            h.assert(slots.command.h === 3 * t("shell.phone.command.size"), `横屏命令胶囊高 ${slots.command.h}`);
             const exifRect = h.dom(".pv-control-exif-block").getBoundingClientRect();
-            const fitRect = h.dom('.pv-control-command-button[data-command="Fit"]').getBoundingClientRect();
+            const firstButton = h.dom(`.pv-control-command-button[data-command="${phoneCommands[0]}"]`);
+            const firstRect = firstButton.getBoundingClientRect();
             h.assert(Math.abs(exifRect.width - t("toolbar.exif.item.width")) <= 1, `横屏 EXIF DOM 宽 ${exifRect.width}`);
-            h.assert(Math.abs((exifRect.left + exifRect.width / 2) - (fitRect.left + fitRect.width / 2)) <= 1,
-                "横屏 EXIF DOM 未与按钮同轴");
+            h.assert(Math.abs((exifRect.left + exifRect.width / 2) - (firstRect.left + firstRect.width / 2)) <= 1,
+                "横屏 EXIF DOM 未与命令按钮同轴");
             const landNav = h.dom(".pv-control-capsule.is-nav");
-            const landUtility = h.dom(".pv-control-capsule.is-utility");
+            const landCommand = h.dom(".pv-control-capsule.is-command");
             const landNavRect = landNav.getBoundingClientRect();
-            const landUtilityRect = landUtility.getBoundingClientRect();
+            const landCommandRect = landCommand.getBoundingClientRect();
             h.assert(Math.round(landNavRect.width) === 88 && Math.round(landNavRect.height) === 44,
                 `横屏上下张合体 ${landNavRect.width}×${landNavRect.height}`);
-            h.assert(Math.round(landUtilityRect.width) === 44 && Math.round(landUtilityRect.height) === 88,
-                `横屏缩放增强合体 ${landUtilityRect.width}×${landUtilityRect.height}`);
-            for (const capsule of [landNav, landUtility]) {
-                const segments = [...capsule.querySelectorAll(".pv-control-command-button")];
-                h.assert(segments.length === 2, `横屏合体段数 ${segments.length} ≠ 2`);
-                for (const segment of segments) {
-                    const rect = segment.getBoundingClientRect();
-                    h.assert(Math.round(rect.width) === 44 && Math.round(rect.height) === 44,
-                        `横屏合体段 ${rect.width}×${rect.height}`);
-                }
+            h.assert(Math.round(landCommandRect.width) === 44
+                && Math.round(landCommandRect.height) === 3 * t("shell.phone.command.size"),
+            `横屏命令合体 ${landCommandRect.width}×${landCommandRect.height}`);
+            const landSegments = [...landCommand.querySelectorAll(".pv-control-command-button")];
+            h.assert(landSegments.length === phoneCommands.length, "横屏命令段数与生效命令不符");
+            for (const segment of landSegments) {
+                const rect = segment.getBoundingClientRect();
+                h.assert(Math.round(rect.width) === 44 && Math.round(rect.height) === 44,
+                    `横屏命令段 ${rect.width}×${rect.height}`);
+                h.assert(segment.tabIndex === 0 && segment.getAttribute("aria-label"), "横屏命令段不是独立可聚焦动作按钮");
             }
+            h.deepEqual(landSegments.map((segment) => segment.dataset.command), phoneCommands,
+                "横屏可选命令不是从上到下按设置顺序");
+            h.assert(landSegments.every((segment, index) => Math.abs(
+                segment.getBoundingClientRect().top - (landCommandRect.top + index * 44)) <= 1),
+            "横屏命令段未在胶囊内自上下等分");
+            h.assert(landCommand.getAttribute("role") === "group"
+                && landCommand.querySelector('[role="tab"], [role="radio"], [role="tablist"], [role="radiogroup"]') === null,
+            "横屏可选命令被表达为互斥分段控件");
+
+            // 长度缩短时先保住评分紧凑态最短长度，命令组不压缩、不重叠。
+            shell.setWindowSize(844, 250);
+            await h.tick(120);
+            const short = app.state.layout.control.slots;
+            h.assert(short.rating.h >= t("rating.compact.minLength"), `短高度评分 ${short.rating.h}`);
+            h.assert(short.rating.y + short.rating.h <= short.command.y, "短高度评分与命令组重叠");
+            shell.setWindowSize(844, 390);
+            await h.tick(120);
+
             app.selectCard(app.state.cards[5].photo.id);
             await h.tick(80);
 
@@ -2429,15 +2526,12 @@ const CHECKS = [
             await h.tick(100);
             h.assert(app.state.panes.control === false, "未关闭控制栏");
             h.assert(app.state.layout.nav.visible === true, "关闭控制栏把横屏上下张一起隐藏了");
+            h.assert(h.dom(".pv-control-capsule.is-command").hidden, "关闭控制栏后命令合体仍可见");
             const prev = h.dom('.pv-control-command-button[data-command="Previous"]');
             h.assert(prev && !prev.hidden, "横屏上下张 DOM 仍被隐藏");
             const prevRect = prev.getBoundingClientRect();
             h.assert(Math.round(prevRect.width) === t("shell.glass.button.size"),
                 `横屏上下张 DOM 宽 ${prevRect.width}`);
-            const fitOff = h.dom('.pv-control-command-button[data-command="Fit"]');
-            const enhanceOff = h.dom('.pv-control-command-button[data-command="ToggleEnhance"]');
-            h.assert(fitOff.hidden && enhanceOff.hidden, "关闭控制栏后缩放/增强按钮仍可见");
-            h.assert(h.dom(".pv-control-capsule.is-utility").hidden, "关闭控制栏后缩放增强合体未隐藏");
             h.assert(!h.dom(".pv-control-capsule.is-nav").hidden, "关闭控制栏后上下张合体被误隐藏");
             const displayed = app.state.displayedId;
             h.click(prev);
@@ -2446,15 +2540,26 @@ const CHECKS = [
                 `关闭控制栏后横屏上下张不可点：${displayed} -> ${app.state.displayedId}（disabled ${prev.disabled}, cmd ${prev.dataset.command}, rect ${prevRect.left},${prevRect.top}）`);
             app.toggleControlbar();
             await h.tick(80);
-            const fitOn = h.dom('.pv-control-command-button[data-command="Fit"]');
-            const enhanceOn = h.dom('.pv-control-command-button[data-command="ToggleEnhance"]');
-            h.assert(!fitOn.hidden && !enhanceOn.hidden, "重新显示控制栏后缩放/增强按钮未恢复");
-            h.assert(!h.dom(".pv-control-capsule.is-utility").hidden, "重新显示控制栏后缩放增强合体未恢复");
+            h.assert(!h.dom(".pv-control-capsule.is-command").hidden, "重新显示控制栏后命令合体未恢复");
+
+            // SETTINGS-08：组合开关关闭时独立上下张进入竖排命令组，刘海侧合体消失。
+            app.toggleNavigation();
+            await h.tick(120);
+            h.assert(h.dom(".pv-control-capsule.is-nav").hidden, "关闭组合式上下张后横屏合体仍残留");
+            const offCommands = app.state.toolbar.phoneCommands.map((item) => item.command);
+            h.assert(offCommands.includes("Previous") && offCommands.includes("Next"),
+                "横屏组合开关关闭后独立上下张未进入命令组");
+            h.assert(offCommands.indexOf("Previous") < offCommands.indexOf("Next"),
+                "横屏独立上下张未保持目录顺序");
+            h.assert(Math.round(h.dom(".pv-control-capsule.is-command").getBoundingClientRect().height)
+                === 3 * 44, "横屏命令组三项高度不符");
+            app.toggleNavigation();
+            await h.tick(120);
 
             app.toggleFilmbar();
             await h.tick(100);
             h.assert(h.dom(".pv-control-capsule.is-nav").hidden, "横屏关闭胶片栏后上下张合体仍残留");
-            h.assert(!h.dom(".pv-control-capsule.is-utility").hidden, "横屏关闭胶片栏后缩放增强合体被误隐藏");
+            h.assert(!h.dom(".pv-control-capsule.is-command").hidden, "横屏关闭胶片栏后命令合体被误隐藏");
             app.toggleFilmbar();
             await h.tick(100);
 
@@ -2463,6 +2568,11 @@ const CHECKS = [
             const mirrored = app.state.layout;
             h.assert(mirrored.panes.sideColumn.x === 844 - mirrored.panes.sideColumn.w, "刘海在右时侧列未镜像");
             h.assert(mirrored.panes.controlPane.x === 0, "刘海在右时控制列未镜像到左侧");
+            h.assert(mirrored.control.slots.command.x === 10, `镜像命令列 x ${mirrored.control.slots.command.x}`);
+            h.assert(mirrored.control.slots.exif.x === 6, `镜像 EXIF x ${mirrored.control.slots.exif.x}`);
+            h.assert(Math.abs(mirrored.control.slots.exif.x + mirrored.control.slots.exif.w / 2
+                - (mirrored.control.slots.command.x + t("shell.phone.command.size") / 2)) <= 0.01,
+            "镜像后 EXIF 容器未与命令列同轴");
             const windowRect = h.dom(".pv-window").getBoundingClientRect();
             const filterRect = h.dom(".pv-filter-entry").getBoundingClientRect();
             const ratingRect = h.dom(".pv-control-rating").getBoundingClientRect();
@@ -2470,6 +2580,7 @@ const CHECKS = [
                 `镜像筛选 DOM x ${filterRect.left - windowRect.left} ≠ ${mirrored.filter.entry.x}`);
             h.assert(Math.abs(ratingRect.left - windowRect.left - 10) <= 1,
                 `镜像控制内容未保留窗口侧 10：${ratingRect.left - windowRect.left}`);
+            app.updateSettings({ hotkeys: originalHotkeys });
             shell.setSafeArea(null);
         },
     },

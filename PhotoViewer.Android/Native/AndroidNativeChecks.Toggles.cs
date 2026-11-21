@@ -51,14 +51,14 @@ internal static partial class AndroidNativeChecks
             if (phone)
             {
                 var slots = root.PhoneSlots;
-                Check("toggles 手机全关：胶片/上下张/评分/增强/EXIF 全部收起",
+                Check("toggles 手机全关：胶片/上下张/评分/可选命令/EXIF 全部收起",
                     root.Filmstrip.Visibility != global::Android.Views.ViewStates.Visible
                     && root.PhoneNavigation.Visibility != global::Android.Views.ViewStates.Visible
                     && root.PhoneRating.Visibility != global::Android.Views.ViewStates.Visible
-                    && root.PhoneFitEnhance.Visibility != global::Android.Views.ViewStates.Visible
+                    && root.PhoneCommands.Visibility != global::Android.Views.ViewStates.Visible
                     && root.PhoneExif.Visibility != global::Android.Views.ViewStates.Visible
                     && !Has(slots.Filmstrip) && !Has(slots.Navigation) && !Has(slots.Rating)
-                    && !Has(slots.FitEnhance) && !Has(slots.Exif),
+                    && !Has(slots.Commands) && !Has(slots.Exif),
                     $"film={slots.Filmstrip} nav={slots.Navigation} rating={slots.Rating} exif={slots.Exif}");
                 Check("toggles 手机全关：筛选/更多仍常驻",
                     Has(slots.Filter) && Has(slots.More) && root.FilterBar.Visibility == global::Android.Views.ViewStates.Visible,
@@ -101,9 +101,9 @@ internal static partial class AndroidNativeChecks
                     ? Has(slots.Navigation)
                     : false;
                 Check("toggles 独立控制栏（手机）",
-                    root.PhoneFitEnhance.Visibility == global::Android.Views.ViewStates.Visible && controls
+                    root.PhoneCommands.Visibility == global::Android.Views.ViewStates.Visible && controls
                     && !Has(slots.Filmstrip) && Has(slots.Navigation) == navigationExpected,
-                    $"fit={slots.FitEnhance} rating={slots.Rating} film={slots.Filmstrip} nav={slots.Navigation}");
+                    $"commands={slots.Commands} rating={slots.Rating} film={slots.Filmstrip} nav={slots.Navigation}");
             }
             else
             {
@@ -185,9 +185,9 @@ internal static partial class AndroidNativeChecks
             {
                 Check("toggles 恢复全开",
                     root.Filmstrip.Visibility == global::Android.Views.ViewStates.Visible
-                    && root.PhoneFitEnhance.Visibility == global::Android.Views.ViewStates.Visible
+                    && root.PhoneCommands.Visibility == global::Android.Views.ViewStates.Visible
                     && Has(root.PhoneSlots.Filter) && Has(root.PhoneSlots.More),
-                    $"film={root.PhoneSlots.Filmstrip} fit={root.PhoneSlots.FitEnhance}");
+                    $"film={root.PhoneSlots.Filmstrip} commands={root.PhoneSlots.Commands}");
             }
             else
             {

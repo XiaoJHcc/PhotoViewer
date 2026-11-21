@@ -312,6 +312,7 @@ const tokens = Object.freeze({
     "settings.android.row.paddingY": 12,
     "settings.android.sheet.heightRatio": 0.85,
     "settings.android.sheet.peekRatio": 0.5,
+    "settings.phone.inactiveCheck.opacity": 0.2,
     "shell.analysis.divider.thickness": 1,
     "shell.bar.acrylic.luminosityOpacityMax": 0.8,
     "shell.bar.blur.radius": 30,
@@ -323,6 +324,7 @@ const tokens = Object.freeze({
     "shell.glass.button.tint.opacity": 0.135,
     "shell.glass.container.spacing": 8,
     "shell.glass.group.gap": 8,
+    "shell.phone.command.size": 44,
     "shell.phone.edgeMargin": 16,
     "shell.phone.rowInset": 8,
     "shell.titlebar.acrylic.luminosityOpacity": 0.77,
@@ -404,6 +406,7 @@ export const platformTokens = Object.freeze({
         "filter.toggle.width": 76,
         "shell.bar.overlay.opacity": 0.8,
         "shell.glass.button.tint.opacity": 0.135,
+        "shell.phone.command.size": 48,
     }),
     "macos": Object.freeze({
         "color.bar.overlay": "#2B2B2B",

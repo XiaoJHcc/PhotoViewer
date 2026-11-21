@@ -187,7 +187,7 @@ internal static class iOSNativeLayoutCheck
 
     /// <summary>
     /// 手机形态外壳（SHELL-08、SHELL-09）：宽形态浮层全部收起，主图分区与主图视图铺满舞台，
-    /// 适应区、胶片条档位与每个固定控件的 frame 逐项等于按当前输入重算的共享手机槽位。
+    /// 适应区、胶片条档位与各手机控件的 frame 逐项等于按当前输入重算的共享手机槽位。
     /// 两向布局与栏位显隐的组合由 form 检查覆盖，这里证明主屏消费的是同一份共享几何。
     /// </summary>
     /// <param name="root">原生根控制器。</param>
@@ -224,7 +224,7 @@ internal static class iOSNativeLayoutCheck
         RequireSlot(root.PhoneFilterMoreGroup, slots.FilterMoreGroup, "筛选/更多合体");
         RequireSlot(root.PhoneNavigationGroup, slots.Navigation, "上下张");
         RequireSlot(root.PhoneRatingControl, slots.Rating, "星级控件");
-        RequireSlot(root.PhoneFitEnhanceGroup, slots.FitEnhance, "缩放适应/雾天增强");
+        RequireSlot(root.PhoneCommandsGroup, slots.Commands, "可选命令");
         RequireSlot(root.PhoneExifBlock, slots.Exif, "EXIF 块");
         var bars = root.PhoneBarBackgrounds;
         RequireSlot(bars.Top, slots.TopBar, "顶栏背景");
@@ -236,9 +236,10 @@ internal static class iOSNativeLayoutCheck
                 $"手机形态 EXIF 显示 {root.PhoneExifBlock.ShownItemCount} 项 ≠ 共享裁剪 {slots.ExifItems} 项");
         lines.Add($"PASS 手机外壳（{(portrait ? "竖屏" : "横屏")}）：宽形态浮层收起、主图满舞台、适应区 " +
             $"{(double)root.Photo.FitRect.Width:0.#}×{(double)root.Photo.FitRect.Height:0.#}、胶片条 {tier}、" +
-            $"筛选/更多/上下张/星级/适应增强/EXIF 与栏背景逐项等于共享槽位，空态提示/提示条/计算中药丸与导航图落在适应区内");
+            $"筛选/更多/上下张/星级/可选命令/EXIF 与栏背景逐项等于共享槽位，空态提示/提示条/计算中药丸与导航图落在适应区内");
 
-        // SETTINGS-17「显示上下张按钮」两态：关闭后合体收起，竖屏让出的长度并入星级、横屏控制列几何不变；打开后恢复。
+        // SETTINGS-17「显示上下张按钮」两态：关闭后合体收起，勾选的独立上一张/下一张按 SETTINGS-08 进入可选命令组；
+        // 槽位与命令按钮按同一份共享解析重算，打开后恢复。
         await UiDispatcher.InvokeAsync(() => main.Settings.ShowNavigationButtons = false);
         await SettleAsync(root);
         try
@@ -247,12 +248,27 @@ internal static class iOSNativeLayoutCheck
             if (off.Navigation.Width > 0 || off.Navigation.Height > 0)
                 throw new InvalidOperationException($"关闭显示上下张后槽位仍占位：{off.Navigation}");
             RequireSlot(root.PhoneNavigationGroup, off.Navigation, "上下张（关闭）");
-            if (portrait && off.Rating.Width <= slots.Rating.Width)
+            RequireSlot(root.PhoneCommandsGroup, off.Commands, "可选命令（关闭组合开关）");
+            var expected = PhoneControlCommands.Resolve(
+                main.ControlVM.EnabledControls.Select(hotkey => hotkey.Command), showNavigationButtons: false);
+            if (root.PhoneSlotsInput.CommandCount != expected.Length
+                || root.PhoneCommandsGroup.Buttons.Count != expected.Length)
+                throw new InvalidOperationException(
+                    $"关闭上下张后命令组 {root.PhoneCommandsGroup.Buttons.Count} 段 ≠ 共享解析 {expected.Length} 项");
+            if (expected.Length > 0)
+            {
+                double size = root.PhoneSlotsInput.CommandButtonSize;
+                double mainLength = portrait ? off.Commands.Width : off.Commands.Height;
+                if (Math.Abs(mainLength - expected.Length * size) > 1)
+                    throw new InvalidOperationException(
+                        $"命令组主轴 {mainLength:0.##} ≠ {expected.Length} × {size:0.##}");
+            }
+            if (portrait && Math.Abs(off.Commands.Width - slots.Commands.Width) <= 1
+                && off.Rating.Width < slots.Rating.Width - 1)
                 throw new InvalidOperationException(
                     $"竖屏关闭上下张后星级未取回让出的长度：{slots.Rating.Width:0.##} → {off.Rating.Width:0.##}");
-            if (!portrait && Math.Abs(off.FitEnhance.Width - slots.FitEnhance.Width) > 1)
-                throw new InvalidOperationException("横屏关闭上下张改变了控制列几何");
-            lines.Add($"PASS 显示上下张按钮关闭：{(portrait ? "底部行合体收起、星级加宽" : "刘海侧上下张收起、控制列几何不变")}");
+            lines.Add($"PASS 显示上下张按钮关闭：{(portrait ? "底部行合体收起、星级按释放长度重排" : "刘海侧上下张收起")}，" +
+                $"独立上下张按共享解析进入可选命令组（{expected.Length} 项）");
         }
         finally
         {
@@ -913,7 +929,8 @@ internal static class iOSNativeLayoutCheck
             AnalysisCross: 67, ExifCount: 4, ExifWidth: exif.Width, ExifHeight: exif.Height,
             ExifItemSpacing: ExifBlockGeometry.ItemSpacing, RatingMinLength: RatingControlGeometry.CompactMinLength,
             ButtonSize: DesignTokens.ShellGlassButtonSize, EdgeMargin: DesignTokens.ShellPhoneEdgeMargin,
-            RowInset: DesignTokens.ShellPhoneRowInset, GroupGap: DesignTokens.ShellGlassGroupGap);
+            RowInset: DesignTokens.ShellPhoneRowInset, GroupGap: DesignTokens.ShellGlassGroupGap,
+            CommandCount: 2, CommandButtonSize: DesignTokens.ShellPhoneCommandSize);
         var flat = PhoneScreenLayout.Compute(layoutInput with
         {
             LeadBand = layoutInput.LeadBand with { Bottom = 0 },
@@ -930,15 +947,15 @@ internal static class iOSNativeLayoutCheck
             double columnBottom = (double)stage.Height
                 - Math.Max(layoutInput.Safe.Bottom, layoutInput.ControlBand.Bottom) - ToolRegionGeometry.Padding;
             double groupTop = slots.Exif.Width > 0 ? slots.Exif.Y : slots.Rating.Y;
-            if (groupTop < columnTop - Exact || slots.FitEnhance.MaxY > columnBottom + Exact)
+            if (groupTop < columnTop - Exact || slots.Commands.MaxY > columnBottom + Exact)
                 throw new InvalidOperationException(
                     $"{scope} 圆角读数 {corner:0.##} 未进入控制列区间：组顶 {groupTop:0.##}，"
-                    + $"增强末端 {slots.FitEnhance.MaxY:0.##}，可用 {columnTop:0.##}..{columnBottom:0.##}");
+                    + $"命令末端 {slots.Commands.MaxY:0.##}，可用 {columnTop:0.##}..{columnBottom:0.##}");
             if (corner > ToolRegionGeometry.Padding + Exact
-                && !(slots.FitEnhance.MaxY < flat.FitEnhance.MaxY - Exact))
+                && !(slots.Commands.MaxY < flat.Commands.MaxY - Exact))
                 throw new InvalidOperationException(
-                    $"{scope} 圆角读数 {corner:0.##} 未收紧控制列：增强末端 {slots.FitEnhance.MaxY:0.##}"
-                    + $" / 零圆角 {flat.FitEnhance.MaxY:0.##}");
+                    $"{scope} 圆角读数 {corner:0.##} 未收紧控制列：命令末端 {slots.Commands.MaxY:0.##}"
+                    + $" / 零圆角 {flat.Commands.MaxY:0.##}");
         }
         lines.Add($"{scope} 横屏圆角：两条贴角带下缘原样采用原生边距区域读数"
             + $"（刘海 {input.LeadBand.Bottom:0.##}、控制 {input.ControlBand.Bottom:0.##}），上缘取安全区与圆角的较大者，"
