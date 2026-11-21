@@ -133,13 +133,22 @@
 
 纯外观简版不需要 `TextureView`；真正实时模糊下方照片在本路线必须使用 `TextureView`。对普通 `View` 单独模糊不代表能取到主图。
 
-### 阶段 2 真实栏底与 EXIF 模糊（当前下一里程碑，6–10 工作日）
+### 阶段 2 真实栏底与 EXIF 模糊（已交付）
 
 在独立分支把主图迁到 `TextureView` 并接入最小照片层，用 `RenderEffect` 给计划内栏底与带衬底的 EXIF 出真模糊；按钮、合体、星级胶囊与小型弹出菜单保持现有实现。本阶段不做按钮与弹窗材质、不带按压缩放、跟手高光、折射与 G2 形状，也不改弹窗宿主。范围即 SHELL-12 的 Android 栏底与带衬底 EXIF 条款，加上 TOOLBAR-05/10 的 Android 相关条款。
 
 必须处理生命周期、前后台与旋转、缓冲及离屏预算、拖动翻页；`color` / `zoom` / `perf` / `input` / `layout` 不退化，渲染器输出与整窗终态同时核对，未加材质的主图区核物理 100%，复验 P3 与阶段 0 门槛，完成三色衬底校准。主图切换与第一个真实取样场景一起验收、一起合入。
 
 API 31+ 使用真模糊，API 24–30 不取样、保留色层；所有 API 级别保持原案的同一 `TextureView` 宿主，不改为双后端，低版本同样跑主图回归。若真机不能达标，版本分流是另行评估的架构变更。本阶段是中间交付，交付后不等于液态玻璃完成。
+
+#### 阶段 2 实测结论
+
+- **产品材质**：主图在所有 API 级别统一 `TextureView`，包住主图分区的 `LayerBackdropLayout` 是唯一取样源；六个栏底与带衬底 EXIF 共用 `AndroidPhotoMaterial`（API 31+ vibrancy 1.5 → blur 8dp → 令牌色层），API 24–30 不录制、保留色层。主图真实出帧经 `PresentationFrameRendered` 显式驱动照片层重录，材质按渲染代际失效；共享离屏效果层估算（RGBA8）并入 `ExternalFootprint`。
+- **回归**（API 33 真机）：标准 Debug 完整 `glass` 41/41，AI Release 完整 `glass` 41/41；`layout` 93/93、`input` 29/29、`perf` 72/72、`color` 119/119；`zoom` 40/3，三条失败与阶段 0 相同（顶点缓冲断言），HIF 心跳 100.3ms。
+- **三色衬底**（sRGB 8 位，黑 / 50% 灰 / 白）：栏底 `#212121` / `#3B3B3B` / `#545454`（33/59/84），带衬底 EXIF `#1B1B1B` / `#353535` / `#4E4E4E`（27/53/78）。
+- **API 24–30 回退**：**同源码 x86_64 临时验收构建、不含私有原生库**（`libpvraw` / `libpvhevc` / `libheif` 按设计回退），在 API 28 x86_64 AVD 上只跑 `product`：14/14 通过，`tier=ColorLayer`、`RecordsBackdrop=false`、材质绘制计数 0、栏底保持直通色层且不产生低通。该结果只验证色层回退，**正式分发仍只 arm64**，未声称低版本 arm64 真机已通过。
+- **已知边界**：AI 版 Debug 的 Assembly Store 在本次真机启动时缺少 `zh-CN/System.Private.CoreLib.resources` 并中止，AI 版真机验收以 Release 为准；该启动/打包问题不属于玻璃断言。按钮、合体、星级胶囊与小型弹出菜单的光学仍属阶段 3。
+- 证据：`artifacts/acceptance/android-glass-phase2/`（标准/AI 完整 `glass` 报告与截图、各回归报告、三色读数、API 28 product 报告与 Logcat、普通浏览截图）。
 
 ### 阶段 3 完整液态玻璃（7–11 工作日）
 
