@@ -51,7 +51,7 @@ internal sealed class AndroidFilterBar : FrameLayout
     private int _dropdownWidth;
     private int _dropdownHeight;
     private readonly List<FilterMenuRow> _dropdownRows = [];
-    private readonly string _checkGlyph = AndroidUiTheme.IconGlyph(DesignTokens.IconCheck);
+    private readonly string _checkGlyph = AndroidIcons.Check;
 
     /// <summary>排序控件矩形（dp，验收读取）；宽形态与手机入口都是筛选段。</summary>
     internal LayoutRect SortFrame => _frames.Sort;
@@ -158,11 +158,11 @@ internal sealed class AndroidFilterBar : FrameLayout
     public AndroidFilterBar(Context context, MainViewModel main) : base(context)
     {
         _main = main;
-        _filterButton = new AndroidGlassButton(context, DesignTokens.IconFilter, "筛选");
+        _filterButton = new AndroidGlassButton(context, AndroidIcons.Filter, "筛选");
         _filterButton.Click += (_, _) => OpenGroupedMenu(ScreenRectOf(_filterSegment));
         _filterButton.Visibility = ViewStates.Gone;
         AddView(_filterButton);
-        _combo = new AndroidGlassCombo(context, DesignTokens.IconFilter, "筛选", DesignTokens.IconMore, "更多");
+        _combo = new AndroidGlassCombo(context, AndroidIcons.Filter, "筛选", AndroidIcons.More, "更多");
         _combo.First.Click += (_, _) => OpenGroupedMenu(ScreenRectOf(_filterSegment));
         _combo.Second.Click += (_, _) => MoreRequested?.Invoke(_moreSegment);
         _combo.Visibility = ViewStates.Gone;
@@ -592,66 +592,32 @@ internal sealed class AndroidFilterBar : FrameLayout
         };
     }
 
-    /// <summary>菜单行语义图标：优先取 uicons 令牌，缺失的排序/方向图标用系统公开图标。</summary>
-    /// <param name="activity">宿主 Activity。</param>
-    /// <param name="kind">行类型。</param>
-    /// <param name="value">行取值。</param>
-    /// <returns>图标视图与验收可读的资源描述。</returns>
+    /// <summary>菜单行语义图标统一取 Material Symbols Rounded。</summary>
     private static (ImageView Icon, string Description) CreateMenuIcon(Activity activity, FilterMenu kind,
         object value)
     {
-        if (kind == FilterMenu.Sort)
+        string id = kind switch
         {
-            return (SortMode)value switch
-            {
-                SortMode.Name => GlyphIcon(activity, DesignTokens.IconMenuOpenFile, false, null,
-                    AndroidUiTheme.TextSecondary),
-                SortMode.Date => SystemIcon(activity, global::Android.Resource.Drawable.IcMenuToday, "ic_menu_today"),
-                _ => SystemIcon(activity, global::Android.Resource.Drawable.IcMenuSortBySize, "ic_menu_sort_by_size"),
-            };
-        }
-        if (kind == FilterMenu.Order)
-            return (SortOrder)value == SortOrder.Ascending
-                ? SystemIcon(activity, global::Android.Resource.Drawable.ArrowUpFloat, "arrow_up_float")
-                : SystemIcon(activity, global::Android.Resource.Drawable.ArrowDownFloat, "arrow_down_float");
-
-        string key = (string)value;
-        return key switch
-        {
-            PhotoListProjection.AllRatings => GlyphIcon(activity, DesignTokens.IconMenuAnalysis, false, null,
-                AndroidUiTheme.TextSecondary),
-            "None" => GlyphIcon(activity, DesignTokens.IconStar, false, null, AndroidUiTheme.TextSecondary),
-            "Eq1" or "Eq2" or "Eq3" or "Eq4" or "Eq5" => GlyphIcon(activity, DesignTokens.IconStarFilled, true,
-                key[2..], AndroidUiTheme.TextSecondary),
-            "Rejected" => GlyphIcon(activity, DesignTokens.IconClear, false, null, AndroidUiTheme.TextSecondary),
-            "Conflict" => GlyphIcon(activity, DesignTokens.IconWarning, false, null, AndroidUiTheme.StarConflict),
-            _ => GlyphIcon(activity, DesignTokens.IconFilter, false, null, AndroidUiTheme.TextSecondary),
+            FilterMenu.Sort => AndroidIcons.SortModeId((SortMode)value),
+            FilterMenu.Order => (SortOrder)value == SortOrder.Ascending
+                ? IconCatalog.FilterAscending
+                : IconCatalog.FilterDescending,
+            _ => AndroidIcons.RatingFilterId((string)value),
         };
+        var color = id == IconCatalog.FilterConflict ? AndroidUiTheme.StarConflict : AndroidUiTheme.TextSecondary;
+        return GlyphIcon(activity, id, color);
     }
 
-    /// <summary>uicons 字形图标（星级行叠数字）。</summary>
-    private static (ImageView Icon, string Description) GlyphIcon(Activity activity, string token, bool solid,
-        string? digit, Color color)
+    private static (ImageView Icon, string Description) GlyphIcon(Activity activity, string id, Color color)
     {
         int glyphSize = Math.Max(1, (int)Math.Round(AndroidUiTheme.Sp(activity, DesignTokens.MenuIconFontSize)));
-        var drawable = new AndroidGlyphDrawable(activity, AndroidUiTheme.IconGlyph(token), solid, digit, glyphSize);
+        var drawable = new AndroidGlyphDrawable(activity, AndroidIcons.Glyph(id), AndroidIcons.Filled(id), null, glyphSize);
         drawable.SetTintList(ColorStateList.ValueOf(color));
         var icon = new ImageView(activity);
         icon.SetImageDrawable(drawable);
         icon.SetScaleType(ImageView.ScaleType.FitCenter);
         icon.ImportantForAccessibility = ImportantForAccessibility.No;
-        return (icon, digit == null ? $"uicons {token}" : $"uicons {token}+{digit}");
-    }
-
-    /// <summary>系统公开图标（uicons 没有对应语义令牌的排序键与方向）。</summary>
-    private static (ImageView Icon, string Description) SystemIcon(Activity activity, int resource, string name)
-    {
-        var icon = new ImageView(activity);
-        icon.SetImageResource(resource);
-        icon.ImageTintList = ColorStateList.ValueOf(AndroidUiTheme.TextSecondary);
-        icon.SetScaleType(ImageView.ScaleType.FitCenter);
-        icon.ImportantForAccessibility = ImportantForAccessibility.No;
-        return (icon, $"system {name}");
+        return (icon, $"material {id}");
     }
 
     /// <summary>dp → px（布局参数）。</summary>

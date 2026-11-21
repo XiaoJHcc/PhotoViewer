@@ -285,12 +285,12 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             bar.Visibility = ViewStates.Gone;
             AddView(bar, 1);
         }
-        _phoneMoreButton = new AndroidGlassButton(activity, DesignTokens.IconMore, "更多");
+        _phoneMoreButton = new AndroidGlassButton(activity, AndroidIcons.More, "更多");
         _phoneMoreButton.Click += (_, _) => ShowPhotoMenuAt(_phoneMoreButton);
         _phoneMoreButton.Visibility = ViewStates.Gone;
         AddView(_phoneMoreButton);
-        _phoneNavigation = new AndroidGlassCombo(activity, AndroidUiTheme.IconGlyph(DesignTokens.IconCommandPrevious), "上一张",
-            AndroidUiTheme.IconGlyph(DesignTokens.IconCommandNext), "下一张");
+        _phoneNavigation = new AndroidGlassCombo(activity, AndroidIcons.Previous, "上一张",
+            AndroidIcons.Next, "下一张");
         _phoneNavigation.First.Click += (_, _) => Execute("Previous");
         _phoneNavigation.Second.Click += (_, _) => Execute("Next");
         _phoneNavigation.Visibility = ViewStates.Gone;
@@ -1219,10 +1219,10 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             content.AddView(divider, new LinearLayout.LayoutParams(LayoutParams.MatchParent, dividerHeight));
         }
 
-        void AddItem(string label, bool? check, string iconToken, Action action, bool enabled = true)
+        void AddItem(string label, bool? check, PhotoMenuItemId itemId, Action action, bool enabled = true)
         {
             // 验收快照：只记录本次构建出的项（含实际绘制的图标字形），不参与布局、命中或可点击性判断。
-            string iconGlyph = AndroidUiTheme.IconGlyph(iconToken);
+            string iconGlyph = AndroidIcons.ForMenu(itemId);
             _photoMenuItems.Add((label, check == true, enabled, iconGlyph));
             var row = new LinearLayout(activity) { Orientation = Orientation.Horizontal };
             row.SetGravity(GravityFlags.CenterVertical);
@@ -1234,10 +1234,11 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             // MENU-03：勾选列在行首，命令图标紧随其后，文本占剩余宽度；勾号与图标都不发声，读屏只念整行名称。
             var mark = new TextView(activity)
             {
-                Text = check == true ? "✓" : "",
+                Text = check == true ? AndroidIcons.Check : "",
                 TextSize = 15,
                 Gravity = GravityFlags.Center,
             };
+            mark.SetTypeface(AndroidUiTheme.IconTypeface(activity), TypefaceStyle.Normal);
             mark.SetTextColor(enabled ? AndroidUiTheme.Accent : AndroidUiTheme.TextSecondary);
             mark.ImportantForAccessibility = ImportantForAccessibility.No;
             row.AddView(mark, new LinearLayout.LayoutParams((int)Math.Round(24 * density), LayoutParams.MatchParent));
@@ -1284,19 +1285,6 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
                 if (group >= 0) AddDivider();
                 group = item.Group;
             }
-            // EXIF 项在 uicons 令牌集中没有对应码位，图标列留空（文字与勾选照常）。
-            string icon = item.Id switch
-            {
-                PhotoMenuItemId.OpenFile => DesignTokens.IconMenuOpenFile,
-                PhotoMenuItemId.OpenFolder => DesignTokens.IconMenuOpenFolder,
-                PhotoMenuItemId.Filmstrip => DesignTokens.IconMenuFilmstrip,
-                PhotoMenuItemId.Analysis => DesignTokens.IconMenuAnalysis,
-                PhotoMenuItemId.ControlBar => DesignTokens.IconMenuControl,
-                PhotoMenuItemId.Exif => DesignTokens.IconMenuControl,
-                PhotoMenuItemId.Enhance => DesignTokens.IconCommandToggleEnhance,
-                PhotoMenuItemId.Tools => DesignTokens.IconMenuTools,
-                _ => DesignTokens.IconMenuSettings,
-            };
             Action action = item.Id switch
             {
                 PhotoMenuItemId.OpenFile or PhotoMenuItemId.OpenFolder => () => _ = _main.FolderVM.OpenFilePickerAsync(),
@@ -1308,7 +1296,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
                 PhotoMenuItemId.Tools => ShowTools,
                 _ => () => _main.OpenSettingWindow(),
             };
-            AddItem(item.Text, item.IsCheck ? item.Checked : null, icon, action, item.Enabled);
+            AddItem(item.Text, item.IsCheck ? item.Checked : null, item.Id, action, item.Enabled);
         }
 
         ScrollView? scroll = null;

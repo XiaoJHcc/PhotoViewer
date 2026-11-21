@@ -191,11 +191,11 @@ internal sealed class AndroidToolsSheetView : FrameLayout
         header.SetPadding((int)(12 * density), 0, (int)(12 * density), 0);
         header.Clickable = true;
         header.ImportantForAccessibility = ImportantForAccessibility.No;
-        _back = Button("‹", 26, () => { if (!HandleBack()) Dismiss(); });
+        _back = IconButton(IconCatalog.NavigationBack, 22, () => { if (!HandleBack()) Dismiss(); });
         _back.SetPadding((int)(8 * density), 0, (int)(8 * density), 0);
         _title = Text("工具", 17, AndroidUiTheme.TextPrimary, bold: true);
         _title.Gravity = GravityFlags.Center;
-        var close = Button("✕", 20, Dismiss);
+        var close = IconButton(IconCatalog.NavigationClose, 18, Dismiss);
         header.AddView(_back, new LinearLayout.LayoutParams((int)(44 * density), (int)(48 * density)));
         header.AddView(_title, new LinearLayout.LayoutParams(0, (int)(48 * density), 1));
         header.AddView(close, new LinearLayout.LayoutParams((int)(44 * density), (int)(48 * density)));
@@ -426,7 +426,7 @@ internal sealed class AndroidToolsSheetView : FrameLayout
         var column = new LinearLayout(_activity) { Orientation = Orientation.Vertical };
         column.AddView(Text(title, 16, AndroidUiTheme.TextPrimary, bold: true));
         column.AddView(Text(subtitle, 12, AndroidUiTheme.TextSecondary));
-        var chevron = Text("›", 22, AndroidUiTheme.TextSecondary);
+        var chevron = IconText(IconCatalog.NavigationForward, 20, AndroidUiTheme.TextSecondary);
         chevron.Gravity = GravityFlags.Center;
         row.AddView(column, new LinearLayout.LayoutParams(0, LayoutParams.WrapContent, 1));
         row.AddView(chevron, new LinearLayout.LayoutParams(
@@ -483,9 +483,16 @@ internal sealed class AndroidToolsSheetView : FrameLayout
         return view;
     }
 
-    private TextView Button(string label, double sizeSp, Action action)
+    private TextView IconText(string id, double sizeSp, Color color)
     {
-        var text = Text(label, sizeSp, AndroidUiTheme.TextPrimary);
+        var text = Text(AndroidIcons.Glyph(id), sizeSp, color);
+        text.SetTypeface(AndroidUiTheme.IconTypeface(_activity), TypefaceStyle.Normal);
+        return text;
+    }
+
+    private TextView IconButton(string id, double sizeSp, Action action)
+    {
+        var text = IconText(id, sizeSp, AndroidUiTheme.TextPrimary);
         text.Gravity = GravityFlags.Center;
         text.Clickable = true;
         text.Click += (_, _) => action();

@@ -758,7 +758,7 @@ internal sealed partial class WindowsMainWindow : Window
     /// <returns>可直接作为 <c>MenuFlyoutItem.Icon</c> 的图标元素。</returns>
     private static FontIcon MenuGlyph(string glyph) => new()
     {
-        FontFamily = new FontFamily(WindowsIcons.FluentFontFamily),
+        FontFamily = new FontFamily(WindowsIcons.RegularFontFamily),
         Glyph = glyph,
         FontSize = DesignTokens.MenuIconSize,
     };

@@ -171,7 +171,7 @@ internal sealed partial class WindowsSettingsPages
         var icon = new FontIcon
         {
             Glyph = WindowsIcons.ForCommand(hotkey.Command) ?? string.Empty,
-            FontFamily = new FontFamily(WindowsIcons.FluentFontFamily),
+            FontFamily = new FontFamily(WindowsIcons.RegularFontFamily),
             FontSize = 16,
             Foreground = WindowsSettingsCard.ThemeBrush("TextFillColorSecondaryBrush"),
             VerticalAlignment = VerticalAlignment.Center,

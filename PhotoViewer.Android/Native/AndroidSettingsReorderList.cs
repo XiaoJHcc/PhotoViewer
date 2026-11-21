@@ -350,10 +350,11 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
 
             _handle = new TextView(context)
             {
-                Text = "≡",
+                Text = AndroidIcons.DragHandle,
                 TextSize = 22,
                 Gravity = GravityFlags.Center,
             };
+            _handle.SetTypeface(AndroidUiTheme.IconTypeface(context), TypefaceStyle.Normal);
             _handle.SetTextColor(AndroidUiTheme.TextSecondary);
             _handle.Clickable = true;
             _handle.Focusable = true;
@@ -409,12 +410,13 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
 
             var clear = new TextView(context)
             {
-                Text = "✕",
+                Text = AndroidIcons.Clear,
                 TextSize = 16,
                 Gravity = GravityFlags.Center,
                 Clickable = true,
                 Focusable = true,
             };
+            clear.SetTypeface(AndroidUiTheme.IconTypeface(context), TypefaceStyle.Normal);
             clear.SetTextColor(AndroidUiTheme.TextSecondary);
             clear.SetMinimumWidth((int)AndroidUiTheme.Dp(context, 44));
             clear.Click += (_, _) => _item?.ClearBinding?.Invoke(primary);
@@ -478,7 +480,7 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
             // SETTINGS-01：控制栏功能行在勾选与命令名之间显示命令图标；文件格式与 EXIF 行不带图标。
             var hotkey = item.Hotkey;
             if (hotkey == null) _icon.Visibility = ViewStates.Gone;
-            else _icon.Show(hotkey.Command, hotkey.DisplaySymbol);
+            else _icon.Show(hotkey.Command);
             bool hasSubtitle = !string.IsNullOrWhiteSpace(item.Subtitle);
             _subtitle.Text = item.Subtitle ?? "";
             _subtitle.Visibility = hasSubtitle ? ViewStates.Visible : ViewStates.Gone;

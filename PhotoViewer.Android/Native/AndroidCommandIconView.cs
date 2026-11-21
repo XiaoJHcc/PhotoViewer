@@ -8,7 +8,7 @@ namespace PhotoViewer.Android.Native;
 
 /// <summary>
 /// 设置页控制栏功能行的命令图标（SETTINGS-01 / TOOLBAR-04）：与控制栏同一命令语义与字号。
-/// 评分快捷命令 1–5 画实心星并在星内叠数字（数字取按钮底色），0 画清零叉；其余命令画 uicons 描边字形。
+/// 评分快捷命令 1–5 画实心星并在星内叠数字（数字取按钮底色），0 画清零叉；其余命令画 Material 描边字形。
 /// 字形是 PUA 码位，只用于绘制，不进入读屏。
 /// </summary>
 internal sealed class AndroidCommandIconView : View
@@ -55,11 +55,10 @@ internal sealed class AndroidCommandIconView : View
 
     /// <summary>
     /// 绑定命令图标：评分命令按控制栏语义绘制（0 为清零叉，1–5 为实心星叠数字），
-    /// 其余命令取共享命令目录的字形；命令无字形时用主图菜单的同语义图标（雾天增强）。
+    /// 所有命令统一按命令 ID 查共享语义清单。
     /// </summary>
     /// <param name="command">命令 id。</param>
-    /// <param name="symbol">共享命令目录给出的字形。</param>
-    internal void Show(string? command, string? symbol)
+    internal void Show(string? command)
     {
         _number = null;
         _solidGlyph = false;
@@ -68,22 +67,22 @@ internal sealed class AndroidCommandIconView : View
             string digit = command["SetRating".Length..];
             if (digit == "0")
             {
-                _text = AndroidUiTheme.IconGlyph(DesignTokens.IconClear);
+                _text = AndroidIcons.Clear;
             }
             else
             {
-                _text = AndroidUiTheme.IconGlyph(DesignTokens.IconStarFilled);
+                _text = AndroidIcons.StarFilled;
                 _number = digit;
                 _solidGlyph = true;
             }
         }
-        else if (string.IsNullOrEmpty(symbol) && command == "ToggleEnhance")
+        else if (!string.IsNullOrEmpty(command))
         {
-            _text = AndroidUiTheme.IconGlyph(DesignTokens.IconCommandToggleEnhance);
+            _text = AndroidIcons.ForCommand(command);
         }
         else
         {
-            _text = symbol ?? string.Empty;
+            _text = string.Empty;
         }
         Visibility = string.IsNullOrEmpty(_text) ? ViewStates.Gone : ViewStates.Visible;
         RequestLayout();

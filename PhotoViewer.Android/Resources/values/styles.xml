@@ -18,7 +18,7 @@
   </style>
 
   <!--
-    主屏玻璃按钮：Material 3 深色图标按钮，uicons 字形放在图标槽内按墨迹居中，
+    主屏玻璃按钮：Material 3 深色图标按钮，Material Symbols Rounded 字形放在图标槽内按墨迹居中，
     状态层为按钮材质上的主文字色按 M3 状态不透明度叠加；禁用只降内容、底色与几何不变。
   -->
   <style name="Widget.PhotoViewer.GlassButton" parent="Widget.Material3.Button.IconButton.Filled.Tonal">

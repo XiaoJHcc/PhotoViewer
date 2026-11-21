@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "families": {
+    "windows": {
+      "name": "Fluent UI System Icons",
+      "revision": "6c2c9075cf8952ef48369b2475233b6e9761efed",
+      "regularMetadata": "https://raw.githubusercontent.com/microsoft/fluentui-system-icons/6c2c9075cf8952ef48369b2475233b6e9761efed/fonts/FluentSystemIcons-Regular.json",
+      "filledMetadata": "https://raw.githubusercontent.com/microsoft/fluentui-system-icons/6c2c9075cf8952ef48369b2475233b6e9761efed/fonts/FluentSystemIcons-Filled.json",
+      "regularFont": "https://raw.githubusercontent.com/microsoft/fluentui-system-icons/6c2c9075cf8952ef48369b2475233b6e9761efed/fonts/FluentSystemIcons-Regular.ttf",
+      "filledFont": "https://raw.githubusercontent.com/microsoft/fluentui-system-icons/6c2c9075cf8952ef48369b2475233b6e9761efed/fonts/FluentSystemIcons-Filled.ttf",
+      "license": "https://raw.githubusercontent.com/microsoft/fluentui-system-icons/6c2c9075cf8952ef48369b2475233b6e9761efed/LICENSE"
+    },
+    "android": {
+      "name": "Material Symbols Rounded",
+      "revision": "10ecc14790612ca8fd164e3f4ffe9c16fc50d5b7",
+      "codepoints": "https://raw.githubusercontent.com/google/material-design-icons/10ecc14790612ca8fd164e3f4ffe9c16fc50d5b7/variablefont/MaterialSymbolsRounded%5BFILL%2CGRAD%2Copsz%2Cwght%5D.codepoints",
+      "font": "https://raw.githubusercontent.com/google/material-design-icons/10ecc14790612ca8fd164e3f4ffe9c16fc50d5b7/variablefont/MaterialSymbolsRounded%5BFILL%2CGRAD%2Copsz%2Cwght%5D.ttf",
+      "license": "https://raw.githubusercontent.com/google/material-design-icons/10ecc14790612ca8fd164e3f4ffe9c16fc50d5b7/LICENSE",
+      "axes": {
+        "wght": 400,
+        "GRAD": 0,
+        "opsz": 24
+      }
+    }
+  },
+  "icons": [
+    { "id": "command.open", "title": "打开文件", "group": "命令", "apple": "folder", "windows": "ic_fluent_folder_open_20_regular", "android": "folder_open" },
+    { "id": "command.previous", "title": "上一张", "group": "命令", "apple": "chevron.left", "windows": "ic_fluent_chevron_left_20_regular", "android": "chevron_left" },
+    { "id": "command.next", "title": "下一张", "group": "命令", "apple": "chevron.right", "windows": "ic_fluent_chevron_right_20_regular", "android": "chevron_right" },
+    { "id": "command.exchange", "title": "切换上一张", "group": "命令", "apple": "arrow.left.arrow.right", "windows": "ic_fluent_arrow_swap_20_regular", "android": "swap_horiz" },
+    { "id": "command.fit", "title": "缩放适应", "group": "命令", "apple": "arrow.up.left.and.arrow.down.right", "windows": "ic_fluent_arrow_maximize_20_regular", "android": "open_in_full" },
+    { "id": "command.zoomIn", "title": "放大", "group": "命令", "apple": "plus", "windows": "ic_fluent_add_20_regular", "android": "add" },
+    { "id": "command.zoomOut", "title": "缩小", "group": "命令", "apple": "minus", "windows": "ic_fluent_subtract_20_regular", "android": "remove" },
+    { "id": "command.analysis", "title": "分析栏", "group": "命令", "apple": "square.grid.2x2", "windows": "ic_fluent_grid_20_regular", "android": "grid_view" },
+    { "id": "command.enhance", "title": "雾天增强", "group": "命令", "apple": "wand.and.stars", "windows": "ic_fluent_dark_theme_20_regular", "android": "contrast" },
+
+    { "id": "menu.openFile", "title": "打开单个文件", "group": "菜单", "apple": "doc", "windows": "ic_fluent_document_20_regular", "android": "description" },
+    { "id": "menu.filmstrip", "title": "胶片栏", "group": "菜单", "apple": "rectangle.stack", "windows": "ic_fluent_image_multiple_20_regular", "android": "photo_library" },
+    { "id": "menu.control", "title": "控制栏", "group": "菜单", "apple": "slider.horizontal.3", "windows": "ic_fluent_options_20_regular", "android": "tune" },
+    { "id": "menu.exif", "title": "EXIF", "group": "菜单", "apple": "text.below.photo", "windows": "ic_fluent_document_text_20_regular", "android": "page_info" },
+    { "id": "menu.tools", "title": "工具", "group": "菜单", "apple": "wrench.and.screwdriver", "windows": "ic_fluent_wrench_screwdriver_20_regular", "android": "handyman" },
+    { "id": "menu.settings", "title": "设置", "group": "菜单", "apple": "gearshape", "windows": "ic_fluent_settings_20_regular", "android": "settings" },
+    { "id": "menu.quit", "title": "退出", "group": "菜单", "apple": "power", "windows": "ic_fluent_power_20_regular", "android": "power_settings_new" },
+
+    { "id": "filter.entry", "title": "筛选", "group": "筛选", "apple": "line.3.horizontal.decrease", "windows": "ic_fluent_filter_20_regular", "android": "filter_list" },
+    { "id": "filter.more", "title": "更多", "group": "筛选", "apple": "ellipsis", "windows": "ic_fluent_more_horizontal_20_regular", "android": "more_horiz" },
+    { "id": "filter.sortName", "title": "按文件名", "group": "筛选", "apple": "textformat", "windows": "ic_fluent_text_font_20_regular", "android": "text_format" },
+    { "id": "filter.sortDate", "title": "按拍摄时间", "group": "筛选", "apple": "camera", "windows": "ic_fluent_camera_20_regular", "android": "photo_camera" },
+    { "id": "filter.sortSize", "title": "按文件大小", "group": "筛选", "apple": "internaldrive", "windows": "ic_fluent_hard_drive_20_regular", "android": "hard_drive" },
+    { "id": "filter.ascending", "title": "升序", "group": "筛选", "apple": "arrow.up", "windows": "ic_fluent_arrow_up_20_regular", "android": "arrow_upward" },
+    { "id": "filter.descending", "title": "降序", "group": "筛选", "apple": "arrow.down", "windows": "ic_fluent_arrow_down_20_regular", "android": "arrow_downward" },
+    { "id": "filter.all", "title": "全部星级", "group": "筛选", "apple": "square.grid.3x3", "windows": "ic_fluent_grid_20_regular", "android": "apps" },
+    { "id": "filter.unrated", "title": "无星级", "group": "筛选", "apple": "star.slash", "windows": "ic_fluent_star_dismiss_20_regular", "android": "block" },
+    { "id": "filter.rating1", "title": "一星筛选", "group": "筛选", "apple": "1.circle", "windows": "ic_fluent_number_circle_1_20_regular", "android": "counter_1" },
+    { "id": "filter.rating2", "title": "二星筛选", "group": "筛选", "apple": "2.circle", "windows": "ic_fluent_number_circle_2_20_regular", "android": "counter_2" },
+    { "id": "filter.rating3", "title": "三星筛选", "group": "筛选", "apple": "3.circle", "windows": "ic_fluent_number_circle_3_20_regular", "android": "counter_3" },
+    { "id": "filter.rating4", "title": "四星筛选", "group": "筛选", "apple": "4.circle", "windows": "ic_fluent_number_circle_4_20_regular", "android": "counter_4" },
+    { "id": "filter.rating5", "title": "五星筛选", "group": "筛选", "apple": "5.circle", "windows": "ic_fluent_number_circle_5_20_regular", "android": "counter_5" },
+    { "id": "filter.rejected", "title": "已拒绝", "group": "筛选", "apple": "xmark.circle", "windows": "ic_fluent_dismiss_circle_20_regular", "android": "cancel" },
+    { "id": "filter.conflict", "title": "筛选评分冲突", "group": "筛选", "apple": "exclamationmark.triangle", "windows": "ic_fluent_warning_20_regular", "android": "warning" },
+
+    { "id": "rating.clear", "title": "清零评分", "group": "评分", "apple": "xmark", "windows": "ic_fluent_dismiss_20_regular", "android": "close" },
+    { "id": "rating.star", "title": "描边星", "group": "评分", "apple": "star", "windows": "ic_fluent_star_20_regular", "android": "star" },
+    { "id": "rating.starFilled", "title": "实心星", "group": "评分", "apple": "star.fill", "windows": "ic_fluent_star_20_filled", "android": "star", "androidFill": 1 },
+    { "id": "rating.warning", "title": "评分冲突", "group": "评分", "apple": "exclamationmark.triangle.fill", "windows": "ic_fluent_warning_20_filled", "android": "warning", "androidFill": 1 },
+
+    { "id": "common.check", "title": "勾选", "group": "通用", "apple": "checkmark", "windows": "ic_fluent_checkmark_20_regular", "android": "check" },
+    { "id": "common.chevronDown", "title": "下拉箭头", "group": "通用", "apple": "chevron.down", "windows": "ic_fluent_chevron_down_20_regular", "android": "expand_more" },
+    { "id": "common.photoPlaceholder", "title": "照片占位", "group": "通用", "apple": "photo", "windows": "ic_fluent_image_20_regular", "android": "image" },
+
+    { "id": "settings.file", "title": "文件设置", "group": "设置", "apple": "folder", "windows": "ic_fluent_folder_20_regular", "android": "folder" },
+    { "id": "settings.preview", "title": "预览设置", "group": "设置", "apple": "photo", "windows": "ic_fluent_image_20_regular", "android": "photo" },
+    { "id": "settings.control", "title": "控制设置", "group": "设置", "apple": "keyboard", "windows": "ic_fluent_keyboard_20_regular", "android": "keyboard" },
+    { "id": "settings.exif", "title": "EXIF 设置", "group": "设置", "apple": "text.below.photo", "windows": "ic_fluent_document_text_20_regular", "android": "page_info" },
+    { "id": "settings.ai", "title": "AI 设置", "group": "设置", "apple": "sparkles", "windows": "ic_fluent_bot_sparkle_20_regular", "android": "neurology" },
+    { "id": "settings.add", "title": "添加", "group": "设置", "apple": "plus", "windows": "ic_fluent_add_20_regular", "android": "add" },
+    { "id": "settings.remove", "title": "删除", "group": "设置", "apple": "minus", "windows": "ic_fluent_subtract_20_regular", "android": "remove" },
+    { "id": "settings.drag", "title": "排序把手", "group": "设置", "apple": "line.3.horizontal", "windows": "ic_fluent_re_order_dots_vertical_20_regular", "android": "drag_handle" },
+
+    { "id": "tools.exif", "title": "EXIF 工具", "group": "工具", "apple": "text.below.photo", "windows": "ic_fluent_document_text_20_regular", "android": "page_info" },
+    { "id": "tools.stats", "title": "统计工具", "group": "工具", "apple": "chart.bar", "windows": "ic_fluent_chart_multiple_20_regular", "android": "bar_chart" },
+    { "id": "tools.dino", "title": "DINO 诊断", "group": "工具", "apple": "brain", "windows": "ic_fluent_brain_circuit_20_regular", "android": "neurology" },
+    { "id": "tools.cv", "title": "CV 诊断", "group": "工具", "apple": "viewfinder", "windows": "ic_fluent_scan_20_regular", "android": "center_focus_strong" },
+
+    { "id": "navigation.back", "title": "返回", "group": "导航", "apple": "chevron.left", "windows": "ic_fluent_chevron_left_20_regular", "android": "chevron_left" },
+    { "id": "navigation.forward", "title": "前进", "group": "导航", "apple": "chevron.right", "windows": "ic_fluent_chevron_right_20_regular", "android": "chevron_right" },
+    { "id": "navigation.close", "title": "关闭", "group": "导航", "apple": "xmark", "windows": "ic_fluent_dismiss_20_regular", "android": "close" }
+  ]
+}

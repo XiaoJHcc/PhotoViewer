@@ -74,8 +74,8 @@ internal sealed class WindowsToolsWindow
             IsPaneToggleButtonVisible = false,
             IconSource = new FontIconSource
             {
-                Glyph = WindowsLayout.ToolsWindowGlyph,
-                FontFamily = new FontFamily(WindowsIcons.FluentFontFamily),
+                Glyph = WindowsIcons.ToolsGlyph,
+                FontFamily = new FontFamily(WindowsIcons.RegularFontFamily),
                 FontSize = 16,
             },
         };
@@ -122,7 +122,11 @@ internal sealed class WindowsToolsWindow
             var item = new NavigationViewItem
             {
                 Content = Categories[index].Title,
-                Icon = new FontIcon { Glyph = WindowsIcons.ForToolCategory(Categories[index].Key) },
+                Icon = new FontIcon
+                {
+                    Glyph = WindowsIcons.ForToolCategory(Categories[index].Key),
+                    FontFamily = new FontFamily(WindowsIcons.RegularFontFamily),
+                },
                 Tag = Categories[index].Page,
             };
             _navItems.Add(item);

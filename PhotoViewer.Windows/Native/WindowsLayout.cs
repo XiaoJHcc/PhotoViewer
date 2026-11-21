@@ -552,9 +552,6 @@ internal static class WindowsLayout
     /// <summary>照片统计页通配符输入框高度(Win11 控件高度)。</summary>
     public const double ToolsPatternBoxHeight = 32;
 
-    /// <summary>工具窗口标题栏图标(Segoe Fluent Icons 扳手)。</summary>
-    public const string ToolsWindowGlyph = "\uE90F";
-
     /// <summary>把 <c>0xAARRGGBB</c> 设计令牌转换为 WinUI 颜色。</summary>
     /// <param name="argb">令牌颜色。</param>
     /// <returns>WinUI 颜色。</returns>

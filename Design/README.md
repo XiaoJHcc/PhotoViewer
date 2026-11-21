@@ -10,6 +10,7 @@
 |---|---|---|
 | `spec/` | L0–L2 | 原则、分区、行为规则（按模块分文件） |
 | `tokens.json` | L3 | 尺寸、间距、动效、颜色语义、字号层级等数值的唯一来源；由 `python3 Tools/generate-design-tokens.py` 生成 `PhotoViewer/Core/Design/DesignTokens.g.cs`（共享程序集，四端与共享会话均可引用）与 Web 参考壳的 `PhotoViewer.Web/src/tokens.g.js`；`--check` 校验是否最新 |
+| `icons.json` | L3 | Apple / Windows / Android 的语义图标与固定上游映射；由 `python3 Tools/generate-icons.py` 生成共享码位表、随包字体子集和三端对比报告；`--check` 校验覆盖与产物一致性 |
 | `platforms.md` | L4 | 各平台控件选型、实现入口与已登记的平台差异 |
 | `status.md` | — | 按设计 ID 记录四端实现与验收状态；规则正文不写状态 |
 | `baseline/avalonia/` | — | 冻结的旧壳几何与截图，只读，仅供追溯 |
@@ -32,7 +33,7 @@
 | 主窗口分区结构、几何、占位、边距、方形约束、动效参数 | 必须对齐 tokens 与 Web 参考壳导出的几何 |
 | 主窗口内的小型控件（下拉、菜单、按钮外观、tooltip、滚动条） | 功能与操作必须一致；外观可以原生。自绘的主屏按钮（Web）按上述对标链以 macOS 原生壳为外观参照（TOOLBAR-10）；自绘的下拉、菜单与 tooltip（Web、Android 自绘弹层）以旧壳 Avalonia Fluent 深色外观为准，数值见 `dropdown.*`、`popup.*`、`menu.*`、`tooltip.*` 令牌 |
 | 设置窗口、工具窗口 | 分类、项目、行为与持久化必须一致；工具窗口的导航与容器与该平台设置统一（macOS 原生侧栏、iPad 分组列表 + 设置同款 sheet、Windows 常驻分类、Android Material 浮层）；视觉应当遵循各平台规范（macOS 系统设置、Win11 设置、iOS 设置、Material 3） |
-| 主屏图标 | 语义与字形必须一致：四端与 Web 共用 `icon.font`（uicons Regular Rounded，描边）/ `icon.fontSolid`（uicons Solid Straight，只用于实心星）与 `icon.*` 码位，尺寸取各控件的 glyph 字号令牌；平台系统图标集只能作为已登记的平台差异 |
+| 主屏图标 | 语义必须一致，视觉在各平台图标族内自洽：Apple / Windows / Android 共用 `icons.json` 的语义清单，分别使用 SF Symbols / Fluent UI System Icons / Material Symbols Rounded；Web 使用 `icon.font` / `icon.fontSolid` 与 `icon.*` 码位。尺寸取各控件的 glyph 字号令牌，规则见 ICON-01–05 |
 | 色彩、画质、物理 100% | 必须一致，由验收素材与色卡判定，不由 Web 参考壳判定（其照片为合成数据） |
 
 悬停、按下、禁用与焦点反馈属于 L2 行为（TOOLBAR-10）：四端都不得因状态切换产生布局抖动、残留旧态或裁切内容。原生控件可以使用系统状态色与轻量状态动效（L4），但禁用必须仍可辨、不近似隐藏；自绘控件按 `color.*` / `toolbar.*` 令牌绘制，圆角不与系统 bezel 或系统描边裁切叠加。
@@ -67,6 +68,7 @@
 | `TOOLS` | 工具窗口 |
 | `SCOPE` | 功能边界与隐式计算约束 |
 | `EDITION` | 标准版 / AI 版的能力边界、入口差异、独立计算门控与版本切换兼容 |
+| `ICON` | 图标语义、平台图标族、资产生成、对比与完整性验收 |
 
 ## 5. 权威顺序
 

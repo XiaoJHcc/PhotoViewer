@@ -62,9 +62,9 @@
     </ItemGroup>
 
     <ItemGroup>
-        <!-- 控制栏命令图标沿用共享 uicons 字体，随 APK 打包；实心字用于评分快捷命令的星底。 -->
-        <AndroidAsset Include="..\PhotoViewer\Assets\Fonts\uicons-regular-rounded.ttf" Link="Assets\Fonts\%(Filename)%(Extension)" />
-        <AndroidAsset Include="..\PhotoViewer\Assets\Fonts\uicons-solid-straight.ttf" Link="Assets\Fonts\%(Filename)%(Extension)" />
+        <!-- 业务图标统一使用 Design/icons.json 生成的 Material Symbols Rounded 子集。 -->
+        <AndroidAsset Include="..\PhotoViewer\Assets\Icons\MaterialSymbolsRounded-*.ttf" Link="Assets\Icons\%(Filename)%(Extension)" />
+        <AndroidAsset Include="..\PhotoViewer\Assets\Icons\MaterialSymbols-LICENSE.txt" Link="Assets\Icons\MaterialSymbols-LICENSE.txt" />
     </ItemGroup>
 
     <ItemGroup>

@@ -51,8 +51,8 @@
 
 - 宽形态：内容 = 设置中"在控制栏显示"的命令，按用户排序；壳不写死第二份命令列表，也不因按钮少而补占位按钮。手机形态按 SETTINGS-08 取生效命令，按顺序并列在同一个胶囊内（竖屏从左到右，横屏从上到下）。每段是独立可聚焦、可点按、带读屏名称的动作按钮；不使用表达互斥选择的分段控件。零项移除整组，一项为圆形，两至三项共用胶囊。
 - 宽形态命令圆按钮 `shell.glass.button.size`（44）见方，间距 `toolbar.command.spacing`（8）；手机形态胶囊内段间无额外间距，每段尺寸取 `shell.phone.command.size`。两者图标字号均取 `toolbar.command.glyph.fontSize`（18）；按钮尺寸不随名称或文字长度拉宽。
-- 图标统一取 `icon.font`（uicons Regular Rounded，`PhotoViewer/Assets/Fonts/uicons-regular-rounded.ttf`）的 `icon.command.*` 码位，四端与 Web 同一字形，居中绘制于命令按钮内，颜色取 `color.text.primary`（自绘禁用按 TOOLBAR-10 降内容强调；原生控件按 TOOLBAR-10 使用系统禁用外观）。平台改用系统图标集（SF Symbols、Segoe Fluent Icons 等）须登记为平台差异，且语义须与下条一致。
-- 图标语义固定，不得用容易误读的抽象字形替代：打开文件用**文件夹**；上一张/下一张用单向箭头；交换用双向箭头；缩放适应用**向外双对角箭头**（“回到窗口大小”），不用带方框的适配图标；放大/缩小用**纯加号/减号**，不用放大镜；雾天增强用**对比度半圆**，不用闪电/加速类字形。
+- Apple / Windows / Android 按 `Design/icons.json` 的 `command.*` 语义取 SF Symbols / Fluent UI System Icons / Material Symbols Rounded，Web 取 `icon.font` 的 `icon.command.*` 码位；平台映射、随包资产与完整性规则见 [ICON](icons.md)。图标居中绘制于命令按钮内，颜色取 `color.text.primary`（自绘禁用按 TOOLBAR-10 降内容强调；原生控件按 TOOLBAR-10 使用系统禁用外观）。
+- 图标语义固定，不得用容易误读的抽象字形替代：打开文件用**文件夹**；上一张/下一张用单向箭头；交换用双向箭头；缩放适应用**向外双对角箭头**（“回到窗口大小”），不用带方框的适配图标；放大/缩小用**纯加号/减号**，不用放大镜；雾天增强在各端使用与“明暗对比”语义一致的半圆或系统增强符号，不用闪电/加速类字形。
 - 桌面悬停提示包含**命令名 + 实际主/次绑定**，格式 `命令名（主 / 次）`，按键用可读键名（数字键 `2`、符号键 `;` `=` `` ` `` 等），不得出现 `D2`、`Oem3` 这类枚举名；未设置的槽省略，主次相同只显示一次，两个槽都未设置时只显示命令名，不能出现"未设置"字样，不使用点号分隔命令名与绑定。移动端的命令读屏名称使用同一文案。绑定改变后提示立即更新。提示相对指针偏移 `tooltip.offset.x` / `tooltip.offset.y`，超过宿主时向内夹取；等待 `motion.tooltip.delay`，从一个提示连续划到下一个控件时改为 `motion.tooltip.chainDelay`。直接触控没有悬停；连接键鼠外设后可在宽形态的设置页查看与编辑绑定（INPUT-13）。四端都不做长按浮层。
 - 评分快捷命令（`SetRating0`–`SetRating5`）显示在命令组时，1–5 为**星形内叠数字**：实心 `icon.starFilled` 星形按 `toolbar.command.glyph.fontSize` 画在按钮中心，数字 `toolbar.rating.digit.fontSize`（9）半粗、取按钮底色，叠在星形中心；0 为清零叉 `icon.clear`。0 星与 1–5 星必须可辨。图标字体无法叠字的平台可以只画数字（0=叉），须登记为平台差异。
 - 当前壳未实现、或按 SCOPE-01 未开放的命令不生成按钮，也不显示禁用死按钮。

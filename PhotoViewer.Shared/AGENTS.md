@@ -31,5 +31,6 @@
 | SimilarityPanelGeometry.cs | 相似聚类面板几何：MinWidth 106 / MinHeight 154、外边距 4、列表内边距 8、列布局面板宽（卡片 96 + 内边距 + 描边）与行布局「从胶片栏右侧切出」的宽度规则（`RowWidth(hasItems, itemCount, paneWidth, dockWidth = 0)`：卡片数 × 96 + `sim.list.padding` + 2 × 描边 + 停靠区宽，封顶可用宽度一半）。 |
 | ExifTableGeometry.cs | EXIF 详情页 7 列行几何：Tag ID 60 点、其余 2:2:3、列间 1 点分隔线、单元格内边距 10/8、值列最多 3 行；给出卡片宽度下的列宽与可用文本宽。 |
 | InputCommandMap.cs | 平台中立的「手势 → 用户命令」查询（`CommandForGesture`）、命令是否登记（`IsCommandKnown`：唯一来源 `SettingsCatalog.Commands`，各平台输入派发的闸门；SF Symbols 等图标表只负责 UI，不得充当命令白名单）与命令元数据 `IsRepeatable`（INPUT-05：仅上一张/下一张/预设缩放可按住重复）。Apple 的 `AppleInputMapping` 与 Android 的 `AndroidInputMapping` 各自把原生事件解包成共享 `AppGesture`，再共用这一张用户主/次绑定表。 |
+| IconCatalog.g.cs | 由 `Design/icons.json` 生成的语义 ID、SF Symbols 名称与 Fluent / Material 码位及填充状态；只含纯 C# 静态表，不创建平台图标对象。上游版本、字体子集和三端对比由 `Tools/generate-icons.py` 维护。 |
 | ScreenForm.cs | SHELL-07 主屏形态判定：`ScreenFormResolver.Resolve` 输入两轴尺寸类别、窗口宽高、设备类型、用户布局模式与平台能力，输出宽 / 手机竖屏 / 手机横屏；判定表见 spec。 |
 | PhoneScreenLayout.cs | SHELL-08–SHELL-12 手机槽位几何：`PhoneScreenLayout.Compute` 输入方向归一后的系统安全区、贴角带探测值、栏位显隐、EXIF 项数、是否显示评分及生效的可选命令数和按钮边长，输出竖横屏槽位、栏背景、胶片条两端停靠留白、主图避让与 `ExifItems`；关闭评分时评分槽与组间距一并释放，刘海在右整体镜像。横屏刘海侧列的列宽、内容末端锚点与列表 X 取 `FilmSideGeometry`，入口合体常驻、上下张仅胶片栏与显示开关同时满足时出现；`TopRowY` 给出竖屏顶行位置，`LeadStripWidth` 只作刘海侧列宽、`ControlStripWidth` 只作控制区域宽，宿主在入口合体（88 × 全高）与控制内容列（按 `ControlContentWidth` × 全高）的实际范围上取圆角探测值。 |

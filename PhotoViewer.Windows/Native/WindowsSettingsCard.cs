@@ -233,8 +233,8 @@ internal static class WindowsSettingsCard
     /// <returns>把手字形</returns>
     public static TextBlock DragHandle() => new()
     {
-        Text = "\uE76F",
-        FontFamily = new FontFamily(WindowsIcons.FluentFontFamily),
+        Text = WindowsIcons.DragHandleGlyph,
+        FontFamily = new FontFamily(WindowsIcons.RegularFontFamily),
         FontSize = 12,
         Foreground = ThemeBrush("TextFillColorTertiaryBrush"),
         VerticalAlignment = VerticalAlignment.Center,
@@ -257,7 +257,7 @@ internal static class WindowsSettingsCard
     };
 
     /// <summary>透明底的图标按钮(行内删除/添加用)。</summary>
-    /// <param name="glyph">Segoe Fluent Icons 字形</param>
+    /// <param name="glyph">随包 Fluent UI System Icons 字形</param>
     /// <param name="tooltip">悬停提示</param>
     /// <param name="action">点击动作</param>
     /// <returns>按钮</returns>
@@ -275,6 +275,7 @@ internal static class WindowsSettingsCard
             Content = new FontIcon
             {
                 Glyph = glyph,
+                FontFamily = new FontFamily(WindowsIcons.RegularFontFamily),
                 FontSize = 14,
                 Foreground = ThemeBrush("TextFillColorSecondaryBrush"),
                 HorizontalAlignment = HorizontalAlignment.Center,

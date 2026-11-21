@@ -45,7 +45,7 @@ internal sealed class AndroidBarScrim : View
 }
 
 /// <summary>
-/// uicons 字形图标：按字形墨迹在自身边界内居中，可作为 <see cref="MaterialButton"/> 的图标槽（评分快捷命令另叠 1–5 数字）。
+/// Material Symbols Rounded 字形图标：按字形墨迹在自身边界内居中，可作为 <see cref="MaterialButton"/> 的图标槽（评分快捷命令另叠 1–5 数字）。
 /// 着色取 Material 的 <c>iconTint</c>（含禁用态），绘制时按当前状态解析到画笔。
 /// </summary>
 internal sealed class AndroidGlyphDrawable : Drawable
@@ -60,7 +60,7 @@ internal sealed class AndroidGlyphDrawable : Drawable
 
     /// <summary>建一个字形图标。</summary>
     /// <param name="context">宿主上下文。</param>
-    /// <param name="glyph">uicons 字形。</param>
+    /// <param name="glyph">Material Symbols Rounded 字形。</param>
     /// <param name="solid">是否取实心图标字体（评分快捷命令的星底）。</param>
     /// <param name="digit">叠在字形中心的数字（评分快捷命令 1–5；null 表示不叠）。</param>
     public AndroidGlyphDrawable(Context context, string glyph, bool solid, string? digit, int? sizePx = null)
@@ -148,7 +148,7 @@ internal sealed class AndroidGlyphDrawable : Drawable
 /// <summary>
 /// 玻璃圆按钮（SHELL-12）：Material 3 图标按钮样式 <c>Widget.PhotoViewer.GlassButton</c> 承载常态底材、
 /// 状态层与涟漪；常态底材取 <c>color.toolbar.button.tint</c> 与 <c>shell.glass.button.tint.opacity</c> 的同一色层，
-/// uicons 字形放在 Material 图标槽并按墨迹居中，尺寸固定 <c>shell.glass.button.size</c>（44），
+/// Material Symbols Rounded 字形放在 Material 图标槽并按墨迹居中，尺寸固定 <c>shell.glass.button.size</c>（44），
 /// 不随内容拉宽；禁用只把内容降到 <c>color.toolbar.disabled.content.alpha</c>，底色与几何不变。
 /// </summary>
 internal sealed class AndroidGlassButton : MaterialButton
@@ -162,15 +162,15 @@ internal sealed class AndroidGlassButton : MaterialButton
 
     /// <summary>建一个图标按钮。</summary>
     /// <param name="context">宿主上下文。</param>
-    /// <param name="glyph">uicons 字形或 <c>U+</c> 码位令牌；<paramref name="iconFont"/> 为 false 时是普通文字。</param>
+    /// <param name="glyph">Material Symbols Rounded 字形；<paramref name="iconFont"/> 为 false 时是普通文字。</param>
     /// <param name="description">读屏名称（与按钮语义一致）。</param>
     /// <param name="solid">是否取实心图标字体（评分快捷命令的星底）。</param>
     /// <param name="number">评分快捷命令的星级（1–5 叠在星形中心，"0" 为零清叉、不叠数字；null 表示非评分命令）。</param>
-    /// <param name="iconFont">是否用 uicons 字形绘制（false 为普通文字入口，如相似聚类开关）。</param>
+    /// <param name="iconFont">是否用 Material Symbols Rounded 字形绘制（false 为普通文字入口，如相似聚类开关）。</param>
     public AndroidGlassButton(Context context, string glyph, string description, bool solid = false,
         string? number = null, bool iconFont = true) : base(context, null, Resource.Attribute.pvGlassButtonStyle)
     {
-        _glyph = iconFont && glyph.StartsWith("U+", StringComparison.Ordinal) ? AndroidUiTheme.IconGlyph(glyph) : glyph;
+        _glyph = glyph;
         _number = number;
         _iconFont = iconFont;
         ContentDescription = description;
@@ -275,7 +275,7 @@ internal sealed class AndroidGlassButton : MaterialButton
 }
 
 /// <summary>胶囊内一段：字形、读屏名称、命令标识与可用性。</summary>
-/// <param name="Glyph">uicons 字形或 <c>U+</c> 码位令牌。</param>
+/// <param name="Glyph">Material Symbols Rounded 字形。</param>
 /// <param name="Description">读屏名称（与宽形态命令同源）。</param>
 /// <param name="Command">共享命令标识；null 表示纯动作段（筛选/更多、上下张）。</param>
 /// <param name="Enabled">是否可用（无照片时除打开文件外禁用）。</param>
@@ -762,20 +762,19 @@ internal sealed class AndroidRatingControl : MaterialCardView
             {
                 _conflictPaint.TextSize = AndroidUiTheme.Sp(Context!, DesignTokens.ToolbarRatingGlyphFontSize);
                 _conflictPaint.Alpha = alpha;
-                AndroidUiTheme.DrawGlyphCentered(canvas, AndroidUiTheme.IconGlyph(DesignTokens.IconWarning), _conflictPaint, x, y);
+                AndroidUiTheme.DrawGlyphCentered(canvas, AndroidIcons.Warning, _conflictPaint, x, y);
                 return;
             }
             _starClear.TextSize = AndroidUiTheme.Sp(Context!, DesignTokens.ToolbarRatingClearGlyphFontSize);
             _starClear.Alpha = alpha;
-            AndroidUiTheme.DrawGlyphCentered(canvas, AndroidUiTheme.IconGlyph(DesignTokens.IconClear), _starClear, x, y);
+            AndroidUiTheme.DrawGlyphCentered(canvas, AndroidIcons.Clear, _starClear, x, y);
             return;
         }
         bool active = value <= (_ratingGesture?.Preview ?? _rating);
         var paint = active ? _starActive : _starInactive;
         paint.TextSize = AndroidUiTheme.Sp(Context!, glyphSize);
         paint.Alpha = alpha;
-        AndroidUiTheme.DrawGlyphCentered(canvas, AndroidUiTheme.IconGlyph(
-            active ? DesignTokens.IconStarFilled : DesignTokens.IconStar), paint, x, y);
+        AndroidUiTheme.DrawGlyphCentered(canvas, active ? AndroidIcons.StarFilled : AndroidIcons.Star, paint, x, y);
     }
 
     /// <summary>

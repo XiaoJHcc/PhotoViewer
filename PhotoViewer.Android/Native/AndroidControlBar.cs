@@ -313,17 +313,15 @@ internal sealed class AndroidControlBar : FrameLayout
         => IsRatingCommand(command) ? command[9..] : null;
 
     /// <summary>
-    /// 命令实际绘制的字形（TOOLBAR-04）：评分 1–5 为实心星、0 为零清叉，其余取共享命令目录的
-    /// <see cref="SettingsViewModel.HotkeyItem.DisplaySymbol"/>；控制栏与手机可选命令组共用同一语义。
+    /// 命令实际绘制的字形（TOOLBAR-04）：评分 1–5 为实心星、0 为零清叉，
+    /// 其余取共享语义清单；控制栏与手机可选命令组共用同一映射。
     /// </summary>
     /// <param name="hotkey">共享快捷键项。</param>
-    /// <returns>uicons 字形。</returns>
+    /// <returns>Material Symbols Rounded 字形。</returns>
     internal static string CommandGlyph(SettingsViewModel.HotkeyItem hotkey)
     {
-        if (!IsRatingCommand(hotkey.Command)) return hotkey.DisplaySymbol ?? string.Empty;
-        return RatingNumber(hotkey.Command) == "0"
-            ? AndroidUiTheme.IconGlyph(DesignTokens.IconClear)
-            : AndroidUiTheme.IconGlyph(DesignTokens.IconStarFilled);
+        if (!IsRatingCommand(hotkey.Command)) return AndroidIcons.ForCommand(hotkey.Command);
+        return RatingNumber(hotkey.Command) == "0" ? AndroidIcons.Clear : AndroidIcons.StarFilled;
     }
 
     /// <summary>

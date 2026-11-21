@@ -1,203 +1,131 @@
 using System;
 using System.Collections.Generic;
+using PhotoViewer.Shared;
 
 namespace PhotoViewer.Windows.Native;
 
 /// <summary>
-/// 命令 → Windows 原生图标字形。
-/// 与 macOS 的 SF Symbols 映射同理:平台层维护"命令 → 图标"的显式表,共享层只给命令标识,
-/// 不修改快捷键 JSON 里的私用区字码。
+/// 业务语义 → Fluent UI System Icons 字形。窗口 chrome 仍使用系统 Segoe 字形。
+/// 本表只负责显示；命令能否执行由共享 InputCommandMap 判定。
 /// </summary>
 internal static class WindowsIcons
 {
-    /// <summary>Windows 11 图标字体。带 MDL2 回退链,旧系统缺 Fluent 字体时不至于出现空框。</summary>
+    /// <summary>Windows 窗口按钮的系统图标字体。</summary>
     public const string FluentFontFamily = "Segoe Fluent Icons,Segoe MDL2 Assets";
 
-    /// <summary>已评分星形字形。</summary>
-    public const string StarGlyph = "\uE735";
+    /// <summary>随包 Fluent Regular 字体。</summary>
+    public const string RegularFontFamily = "ms-appx:///Assets/Icons/FluentSystemIcons-Regular.ttf#FluentSystemIcons-Regular";
 
-    /// <summary>清零评分字形。</summary>
-    public const string ClearGlyph = "\uE711";
+    /// <summary>随包 Fluent Filled 字体。</summary>
+    public const string FilledFontFamily = "ms-appx:///Assets/Icons/FluentSystemIcons-Filled.ttf#FluentSystemIcons-Filled";
 
-    /// <summary>星级冲突警示三角字形(RATING-04,与 <c>icon.warning</c> 同义)。</summary>
-    public const string WarningGlyph = "\uE7BA";
+    public static string StarGlyph => IconCatalog.WindowsGlyph(IconCatalog.RatingStarFilled);
+    public static string StarOutlineGlyph => IconCatalog.WindowsGlyph(IconCatalog.RatingStar);
+    public static string ClearGlyph => IconCatalog.WindowsGlyph(IconCatalog.RatingClear);
+    public static string WarningGlyph => IconCatalog.WindowsGlyph(IconCatalog.RatingWarning);
 
-    // SHELL-02：自绘窗口按钮字形（全屏/最小化/最大化/还原/关闭）。
-
-    /// <summary>全屏字形。</summary>
+    // SHELL-02：自绘窗口按钮保留系统字形。
     public const string FullScreenGlyph = "\uE740";
-
-    /// <summary>退出全屏字形。</summary>
     public const string ExitFullScreenGlyph = "\uE73F";
-
-    /// <summary>最小化字形。</summary>
     public const string MinimizeGlyph = "\uE921";
-
-    /// <summary>最大化字形。</summary>
     public const string MaximizeGlyph = "\uE922";
-
-    /// <summary>还原字形（最大化态）。</summary>
     public const string RestoreGlyph = "\uE923";
-
-    /// <summary>关闭字形。</summary>
     public const string CloseGlyph = "\uE8BB";
 
-    // MENU-06：主图菜单的语义前置图标(系统 Fluent 字形,语义与 icon.menu.* 一一对应)。
+    public static string DocumentGlyph => IconCatalog.WindowsGlyph(IconCatalog.MenuOpenFile);
+    public static string FolderGlyph => IconCatalog.WindowsGlyph(IconCatalog.CommandOpen);
+    public static string PhotosGlyph => IconCatalog.WindowsGlyph(IconCatalog.MenuFilmstrip);
+    public static string AnalysisGridGlyph => IconCatalog.WindowsGlyph(IconCatalog.CommandAnalysis);
+    public static string SliderGlyph => IconCatalog.WindowsGlyph(IconCatalog.MenuControl);
+    public static string ExifGlyph => IconCatalog.WindowsGlyph(IconCatalog.MenuExif);
+    public static string ContrastGlyph => IconCatalog.WindowsGlyph(IconCatalog.CommandEnhance);
+    public static string ToolsGlyph => IconCatalog.WindowsGlyph(IconCatalog.MenuTools);
+    public static string SettingsGlyph => IconCatalog.WindowsGlyph(IconCatalog.MenuSettings);
+    public static string SortDateGlyph => IconCatalog.WindowsGlyph(IconCatalog.FilterSortDate);
+    public static string SortSizeGlyph => IconCatalog.WindowsGlyph(IconCatalog.FilterSortSize);
+    public static string UpGlyph => IconCatalog.WindowsGlyph(IconCatalog.FilterAscending);
+    public static string DownGlyph => IconCatalog.WindowsGlyph(IconCatalog.FilterDescending);
+    public static string SelectAllGlyph => IconCatalog.WindowsGlyph(IconCatalog.FilterAll);
+    public static string UnratedGlyph => IconCatalog.WindowsGlyph(IconCatalog.FilterUnrated);
+    public static string BlockedGlyph => IconCatalog.WindowsGlyph(IconCatalog.FilterRejected);
+    public static string RemoveGlyph => IconCatalog.WindowsGlyph(IconCatalog.SettingsRemove);
+    public static string DragHandleGlyph => IconCatalog.WindowsGlyph(IconCatalog.SettingsDrag);
+    public static string PhotoPlaceholderGlyph => IconCatalog.WindowsGlyph(IconCatalog.CommonPhotoPlaceholder);
 
-    /// <summary>打开文件:文档字形(<c>icon.menu.openFile</c>)。</summary>
-    public const string DocumentGlyph = "\uE8A5";
-
-    /// <summary>打开文件夹:文件夹字形(<c>icon.menu.openFolder</c>)。</summary>
-    public const string FolderGlyph = "\uE8B7";
-
-    /// <summary>胶片栏:照片/照片组字形(<c>icon.menu.filmstrip</c>)。</summary>
-    public const string PhotosGlyph = "\uE8B9";
-
-    /// <summary>分析栏:方格网字形(<c>icon.menu.analysis</c>)。</summary>
-    public const string AnalysisGridGlyph = "\uE8A9";
-
-    /// <summary>控制栏:滑杆字形(<c>icon.menu.control</c>)。</summary>
-    public const string SliderGlyph = "\uE9E9";
-
-    /// <summary>雾天增强:对比度半圆字形(与 <c>icon.command.toggleEnhance</c> 同义)。</summary>
-    public const string ContrastGlyph = "\uE7A1";
-
-    /// <summary>工具:扳手字形(<c>icon.menu.tools</c>)。</summary>
-    public const string ToolsGlyph = "\uE90F";
-
-    /// <summary>设置:齿轮字形(<c>icon.menu.settings</c>)。</summary>
-    public const string SettingsGlyph = "\uE713";
-
-    // FILTER-08：筛选菜单项的语义前置图标（Segoe Fluent Icons）。
-
-    /// <summary>拍摄时间:日历字形。</summary>
-    public const string CalendarGlyph = "\uE787";
-
-    /// <summary>文件大小:页面字形。</summary>
-    public const string PageGlyph = "\uE7C3";
-
-    /// <summary>升序:向上箭头字形。</summary>
-    public const string UpGlyph = "\uE74A";
-
-    /// <summary>降序:向下箭头字形。</summary>
-    public const string DownGlyph = "\uE74B";
-
-    /// <summary>全选:星级条件「全部」。</summary>
-    public const string SelectAllGlyph = "\uE8B3";
-
-    /// <summary>已拒绝:禁止字形。</summary>
-    public const string BlockedGlyph = "\uECCD";
-
-    /// <summary>命令 → 单字形映射。null 表示该命令在本阶段不显示/不可达(P3 延期)。</summary>
-    private static readonly Dictionary<string, string?> Glyphs = new(StringComparer.Ordinal)
+    private static readonly Dictionary<string, string> CommandIds = new(StringComparer.Ordinal)
     {
-        // 打开用文件夹而不是“带箭头文档”，与旧壳和新手预期一致。
-        ["Open"] = FolderGlyph,
-        ["Previous"] = "\uE76B",
-        ["Next"] = "\uE76C",
-        ["Exchange"] = "\uE8AB",
-        // TOOLBAR-04：缩放适应用向外双对角箭头（与 macOS arrow.up.left.and.arrow.down.right 同语义），
-        // 不用带方框的 FitPage；BackToWindow（E73F）是向内箭头，与标题栏「退出全屏」同形，不能借用。
-        ["Fit"] = FullScreenGlyph,
-        // 放大/缩小用纯加号/减号，不用放大镜（放大镜在 18 点尺寸下与“适应”难区分）。
-        ["ZoomInPreset"] = "\uE710",
-        ["ZoomOutPreset"] = "\uE738",
-        ["ZoomInScale"] = "\uE710",
-        ["ZoomOutScale"] = "\uE738",
-        ["SetRating0"] = ClearGlyph,
-        ["SetRating1"] = StarGlyph,
-        ["SetRating2"] = StarGlyph,
-        ["SetRating3"] = StarGlyph,
-        ["SetRating4"] = StarGlyph,
-        ["SetRating5"] = StarGlyph,
-
-        // 主屏 P3 入口(第二轮补齐):分析栏开关与增强预览
-        ["ToggleAnalysisView"] = "\uE9D9",
-        // 增强预览画对比度半圆（旧壳字形同义），比闪电更贴近“明暗增强”而不是“性能/加速”。
-        ["ToggleEnhance"] = ContrastGlyph,
+        ["Open"] = IconCatalog.CommandOpen,
+        ["Previous"] = IconCatalog.CommandPrevious,
+        ["Next"] = IconCatalog.CommandNext,
+        ["Exchange"] = IconCatalog.CommandExchange,
+        ["Fit"] = IconCatalog.CommandFit,
+        ["ZoomInPreset"] = IconCatalog.CommandZoomIn,
+        ["ZoomOutPreset"] = IconCatalog.CommandZoomOut,
+        ["ZoomInScale"] = IconCatalog.CommandZoomIn,
+        ["ZoomOutScale"] = IconCatalog.CommandZoomOut,
+        ["SetRating0"] = IconCatalog.RatingClear,
+        ["SetRating1"] = IconCatalog.RatingStarFilled,
+        ["SetRating2"] = IconCatalog.RatingStarFilled,
+        ["SetRating3"] = IconCatalog.RatingStarFilled,
+        ["SetRating4"] = IconCatalog.RatingStarFilled,
+        ["SetRating5"] = IconCatalog.RatingStarFilled,
+        ["ToggleAnalysisView"] = IconCatalog.CommandAnalysis,
+        ["ToggleEnhance"] = IconCatalog.CommandEnhance,
     };
 
-    /// <summary>评分快捷命令底图:0 为清零叉,1–5 为实心星(数字另行叠在星心,TOOLBAR-04)。</summary>
-    private static readonly Dictionary<int, string> RatingGlyphs = new()
-    {
-        [0] = ClearGlyph,
-        [1] = StarGlyph,
-        [2] = StarGlyph,
-        [3] = StarGlyph,
-        [4] = StarGlyph,
-        [5] = StarGlyph,
-    };
-
-    /// <summary>已记录过缺失图标的命令,避免用户配置漂移时每次按键都写日志。</summary>
     private static readonly HashSet<string> WarnedMissing = new(StringComparer.Ordinal);
 
-    /// <summary>
-    /// 取命令的图标字形(只负责显示)。
-    /// 表里没有的命令不显示按钮并记录一次日志;命令是否可达由共享
-    /// <c>InputCommandMap.IsCommandKnown</c> 判定,图标不参与输入闸门。
-    /// 不能让用户可编辑的快捷键 JSON 把进程打死。
-    /// </summary>
-    /// <param name="command">命令标识</param>
-    /// <returns>字形;null 表示本阶段不显示该命令</returns>
+    /// <summary>按字形对应的语义状态选择随包 Regular / Filled 字体。</summary>
+    public static string FontFamilyForGlyph(string glyph)
+        => glyph == StarGlyph || glyph == WarningGlyph ? FilledFontFamily : RegularFontFamily;
+
+    /// <summary>筛选的 1–5 星使用对应数字圆。</summary>
+    public static string ForRatingFilter(string key) => key switch
+    {
+        "Eq1" => IconCatalog.WindowsGlyph(IconCatalog.FilterRating1),
+        "Eq2" => IconCatalog.WindowsGlyph(IconCatalog.FilterRating2),
+        "Eq3" => IconCatalog.WindowsGlyph(IconCatalog.FilterRating3),
+        "Eq4" => IconCatalog.WindowsGlyph(IconCatalog.FilterRating4),
+        "Eq5" => IconCatalog.WindowsGlyph(IconCatalog.FilterRating5),
+        _ => throw new ArgumentException($"未定义星级筛选图标：{key}", nameof(key)),
+    };
+
+    /// <summary>取命令图标；未登记的命令只记录并隐藏按钮，不影响输入派发。</summary>
     public static string? ForCommand(string command)
     {
-        if (Glyphs.TryGetValue(command, out var glyph))
+        if (CommandIds.TryGetValue(command, out string? id))
         {
-            return glyph;
+            return IconCatalog.WindowsGlyph(id);
         }
-
         if (WarnedMissing.Add(command))
         {
             NativeStartupLog.Write($"图标映射缺少命令「{command}」,该命令不显示按钮;请在 WindowsIcons 中登记。");
         }
-
         return null;
     }
 
-    /// <summary>
-    /// 取评分快捷命令的底图字形:0 为清零叉,1–5 为实心星;越界星数按实心星兜底。
-    /// </summary>
-    /// <param name="stars">星数(0–5)</param>
-    /// <returns>Segoe Fluent Icons 字形</returns>
     public static string ForRatingGlyph(int stars)
-        => RatingGlyphs.TryGetValue(stars, out var glyph) ? glyph : StarGlyph;
+        => stars == 0 ? ClearGlyph : StarGlyph;
 
-    /// <summary>
-    /// 设置分类 → 导航图标字形。分类键由设置窗口固定使用(File/Preview/Control/Exif/Ai)。
-    /// </summary>
-    /// <param name="category">分类键</param>
-    /// <returns>Segoe Fluent Icons 字形</returns>
     public static string ForCategory(string category) => category switch
     {
-        "File" => "\uE8B7",
-        "Preview" => "\uE8B9",
-        "Control" => "\uE765",
-        "Exif" => "\uE946",
-        "Ai" => "\uE945",
-        _ => "\uE713",
+        "File" => IconCatalog.WindowsGlyph(IconCatalog.SettingsFile),
+        "Preview" => IconCatalog.WindowsGlyph(IconCatalog.SettingsPreview),
+        "Control" => IconCatalog.WindowsGlyph(IconCatalog.SettingsControl),
+        "Exif" => IconCatalog.WindowsGlyph(IconCatalog.SettingsExif),
+        "Ai" => IconCatalog.WindowsGlyph(IconCatalog.SettingsAi),
+        _ => throw new ArgumentException($"未定义设置分类图标：{category}", nameof(category)),
     };
 
-    /// <summary>
-    /// 工具窗口分类 → 导航图标字形。分类键由工具窗口固定使用(Exif/Stats/Dino/Cv)。
-    /// </summary>
-    /// <param name="category">分类键</param>
-    /// <returns>Segoe Fluent Icons 字形</returns>
     public static string ForToolCategory(string category) => category switch
     {
-        "Exif" => "\uE946",
-        "Stats" => "\uE9D2",
-        "Dino" => "\uE99A",
-        "Cv" => "\uE9D9",
-        _ => WindowsLayout.ToolsWindowGlyph,
+        "Exif" => IconCatalog.WindowsGlyph(IconCatalog.ToolsExif),
+        "Stats" => IconCatalog.WindowsGlyph(IconCatalog.ToolsStats),
+        "Dino" => IconCatalog.WindowsGlyph(IconCatalog.ToolsDino),
+        "Cv" => IconCatalog.WindowsGlyph(IconCatalog.ToolsCv),
+        _ => throw new ArgumentException($"未定义工具分类图标：{category}", nameof(category)),
     };
 
-    /// <summary>
-    /// 判断命令是否为"显示星数"的评分命令
-    /// (TOOLBAR-01:控制栏里显示的评分快捷命令要保留星数)。
-    /// </summary>
-    /// <param name="command">命令标识</param>
-    /// <param name="stars">星数(0 表示清零命令)</param>
-    /// <returns>是否评分命令</returns>
     public static bool TryGetRatingStars(string command, out int stars)
     {
         stars = 0;
@@ -205,7 +133,6 @@ internal static class WindowsIcons
         {
             return false;
         }
-
         return int.TryParse(command.AsSpan("SetRating".Length), out stars);
     }
 }

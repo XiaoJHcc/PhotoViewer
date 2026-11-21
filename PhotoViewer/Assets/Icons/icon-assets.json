@@ -1,0 +1,412 @@
+{
+  "schemaVersion": 1,
+  "families": {
+    "windows": {
+      "name": "Fluent UI System Icons",
+      "revision": "6c2c9075cf8952ef48369b2475233b6e9761efed",
+      "regularMetadata": "https://raw.githubusercontent.com/microsoft/fluentui-system-icons/6c2c9075cf8952ef48369b2475233b6e9761efed/fonts/FluentSystemIcons-Regular.json",
+      "filledMetadata": "https://raw.githubusercontent.com/microsoft/fluentui-system-icons/6c2c9075cf8952ef48369b2475233b6e9761efed/fonts/FluentSystemIcons-Filled.json",
+      "regularFont": "https://raw.githubusercontent.com/microsoft/fluentui-system-icons/6c2c9075cf8952ef48369b2475233b6e9761efed/fonts/FluentSystemIcons-Regular.ttf",
+      "filledFont": "https://raw.githubusercontent.com/microsoft/fluentui-system-icons/6c2c9075cf8952ef48369b2475233b6e9761efed/fonts/FluentSystemIcons-Filled.ttf",
+      "license": "https://raw.githubusercontent.com/microsoft/fluentui-system-icons/6c2c9075cf8952ef48369b2475233b6e9761efed/LICENSE"
+    },
+    "android": {
+      "name": "Material Symbols Rounded",
+      "revision": "10ecc14790612ca8fd164e3f4ffe9c16fc50d5b7",
+      "codepoints": "https://raw.githubusercontent.com/google/material-design-icons/10ecc14790612ca8fd164e3f4ffe9c16fc50d5b7/variablefont/MaterialSymbolsRounded%5BFILL%2CGRAD%2Copsz%2Cwght%5D.codepoints",
+      "font": "https://raw.githubusercontent.com/google/material-design-icons/10ecc14790612ca8fd164e3f4ffe9c16fc50d5b7/variablefont/MaterialSymbolsRounded%5BFILL%2CGRAD%2Copsz%2Cwght%5D.ttf",
+      "license": "https://raw.githubusercontent.com/google/material-design-icons/10ecc14790612ca8fd164e3f4ffe9c16fc50d5b7/LICENSE",
+      "axes": {
+        "wght": 400,
+        "GRAD": 0,
+        "opsz": 24
+      }
+    }
+  },
+  "icons": [
+    {
+      "id": "command.open",
+      "windowsCodepoint": 62510,
+      "windowsFilled": false,
+      "androidCodepoint": 58056,
+      "androidFill": 0
+    },
+    {
+      "id": "command.previous",
+      "windowsCodepoint": 62122,
+      "windowsFilled": false,
+      "androidCodepoint": 58827,
+      "androidFill": 0
+    },
+    {
+      "id": "command.next",
+      "windowsCodepoint": 62128,
+      "windowsFilled": false,
+      "androidCodepoint": 58828,
+      "androidFill": 0
+    },
+    {
+      "id": "command.exchange",
+      "windowsCodepoint": 61837,
+      "windowsFilled": false,
+      "androidCodepoint": 59604,
+      "androidFill": 0
+    },
+    {
+      "id": "command.fit",
+      "windowsCodepoint": 61791,
+      "windowsFilled": false,
+      "androidCodepoint": 61902,
+      "androidFill": 0
+    },
+    {
+      "id": "command.zoomIn",
+      "windowsCodepoint": 61705,
+      "windowsFilled": false,
+      "androidCodepoint": 57669,
+      "androidFill": 0
+    },
+    {
+      "id": "command.zoomOut",
+      "windowsCodepoint": 60368,
+      "windowsFilled": false,
+      "androidCodepoint": 57691,
+      "androidFill": 0
+    },
+    {
+      "id": "command.analysis",
+      "windowsCodepoint": 62562,
+      "windowsFilled": false,
+      "androidCodepoint": 59824,
+      "androidFill": 0
+    },
+    {
+      "id": "command.enhance",
+      "windowsCodepoint": 58450,
+      "windowsFilled": false,
+      "androidCodepoint": 60215,
+      "androidFill": 0
+    },
+    {
+      "id": "menu.openFile",
+      "windowsCodepoint": 62328,
+      "windowsFilled": false,
+      "androidCodepoint": 59507,
+      "androidFill": 0
+    },
+    {
+      "id": "menu.filmstrip",
+      "windowsCodepoint": 59173,
+      "windowsFilled": false,
+      "androidCodepoint": 58387,
+      "androidFill": 0
+    },
+    {
+      "id": "menu.control",
+      "windowsCodepoint": 62855,
+      "windowsFilled": false,
+      "androidCodepoint": 58409,
+      "androidFill": 0
+    },
+    {
+      "id": "menu.exif",
+      "windowsCodepoint": 58711,
+      "windowsFilled": false,
+      "androidCodepoint": 62996,
+      "androidFill": 0
+    },
+    {
+      "id": "menu.tools",
+      "windowsCodepoint": 61063,
+      "windowsFilled": false,
+      "androidCodepoint": 61707,
+      "androidFill": 0
+    },
+    {
+      "id": "menu.settings",
+      "windowsCodepoint": 63145,
+      "windowsFilled": false,
+      "androidCodepoint": 59576,
+      "androidFill": 0
+    },
+    {
+      "id": "menu.quit",
+      "windowsCodepoint": 62990,
+      "windowsFilled": false,
+      "androidCodepoint": 63687,
+      "androidFill": 0
+    },
+    {
+      "id": "filter.entry",
+      "windowsCodepoint": 62470,
+      "windowsFilled": false,
+      "androidCodepoint": 57682,
+      "androidFill": 0
+    },
+    {
+      "id": "filter.more",
+      "windowsCodepoint": 59428,
+      "windowsFilled": false,
+      "androidCodepoint": 58835,
+      "androidFill": 0
+    },
+    {
+      "id": "filter.sortName",
+      "windowsCodepoint": 63460,
+      "windowsFilled": false,
+      "androidCodepoint": 57701,
+      "androidFill": 0
+    },
+    {
+      "id": "filter.sortDate",
+      "windowsCodepoint": 62036,
+      "windowsFilled": false,
+      "androidCodepoint": 58386,
+      "androidFill": 0
+    },
+    {
+      "id": "filter.sortSize",
+      "windowsCodepoint": 59107,
+      "windowsFilled": false,
+      "androidCodepoint": 63502,
+      "androidFill": 0
+    },
+    {
+      "id": "filter.ascending",
+      "windowsCodepoint": 61851,
+      "windowsFilled": false,
+      "androidCodepoint": 58840,
+      "androidFill": 0
+    },
+    {
+      "id": "filter.descending",
+      "windowsCodepoint": 61768,
+      "windowsFilled": false,
+      "androidCodepoint": 58843,
+      "androidFill": 0
+    },
+    {
+      "id": "filter.all",
+      "windowsCodepoint": 62562,
+      "windowsFilled": false,
+      "androidCodepoint": 58819,
+      "androidFill": 0
+    },
+    {
+      "id": "filter.unrated",
+      "windowsCodepoint": 60325,
+      "windowsFilled": false,
+      "androidCodepoint": 61580,
+      "androidFill": 0
+    },
+    {
+      "id": "filter.rating1",
+      "windowsCodepoint": 59525,
+      "windowsFilled": false,
+      "androidCodepoint": 63364,
+      "androidFill": 0
+    },
+    {
+      "id": "filter.rating2",
+      "windowsCodepoint": 983631,
+      "windowsFilled": false,
+      "androidCodepoint": 63363,
+      "androidFill": 0
+    },
+    {
+      "id": "filter.rating3",
+      "windowsCodepoint": 983637,
+      "windowsFilled": false,
+      "androidCodepoint": 63362,
+      "androidFill": 0
+    },
+    {
+      "id": "filter.rating4",
+      "windowsCodepoint": 983643,
+      "windowsFilled": false,
+      "androidCodepoint": 63361,
+      "androidFill": 0
+    },
+    {
+      "id": "filter.rating5",
+      "windowsCodepoint": 983649,
+      "windowsFilled": false,
+      "androidCodepoint": 63360,
+      "androidFill": 0
+    },
+    {
+      "id": "filter.rejected",
+      "windowsCodepoint": 62317,
+      "windowsFilled": false,
+      "androidCodepoint": 59528,
+      "androidFill": 0
+    },
+    {
+      "id": "filter.conflict",
+      "windowsCodepoint": 63593,
+      "windowsFilled": false,
+      "androidCodepoint": 61571,
+      "androidFill": 0
+    },
+    {
+      "id": "rating.clear",
+      "windowsCodepoint": 62313,
+      "windowsFilled": false,
+      "androidCodepoint": 58829,
+      "androidFill": 0
+    },
+    {
+      "id": "rating.star",
+      "windowsCodepoint": 63247,
+      "windowsFilled": false,
+      "androidCodepoint": 61594,
+      "androidFill": 0
+    },
+    {
+      "id": "rating.starFilled",
+      "windowsCodepoint": 63256,
+      "windowsFilled": true,
+      "androidCodepoint": 61594,
+      "androidFill": 1
+    },
+    {
+      "id": "rating.warning",
+      "windowsCodepoint": 63617,
+      "windowsFilled": true,
+      "androidCodepoint": 61571,
+      "androidFill": 1
+    },
+    {
+      "id": "common.check",
+      "windowsCodepoint": 62100,
+      "windowsFilled": false,
+      "androidCodepoint": 58984,
+      "androidFill": 0
+    },
+    {
+      "id": "common.chevronDown",
+      "windowsCodepoint": 62115,
+      "windowsFilled": false,
+      "androidCodepoint": 58831,
+      "androidFill": 0
+    },
+    {
+      "id": "common.photoPlaceholder",
+      "windowsCodepoint": 62600,
+      "windowsFilled": false,
+      "androidCodepoint": 58356,
+      "androidFill": 0
+    },
+    {
+      "id": "settings.file",
+      "windowsCodepoint": 62488,
+      "windowsFilled": false,
+      "androidCodepoint": 58055,
+      "androidFill": 0
+    },
+    {
+      "id": "settings.preview",
+      "windowsCodepoint": 62600,
+      "windowsFilled": false,
+      "androidCodepoint": 59027,
+      "androidFill": 0
+    },
+    {
+      "id": "settings.control",
+      "windowsCodepoint": 62648,
+      "windowsFilled": false,
+      "androidCodepoint": 58130,
+      "androidFill": 0
+    },
+    {
+      "id": "settings.exif",
+      "windowsCodepoint": 58711,
+      "windowsFilled": false,
+      "androidCodepoint": 62996,
+      "androidFill": 0
+    },
+    {
+      "id": "settings.ai",
+      "windowsCodepoint": 63141,
+      "windowsFilled": false,
+      "androidCodepoint": 57614,
+      "androidFill": 0
+    },
+    {
+      "id": "settings.add",
+      "windowsCodepoint": 61705,
+      "windowsFilled": false,
+      "androidCodepoint": 57669,
+      "androidFill": 0
+    },
+    {
+      "id": "settings.remove",
+      "windowsCodepoint": 60368,
+      "windowsFilled": false,
+      "androidCodepoint": 57691,
+      "androidFill": 0
+    },
+    {
+      "id": "settings.drag",
+      "windowsCodepoint": 59896,
+      "windowsFilled": false,
+      "androidCodepoint": 57949,
+      "androidFill": 0
+    },
+    {
+      "id": "tools.exif",
+      "windowsCodepoint": 58711,
+      "windowsFilled": false,
+      "androidCodepoint": 62996,
+      "androidFill": 0
+    },
+    {
+      "id": "tools.stats",
+      "windowsCodepoint": 58077,
+      "windowsFilled": false,
+      "androidCodepoint": 57963,
+      "androidFill": 0
+    },
+    {
+      "id": "tools.dino",
+      "windowsCodepoint": 61934,
+      "windowsFilled": false,
+      "androidCodepoint": 57614,
+      "androidFill": 0
+    },
+    {
+      "id": "tools.cv",
+      "windowsCodepoint": 59988,
+      "windowsFilled": false,
+      "androidCodepoint": 58292,
+      "androidFill": 0
+    },
+    {
+      "id": "navigation.back",
+      "windowsCodepoint": 62122,
+      "windowsFilled": false,
+      "androidCodepoint": 58827,
+      "androidFill": 0
+    },
+    {
+      "id": "navigation.forward",
+      "windowsCodepoint": 62128,
+      "windowsFilled": false,
+      "androidCodepoint": 58828,
+      "androidFill": 0
+    },
+    {
+      "id": "navigation.close",
+      "windowsCodepoint": 62313,
+      "windowsFilled": false,
+      "androidCodepoint": 58829,
+      "androidFill": 0
+    }
+  ],
+  "files": {
+    "FluentSystemIcons-Regular.ttf": "1efe283e5b15447f15600ad9138eab3d5da6ea660e696c66b859f0f3271e34d0",
+    "FluentSystemIcons-Filled.ttf": "fe0dc844f0e281e7a6d94523aed778823c96f378813e6f78aee3bd077cc3aa35",
+    "MaterialSymbolsRounded-Regular.ttf": "37ea0169664fe7773ce0135568266dbd0948cfc8348b52188adb4624e32798fa",
+    "MaterialSymbolsRounded-Filled.ttf": "4aaa1d20ef2a9bbc9eb93f1be39022df12e2e6aa71baf12490b3833abf804729"
+  }
+}

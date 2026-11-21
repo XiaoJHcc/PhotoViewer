@@ -384,6 +384,8 @@ internal static class WindowsSettingsAcceptance
             var rowIcon = FindDescendants<FontIcon>(hotkeyRow!)
                 .FirstOrDefault(icon => icon.Glyph == expectedGlyph && icon.Width == WindowsSettingsPages.HotkeyIconSize)
                 ?? throw new InvalidOperationException($"快捷键行缺少命令图标: {hotkeyItem.Command}");
+            Require(rowIcon.FontFamily.Source == WindowsIcons.RegularFontFamily,
+                $"控制行未使用随包 Fluent Regular 字体: {hotkeyItem.Command}");
             var rowName = FindDescendants<TextBlock>(hotkeyRow!)
                 .FirstOrDefault(text => text.Text == hotkeyItem.Name)
                 ?? throw new InvalidOperationException("快捷键行没有命令名");

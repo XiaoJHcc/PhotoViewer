@@ -888,6 +888,14 @@ internal sealed partial class WindowsMainWindow
     {
         var iconPath = Path.Combine(AppContext.BaseDirectory, "icon.ico");
         RequireSmoke(File.Exists(iconPath), $"输出目录缺少窗口图标文件: {iconPath}");
+        foreach (string filename in new[]
+                 {
+                     "FluentSystemIcons-Regular.ttf", "FluentSystemIcons-Filled.ttf", "FluentSystemIcons-LICENSE.txt",
+                 })
+        {
+            string path = Path.Combine(AppContext.BaseDirectory, "Assets", "Icons", filename);
+            RequireSmoke(File.Exists(path), $"输出目录缺少随包图标资产: {path}");
+        }
         RequireSmoke(_windowIconApplied, "窗口图标未在激活后设置");
 
         var hwnd = Microsoft.UI.Win32Interop.GetWindowFromWindowId(AppWindow.Id);
@@ -930,6 +938,8 @@ internal sealed partial class WindowsMainWindow
             RequireSmoke(match != null, $"主图菜单缺少「{text}」");
             RequireSmoke(match!.Icon is FontIcon icon && icon.Glyph == glyph,
                 $"菜单项「{text}」的前置图标不符: {(match.Icon as FontIcon)?.Glyph ?? "null"} != {glyph}");
+            RequireSmoke(((FontIcon)match.Icon).FontFamily.Source == WindowsIcons.RegularFontFamily,
+                $"菜单项「{text}」未使用随包 Fluent Regular 字体");
         }
 
         // MENU-06：勾选不只靠图标,四个开关项必须仍是 ToggleMenuFlyoutItem(保留系统勾选列)。

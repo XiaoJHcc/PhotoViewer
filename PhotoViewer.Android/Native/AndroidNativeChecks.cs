@@ -128,7 +128,7 @@ internal static partial class AndroidNativeChecks
                 || (root.ControlBar.Commands.Contains("Next") && root.ControlBar.Commands.Contains("Fit")),
             string.Join(",", root.ControlBar.Commands));
         Check("控制栏雾天增强显示对比度半圆", root.Form != ScreenForm.Wide
-                || root.ControlBar.CommandIconForChecks("ToggleEnhance") == AndroidUiTheme.IconGlyph(DesignTokens.IconCommandToggleEnhance),
+                || root.ControlBar.CommandIconForChecks("ToggleEnhance") == AndroidIcons.ForCommand("ToggleEnhance"),
             $"form={root.Form} icon={DescribeGlyph(root.ControlBar.CommandIconForChecks("ToggleEnhance") ?? string.Empty)}");
 
         if (session.Image == null)
@@ -484,11 +484,12 @@ internal static partial class AndroidNativeChecks
             int hitArea44Dp = (int)AndroidUiTheme.Dp(_activity!, AndroidSettingsReorderList.CheckHitSizeDp);
             int checkGlyphPx = (int)AndroidUiTheme.Dp(_activity!, AndroidSettingsReorderList.CheckBoxGlyphSizeDp);
             int insetOffsetPx = (hitArea44Dp - checkGlyphPx) / 2 + checkGlyphPx + iconGapPx - hitArea44Dp;
-            int? hitWidth = HotkeyCheckHitWidthPx(sheet, firstHotkey.DisplaySymbol);
+            string expectedIcon = AndroidIcons.ForCommand(firstHotkey.Command);
+            int? hitWidth = HotkeyCheckHitWidthPx(sheet, expectedIcon);
             bool iconVisible = iconRow is { IconVisible: true } && !string.IsNullOrEmpty(iconRow.Value.IconSymbol);
             Check("控制栏功能行显示命令图标",
-                iconVisible && iconRow!.Value.IconSymbol == firstHotkey.DisplaySymbol,
-                iconRow is { } iconValue ? $"icon={DescribeGlyph(iconValue.IconSymbol)} expected={firstHotkey.DisplaySymbol}" : DescribeRow(iconRow));
+                iconVisible && iconRow!.Value.IconSymbol == expectedIcon,
+                iconRow is { } iconValue ? $"icon={DescribeGlyph(iconValue.IconSymbol)} expected={expectedIcon}" : DescribeRow(iconRow));
             Check("命令图标到命令名间距 16dp",
                 iconRow is { } gapRow && Math.Abs(gapRow.IconToTitleGap - iconGapPx) <= 1,
                 iconRow is { } gapValue ? $"gap={gapValue.IconToTitleGap}px expected={iconGapPx}px" : DescribeRow(iconRow));
@@ -937,31 +938,31 @@ internal static partial class AndroidNativeChecks
                 $"enhanced={session.IsEnhanced} found={found} items=[{DescribePhotoMenu(items)}]");
 
             // 触屏没有悬停提示，前置图标是唯一的命令符号：逐项核对顺序与字形语义（MENU-06）。
-            var expectedIconList = new System.Collections.Generic.List<(string Text, string Token)>
+            var expectedIconList = new System.Collections.Generic.List<(string Text, string Id)>
             {
-                ("打开文件夹…", DesignTokens.IconMenuOpenFolder),
-                ("胶片栏", DesignTokens.IconMenuFilmstrip),
-                ("分析栏", DesignTokens.IconMenuAnalysis),
-                ("控制栏", DesignTokens.IconMenuControl),
+                ("打开文件夹…", IconCatalog.CommandOpen),
+                ("胶片栏", IconCatalog.MenuFilmstrip),
+                ("分析栏", IconCatalog.CommandAnalysis),
+                ("控制栏", IconCatalog.MenuControl),
             };
-            if (root.Form != ScreenForm.Wide) expectedIconList.Add(("EXIF", DesignTokens.IconMenuControl));
-            expectedIconList.Add(("雾天增强", DesignTokens.IconCommandToggleEnhance));
-            expectedIconList.Add(("工具…", DesignTokens.IconMenuTools));
-            expectedIconList.Add(("设置…", DesignTokens.IconMenuSettings));
+            if (root.Form != ScreenForm.Wide) expectedIconList.Add(("EXIF", IconCatalog.MenuExif));
+            expectedIconList.Add(("雾天增强", IconCatalog.CommandEnhance));
+            expectedIconList.Add(("工具…", IconCatalog.MenuTools));
+            expectedIconList.Add(("设置…", IconCatalog.MenuSettings));
             var expectedIcons = expectedIconList.ToArray();
             bool iconsOk = items.Count == expectedIcons.Length;
             string iconMismatch = string.Empty;
             for (int index = 0; iconsOk && index < expectedIcons.Length; index++)
             {
-                var (text, token) = expectedIcons[index];
-                string glyph = AndroidUiTheme.IconGlyph(token);
+                var (text, id) = expectedIcons[index];
+                string glyph = AndroidIcons.Glyph(id);
                 if (glyph.Length > 0 && string.Equals(items[index].Text, text, StringComparison.Ordinal)
                     && string.Equals(items[index].Icon, glyph, StringComparison.Ordinal)) continue;
                 iconsOk = false;
-                iconMismatch = $"{items[index].Text}:{DescribeGlyph(items[index].Icon)}≠{text}:{token}";
+                iconMismatch = $"{items[index].Text}:{DescribeGlyph(items[index].Icon)}≠{text}:{id}";
             }
             Check("MENU-06 菜单项前置图标", iconsOk && iconMismatch.Length == 0,
-                iconsOk ? $"7 项图标按 {string.Join("/", expectedIcons.Select(item => item.Token))} 绘制"
+                iconsOk ? $"{expectedIcons.Length} 项图标按 {string.Join("/", expectedIcons.Select(item => item.Id))} 绘制"
                     : $"items=[{DescribePhotoMenu(items)}] 首个不符 {iconMismatch}");
 
             // 勾选不是静态文案：切一次增强再重建菜单，勾选必须跟着会话状态走。
