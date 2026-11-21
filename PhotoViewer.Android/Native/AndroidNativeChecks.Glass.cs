@@ -312,8 +312,41 @@ internal static partial class AndroidNativeChecks
             }
 
             var requested = new Rect(compareLeft, compareTop, compareLeft + compareWidth, compareTop + compareHeight);
-            using var capture = await CaptureGlassWindowAsync(_activity!, GlassCapturePixelFormat.Argb8888,
+            var uploaded = PhotoRendererForChecks(photo).CheckTexturePixelsForChecks(pattern);
+            Check("物理100% 上传纹理与源一致（边界抽样）", uploaded.Matches, uploaded.Details);
+
+            // 同帧对照：先在默认帧缓冲上按同一视口整块回读（GL→源），提交上屏后立刻发起整窗回读，
+            // 两次回读看的是同一帧内容；逐像素比较在后台跑，不插在两次回读之间，也不逐像素 swap。
+            byte[]? glBytes = null;
+            string glFailure = string.Empty;
+            try
+            {
+                glBytes = photo.ReadRegionForChecks(viewport, scale,
+                    compareLeft - location[0], compareTop - location[1], compareWidth, compareHeight);
+            }
+            catch (Exception exception)
+            {
+                glFailure = $"{exception.GetType().Name}：{exception.Message}";
+            }
+
+            var captureTask = CaptureGlassWindowAsync(_activity!, GlassCapturePixelFormat.Argb8888,
                 GlassWindowColorSpace(SurfaceImageColorSpace()), requested);
+
+            bool glByteExact = false;
+            if (glBytes == null)
+            {
+                Check("物理100% GL 帧缓冲逐字节一致", false, $"默认帧缓冲整块回读失败：{glFailure}");
+            }
+            else
+            {
+                using var glPixels = GlassPixelBuffer.FromRgba8(glBytes, compareWidth, compareHeight);
+                var glComparison = await Task.Run(() =>
+                    CompareGlassPhysicalScale(pattern, originX, originY, glPixels, GlassOffsetSearchRadius));
+                glByteExact = glComparison.ByteExact;
+                Check("物理100% GL 帧缓冲逐字节一致", glComparison.ByteExact, glComparison.Describe());
+            }
+
+            using var capture = await captureTask;
             // 回读矩形被裁过（窗口尺寸/insets 与预期不符）时，下面的源内起点就不可信：先比矩形再比像素。
             bool rectMatches = capture.SourceRect.Left == requested.Left
                 && capture.SourceRect.Top == requested.Top
@@ -345,6 +378,12 @@ internal static partial class AndroidNativeChecks
             var comparison = await Task.Run(() =>
                 CompareGlassPhysicalScale(pattern, originX, originY, pixels, GlassOffsetSearchRadius));
             Check("物理100% 逐字节一致", comparison.ByteExact, comparison.Describe());
+            if (!comparison.ByteExact && glByteExact)
+            {
+                // 只是差异定位的读数方向，不改变上面两条严格判定：渲染器输出逐字节一致而整窗不一致。
+                GlassHostNote("物理100% 差异定位：GL 帧缓冲→源逐字节一致、整窗→源不一致"
+                    + "——差异出在窗口合成/回读这一段（色域转换或缓冲位深），不在渲染器输出");
+            }
             if (!comparison.ByteExact)
             {
                 using var f16Capture = await CaptureGlassWindowAsync(_activity!, GlassCapturePixelFormat.RgbaF16,

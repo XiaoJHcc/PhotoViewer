@@ -743,6 +743,34 @@ internal static partial class AndroidNativeChecks
         }
 
         /// <summary>
+        /// 用 GL 整块回读的 RGBA8 字节建一份像素副本：逐像素按 <see cref="PackRawRgba"/> 打包，
+        /// 与 <see cref="ReadBitmapPacked"/> 的位图内存字节口径一致（内存序 R,G,B,A 小端），
+        /// 因此可以直接交给 <see cref="CompareGlassPhysicalScale"/> 做同一套逐字节判定。
+        /// </summary>
+        /// <param name="rgba">RGBA8 缓冲，行序自左上看起。</param>
+        /// <param name="width">宽（像素）。</param>
+        /// <param name="height">高（像素）。</param>
+        /// <returns>像素副本；调用方负责释放。</returns>
+        internal static GlassPixelBuffer FromRgba8(byte[] rgba, int width, int height)
+        {
+            ArgumentNullException.ThrowIfNull(rgba);
+            if (width < 1 || height < 1)
+                throw new ArgumentOutOfRangeException(nameof(width), $"区域必须为正：{width}x{height}");
+
+            int expected = checked(checked(width * 4) * height);
+            if (rgba.Length < expected)
+                throw new ArgumentException($"RGBA8 缓冲不足：{rgba.Length} < {expected}", nameof(rgba));
+
+            var packed = new int[checked(width * height)];
+            for (int index = 0, offset = 0; index < packed.Length; index++, offset += 4)
+            {
+                packed[index] = PackRawRgba(rgba[offset], rgba[offset + 1], rgba[offset + 2], rgba[offset + 3]);
+            }
+
+            return new GlassPixelBuffer(width, height, packed, null, 0, "gl-readback");
+        }
+
+        /// <summary>
         /// 取一个像素的 8 位 RGB。半精度回读在这里按 <c>round(值 × 255)</c> 量化——对 8 位源是无损往返，
         /// 但窗口缓冲究竟是 8 位还是半精度必须另有证据（见位深取样）；逐字节一致判定只使用 8 位回读。
         /// </summary>

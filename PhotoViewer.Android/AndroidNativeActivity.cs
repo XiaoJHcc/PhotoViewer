@@ -26,6 +26,9 @@ namespace PhotoViewer.Android;
         | ConfigChanges.Touchscreen)]
 public sealed class AndroidNativeActivity : AppCompatActivity
 {
+    /// <summary>诊断开关的 Intent extra 名：请求 F16 窗口像素格式（只在 <c>pv-check=glass</c> 时生效）。</summary>
+    private const string GlassF16Extra = "pv-glass-f16";
+
     /// <summary>
     /// 创建原生壳根视图。
     /// </summary>
@@ -37,6 +40,8 @@ public sealed class AndroidNativeActivity : AppCompatActivity
         // 明确请求广色域窗口（API 26+）；不设置时窗口默认按 sRGB 合成，EGL 也拿不到 P3 表面。
         if (OperatingSystem.IsAndroidVersionAtLeast(26))
             Window!.ColorMode = ActivityColorMode.WideColorGamut;
+        // 诊断用的 F16 请求必须早于根视图与窗口表面建立：窗口格式一旦有内容再改会重建表面。
+        MaybeRequestGlassF16Window(Intent);
         var root = Native.AndroidNativeShell.CreateRootView(this, Intent);
         SetContentView(root);
         ApplySystemBarVisibility();
@@ -46,6 +51,37 @@ public sealed class AndroidNativeActivity : AppCompatActivity
             Window?.DecorView?.Post(() => Native.AndroidNativeShell.Main?.OpenSettingWindow());
         }
         Console.WriteLine("[Native] AndroidNativeActivity 就绪");
+    }
+
+    /// <summary>
+    /// 仅诊断：把窗口像素格式请求成 F16（<c>android.graphics.PixelFormat.RGBA_F16</c>，API 26+），
+    /// 供阶段 0 核对广色域窗口走的是 8 位缓冲还是 F16 缓冲；广色域窗口模式（<see cref="Window.ColorMode"/>）保持不变。
+    /// 只在 <c>pv-check=glass</c> 且 <c>pv-glass-f16</c> 为真时生效，且只在启动时生效（运行期新 Intent 不改窗口格式）；
+    /// 默认启动完全不经过这里。这里只发出「请求」，系统是否接受由运行期的实际缓冲决定，
+    /// 日志与读数都不得声称已生效。
+    /// </summary>
+    /// <param name="intent">启动 Intent。</param>
+    private void MaybeRequestGlassF16Window(Intent? intent)
+    {
+        if (intent == null) return;
+        // 只有显式带这个 extra（adb --ez pv-glass-f16 true，且为布尔类型）才继续：
+        // 默认启动在这里就返回，窗口行为一字不变。
+        if (!intent.GetBooleanExtra(GlassF16Extra, false)) return;
+        if (!string.Equals(intent.GetStringExtra("pv-check"), "glass", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine($"[Native] {GlassF16Extra}：已忽略（仅 pv-check=glass 生效）");
+            return;
+        }
+        if (!OperatingSystem.IsAndroidVersionAtLeast(26))
+        {
+            Console.WriteLine($"[Native] {GlassF16Extra}：已忽略（RGBA_F16 需要 API 26，当前 API {(int)Build.VERSION.SdkInt}）");
+            return;
+        }
+        Window!.SetFormat(global::Android.Graphics.Format.RgbaF16);
+        // mAttrs.format 只是我们刚写进去的请求值；真实缓冲格式只能由 SurfaceFlinger 侧的证据判断。
+        Console.WriteLine($"[Native] {GlassF16Extra}：已请求窗口像素格式 RGBA_F16（API {(int)Build.VERSION.SdkInt}，"
+            + $"ColorMode={Window.ColorMode}，请求值={Window.Attributes?.Format}）；"
+            + "系统是否接受由运行期实际缓冲决定，此处不作断言");
     }
 
     /// <summary>横屏隐藏状态栏，竖屏恢复；配置变化不重建 Activity，因此在这里同步系统栏。</summary>

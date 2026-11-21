@@ -371,6 +371,24 @@ internal sealed partial class AndroidPhotoView : FrameLayout, TextureView.ISurfa
     }
 
     /// <summary>
+    /// 验收用：按视图左上原点整块回读默认帧缓冲（RGBA8，行序已翻成左上原点），返回前补一次重绘，
+    /// 让窗口取用刚提交的这帧。产品路径不读取。
+    /// </summary>
+    /// <param name="viewport">当前视口。</param>
+    /// <param name="density">绘制密度。</param>
+    /// <param name="x">区域左上横坐标（缓冲像素，视图左上原点）。</param>
+    /// <param name="y">区域左上纵坐标（缓冲像素，视图左上原点）。</param>
+    /// <param name="width">区域宽（像素）。</param>
+    /// <param name="height">区域高（像素）。</param>
+    /// <returns>RGBA8 缓冲（<c>width × height × 4</c> 字节）。</returns>
+    internal byte[] ReadRegionForChecks(PhotoViewport viewport, double density, int x, int y, int width, int height)
+    {
+        var pixels = _renderer.ReadRegionForChecks(viewport, density, x, y, width, height);
+        _textureView.Invalidate();
+        return pixels;
+    }
+
+    /// <summary>
     /// 验收用：在同一个表面纹理上销毁并重建 EGL 窗口表面与上下文，重传当前图。
     /// 需要表面已就绪（没有真实表面时不做无表面的假重建），产品路径不调用。
     /// </summary>

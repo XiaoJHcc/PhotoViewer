@@ -586,6 +586,11 @@ internal sealed class AndroidPhotoRenderer : IDisposable
                     GLES20.GlUseProgram(_program);
                     if (_linearizeHandle < 0) _linearizeHandle = GLES20.GlGetUniformLocation(_program, "uLinearize");
                     GLES20.GlUniform1i(_linearizeHandle, FramebufferEncoding == GlSrgb && !_bypassOutputTransfer ? 1 : 0);
+                    bool pixelExact = Math.Abs(viewport.PhysicalScale - 1) < 1e-9;
+                    GLES20.GlTexParameteri(GLES20.GlTexture2d, GLES20.GlTextureMagFilter,
+                        pixelExact ? GLES20.GlNearest : GLES20.GlLinear);
+                    GLES20.GlTexParameteri(GLES20.GlTexture2d, GLES20.GlTextureMinFilter,
+                        pixelExact ? GLES20.GlNearest : GLES20.GlLinearMipmapLinear);
                     double scale = Math.Max(1e-9, viewport.Scale) * density;
                     double drawWidth = viewport.ImageWidth * scale;
                     double drawHeight = viewport.ImageHeight * scale;
@@ -845,6 +850,75 @@ internal sealed class AndroidPhotoRenderer : IDisposable
                 _bypassOutputTransfer = false;
                 DrawFrame(viewport, density);
             }
+        }
+    }
+
+    /// <summary>
+    /// 验收用：按视图左上原点整块回读默认帧缓冲（RGBA8，行序已翻成左上原点），
+    /// 返回前补一次上屏，让随后的整窗回读拿到同一帧。产品路径不调用。
+    /// </summary>
+    /// <param name="viewport">当前视口（与上屏同一状态）。</param>
+    /// <param name="density">绘制密度。</param>
+    /// <param name="x">区域左上横坐标（缓冲像素，视图左上原点）。</param>
+    /// <param name="y">区域左上纵坐标（缓冲像素，视图左上原点）。</param>
+    /// <param name="width">区域宽（像素）。</param>
+    /// <param name="height">区域高（像素）。</param>
+    /// <returns>RGBA8 缓冲：<c>width × height × 4</c> 字节，行序自左上看起。</returns>
+    internal byte[] ReadRegionForChecks(PhotoViewport viewport, double density, int x, int y, int width, int height)
+    {
+        if (width < 1 || height < 1)
+            throw new ArgumentOutOfRangeException(nameof(width), $"回读区域必须为正：{width}x{height}");
+
+        lock (_sync)
+        {
+            if (!HasTexture || _width < 1 || _height < 1)
+                throw new InvalidOperationException("无可回读的照片表面");
+            if (x < 0 || y < 0 || x + width > _width || y + height > _height)
+                throw new ArgumentOutOfRangeException(nameof(x),
+                    $"回读区域 {width}x{height}@({x},{y}) 越出缓冲 {_width}x{_height}");
+
+            // GL 的 y 自下而上：整块换算一次，读回来再整行翻一次，不做逐像素翻转。
+            int glY = _height - y - height;
+            try
+            {
+                // 与单点回读同一口径：走正常的上屏着色器链路（sRGB 帧缓冲的逆传递照常生效）。
+                _bypassOutputTransfer = false;
+                DrawFrame(viewport, density, present: false);
+                var raw = new byte[checked(width * height * 4)];
+                using var buffer = ByteBuffer.AllocateDirect(raw.Length)
+                    ?? throw new InvalidOperationException("回读缓冲分配失败");
+                GLES20.GlReadPixels(x, glY, width, height, GLES20.GlRgba, GLES20.GlUnsignedByte, buffer);
+                int error = GLES20.GlGetError();
+                if (error != GLES20.GlNoError)
+                    throw new InvalidOperationException($"照片整块回读失败：0x{error:X}");
+                buffer.Rewind();
+                buffer.Get(raw, 0, raw.Length);
+                FlipRowsToTopLeft(raw, width, height);
+                return raw;
+            }
+            finally
+            {
+                _bypassOutputTransfer = false;
+                DrawFrame(viewport, density);
+            }
+        }
+    }
+
+    /// <summary>把 GL 自下而上的行序翻成左上原点：逐行交换，整块只翻一次。</summary>
+    /// <param name="raw">RGBA8 缓冲。</param>
+    /// <param name="width">宽（像素）。</param>
+    /// <param name="height">高（像素）。</param>
+    private static void FlipRowsToTopLeft(byte[] raw, int width, int height)
+    {
+        int stride = width * 4;
+        var row = new byte[stride];
+        for (int top = 0, bottom = height - 1; top < bottom; top++, bottom--)
+        {
+            int topOffset = top * stride;
+            int bottomOffset = bottom * stride;
+            System.Buffer.BlockCopy(raw, topOffset, row, 0, stride);
+            System.Buffer.BlockCopy(raw, bottomOffset, raw, topOffset, stride);
+            System.Buffer.BlockCopy(row, 0, raw, bottomOffset, stride);
         }
     }
 
