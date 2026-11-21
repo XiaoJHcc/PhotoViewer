@@ -694,7 +694,8 @@ internal static class iOSNativeInputCheck
         lines.Add("PASS 外部路径缺少系统 URL：/var 与 /private/var 同判定，前缀相似目录与 ../ 逃逸均按 AccessDenied 上报且不启动作用域");
 
         // ⑥ 选择器结果：文档选择器返回的 URL 与 openURL 同一判断口径（作用域 URL 保留原 URL，沙盒 URL 用 Local 引用）。
-        var pickedFolder = iOSStorageRefs.CreateFolderRef(folderUrl, new RecordingSecurityScope(started: true));
+        var pickedScope = new RecordingSecurityScope(started: true);
+        var pickedFolder = iOSStorageRefs.CreateFolderRef(folderUrl, pickedScope);
         if (pickedFolder is not iOSScopedFolderRef folderWithScope ||
             !ReferenceEquals(folderWithScope.SecurityScopedUrls[0], folderUrl))
             throw new InvalidOperationException("选择器返回的外部目录未保留原 URL");
@@ -708,7 +709,11 @@ internal static class iOSNativeInputCheck
             ?? throw new InvalidOperationException("外部目录没有找到已授权子文件");
         if (scopedChild.StorageId != pickedFile.StorageId || scopedChild.TryGetLocalPath() != filePath)
             throw new InvalidOperationException("目录子项没有继承实际拼写身份，或身份归一改写了访问地址");
-        lines.Add("PASS 选择器结果：外部目录/文件保留原 URL，目录子项继承稳定身份，沙盒目录仍返回共享 LocalFolderRef");
+        int scopeStarts = pickedScope.Starts.Count;
+        if (!ReferenceEquals(scopedChild.GetParentAsync().GetAwaiter().GetResult(), folderWithScope)
+            || pickedScope.Starts.Count != scopeStarts)
+            throw new InvalidOperationException("已枚举的目录子项没有直接返回原父目录");
+        lines.Add("PASS 选择器结果：外部目录/文件保留原 URL，目录子项继承稳定身份与父目录，沙盒目录仍返回共享 LocalFolderRef");
         lines.Add("NOTE 模拟器不能构造真实沙盒扩展：真机需复核 Files「打开方式」(就地打开) 与文档选择器目录的读取/评分写回");
     }
 

@@ -221,11 +221,38 @@ public sealed class LocalFolderRef : IFolderRef
         }
     }
 
+    public Task CheckAccessAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using var entries = Directory.EnumerateFileSystemEntries(_localPath).GetEnumerator();
+        entries.MoveNext();
+        return Task.CompletedTask;
+    }
+
     public Task<IFileRef?> FindFileAsync(string name, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var path = GetChildPath(name);
-        return Task.FromResult<IFileRef?>(File.Exists(path) ? new LocalFileRef(path) : null);
+        try
+        {
+            try
+            {
+                var attributes = File.GetAttributes(path);
+                return Task.FromResult<IFileRef?>((attributes & FileAttributes.Directory) == 0
+                    ? new LocalFileRef(path) : null);
+            }
+            catch (FileNotFoundException)
+            {
+                // Some filesystems return the same error for a missing child and a missing parent.
+                if ((File.GetAttributes(_localPath) & FileAttributes.Directory) == 0)
+                    throw new DirectoryNotFoundException(_localPath);
+                return Task.FromResult<IFileRef?>(null);
+            }
+        }
+        catch (Exception exception) when (StorageException.IsAvailabilityFailure(exception))
+        {
+            throw StorageException.From(exception, $"在 {Name} 中查找 {name}");
+        }
     }
 
     public Task<IFileRef> CreateFileAsync(string name, CancellationToken cancellationToken = default)

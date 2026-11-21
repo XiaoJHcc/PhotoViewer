@@ -307,7 +307,7 @@ export function mountFilmstrip(host, ctx) {
             app.layoutReady();
         }
 
-        if (geometry || touches(regions, "list", "current", "settings", "image")) syncRange();
+        if (geometry || touches(regions, "list", "current", "settings", "image", "folder")) syncRange();
         updateScrollbar();
     }
 

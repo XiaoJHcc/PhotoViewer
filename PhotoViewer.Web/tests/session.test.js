@@ -397,6 +397,58 @@ test("STATE-03：药丸可见时提示条底距 60，否则回到 24", async () 
     assert.equal(h.session.snapshot().toastBottom, 24);
 });
 
+test("STATE-05：暂停后保留已上屏产物，拒绝未缓存切图与解码", async () => {
+    const h = harness({ cacheLimit: 4 });
+    const a = fakePhoto("A.JPG");
+    const b = fakePhoto("B.JPG");
+    const c = fakePhoto("C.JPG");
+
+    h.session.show(a);
+    await loadProxy(h, 0, proxySurface("A"));
+    h.session.show(b);
+    await loadProxy(h, 1, proxySurface("B"));
+    const surface = h.session.snapshot().surface;
+
+    assert.equal(h.session.setSuspended(true), true);
+    assert.equal(h.session.snapshot().suspended, true);
+    assert.equal(h.session.canShowCached(a.id), true);
+    assert.equal(h.session.canShowCached(a.id, { wantFull: true }), false);
+    assert.equal(h.session.canShowCached(c.id), false);
+
+    assert.equal(h.session.show(c), false);
+    assert.equal(h.session.snapshot().photoId, b.id);
+    assert.equal(h.session.snapshot().surface, surface);
+    h.session.setWantFull(true);
+    h.session.setProxyLongEdge(3000);
+    assert.equal(h.decodeCalls.length, 2);
+
+    h.session.setSuspended(false);
+    assert.equal(h.session.snapshot().suspended, false);
+    assert.equal(h.decodeCalls.length, 3);
+    assert.equal(h.decodeCalls[2].tier, "full");
+});
+
+test("STATE-05：暂停时在途代理作废，恢复后重新加载当前照片", async () => {
+    const h = harness();
+    const a = fakePhoto("A.JPG");
+    h.session.show(a);
+    assert.equal(h.decodeCalls.length, 1);
+
+    h.session.setSuspended(true);
+    h.decodeCalls[0].pending.resolve(proxySurface("A"));
+    await flush();
+    assert.equal(h.session.snapshot().surface, null);
+    h.clock.advance(300);
+    assert.equal(h.session.snapshot().loadingHint, false);
+    assert.equal(h.decodeCalls.length, 1);
+
+    h.session.setSuspended(false);
+    assert.equal(h.decodeCalls.length, 2);
+    assert.equal(h.decodeCalls[1].tier, "proxy");
+    h.clock.advance(300);
+    assert.equal(h.session.snapshot().loadingHint, true);
+});
+
 test("IMAGE-03：先代理后 Full，Full 就绪原地热替换", async () => {
     const h = harness();
     h.session.show(fakePhoto("A.JPG"), { proxyLongEdge: 1600, wantFull: true });

@@ -146,12 +146,13 @@ function expectedFilmOffset(app, index) {
 function harness({ storage = createStorage(), settings = null, edition = "ai", width = 1200, height = 850, library = makeLibrary() } = {}) {
     const clock = manualClock();
     const film = createFilmHost();
+    const decoder = createDecoder();
     const app = createApp({
         t,
         clock,
         edition,
         library,
-        decoder: createDecoder(),
+        decoder,
         store: createStore(),
         storage,
         settings: { appleKeyboard: false, ...(settings ?? {}) },
@@ -163,7 +164,7 @@ function harness({ storage = createStorage(), settings = null, edition = "ai", w
     // 假滚动宿主的视口长取布局给出的胶片栏主轴长度，与真实壳层一致。
     film.state.viewportLength = filmViewport(app);
     app.bindFilmScroller(film);
-    return { app, clock, library, film, storage };
+    return { app, clock, library, film, storage, decoder };
 }
 
 async function settle(clock, rounds = 6) {
@@ -621,6 +622,101 @@ test("STATE-03/FILM-06：星级写回失败保持原值并给出提示条", asyn
     assert.equal(app.state.photo.rating, 4);
     assert.equal(app.state.toolbar.rating.value, 4);
     assert.equal(app.state.session.toast.text, "无法写入星级：D004.JPG（文件只读）");
+});
+
+test("STATE-05：不可用保留主图/列表/评分，只允许缓存浏览并暂停写入与提取", async () => {
+    const { app, clock, decoder } = harness();
+    app.openFolder("f1", { target: "f1/A001.JPG" });
+    await settle(clock, 3);
+    app.selectCard("f1/B002.JPG");
+    await settle(clock, 3);
+
+    const surface = app.state.session.surface;
+    const count = app.state.count;
+    const keys = app.state.cards.map((card) => card.key);
+    const rating = app.state.photo.rating;
+
+    assert.equal(app.simulateFolderLoss("目录已移动"), true);
+    assert.deepEqual(app.state.folderAccess, { available: false, reason: "目录已移动" });
+    assert.equal(app.state.session.surface, surface);
+    assert.equal(app.state.count, count);
+    assert.deepEqual(app.state.cards.map((card) => card.key), keys);
+    assert.equal(app.state.photo.rating, rating);
+
+    const calls = decoder.calls.length;
+    assert.equal(app.selectCard("f1/C003.JPG"), false);
+    assert.equal(app.state.displayedId, "f1/B002.JPG");
+    assert.equal(app.state.session.surface, surface);
+    assert.equal(decoder.calls.length, calls);
+
+    assert.equal(app.selectCard("f1/A001.JPG"), true);
+    assert.equal(app.state.displayedId, "f1/A001.JPG");
+    const cachedSurface = app.state.session.surface;
+    assert.ok(cachedSurface);
+    assert.equal(decoder.calls.length, calls);
+    const cachedRating = app.state.photo.rating;
+
+    assert.equal(await app.rate("f1/A001.JPG", 5), false);
+    assert.equal(app.state.photo.rating, cachedRating);
+    assert.equal(await app.extractAll(), false);
+
+    assert.equal(app.openFolder("missing"), false);
+    assert.equal(app.state.folderAccess.available, false);
+    assert.equal(app.state.displayedId, "f1/A001.JPG");
+
+    assert.equal(app.simulateFolderReopenFailure("权限已撤销"), "权限已撤销");
+    assert.equal(app.openFolder("f1"), false);
+    assert.equal(app.state.folderAccess.available, false);
+    assert.equal(app.state.displayedId, "f1/A001.JPG");
+    assert.equal(app.state.session.surface, cachedSurface);
+    assert.equal(app.state.session.toast.text, "无法读取文件夹：测试文件夹（权限已撤销）");
+
+    app.simulateFolderReopenFailure(null);
+    assert.equal(app.openFolder("f1"), true);
+    assert.deepEqual(app.state.folderAccess, { available: true, reason: null });
+    const writing = app.rate("f1/A001.JPG", 5);
+    await settle(clock, 2);
+    assert.equal(await writing, true);
+    assert.equal(app.state.photo.rating, 5);
+
+    assert.equal(app.simulateFolderLoss("目录已移动"), true);
+    assert.equal(app.openFolder("empty"), true);
+    assert.equal(app.state.folderAccess.available, true);
+});
+
+test("STATE-05：不可用时上下张跳过未缓存结果，进行中的评分事务安全收尾", async () => {
+    const { app, clock, decoder } = harness();
+    app.openFolder("f1", { target: "f1/A001.JPG" });
+    await settle(clock, 3);
+    app.selectCard("f1/C003.JPG");
+    await settle(clock, 3);
+    const writing = app.rate("f1/B002.JPG", 5);
+
+    app.simulateFolderLoss("目录已移动");
+    await settle(clock, 2);
+    assert.equal(await writing, true);
+    assert.equal(app.state.cards.find((card) => card.photo.id === "f1/B002.JPG").photo.rating, 5);
+
+    const calls = decoder.calls.length;
+    assert.equal(app.navigate(-1), true);
+    assert.equal(app.state.displayedId, "f1/A001.JPG");
+    assert.equal(decoder.calls.length, calls);
+    assert.equal(app.navigate(1), true);
+    assert.equal(app.state.displayedId, "f1/C003.JPG");
+    assert.equal(decoder.calls.length, calls);
+
+    assert.equal(await app.rate("f1/B002.JPG", 1), false);
+    assert.equal(app.state.cards.find((card) => card.photo.id === "f1/B002.JPG").photo.rating, 5);
+
+    app.simulateFolderReopenFailure(null);
+    app.openFolder("f1", { target: "f1/D004.JPG" });
+    await settle(clock, 3);
+    const failing = app.rate("f1/D004.JPG", 1);
+    await settle(clock, 2);
+    assert.equal(await failing, false);
+    assert.equal(app.state.folderAccess.available, true);
+    app.openFolder("empty");
+    assert.equal(app.state.folderAccess.available, true);
 });
 
 test("change 事件：同一 tick 内多次变化合并为一次派发", async () => {

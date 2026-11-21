@@ -209,6 +209,21 @@ internal static class PresentationCacheChecks
             c.True("Full 产物为源尺寸", session.Image is { Width: 1600, Height: 1200 });
         }
 
+        using (var offline = new PhotoLoadSession())
+        {
+            offline.UpdateViewport(300, 200, needsFull: false);
+            offline.SetFile(proxyFile);
+            var displayed = offline.Image;
+            var calls = decoder.Calls;
+            offline.SetStorageUnavailable(true);
+            offline.UpdateViewport(300, 200, needsFull: true);
+            c.True("STATE-05 失联保留已上屏图", displayed != null && ReferenceEquals(displayed, offline.Image));
+            offline.SetFile(new LocalFileRef(Path.Combine(root, "offline-cache-miss.jpg")));
+            c.True("STATE-05 无缓存不发起磁盘解码或加载提示", offline.Image == null && !offline.IsLoadingVisible);
+            offline.SetFile(proxyFile);
+            c.True("STATE-05 已缓存照片仍可显示且不重新解码", offline.Image != null && decoder.Calls == calls);
+        }
+
         const string reuseName = "session-reuse.jpg";
         decoder.Sources[reuseName] = (1200, 800);
         var reuseFile = new LocalFileRef(Path.Combine(root, reuseName));

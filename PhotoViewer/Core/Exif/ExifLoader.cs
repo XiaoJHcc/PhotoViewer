@@ -25,9 +25,16 @@ public static class ExifLoader
     /// 文件夹枚举得到的 sidecar 索引；传入后不再为每个文件单独查找目录（SAF 上代价很高）。
     /// 为 null 时才按文件名查找同名 sidecar。
     /// </param>
-    public static async Task<ExifData?> LoadExifDataAsync(
+    public static Task<ExifData?> LoadExifDataAsync(
         IFileRef file,
         RatingSidecarIndex? sidecarIndex = null)
+        => LoadExifDataAsync(file, sidecarIndex, throwOnStorageFailure: false, CancellationToken.None);
+
+    internal static async Task<ExifData?> LoadExifDataAsync(
+        IFileRef file,
+        RatingSidecarIndex? sidecarIndex,
+        bool throwOnStorageFailure,
+        CancellationToken cancellationToken)
     {
         var filePath = file.StorageId.Value;
 
@@ -35,7 +42,7 @@ public static class ExifLoader
         {
             var exifData = new ExifData { FilePath = filePath };
 
-            using var stream = await file.OpenReadAsync();
+            using var stream = await file.OpenReadAsync(cancellationToken).ConfigureAwait(false);
             var directories = ImageMetadataReader.ReadMetadata(stream);
 
             // RAW 文件（如 Sony ARW）可能有多个 SubIFD，选择包含拍摄参数的那一个
@@ -62,10 +69,11 @@ public static class ExifLoader
                 new(XmpRatingSource.Embedded, file, embedded),
             };
             var sidecar = await RatingSourceReader
-                .ResolveSidecarAsync(file, sidecarIndex)
+                .ResolveSidecarAsync(file, sidecarIndex, cancellationToken)
                 .ConfigureAwait(false);
             if (sidecar != null)
-                sources.Add(await RatingSourceReader.ReadSidecarAsync(sidecar).ConfigureAwait(false));
+                sources.Add(await RatingSourceReader.ReadSidecarAsync(sidecar, throwOnStorageFailure, cancellationToken)
+                    .ConfigureAwait(false));
 
             exifData.EmbeddedRating = embedded;
             exifData.RatingState = embedded.State;
@@ -83,7 +91,8 @@ public static class ExifLoader
 
             return exifData;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
+                                   (!throwOnStorageFailure || !StorageException.IsAvailabilityFailure(ex)))
         {
             Console.WriteLine("Failed to read EXIF data (" + filePath + "): " + ex.Message);
             return null;
@@ -93,30 +102,11 @@ public static class ExifLoader
     /// <summary>
     /// 读取一个文件的全部评分来源（内嵌 + 已存在的 sidecar），不解析其余 EXIF。
     /// </summary>
-    public static async Task<(XmpRatingSnapshot Embedded, IReadOnlyList<RatingSourceState> Sources)> LoadRatingSourcesAsync(
+    public static Task<(XmpRatingSnapshot Embedded, IReadOnlyList<RatingSourceState> Sources)> LoadRatingSourcesAsync(
         IFileRef file,
         RatingSidecarIndex? sidecarIndex,
         CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(file);
-
-        cancellationToken.ThrowIfCancellationRequested();
-        var embedded = await RatingSourceReader
-            .ReadEmbeddedAsync(file, cancellationToken)
-            .ConfigureAwait(false);
-
-        var sources = new List<RatingSourceState>(2)
-        {
-            new(XmpRatingSource.Embedded, file, embedded),
-        };
-        var sidecar = await RatingSourceReader
-            .ResolveSidecarAsync(file, sidecarIndex, cancellationToken)
-            .ConfigureAwait(false);
-        if (sidecar != null)
-            sources.Add(await RatingSourceReader.ReadSidecarAsync(sidecar, cancellationToken).ConfigureAwait(false));
-
-        return (embedded, sources);
-    }
+        => RatingSourceReader.ReadAsync(file, sidecarIndex, cancellationToken);
 
     /// <summary>
     /// 仅加载文件的星级评分（用于快速筛选，避免读取完整 EXIF）。

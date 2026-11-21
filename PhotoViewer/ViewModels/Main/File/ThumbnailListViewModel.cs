@@ -358,6 +358,7 @@ public class ThumbnailListViewModel : ReactiveObject
         if (target == null) return false;
 
         _main.CurrentFile = target;
+        if (!ReferenceEquals(_main.CurrentFile, target)) return false;
         ScrollToCurrent();
         return true;
     }
@@ -377,7 +378,11 @@ public class ThumbnailListViewModel : ReactiveObject
         if (index >= 0)
         {
             int target = index + offset;
-            return target >= 0 && target < _filteredFiles.Count ? _filteredFiles[target] : null;
+            if (!_folder.IsFolderUnavailable)
+                return target >= 0 && target < _filteredFiles.Count ? _filteredFiles[target] : null;
+            for (int i = target; i >= 0 && i < _filteredFiles.Count; i += Math.Sign(offset))
+                if (HasCachedDisplay(_filteredFiles[i])) return _filteredFiles[i];
+            return null;
         }
 
         // FILTER-05：锚点是当前照片被排除前的列表与索引；锚点自身已不在新列表，
@@ -388,15 +393,18 @@ public class ThumbnailListViewModel : ReactiveObject
         for (int i = _anchorIndex + step; i >= 0 && i < _anchorSnapshot.Count; i += step)
         {
             var candidate = _anchorSnapshot[i];
-            if (_filteredFiles.Contains(candidate)) return candidate;
+            if (_filteredFiles.Contains(candidate) && (!_folder.IsFolderUnavailable || HasCachedDisplay(candidate)))
+                return candidate;
         }
 
         return null;
     }
 
-    /// <summary>
-    /// 触发滚动到当前文件的事件。
-    /// </summary>
+    private static bool HasCachedDisplay(ImageFile file) =>
+        BitmapLoader.IsInCache(file.File.StorageId.Value, ImageSizeClass.Full) ||
+        BitmapLoader.IsInCache(file.File.StorageId.Value, ImageSizeClass.Proxy);
+
+    /// <summary>触发滚动到当前文件的事件。</summary>
     public void ScrollToCurrent() => ScrollToCurrentRequested?.Invoke();
 
     /// <summary>
@@ -446,7 +454,7 @@ public class ThumbnailListViewModel : ReactiveObject
     /// <param name="priority">是否优先加载(P1 可见/当前;否则 P2 普通排队)</param>
     public void QueueThumbnailLoad(ImageFile imageFile, bool priority = false)
     {
-        if (imageFile.Thumbnail != null || imageFile.IsThumbnailLoading) return;
+        if (_folder.IsFolderUnavailable || imageFile.Thumbnail != null || imageFile.IsThumbnailLoading) return;
 
         DecodeScheduler.Submit(
             imageFile.File.StorageId.Value + "#thumb",

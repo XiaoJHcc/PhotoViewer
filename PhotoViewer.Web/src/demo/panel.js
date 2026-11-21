@@ -202,6 +202,9 @@ export function mountDemoPanel(root, shell) {
     el("option", { value: "1", selected: true }, "1×"),
     el("option", { value: "4" }, "4×"),
     el("option", { value: "10" }, "10×"));
+    const reopenFailure = checkbox("重新打开失败", false, (value) => {
+        app.simulateFolderReopenFailure(value ? "模拟无访问权限" : null);
+    });
     const failNextInput = el("input", { class: "pv-demo-number", type: "number", min: "0", max: "5", step: "1", value: store.failNext ?? 0 });
     const failNextNote = el("span", { class: "pv-demo-note" }, `failNext = ${store.failNext ?? 0}`);
     failNextInput.addEventListener("change", () => {
@@ -343,6 +346,8 @@ export function mountDemoPanel(root, shell) {
             field("解码延迟倍率", latencySelect),
             field("下一次提取失败", failNextInput),
             failNextNote,
+            button("模拟文件夹不可用", () => app.simulateFolderLoss("目录已移动")),
+            reopenFailure.node,
             button("模拟内存告警", () => app.simulateMemoryWarning()),
             field("减少动态效果", motionSelect),
         ]),

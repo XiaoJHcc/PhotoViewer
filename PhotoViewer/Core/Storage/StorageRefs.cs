@@ -42,6 +42,14 @@ public interface IFolderRef : IStorageItemRef
 {
     IAsyncEnumerable<IStorageItemRef> GetItemsAsync(CancellationToken cancellationToken = default);
 
+    async Task CheckAccessAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        await using var entries = GetItemsAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
+        await entries.MoveNextAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>找不到子文件时返回 null；父目录无法访问时报告存储错误。</summary>
     Task<IFileRef?> FindFileAsync(string name, CancellationToken cancellationToken = default)
         => throw StorageException.Unsupported("查找子文件");
 

@@ -72,6 +72,8 @@ internal sealed class AndroidControlBar : FrameLayout
     internal AndroidExifBlock ExifBlock => _exifView;
     /// <summary>星级控件子视图（验收读取胶囊矩形与状态）。</summary>
     internal AndroidRatingControl RatingControl => _ratingView;
+    /// <summary>评分槽位当前是否接受输入（验收读取；STATE-05 不可用期间为 false）。</summary>
+    internal bool RatingInputEnabledForChecks => _ratingView.EnabledForChecks;
     /// <summary>分组类型顺序（验收读取，与 <see cref="GroupFramesForChecks"/> 同序）。</summary>
     internal IReadOnlyList<ControlBarGroupKind> GroupKindsForChecks
         => _groups.ConvertAll(group => group.Kind);
@@ -208,7 +210,8 @@ internal sealed class AndroidControlBar : FrameLayout
         if (_main.Settings.ShowRating)
         {
             var children = new List<Child>(6);
-            bool hasPhoto = _main.CurrentFile != null;
+            // STATE-05：目录不可用时评分写入已冻结，槽位保留几何但不再接受输入。
+            bool hasPhoto = _main.CurrentFile != null && !_main.FolderVM.IsFolderUnavailable;
             int rating = _main.CurrentFile?.Rating ?? 0;
             // RATING-04：组级冲突时 0 号换成警示三角，几何与命中区不变。
             bool conflict = hasPhoto && _main.CurrentFile!.HasRatingConflict;
@@ -323,12 +326,19 @@ internal sealed class AndroidControlBar : FrameLayout
             : AndroidUiTheme.IconGlyph(DesignTokens.IconStarFilled);
     }
 
-    /// <summary>命令可用性（TOOLBAR-04：无照片时除打开文件外全部禁用）。</summary>
+    /// <summary>
+    /// 命令可用性（TOOLBAR-04：无照片时除打开文件外全部禁用；STATE-05 不可用期间只冻结评分命令，
+    /// 缩放、翻页与打开其他文件源照常可用）。
+    /// </summary>
     /// <param name="main">主 VM。</param>
     /// <param name="command">共享命令标识。</param>
     /// <returns>命令可用返回 true。</returns>
     internal static bool IsCommandEnabled(MainViewModel main, string command)
-        => command == "Open" || main.CurrentFile != null;
+    {
+        if (command == "Open") return true;
+        if (main.CurrentFile == null) return false;
+        return !(IsRatingCommand(command) && main.FolderVM.IsFolderUnavailable);
+    }
 
     /// <summary>
     /// 命令在控制栏与手机可选命令组中的呈现：字形、读屏名称、可用性与评分叠字同源。

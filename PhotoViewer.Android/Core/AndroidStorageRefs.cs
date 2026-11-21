@@ -25,7 +25,12 @@ internal readonly record struct AndroidDocumentMetadata(
     int? Flags);
 
 /// <summary>
-/// Android 存储引用共用的 SAF 助手：文档身份、投影读取、异常归类与能力映射。
+/// 枚举/查找当前行的文档 ID 与完整投影；空文档 ID 表示该行不可寻址。
+/// </summary>
+internal readonly record struct AndroidChildRow(string DocumentId, AndroidDocumentMetadata Metadata);
+
+/// <summary>
+/// Android 存储引用共用的 SAF 助手：文档身份、投影读取、游标遍历、异常归类与能力映射。
 /// </summary>
 internal static class AndroidStorageSupport
 {
@@ -219,6 +224,54 @@ internal static class AndroidStorageSupport
         return index < 0 || cursor.IsNull(index) ? null : cursor.GetInt(index);
     }
 
+    /// <summary>
+    /// 推进枚举游标：遍历中途 Provider 断开/游标失效归类为 typed 异常，取消原样抛出；
+    /// 迭代器里不能用 try/catch 包住 <c>yield</c>，所以这一步单独收口。
+    /// </summary>
+    internal static bool MoveToNext(ICursor cursor, string operation)
+    {
+        try
+        {
+            return cursor.MoveToNext();
+        }
+        catch (Exception exception) when (exception is not StorageException and not OperationCanceledException)
+        {
+            throw Wrap(exception, operation);
+        }
+    }
+
+    /// <summary>读取当前行的文档 ID 与投影；空文档 ID 返回 null，Provider 读取失败抛 typed 异常。</summary>
+    internal static AndroidChildRow? ReadChildRow(ICursor cursor, string operation)
+    {
+        try
+        {
+            string? documentId = ReadString(cursor, DocumentsContract.Document.ColumnDocumentId);
+            if (string.IsNullOrEmpty(documentId)) return null;
+            return new AndroidChildRow(documentId, ReadMetadata(cursor));
+        }
+        catch (Exception exception) when (exception is not StorageException and not OperationCanceledException)
+        {
+            throw Wrap(exception, operation);
+        }
+    }
+
+    /// <summary>
+    /// 释放枚举游标：已经交出的行保持有效，关闭阶段的 Provider 失败不改写枚举结果，
+    /// 也不覆盖调用方自己的失败原因；目录可达性由零行回查与下一次访问负责。
+    /// </summary>
+    internal static void CloseCursor(ICursor cursor)
+    {
+        try
+        {
+            // Dispose 等价于 Close 并释放 JNI 引用：只调 Close 会把托管 peer 留到 GC。
+            cursor.Dispose();
+        }
+        catch (Exception)
+        {
+            // 见 summary：关闭失败不能反过来判定已经读到的枚举结果无效。
+        }
+    }
+
     /// <summary>子文件名校验：拒绝空名、路径分隔符与 <c>.</c>/<c>..</c>，不做任何静默改写。</summary>
     internal static void ValidateChildName(string name)
     {
@@ -248,6 +301,20 @@ internal static class AndroidStorageSupport
     }
 
     /// <summary>
+    /// 定位探测的明确拒绝：Java 侧不支持 Seek，或管道描述符的 <c>lseek</c> 返回 ESPIPE。
+    /// 其它 IO 失败（Provider 断开等）不是「不可定位」，必须如实归类。
+    /// <c>Java.IO.IOException</c> 不继承 <see cref="IOException"/>，两种都要按消息判定。
+    /// </summary>
+    internal static bool IsSeekRejection(Exception exception) =>
+        exception is NotSupportedException
+        || (exception is Java.IO.IOException or IOException
+            && IsSeekRejectionMessage(exception.Message));
+
+    private static bool IsSeekRejectionMessage(string message) =>
+        message.Contains("ESPIPE", StringComparison.Ordinal)
+        || message.Contains("Illegal seek", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Java 侧异常归类为共享 <see cref="StorageException"/>；不把同步 IO 失败吞成 bool。
     /// </summary>
     internal static StorageException Wrap(Exception exception, string operation)
@@ -265,8 +332,7 @@ internal static class AndroidStorageSupport
         if (message.Contains("EACCES", StringComparison.Ordinal)
             || message.Contains("Permission denied", StringComparison.OrdinalIgnoreCase))
             return new StorageException(StorageError.AccessDenied, $"无权{operation}", exception);
-        if (message.Contains("ESPIPE", StringComparison.Ordinal)
-            || message.Contains("Illegal seek", StringComparison.OrdinalIgnoreCase))
+        if (IsSeekRejectionMessage(message))
             return new StorageException(StorageError.NotSeekable, $"{operation}失败：目标不可定位", exception);
         if (exception is Java.IO.FileNotFoundException or FileNotFoundException or DirectoryNotFoundException)
             return new StorageException(StorageError.ObjectGone, $"目标已不存在，无法{operation}", exception);
@@ -422,28 +488,49 @@ public sealed class AndroidFileRef : IFileRef
         return Task.Run<Stream>(() =>
         {
             cancellationToken.ThrowIfCancellationRequested();
+            Stream? pending = null;
             try
             {
-                var stream = _resolver.OpenInputStream(_uri)
+                pending = _resolver.OpenInputStream(_uri)
                     ?? throw new StorageException(StorageError.ObjectGone, $"{Name} 无法打开");
+                // 取到流之后到交还调用方之间仍可能被取消：这条流还没有接手者，必须在这里关掉。
                 cancellationToken.ThrowIfCancellationRequested();
-                // Provider 的流可能来自管道（不可定位）：能读 Position 的保持原流（MetadataExtractor 要求可 Seek），
-                // 探测到 ESPIPE 的包一层明确不可 Seek 的流，避免 CopyToAsync 消费者反复探测 Position。
-                try
-                {
-                    _ = stream.Position;
-                    return stream;
-                }
-                catch (Exception)
-                {
-                    return new NonSeekableReadStream(stream);
-                }
+                // Provider 的流可能来自管道（不可定位）：能定位的保持原流（MetadataExtractor 要求可 Seek），
+                // 探测到 ESPIPE/不支持定位的包一层明确不可 Seek 的流，避免 CopyToAsync 消费者反复探测 Position；
+                // 其它 IO 失败（Provider 断开）如实抛 typed 异常，不伪装成「不可定位」。
+                var stream = IsSeekable(pending) ? pending : new NonSeekableReadStream(pending);
+                pending = null;
+                return stream;
             }
             catch (Exception exception) when (exception is not StorageException and not OperationCanceledException)
             {
                 throw AndroidStorageSupport.Wrap(exception, $"读取 {Name}");
             }
+            finally
+            {
+                if (pending != null)
+                {
+                    try { pending.Dispose(); } catch (Exception) { }
+                }
+            }
         }, cancellationToken);
+    }
+
+    /// <summary>
+    /// 探测 Provider 流能否定位：管道 fd 的 Position 会抛 ESPIPE，包装成显式不可定位；
+    /// 其它 IO 失败原样抛出，由调用方归类为 typed 存储异常。
+    /// </summary>
+    private static bool IsSeekable(Stream stream)
+    {
+        try
+        {
+            _ = stream.Position;
+            return true;
+        }
+        catch (Exception exception) when (AndroidStorageSupport.IsSeekRejection(exception))
+        {
+            return false;
+        }
     }
 
     /// <summary>
@@ -864,12 +951,13 @@ public sealed class AndroidFolderRef : IFolderRef
             yield break;
         }
 
+        string operation = $"枚举 {CachedName}";
         var childrenUri = BuildChildrenUri();
         ICursor cursor;
         try
         {
             cursor = _resolver.Query(childrenUri, AndroidStorageSupport.ProjectionColumns, null, null, null)
-                ?? throw new StorageException(StorageError.IoError, $"无法枚举 {Name}");
+                ?? throw new StorageException(StorageError.ObjectGone, $"{CachedName} 已不存在或无法枚举");
         }
         catch (StorageException)
         {
@@ -877,31 +965,43 @@ public sealed class AndroidFolderRef : IFolderRef
         }
         catch (Exception exception)
         {
-            throw AndroidStorageSupport.Wrap(exception, $"枚举 {Name}");
+            throw AndroidStorageSupport.Wrap(exception, operation);
         }
 
+        // 迭代器不能用 try/catch 包住 yield：游标推进/行读取逐次收口为 typed 异常，关闭放在 finally。
         int count = 0;
-        using (cursor)
+        try
         {
-            while (cursor.MoveToNext())
+            while (AndroidStorageSupport.MoveToNext(cursor, operation))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                string? documentId = AndroidStorageSupport.ReadString(
-                    cursor, DocumentsContract.Document.ColumnDocumentId);
-                if (string.IsNullOrEmpty(documentId)) continue;
+                count++;
+                if (AndroidStorageSupport.ReadChildRow(cursor, operation) is { } child
+                    && BuildDocumentUri(child.DocumentId) is { } documentUri)
+                {
+                    if (string.Equals(child.Metadata.MimeType, DocumentsContract.Document.MimeTypeDir,
+                            StringComparison.Ordinal))
+                        yield return new AndroidFolderRef(
+                            _resolver, _treeUri, documentUri, child.DocumentId, child.Metadata.DisplayName,
+                            child.Metadata, true);
+                    else
+                        yield return new AndroidFileRef(_resolver, documentUri, _treeUri, child.Metadata, true);
+                }
 
-                var metadata = AndroidStorageSupport.ReadMetadata(cursor);
-                var documentUri = BuildDocumentUri(documentId);
-                if (documentUri == null) continue;
-
-                if (string.Equals(metadata.MimeType, DocumentsContract.Document.MimeTypeDir, StringComparison.Ordinal))
-                    yield return new AndroidFolderRef(
-                        _resolver, _treeUri, documentUri, documentId, metadata.DisplayName, metadata, true);
-                else
-                    yield return new AndroidFileRef(_resolver, documentUri, _treeUri, metadata, true);
-
-                if (++count % 64 == 0) await Task.Yield();
+                if (count % 64 == 0) await Task.Yield();
             }
+
+            // Provider 对不可达的目录也可能返回空游标：零行必须回查目录自身投影，
+            // 才能把真实空目录与已经断开/被撤销的目录分开。
+            if (count == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                EnsureDocumentReachable();
+            }
+        }
+        finally
+        {
+            AndroidStorageSupport.CloseCursor(cursor);
         }
     }
 
@@ -927,34 +1027,46 @@ public sealed class AndroidFolderRef : IFolderRef
 
     private IFileRef? FindDocumentFile(string name, CancellationToken cancellationToken)
     {
+        string operation = $"查找 {name}";
         try
         {
             using var cursor = _resolver.Query(BuildChildrenUri(), AndroidStorageSupport.ProjectionColumns,
-                null, null, null) ?? throw new StorageException(StorageError.IoError, $"无法枚举 {Name}");
-            int nameColumn = cursor.GetColumnIndex(DocumentsContract.Document.ColumnDisplayName);
-            while (cursor.MoveToNext())
+                null, null, null) ?? throw new StorageException(
+                StorageError.ObjectGone, $"{CachedName} 已不存在或无法枚举");
+            while (AndroidStorageSupport.MoveToNext(cursor, operation))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                string? displayName = nameColumn < 0 || cursor.IsNull(nameColumn) ? null : cursor.GetString(nameColumn);
-                if (displayName != null && !string.Equals(displayName, name, StringComparison.Ordinal)) continue;
-
-                string? documentId = AndroidStorageSupport.ReadString(cursor, DocumentsContract.Document.ColumnDocumentId);
-                if (string.IsNullOrEmpty(documentId)) continue;
-                if (displayName == null && !string.Equals(AndroidStorageSupport.NameFromDocumentId(documentId),
+                if (AndroidStorageSupport.ReadChildRow(cursor, operation) is not { } child) continue;
+                if (!string.Equals(
+                        child.Metadata.DisplayName ?? AndroidStorageSupport.NameFromDocumentId(child.DocumentId),
                         name, StringComparison.Ordinal)) continue;
-
-                var metadata = AndroidStorageSupport.ReadMetadata(cursor);
-                if (string.Equals(metadata.MimeType, DocumentsContract.Document.MimeTypeDir, StringComparison.Ordinal))
-                    continue;
-                var documentUri = BuildDocumentUri(documentId);
-                if (documentUri != null) return new AndroidFileRef(_resolver, documentUri, _treeUri, metadata, true);
+                if (string.Equals(child.Metadata.MimeType, DocumentsContract.Document.MimeTypeDir,
+                        StringComparison.Ordinal)) continue;
+                if (BuildDocumentUri(child.DocumentId) is { } documentUri)
+                    return new AndroidFileRef(_resolver, documentUri, _treeUri, child.Metadata, true);
             }
+
+            // 未命中只有在目录仍可访问时才等于「没有这个文件」：
+            // Provider 对不可达目录返回空游标时不能静默返回 null。
+            cancellationToken.ThrowIfCancellationRequested();
+            EnsureDocumentReachable();
             return null;
         }
         catch (Exception exception) when (exception is not StorageException and not OperationCanceledException)
         {
-            throw AndroidStorageSupport.Wrap(exception, $"查找 {name}");
+            throw AndroidStorageSupport.Wrap(exception, operation);
         }
+    }
+
+    /// <summary>
+    /// 回查目录自身的投影，确认它仍然可访问。Provider 对已经断开/被撤销的目录也可能返回空游标，
+    /// 零行枚举或未命中只有在这一步成功后才是「真实空目录 / 确实没有这个文件」；
+    /// 不可访问时由 <see cref="AndroidStorageSupport.QueryDocument"/> 抛 typed 异常。
+    /// </summary>
+    private void EnsureDocumentReachable()
+    {
+        if (_documentId == null) return;
+        AndroidStorageSupport.QueryDocument(_resolver, BuildDocumentUri(_documentId) ?? _uri, CachedName);
     }
 
     /// <summary>在本目录新建文件；MIME 按扩展名选择（.xmp → application/xml）。</summary>

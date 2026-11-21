@@ -12,10 +12,12 @@
  * 档位不足或没有产物则清图走黑屏加载（低分辨率顶替默认禁用）。
  *
  * new PhotoSession({ t, clock, decoder, onChange, cacheLimit })
- *     show(photo, { proxyLongEdge, wantFull })   切图；photo 为 null 进入空态
+ *     show(photo, { proxyLongEdge, wantFull }) -> boolean 切图；photo 为 null 进入空态
  *     setWantFull(bool)                          视口/分析栏可见性变化后的升级需求
  *     setProxyLongEdge(px)                       视口变大时重出代理
  *     setCacheLimit(count)                       缓存数量上限变化后裁剪
+ *     setSuspended(bool)                         暂停/恢复需要访问目录的解码（STATE-05）
+ *     canShowCached(photoId, { wantFull })       已缓存产物是否满足当前需求（仅缓存浏览）
  *     cachedFullIds() -> string[]                已缓存全分辨率的照片 id（胶片栏细边口径）
  *     setEnhance(bool)                           雾天增强会话开关（无照片时不可开）；返回生效值
  *     memoryWarning()                            内存压力：自动关闭雾天增强并提示；返回是否因此关闭
@@ -67,6 +69,8 @@ export class PhotoSession {
         this._toastSeq = 0;
         this._toastTimer = null;
 
+        this._suspended = false;
+
         this._loadingTimer = null;
         this._proxyReq = null;
         this._fullReq = null;
@@ -92,6 +96,7 @@ export class PhotoSession {
             error: this._error ? { ...this._error } : null,
             enhance: this._enhance,
             busy: this._busy,
+            suspended: this._suspended,
             toast: this._toast ? { ...this._toast } : null,
             toastBottom,
         };
@@ -101,14 +106,18 @@ export class PhotoSession {
         if (!photo) {
             this._reset();
             this._emit();
-            return;
+            return true;
         }
+        const wantFull = options.wantFull === undefined ? this._wantFull : Boolean(options.wantFull);
         const same = this._photo && photo.id === this._photo.id && this._surface && !this._error;
+        const cached = this._cache.get(photo.id);
+        // STATE-05：目录不可用时只允许已缓存的展示结果，拒绝启动需要访问目录的解码。
+        if (this._suspended && !same && !(cached && this._cacheSatisfies(cached, wantFull))) return false;
         if (same) {
             // OPEN-06：同一目标重复打开幂等，不重解码，只调整升级需求
             if (options.proxyLongEdge != null) this.setProxyLongEdge(options.proxyLongEdge);
             if (options.wantFull !== undefined) this.setWantFull(options.wantFull);
-            return;
+            return true;
         }
 
         this._cancelEnhance();
@@ -125,11 +134,10 @@ export class PhotoSession {
         this._tier = "none";
         this._error = null;
         this._loadingHint = false;
-        this._wantFull = options.wantFull === undefined ? this._wantFull : Boolean(options.wantFull);
+        this._wantFull = wantFull;
         if (options.proxyLongEdge != null) this._proxyLongEdge = Number(options.proxyLongEdge);
         this._proxyLongEdgeUsed = null;
 
-        const cached = this._cache.get(photo.id);
         if (cached && this._cacheSatisfies(cached, this._wantFull)) {
             // STATE-01：缓存档位已满足当前需求，只剩上屏——保留前一张直到这次 emit 换上新图，
             // 不插黑帧、不起加载提示计时；新 surface 与新几何在同一次调用里生效。
@@ -140,7 +148,7 @@ export class PhotoSession {
             this._proxyLongEdgeUsed = cached.longEdge;
             if (this._enhance) this._startEnhance();
             this._emit();
-            return;
+            return true;
         }
 
         this._surface = null;
@@ -148,21 +156,45 @@ export class PhotoSession {
         // 需要 Full 而屏上只有代理时不得先拿代理顶替。
         this._emit();
 
-        this._loadingTimer = this._clock.setTimeout(() => {
-            this._loadingTimer = null;
-            if (this._photo && !this._surface && !this._error) {
-                this._loadingHint = true;
-                this._emit();
-            }
-        }, this._t("status.loading.delay"));
-
+        this._startLoadingHint();
         this._requestProxy({ longEdge: this._proxyLongEdge, keepSurface: false });
+        return true;
     }
 
     setWantFull(want) {
         const next = Boolean(want);
         this._wantFull = next;
         if (next) this._requestFull();
+    }
+
+    setSuspended(value) {
+        const next = Boolean(value);
+        if (next === this._suspended) return false;
+        this._suspended = next;
+        if (next) {
+            // STATE-05：暂停目录解码，在途请求作废；已上屏产物原样保留，供只读浏览。
+            this._abort(this._proxyReq);
+            this._abort(this._fullReq);
+            this._proxyReq = null;
+            this._fullReq = null;
+            this._clearLoadingHint();
+        } else if (this._photo && !this._error) {
+            if (!this._surface) {
+                this._startLoadingHint();
+                this._requestProxy({ longEdge: this._proxyLongEdge, keepSurface: false });
+            } else if (this._wantFull && this._tier !== "full") {
+                this._requestFull();
+            } else if (this._tier === "proxy" && this._proxyLongEdgeUsed < this._proxyLongEdge) {
+                this._requestProxy({ longEdge: this._proxyLongEdge, keepSurface: true });
+            }
+        }
+        this._emit();
+        return true;
+    }
+
+    canShowCached(photoId, { wantFull = false } = {}) {
+        const cached = photoId ? this._cache.get(photoId) : null;
+        return Boolean(cached && this._cacheSatisfies(cached, Boolean(wantFull)));
     }
 
     setProxyLongEdge(px) {
@@ -251,6 +283,7 @@ export class PhotoSession {
     }
 
     _requestProxy({ longEdge, keepSurface }) {
+        if (this._suspended) return;
         this._abort(this._proxyReq);
         const gen = this._generation;
         const req = { gen, ctl: new AbortController(), longEdge, keepSurface };
@@ -317,6 +350,7 @@ export class PhotoSession {
     }
 
     _requestFull() {
+        if (this._suspended) return;
         if (!this._photo || this._tier !== "proxy" || this._fullReq) return;
         const gen = this._generation;
         const req = { gen, ctl: new AbortController() };
@@ -502,6 +536,17 @@ export class PhotoSession {
             this._loadingTimer = null;
         }
         this._loadingHint = false;
+    }
+
+    _startLoadingHint() {
+        this._clearLoadingHint();
+        this._loadingTimer = this._clock.setTimeout(() => {
+            this._loadingTimer = null;
+            if (this._photo && !this._surface && !this._error && !this._suspended) {
+                this._loadingHint = true;
+                this._emit();
+            }
+        }, this._t("status.loading.delay"));
     }
 
     _stopBusy() {

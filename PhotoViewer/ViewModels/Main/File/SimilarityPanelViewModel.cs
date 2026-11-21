@@ -364,7 +364,7 @@ public class SimilarityPanelViewModel : ReactiveObject, IDisposable
     /// </summary>
     private Task EvaluateUnindexedAsync(bool invalidate = false)
     {
-        if (_disposed) return Task.CompletedTask;
+        if (_disposed || _folder.IsFolderUnavailable) return Task.CompletedTask;
         if (invalidate) Interlocked.Increment(ref _unindexedVersion);
 
         lock (_unindexedGate)
@@ -381,10 +381,11 @@ public class SimilarityPanelViewModel : ReactiveObject, IDisposable
 
     private async Task RunUnindexedAsync(TaskCompletionSource<bool> run)
     {
-        var token = _lifetimeCts.Token;
+        using var access = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token, _folder.FolderAccessToken);
+        var token = access.Token;
         try
         {
-            while (!_disposed)
+            while (!_disposed && !token.IsCancellationRequested)
             {
                 var request = await UiDispatcher.InvokeAsync(() =>
                     (Version: Volatile.Read(ref _unindexedVersion), Files: _folder.AllFiles.ToArray()))
@@ -469,7 +470,7 @@ public class SimilarityPanelViewModel : ReactiveObject, IDisposable
     /// </summary>
     private async Task RunIndexingAsync()
     {
-        if (_disposed || IsStateIndexing) return;
+        if (_disposed || IsStateIndexing || _folder.IsFolderUnavailable) return;
 
         var files = _folder.AllFiles;
         if (files == null || files.Count == 0) return;
@@ -502,8 +503,9 @@ public class SimilarityPanelViewModel : ReactiveObject, IDisposable
             IsStateIndexing = true;
 
             var indexer = new FolderFeatureIndexer();
+            var folderToken = _folder.FolderAccessToken;
             using var runCts = CancellationTokenSource.CreateLinkedTokenSource(
-                _lifetimeCts.Token, BatchAnalysisContext.ApplicationToken);
+                _lifetimeCts.Token, BatchAnalysisContext.ApplicationToken, folderToken);
             var token = runCts.Token;
 
             void OnProgress(IndexProgress progress) => QueueIndexProgress(batch, progress);
@@ -513,7 +515,7 @@ public class SimilarityPanelViewModel : ReactiveObject, IDisposable
             try
             {
                 // Attach 是平台权限准入(binder 调用),放后台;未附加成功的文件不进本轮。
-                var attached = await Task.Run(() => AttachAll(lease, snapshot), CancellationToken.None)
+                var attached = await Task.Run(() => AttachAll(lease, snapshot, token), token)
                     .ConfigureAwait(false);
                 error = attached.Error;
 
@@ -532,7 +534,9 @@ public class SimilarityPanelViewModel : ReactiveObject, IDisposable
             finally
             {
                 indexer.ProgressChanged -= OnProgress;
-                error ??= token.IsCancellationRequested ? CancelReason() : indexer.LastError;
+                error ??= token.IsCancellationRequested
+                    ? folderToken.IsCancellationRequested ? StatusMessages.FolderUnavailable : CancelReason()
+                    : indexer.LastError;
             }
 
             // 已入库特征先失效重扫覆盖度:等待最新计数提交到 UI 之后才结束"提取中"。
@@ -593,7 +597,7 @@ public class SimilarityPanelViewModel : ReactiveObject, IDisposable
 
     /// <summary>为本轮文件建立访问准入:只返回附加成功的项,首个失败原因一并返回,不在整批上假装通过。</summary>
     private static (IReadOnlyList<ImageFile> Files, string? Error) AttachAll(
-        IStorageAccessSession? lease, IReadOnlyList<ImageFile> files)
+        IStorageAccessSession? lease, IReadOnlyList<ImageFile> files, CancellationToken token)
     {
         if (lease == null) return (files, null);
 
@@ -602,6 +606,7 @@ public class SimilarityPanelViewModel : ReactiveObject, IDisposable
 
         foreach (var file in files)
         {
+            token.ThrowIfCancellationRequested();
             try
             {
                 lease.Attach(file.File);
@@ -674,9 +679,9 @@ public class SimilarityPanelViewModel : ReactiveObject, IDisposable
         if (_disposed) return;
 
         _computeCts?.Cancel();
-        if (!IsPanelVisible || !BatchAnalysisContext.IsApplicationActive) return;
+        if (_folder.IsFolderUnavailable || !IsPanelVisible || !BatchAnalysisContext.IsApplicationActive) return;
 
-        var cts = new CancellationTokenSource();
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(_folder.FolderAccessToken);
         _computeCts = cts;
         var token = cts.Token;
 

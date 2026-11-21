@@ -160,8 +160,8 @@ internal sealed class FolderLoadSession : IDisposable
     public void Dispose()
     {
         if (_disposed) return;
-        _disposed = true;
         Cancel();
+        _disposed = true;
         _lease?.Dispose();
         _cancellation.Dispose();
         _backgroundTasks.Clear();

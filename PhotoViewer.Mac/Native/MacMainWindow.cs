@@ -69,6 +69,7 @@ public sealed class MacMainWindow : IDisposable
     private readonly NSTextField _hint;
     private readonly NSTextField _busyPill;
     private readonly MacStatusToast _toast = new();
+    private readonly MacFolderUnavailableBar _folderUnavailable = new();
     private readonly MacRatingSourcesPopover _ratingSources;
     private readonly NavigatorHostView _navigationHost;
     private readonly NSImageView _navigationImage;
@@ -171,6 +172,8 @@ public sealed class MacMainWindow : IDisposable
     internal NSTextField EnhanceBusyPill => _busyPill;
     /// <summary>主图区底部提示条，供验收核对非模态反馈。</summary>
     internal MacStatusToast StatusToast => _toast;
+    /// <summary>STATE-05 持续的文件夹不可用状态条，供验收核对文案、按钮与落位。</summary>
+    internal MacFolderUnavailableBar FolderUnavailableBar => _folderUnavailable;
     /// <summary>来源浮窗（RATING-04），供验收核对冲突入口与横排列。</summary>
     internal MacRatingSourcesPopover RatingSourcesPopover => _ratingSources;
     /// <summary>顶边悬停拖动区供验收核对它们是否绕开了筛选条控件。</summary>
@@ -269,6 +272,8 @@ public sealed class MacMainWindow : IDisposable
         _busyPill.Layer.MasksToBounds = true;
         _busyPill.Hidden = true;
         _photoPane.AddSubview(_busyPill);
+        _folderUnavailable.ReopenRequested += () => _ = ReopenCurrentFolderAsync();
+        _photoPane.AddSubview(_folderUnavailable);
         _photoPane.AddSubview(_toast);
         var filterBar = _main.FileVM.FilterBar;
         _sortWidth = MeasureFilterWidth(filterBar.SortModes.Select(item => item.DisplayName).ToArray());
@@ -384,6 +389,7 @@ public sealed class MacMainWindow : IDisposable
         _deactivationObserver = NSNotificationCenter.DefaultCenter.AddObserver(NSApplication.DidResignActiveNotification, _ => { SetTitlebarVisible(false); HideDetailHighlight(); });
         Session.Changed += OnImageChanged;
         _main.FolderVM.OpenStateChanged += OnOpenStateChanged;
+        _main.FolderVM.FolderAvailabilityChanged += OnFolderAvailabilityChanged;
         Session.Notice += ShowToast;
         _root.Resized = Layout;
         _root.OpenDroppedPaths = paths => _ = OpenPathsAsync(paths, OpenRequestSource.DragDrop);
@@ -401,6 +407,7 @@ public sealed class MacMainWindow : IDisposable
         _root.Menu = ContextMenu();
         Photo.Menu = _root.Menu;
         OnImageChanged();
+        UpdateFolderAvailability();
         // 重复外部激活（再次打开当前目录/当前照片）：前置窗口，并由协调器按 OPEN-08 原地刷新，保留当前照片、筛选、滚动与视口（不重新 Fit）。
         _main.OpenCoordinator.RepeatActivation += BringToFront;
         Window.MakeKeyAndOrderFront(null);
@@ -689,6 +696,8 @@ public sealed class MacMainWindow : IDisposable
                 DesignTokens.ImageBusyWidth,
                 DesignTokens.ImageBusyHeight);
             _toast.StackOverBusyPill = !_busyPill.Hidden;
+            _folderUnavailable.Layout(FitArea, !_busyPill.Hidden);
+            _toast.StackAboveHeight = _folderUnavailable.Hidden ? 0 : (double)_folderUnavailable.Frame.Height;
             _toast.Layout(FitArea);
             double hintWidth = Math.Max(0, Math.Min(DesignTokens.ImageHintMaxWidth,
                 (double)photoRect.Width - 2 * DesignTokens.ImageHintInset));
@@ -1132,6 +1141,7 @@ public sealed class MacMainWindow : IDisposable
     /// <param name="anchor">触发入口的 0 号槽位按钮。</param>
     internal void ShowRatingSources(ImageFile file, NSView anchor)
     {
+        if (_main.FolderVM.IsFolderUnavailable) return;
         _ratingSources.Close();
         _main.ShowRatingSources(file);
         PresentRatingSources(anchor);
@@ -1392,6 +1402,39 @@ public sealed class MacMainWindow : IDisposable
     {
         UpdateHint();
         Layout();
+    }
+
+    /// <summary>STATE-05：共享文件夹可用性变化（UI 线程）→ 会话暂停访问、状态条显隐与评分入口闸门。</summary>
+    private void OnFolderAvailabilityChanged() => UpdateFolderAvailability();
+
+    /// <summary>
+    /// 同步当前文件夹的可用性：已打开的目录不可用时显示持续的底部状态与「重新打开…」，
+    /// 收起评分来源浮窗并让星级控件进入禁用态；恢复后按共享状态重新显示。
+    /// </summary>
+    private void UpdateFolderAvailability()
+    {
+        bool unavailable = _main.FolderVM.IsFolderUnavailable;
+        Session.SetStorageUnavailable(unavailable);
+        _folderUnavailable.Hidden = !unavailable;
+        if (unavailable) _ratingSources.Close();
+        _controlPane.RatingGated = unavailable;
+        _controlPane.UpdateRatingDisplay();
+        Layout();
+    }
+
+    /// <summary>重新打开当前文件夹：共用文件夹选择器，取消或失败时保留当前快照与状态条。</summary>
+    private async Task ReopenCurrentFolderAsync()
+    {
+        try
+        {
+            await _main.FolderVM.ReopenFolderAsync();
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine(exception);
+            if (_automatedValidation) throw new InvalidOperationException(exception.Message);
+            ShowToast(StatusMessages.OpenFailed(null, StatusMessages.ReasonFor(exception)));
+        }
     }
 
     private void UpdateHint()
@@ -1810,12 +1853,13 @@ public sealed class MacMainWindow : IDisposable
         _ratingSources.Dispose();
         Session.Notice -= ShowToast;
         _main.FolderVM.OpenStateChanged -= OnOpenStateChanged;
+        _main.FolderVM.FolderAvailabilityChanged -= OnFolderAvailabilityChanged;
         Session.Dispose(); _navigationBitmap?.Dispose(); _analysisPane.Dispose(); _controlPane.Dispose();
 #if PHOTOVIEWER_DINO
         _similarityPane.Dispose();
 #endif
         Photo.Dispose(); Window.Dispose();
-        _toast.Dispose(); _busyPill.Dispose();
+        _toast.Dispose(); _folderUnavailable.Dispose(); _busyPill.Dispose();
     }
 
     /// <summary>CollectionView 按需创建卡片，不为全部文件创建视图。</summary>

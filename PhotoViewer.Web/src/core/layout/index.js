@@ -607,9 +607,24 @@ function createOverlays(t, profile, layout, panes) {
         };
     }
 
-    function toastFrame(pane, textW, textH, pillVisible = false) {
+    function toastFrame(pane, textW, textH, pillVisible = false, stackOffset = 0) {
         const width = Math.min(t("status.toast.maxWidth"), textW + t("status.toast.paddingX") * 2, pane.w);
         const height = textH + t("status.toast.paddingY") * 2;
+        const bottom = (pillVisible
+            ? t("image.busy.bottomOffset") + t("image.busy.height") + t("status.toast.stackGap")
+            : t("status.toast.bottomMargin")) + stackOffset;
+        return {
+            x: pane.x + (pane.w - width) / 2,
+            y: pane.y + pane.h - bottom - height,
+            w: width,
+            h: height,
+        };
+    }
+
+    // STATE-05：持续状态条与提示条同尺寸、同底距；药丸可见时同样让到药丸上方。
+    function folderNoticeFrame(pane, contentW, contentH, pillVisible = false) {
+        const width = Math.min(t("status.toast.maxWidth"), contentW + t("status.toast.paddingX") * 2, pane.w);
+        const height = contentH + t("status.toast.paddingY") * 2;
         const bottom = pillVisible
             ? t("image.busy.bottomOffset") + t("image.busy.height") + t("status.toast.stackGap")
             : t("status.toast.bottomMargin");
@@ -644,7 +659,7 @@ function createOverlays(t, profile, layout, panes) {
             : { height: t("shell.titlebar.height"), rect: null }
         : null;
 
-    return { navigatorFrame, busyPillFrame, toastFrame, hintFrames, dragzone };
+    return { navigatorFrame, busyPillFrame, toastFrame, folderNoticeFrame, hintFrames, dragzone };
 }
 
 function collectNodes(spec) {

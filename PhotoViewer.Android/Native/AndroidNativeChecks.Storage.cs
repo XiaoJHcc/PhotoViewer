@@ -11,7 +11,9 @@ using Android.OS;
 using Android.Provider;
 using PhotoViewer.Android.Core;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Storage;
 using AndroidUri = Android.Net.Uri;
 using IOPath = System.IO.Path;
@@ -83,6 +85,7 @@ internal static partial class AndroidNativeChecks
         {
             ResetProviderStore(activity);
             DebugTestDocumentsProvider.SetRevoked(null);
+            DebugTestDocumentsProvider.SetSilentEmptyChildren(null);
             try
             {
                 await CheckStorageIdentityAsync(resolver);
@@ -94,13 +97,17 @@ internal static partial class AndroidNativeChecks
                 await CheckReadonlyPrecheckAsync(resolver, activity);
                 await CheckSidecarAndFileOpsAsync(resolver);
                 await CheckRevocationAsync(resolver, providerUri);
+                await CheckEmptyFolderAsync(resolver, providerUri);
                 await CheckActionViewAsync(resolver);
                 await CheckNumericContentNameAsync(resolver, activity);
                 await CheckPickerResultAsync(resolver);
+                // 放最后：不可用状态按产品规则保留到用户重新打开目录，之前的检查不再依赖当前文件源。
+                await RunStepAsync("STATE-05 文件夹不可用", () => CheckFolderUnavailableStatusAsync(resolver, activity));
             }
             finally
             {
                 DebugTestDocumentsProvider.SetRevoked(null);
+                DebugTestDocumentsProvider.SetSilentEmptyChildren(null);
             }
         }
         catch (Exception exception)
@@ -618,6 +625,130 @@ internal static partial class AndroidNativeChecks
         Check("storage Provider 恢复访问后测试环境还原",
             restored.Size > 0 && restoredItems.Count > 0 && before.AsSpan().SequenceEqual(after),
             $"size={restored.Size} items={restoredItems.Count} bytes={before.Length}->{after.Length}");
+    }
+
+    /// <summary>
+    /// 6b) 空枚举不等于目录不可访问：Provider 对已经丢失的目录也可能只返回零行。
+    /// 真实空目录照常得到零项与 null 查找结果；不可达目录必须以 typed 异常收口，不能静默当成空文件夹。
+    /// </summary>
+    private static async Task CheckEmptyFolderAsync(ContentResolver resolver, AndroidUri providerUri)
+    {
+        var treeRoot = TreeUri(DebugTestDocumentsProvider.WritableRoot);
+        string emptyPath = PathForWritable("empty");
+        Directory.CreateDirectory(emptyPath);
+        var rootFolder = new AndroidFolderRef(resolver, treeRoot, null);
+        var emptyFolder = (await ReadItemsAsync(rootFolder)).OfType<IFolderRef>()
+            .FirstOrDefault(folder => folder.Name == "empty");
+        if (emptyFolder == null)
+        {
+            Check("storage 空目录零枚举不报错", false, "根枚举未返回 empty 目录");
+            return;
+        }
+
+        var emptyItems = await ReadItemsAsync(emptyFolder);
+        var missing = await emptyFolder.FindFileAsync("photo.jpg");
+        Check("storage 空目录零枚举不报错",
+            emptyItems.Count == 0 && missing == null,
+            $"items={emptyItems.Count} missing={missing?.Name ?? "null"}");
+
+        // 目录已经丢失但 Provider 只报零行：客户端必须回查目录自身，不能把不可达当成空文件夹。
+        Directory.Delete(emptyPath, recursive: true);
+        resolver.Call(providerUri, "empty-children", DebugTestDocumentsProvider.WritableRoot, null);
+        try
+        {
+            var detachedEnumeration = await CatchStorageAsync(() => ReadItemsAsync(emptyFolder));
+            var detachedLookup = await CatchStorageAsync(async () =>
+            {
+                _ = await emptyFolder.FindFileAsync("photo.jpg");
+            });
+            Check("storage 空枚举与目录不可达区分",
+                detachedEnumeration.Error == StorageError.ObjectGone
+                && detachedLookup.Error == StorageError.ObjectGone,
+                $"list={detachedEnumeration.Error?.ToString() ?? "none"} {detachedEnumeration.Message} "
+                + $"lookup={detachedLookup.Error?.ToString() ?? "none"} {detachedLookup.Message}");
+        }
+        finally
+        {
+            resolver.Call(providerUri, "grant", null, null);
+            Directory.CreateDirectory(emptyPath);
+        }
+    }
+
+    /// <summary>
+    /// 6c) STATE-05：已打开目录经自身访问检查失败后进入持续不可用状态。
+    /// 状态以 STATE-03 的颜色与尺寸常驻主图适应区底部，附原生文字动作；评分弹窗收起、评分输入禁用；
+    /// 短提示同时出现时叠放在持续状态之上。恢复只经「重新打开…」，设备重新出现不自行恢复写入。
+    /// </summary>
+    private static async Task CheckFolderUnavailableStatusAsync(ContentResolver resolver, Activity activity)
+    {
+        var main = _main!;
+        var root = _root!;
+        const string folderName = "state05";
+        string folderPath = PathForWritable(folderName);
+        Directory.CreateDirectory(folderPath);
+        WriteCheckJpeg(IOPath.Combine(folderPath, "photo.jpg"), 400, 300, rating: 0);
+        var providerUri = AndroidUri.Parse($"content://{DebugTestDocumentsProvider.TestAuthority}")!;
+        try
+        {
+            var folder = new AndroidFolderRef(resolver,
+                TreeUri(DebugTestDocumentsProvider.WritableRoot + "/" + folderName), folderName);
+            await main.FolderVM.OpenFolderAsync(folder);
+            await WaitAsync(() => main.CurrentFile != null, "STATE-05 测试目录上屏", 30000);
+            await WaitAsync(() => !main.FolderVM.IsFolderUnavailable
+                && !root.FolderStatusVisibleForChecks, "STATE-05 目录初始可用");
+            Check("storage STATE-05 目录可用时不显示持续状态",
+                !root.FolderStatusVisibleForChecks, $"visible={root.FolderStatusVisibleForChecks}");
+
+            root.OpenRatingPopupForChecks();
+            await Task.Delay(200);
+            bool popupOpened = root.RatingPopup.IsOpen;
+            Check("storage STATE-05 前置星级弹窗可打开", popupOpened,
+                $"showRating={main.Settings.ShowRating} popup={popupOpened}");
+
+            resolver.Call(providerUri, "revoke", DebugTestDocumentsProvider.WritableRoot, null);
+            await WaitAsync(() => main.FolderVM.IsFolderUnavailable,
+                "STATE-05 目录访问检查判定不可用", 15000);
+            await WaitAsync(() => root.FolderStatusVisibleForChecks, "STATE-05 持续状态上屏", 3000);
+            await Task.Delay(200);
+
+            Check("storage STATE-05 持续状态文案", root.FolderStatusTextForChecks == StatusMessages.FolderUnavailable,
+                $"text={root.FolderStatusTextForChecks ?? "null"}");
+            Check("storage STATE-05 重新打开文字动作",
+                root.FolderReopenTextForChecks == StatusMessages.ReopenFolder
+                && root.FolderReopenClickableForChecks,
+                $"text={root.FolderReopenTextForChecks ?? "null"} clickable={root.FolderReopenClickableForChecks}");
+            Check("storage STATE-05 呈现不抢焦点", !root.FolderStatusContainerFocusableForChecks,
+                $"containerFocusable={root.FolderStatusContainerFocusableForChecks}");
+            Check("storage STATE-05 丢失时收起星级弹窗", !root.RatingPopup.IsOpen,
+                $"popup={root.RatingPopup.IsOpen}");
+            Check("storage STATE-05 评分输入禁用", !root.RatingInputEnabledForChecks,
+                $"enabled={root.RatingInputEnabledForChecks}");
+
+            var fit = root.FitArea;
+            var folderRect = root.FolderStatusRectForChecks;
+            double folderBottom = fit.Y + fit.Height - (folderRect.Y + folderRect.Height);
+            Check("storage STATE-05 状态位于适应区底部",
+                Math.Abs(folderBottom - DesignTokens.StatusToastBottomMargin) < 0.75
+                && folderRect.Width > 0 && folderRect.Height > 0,
+                $"bottom={folderBottom:0.##} height={folderRect.Height:0.##} width={folderRect.Width:0.##}");
+
+            root.ShowStatus("STATE-05 叠放核对", DesignTokens.MotionStatusToastDuration);
+            await Task.Delay(150);
+            var toastRect = root.StatusRectForChecks;
+            double gap = folderRect.Y - (toastRect.Y + toastRect.Height);
+            Check("storage STATE-05 短提示叠放在状态之上",
+                root.StatusVisibleForChecks && Math.Abs(gap - DesignTokens.StatusToastStackGap) < 0.75,
+                $"toast={toastRect.Y:0.##}+{toastRect.Height:0.##} status={folderRect.Y:0.##} gap={gap:0.##}");
+            root.ResetStatusForChecks();
+            await Task.Delay(100);
+            Check("storage STATE-05 短提示撤下后持续状态仍在",
+                root.FolderStatusVisibleForChecks && !root.StatusVisibleForChecks,
+                $"folder={root.FolderStatusVisibleForChecks} toast={root.StatusVisibleForChecks}");
+        }
+        finally
+        {
+            resolver.Call(providerUri, "grant", null, null);
+        }
     }
 
     /// <summary>7) ACTION_VIEW：系统真实投递一次，再经共享通道打开，均落到同一 StorageId；Provider 与宿主同 UID，不证明第三方临时授权。</summary>

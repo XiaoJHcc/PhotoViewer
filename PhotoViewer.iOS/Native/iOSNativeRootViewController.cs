@@ -102,6 +102,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private readonly UILabel _enhanceBusy = new();
     /// <summary>STATE-03 提示条：评分写回失败、Full 升级失败与内存自动关闭增强共用。</summary>
     private readonly iOSStatusToast _toast = new();
+    /// <summary>STATE-05 持续的文件夹不可用状态条（文本 + 原生文字按钮）。</summary>
+    private readonly iOSFolderUnavailableBar _folderUnavailable = new();
     private string _lastFullError = string.Empty;
     private UIImage? _navigationBitmap;
     private DecodedImage? _navigationSource;
@@ -324,6 +326,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
     internal UILabel EnhanceBusyLabel => _enhanceBusy;
     /// <summary>STATE-03 提示条（验收读取当前文本与可见性）。</summary>
     internal iOSStatusToast Toast => _toast;
+    /// <summary>STATE-05 持续的文件夹不可用状态条（验收读取文案、按钮与落位）。</summary>
+    internal iOSFolderUnavailableBar FolderUnavailableBar => _folderUnavailable;
     /// <summary>空态/加载/失败标题（STATE-01/02）。</summary>
     internal UILabel HintLabel => _hintLabel;
     /// <summary>解码失败详情文本。</summary>
@@ -381,6 +385,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _main.OpenFailed += OnOpenFailed;
         _main.FolderVM.AllFilesChanged += OnAllFilesChanged;
         _main.FolderVM.OpenStateChanged += OnOpenStateChanged;
+        _main.FolderVM.FolderAvailabilityChanged += OnFolderAvailabilityChanged;
         _main.PropertyChanged += OnMainPropertyChanged;
         _main.Settings.PresentationChanged += OnSettingsChanged;
         _main.FileVM.ThumbnailList.PropertyChanged += OnFilesChanged;
@@ -402,6 +407,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
         // STATE-03：评分写回失败统一由共享事件驱动提示条（共享层只对 RolledBack/Partial/异常发事件，
         // Superseded/Canceled 不发，因此快速连按不会弹虚假失败）。
         _main.RatingWriteFailedDetailed += OnRatingWriteFailed;
+        // STATE-05：启动时把文件夹可用性交给展示会话；视图树就绪后再落位状态条。
+        _session.SetStorageUnavailable(_main.FolderVM.IsFolderUnavailable);
         _observedFile = _main.CurrentFile;
         if (_observedFile != null) _observedFile.PropertyChanged += OnCurrentFileChanged;
         RestoreWindowPreferences();
@@ -467,6 +474,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _photoPane.AddSubview(_enhanceBusy);
         // STATE-03：提示条压在主图区底部，纯展示、不接收触摸。
         _photoPane.AddSubview(_toast);
+        // STATE-05：文件夹不可用时在适应区底部叠一条持续状态；只有其中的文字按钮接收触摸。
+        _folderUnavailable.ReopenRequested += () => _ = ReopenCurrentFolderAsync();
+        _photoPane.AddSubview(_folderUnavailable);
         _photoPane.AddGestureRecognizer(new UITapGestureRecognizer(OnPhotoTapped));
         // 主图上下文菜单：手指长按与触控板/鼠标辅助点按同一入口；滚动/捏合/双击由各自的识别器负责，互不抢占。
         _photoPane.AddInteraction(new UIContextMenuInteraction(_photoMenu));
@@ -519,6 +529,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         BuildControls();
         OnSessionChanged();
         UpdateHint();
+        UpdateFolderAvailability();
         RefreshScreen();
         UpdateRatingControls();
         BootTrace.Mark("native shell: main screen ready");
@@ -689,6 +700,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
             _main.OpenFailed -= OnOpenFailed;
             _main.FolderVM.AllFilesChanged -= OnAllFilesChanged;
             _main.FolderVM.OpenStateChanged -= OnOpenStateChanged;
+            _main.FolderVM.FolderAvailabilityChanged -= OnFolderAvailabilityChanged;
             _main.PropertyChanged -= OnMainPropertyChanged;
             _main.Settings.PresentationChanged -= OnSettingsChanged;
             _main.FileVM.ThumbnailList.PropertyChanged -= OnFilesChanged;
@@ -1475,11 +1487,20 @@ internal sealed class iOSNativeRootViewController : UIViewController
             (double)fit.Y + Math.Max(0, (double)fit.Height - DesignTokens.ImageBusyHeight - DesignTokens.ImageBusyBottomOffset),
             DesignTokens.ImageBusyWidth, DesignTokens.ImageBusyHeight);
         // STATE-03：最大宽 500，水平居中；药丸可见时整体上移到药丸上方，药丸收起后回到距底 24。
+        // STATE-05：文件夹不可用状态叠在最下方，提示条再上移到状态条之上。
         double toastLimit = Math.Max(1, Math.Min(DesignTokens.StatusToastMaxWidth, (double)fit.Width - horizontalMargin * 2));
         var toastSize = _toast.Measure(toastLimit);
-        double toastBottom = _enhanceBusy.Hidden
+        double baseBottom = _enhanceBusy.Hidden
             ? DesignTokens.StatusToastBottomMargin
             : DesignTokens.ImageBusyBottomOffset + DesignTokens.ImageBusyHeight + DesignTokens.StatusToastStackGap;
+        var folderSize = _folderUnavailable.Measure(toastLimit);
+        _folderUnavailable.Frame = new CGRect(
+            (double)fit.X + Math.Max(0, ((double)fit.Width - folderSize.Width) / 2),
+            (double)fit.Y + Math.Max(0, (double)fit.Height - folderSize.Height - baseBottom),
+            folderSize.Width,
+            folderSize.Height);
+        double toastBottom = baseBottom
+            + (_folderUnavailable.Hidden ? 0 : folderSize.Height + DesignTokens.StatusToastStackGap);
         _toast.Frame = new CGRect((double)fit.X + Math.Max(0, ((double)fit.Width - toastSize.Width) / 2),
             (double)fit.Y + Math.Max(0, (double)fit.Height - toastSize.Height - toastBottom),
             toastSize.Width, toastSize.Height);
@@ -1721,7 +1742,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         var file = _main.CurrentFile;
         int value = Math.Max(0, file?.Rating ?? 0);
         bool conflict = file?.HasRatingConflict ?? false;
-        bool enabled = file != null;
+        bool enabled = file != null && !_main.FolderVM.IsFolderUnavailable;
         _controlBar.RatingControl.SetState(value, conflict, enabled);
         if (_phoneRating != null) _phoneRating.SetState(value, conflict, enabled);
     }
@@ -1731,6 +1752,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <returns>是否打开了弹窗。</returns>
     private bool OpenControlPopup(iOSRatingControl control)
     {
+        if (_main.FolderVM.IsFolderUnavailable) return false;
         if (_main.CurrentFile is not { } file) return false;
         var direction = RatingControlGeometry.PopupDirection(_form, _main.IsRowLayout, _notchOnLeft,
             RatingPopupAnchor.Control);
@@ -1744,6 +1766,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <param name="anchor">卡片视图。</param>
     private void OpenCardPopup(ImageFile file, UIView anchor)
     {
+        if (_main.FolderVM.IsFolderUnavailable) return;
         var direction = RatingControlGeometry.PopupDirection(_form, _main.IsRowLayout, _notchOnLeft, RatingPopupAnchor.Card);
         _ratingPopup.Open(file, anchor, RatingPopupAnchor.Card, direction, horizontalRow: true,
             focusTarget: anchor is iOSThumbnailCard card ? card.SelectButton : anchor);
@@ -1885,7 +1908,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <param name="recognizer">点击识别器。</param>
     private void OnPhotoTapped(UITapGestureRecognizer recognizer)
     {
-        if (FitArea().Contains(recognizer.LocationInView(_photoPane))) TapPhoto();
+        var point = recognizer.LocationInView(_photoPane);
+        // STATE-05：不可用状态条所在区域属于状态提示（含其中的文字按钮），不当作主图点按。
+        if (!_folderUnavailable.Hidden && _folderUnavailable.Frame.Contains(point)) return;
+        if (FitArea().Contains(point)) TapPhoto();
     }
 
     /// <summary>主图点按入口（识别器与验收共用）：解除触控活动绿框优先，其次空态打开文件夹。</summary>
@@ -2023,6 +2049,39 @@ internal sealed class iOSNativeRootViewController : UIViewController
     {
         UpdateHint();
         LayoutOverlays();
+    }
+
+    /// <summary>STATE-05：共享文件夹可用性变化（UI 线程）→ 会话暂停访问、状态条显隐与评分入口闸门。</summary>
+    private void OnFolderAvailabilityChanged() => UpdateFolderAvailability();
+
+    /// <summary>
+    /// 同步当前文件夹的可用性：已打开的目录不可用时显示持续的底部状态与「重新打开…」，
+    /// 收起星级弹窗并让星级控件进入禁用态；恢复后按共享状态重新显示。
+    /// </summary>
+    private void UpdateFolderAvailability()
+    {
+        bool unavailable = _main.FolderVM.IsFolderUnavailable;
+        _session.SetStorageUnavailable(unavailable);
+        if (!IsViewLoaded) return;
+        _folderUnavailable.Hidden = !unavailable;
+        if (unavailable) _ratingPopup?.Close();
+        UpdateRatingControls();
+        LayoutOverlays();
+    }
+
+    /// <summary>重新打开当前文件夹：共用文件夹选择器，取消或失败时保留当前快照与状态条。</summary>
+    private async Task ReopenCurrentFolderAsync()
+    {
+        try
+        {
+            await _main.FolderVM.ReopenFolderAsync();
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine(exception);
+            if (_automatedValidation) throw new InvalidOperationException(exception.Message);
+            ShowToast(StatusMessages.OpenFailed(null, StatusMessages.ReasonFor(exception)));
+        }
     }
 
     /// <summary>文件夹加载完成后刷新计数与列表。</summary>

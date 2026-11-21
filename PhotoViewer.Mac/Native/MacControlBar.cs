@@ -45,6 +45,8 @@ internal sealed class MacControlBar : NSView
     internal NSView? RatingControl => _ratingGroup?.Superview == null ? null : _ratingControl;
     /// <summary>实际显示的 EXIF 项数（工具区背景出现条件之一）。</summary>
     internal int ExifItemCount => _exifTiles.Count;
+    /// <summary>STATE-05：当前文件夹不可用时星级控件进入禁用态（几何与内容不变）。</summary>
+    internal bool RatingGated { get; set; }
 
     /// <summary>建立透明控制文档：栏位材质由主窗口的工具区宿主承担，本层不画第二份底色。</summary>
     internal MacControlBar(Action changed)
@@ -203,7 +205,7 @@ internal sealed class MacControlBar : NSView
         int value = Math.Max(0, file?.Rating ?? 0);
         bool conflict = file?.HasRatingConflict == true;
         _ratingConflict = conflict;
-        bool enabled = file != null;
+        bool enabled = file != null && !RatingGated;
         foreach (var button in _ratingButtons)
         {
             int rating = (int)button.Tag;

@@ -320,6 +320,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
 - **STATE-01、STATE-02**：空态、加载与解码失败的提示文案由共享 `PhotoViewer/Core/Platform/PhotoHintText.cs` 按会话状态给出，显示入口同 IMAGE-10。切图方案由共享加载会话选定：缓存命中同步换图（保留前一张），四端主图视图以 `PhotoLoadSession.Generation` 判定切图；未命中清图并以 `IsLoadingVisible`（`status.loading.delay` 300ms）提示。程序化覆盖：Mac `--pv-native-filmstrip`、iOS `--pv-native-photo-check`、Android `pv-check main`，Web `?check=state`。
 - **STATE-03**：操作结果提示。四端统一为 4 s 非模态提示条：macOS `PhotoViewer.Mac/Native/MacStatusToast.cs`（`MacMainWindow` 订阅 `Session.Notice`）、iOS `PhotoViewer.iOS/Native/iOSStatusToast.cs`（`iOSNativeRootViewController` 调用）、Windows `PhotoViewer.Windows/Native/WindowsMainWindow.cs`、Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs`。评分写回与"部分来源写入失败（补偿未完成）"分列文案（RATING-03）；后者必须按磁盘真值展示每个来源与冲突状态，不把部分成功当整组成功。
 - **STATE-04**：模型/推理/数据库不可用由共享 `AnalysisPresenter`、`SimilarityPanelViewModel` 与设置清库路径承担。
+- **STATE-05**：`FolderViewModel` 确认当前目录可达性，`PhotoLoadSession` 持有已显示的画面并停止磁盘加载。各端原生主图宿主呈现持续状态和文件夹选择器入口；Web 用合成目录注入不可用状态（`?check=state`）。
 
 ## settings
 

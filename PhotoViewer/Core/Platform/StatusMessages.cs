@@ -17,6 +17,9 @@ public static class StatusMessages
 
     public const string SinglePhotoRefreshed = "无法读取父目录，仅刷新当前照片";
 
+    public const string FolderUnavailable = "文件夹不可用";
+    public const string ReopenFolder = "重新打开…";
+
     public static string PresentationFailed(string? fileName, string? reason = null)
         => Compose("无法显示", fileName, reason);
 

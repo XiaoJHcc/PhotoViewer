@@ -27,6 +27,11 @@ internal sealed class MacStatusToast : NSView
     /// STATE-03：与「计算中」药丸同时可见时为 true，提示条整体上移到药丸上方。
     /// </summary>
     internal bool StackOverBusyPill { get; set; }
+    /// <summary>
+    /// STATE-05：下方另有持续的文件夹不可用状态条时为该条高度，提示条再上移「高度 + stackGap」叠放在状态之上；
+    /// 为 0 表示没有持续状态。
+    /// </summary>
+    internal double StackAboveHeight { get; set; }
 
     /// <summary>建立深色圆角提示条与只读文本。</summary>
     public MacStatusToast()
@@ -87,6 +92,7 @@ internal sealed class MacStatusToast : NSView
         double bottomMargin = StackOverBusyPill
             ? DesignTokens.ImageBusyBottomOffset + DesignTokens.ImageBusyHeight + DesignTokens.StatusToastStackGap
             : DesignTokens.StatusToastBottomMargin;
+        if (StackAboveHeight > 0) bottomMargin += StackAboveHeight + DesignTokens.StatusToastStackGap;
         Frame = new CGRect(
             photoBounds.X + (photoBounds.Width - width) / 2,
             photoBounds.Y + Math.Max(0, photoBounds.Height - bottomMargin - height),

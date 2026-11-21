@@ -43,7 +43,7 @@ src/
     filmscroll.js       # 胶片栏几何（步长/内容长/居中偏移）、定位动画器与定位门控
     features.js         # 合成 DINO/CV 特征（同一连拍场景彼此相似）
     input.js            # 手势编码、主/次绑定、Repeatable、滚轮分流
-    session.js          # 加载/代理→Full/增强/药丸/提示条时序；展示产物缓存（STATE-01 保留前一张）
+    session.js          # 加载/代理→Full/增强/药丸/提示条时序；展示产物缓存（STATE-01 保留前一张）、离线暂停与缓存浏览判定（STATE-05）
     analysis.js         # 分析栏瓦片集合、三态、准星、cosine
     similarity.js       # 相似面板三态、计算/取消、提取进度
     exifformat.js       # 控制栏 EXIF 值与卡片时间格式化

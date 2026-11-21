@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using PhotoViewer.Apple;
 using PhotoViewer.Core;
 using PhotoViewer.Core.AI;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Memory;
 using PhotoViewer.Core.Platform;
@@ -68,6 +69,7 @@ internal static class iOSNativeFaultCheck
             else lines.Add("NOTE image03 skipped: presentation decoder already in use at startup");
 
             await VerifyOpenFailureAsync(main, root, small, lines);
+            await VerifyFolderUnavailableAsync(main, root, work, small, lines);
             await VerifyRatingFailureAsync(main, root, small, lines);
             await VerifyCorruptSettingsAsync(work, lines);
 #if PHOTOVIEWER_DINO
@@ -394,6 +396,87 @@ internal static class iOSNativeFaultCheck
         }
     }
 
+    /// <summary>
+    /// STATE-05：已打开目录自身的访问检查失败时，保留主图与列表并显示持续的「文件夹不可用」状态条，
+    /// 短时提示叠放在状态之上，星级入口与弹窗禁用；重新打开同一目录恢复后状态条收起。
+    /// </summary>
+    private static async Task VerifyFolderUnavailableAsync(
+        PhotoViewer.ViewModels.Main.MainViewModel main,
+        iOSNativeRootViewController root,
+        string work,
+        string small,
+        List<string> lines)
+    {
+        string folder = Path.Combine(work, $"folder-unavailable-{DateTime.UtcNow.Ticks}");
+        Directory.CreateDirectory(folder);
+        File.Copy(small, Path.Combine(folder, "availability-a.jpg"), true);
+        var real = new LocalFolderRef(folder);
+        var monitored = new AccessRevokingFolderRef(real);
+        try
+        {
+            await main.FolderVM.OpenFolderAsync(monitored);
+            await WaitAsync(() => main.FolderVM.AllFiles.Count == 1 && main.CurrentFile != null, "文件夹不可用素材就绪");
+            if (root.FolderUnavailableBar.IsVisible)
+                throw new InvalidOperationException("可用文件夹不应显示不可用状态条");
+
+            monitored.Revoked = true;
+            // 同目录刷新枚举失败会走共享访问检查；失败即进入不可用状态，同时保留已显示的快照。
+            await main.FolderVM.OpenFolderAsync(monitored);
+            await WaitAsync(() => main.FolderVM.IsFolderUnavailable, "文件夹不可用状态");
+            await WaitAsync(() => root.FolderUnavailableBar.IsVisible, "不可用状态条出现");
+
+            var bar = root.FolderUnavailableBar;
+            if (bar.Text != StatusMessages.FolderUnavailable)
+                throw new InvalidOperationException($"状态条文案不符：{bar.Text}");
+            if (bar.ActionButton.Title(UIControlState.Normal) != StatusMessages.ReopenFolder)
+                throw new InvalidOperationException($"文字按钮文案不符：{bar.ActionButton.Title(UIControlState.Normal)}");
+            if (main.CurrentFile == null || main.FileVM.ThumbnailList.FilteredFiles.Count != 1)
+                throw new InvalidOperationException("不可用状态改变了已显示的照片或列表");
+            if ((double)bar.Frame.Height < DesignTokens.StatusToastFontSize + DesignTokens.StatusToastPaddingY * 2
+                || (double)bar.ActionButton.Bounds.Width <= 0)
+                throw new InvalidOperationException($"状态条尺寸异常：{bar.Frame.Size}, button={bar.ActionButton.Bounds.Size}");
+            // 适应区由主图视图尺寸与四边避让给出（与 LayoutOverlays 同一口径），UIKit 以左上为原点。
+            var bounds = root.Photo.Bounds;
+            var insets = root.Photo.FitInsets;
+            double fitY = (double)insets.Top;
+            double fitHeight = (double)bounds.Height - (double)insets.Top - (double)insets.Bottom;
+            double expectedY = fitY + fitHeight - DesignTokens.StatusToastBottomMargin - (double)bar.Frame.Height;
+            if (Math.Abs((double)bar.Frame.Y - expectedY) > 0.5)
+                throw new InvalidOperationException($"状态条未落在适应区底部距底 24：y={bar.Frame.Y}, expected={expectedY}");
+            if (!root.Toast.IsVisible)
+                throw new InvalidOperationException("打开失败提示应与状态条同时可见");
+            double toastBottom = (double)(root.Toast.Frame.Y + root.Toast.Frame.Height);
+            if (Math.Abs(toastBottom - ((double)bar.Frame.Y - DesignTokens.StatusToastStackGap)) > 0.5)
+                throw new InvalidOperationException(
+                    $"提示条未叠放在状态条之上：toastBottom={toastBottom}, barTop={bar.Frame.Y}");
+            if (root.ControlBar.RatingControl.Enabled)
+                throw new InvalidOperationException("文件夹不可用时星级控件仍可用");
+            // 状态条只有文字按钮接收触摸，空白处与主图照常。
+            if (bar.HitTest(new CGPoint(2, 2), null) != null)
+                throw new InvalidOperationException("状态条空白处拦截了触摸");
+            var buttonCenter = new CGPoint((double)bar.ActionButton.Frame.GetMidX(), (double)bar.ActionButton.Frame.GetMidY());
+            if (bar.HitTest(buttonCenter, null) is not UIButton hit || !ReferenceEquals(hit, bar.ActionButton))
+                throw new InvalidOperationException("「重新打开…」没有接收触摸");
+            if (root.RatingPopup.IsOpen)
+                throw new InvalidOperationException("文件夹不可用时星级弹窗仍然打开");
+
+            await main.FolderVM.OpenFolderAsync(real);
+            await WaitAsync(() => !main.FolderVM.IsFolderUnavailable, "文件夹可用性恢复");
+            await WaitAsync(() => !bar.IsVisible, "不可用状态条收起");
+            if (!root.ControlBar.RatingControl.Enabled)
+                throw new InvalidOperationException("恢复后星级控件没有回到可用态");
+
+            // 收尾回到套件原素材，临时目录随后删除时不留下指向它的当前照片。
+            await main.FolderVM.OpenImageAsync(new LocalFileRef(small));
+            await WaitAsync(() => main.CurrentFile?.Name == Path.GetFileName(small), "文件夹不可用回归收尾");
+            lines.Add("PASS state05：目录访问失效保留快照、持续状态叠放提示并禁用星级，重开后恢复");
+        }
+        finally
+        {
+            try { Directory.Delete(folder, true); } catch { }
+        }
+    }
+
     private static void SetReadOnly(string path, bool readOnly)
         => File.SetUnixFileMode(path, readOnly
             ? UnixFileMode.UserRead | UnixFileMode.GroupRead | UnixFileMode.OtherRead
@@ -450,5 +533,34 @@ internal static class iOSNativeFaultCheck
             yield break;
 #pragma warning restore CS0162
         }
+    }
+
+    /// <summary>可撤销访问的目录引用：撤销后枚举与目录自身访问检查都按授权失效失败，其余委托真实目录。</summary>
+    private sealed class AccessRevokingFolderRef(IFolderRef inner) : IFolderRef
+    {
+        /// <summary>是否已撤销目录访问。</summary>
+        internal bool Revoked { get; set; }
+
+        public string Name => inner.Name;
+        public Uri Path => inner.Path;
+        public string? TryGetLocalPath() => inner.TryGetLocalPath();
+
+        public async IAsyncEnumerable<IStorageItemRef> GetItemsAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            if (Revoked) throw new UnauthorizedAccessException("injected folder access loss");
+            await foreach (var item in inner.GetItemsAsync(cancellationToken).ConfigureAwait(false)) yield return item;
+        }
+
+        public Task<IFileRef?> FindFileAsync(string name, CancellationToken cancellationToken = default)
+            => inner.FindFileAsync(name, cancellationToken);
+
+        public Task<IFileRef> CreateFileAsync(string name, CancellationToken cancellationToken = default)
+            => inner.CreateFileAsync(name, cancellationToken);
+
+        public Task CheckAccessAsync(CancellationToken cancellationToken = default)
+            => Revoked
+                ? Task.FromException(new UnauthorizedAccessException("injected folder access loss"))
+                : inner.CheckAccessAsync(cancellationToken);
     }
 }

@@ -104,6 +104,28 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
     /// <summary>构造并登记为内存客户端：压力到 Warning 时自动关闭增强并释放增强图。</summary>
     public PhotoLoadSession() => MemoryGovernor.Register(this);
 
+    private bool _storageUnavailable;
+    private bool _refreshAfterReopen;
+
+    public void SetStorageUnavailable(bool unavailable)
+    {
+        if (_disposed || _storageUnavailable == unavailable) return;
+        _storageUnavailable = unavailable;
+        if (!unavailable)
+        {
+            _refreshAfterReopen = true;
+            return;
+        }
+
+        // STATE-05：取消磁盘加载，不释放屏上已持有的像素。
+        _cancellation.Cancel();
+        _cancellation.Dispose();
+        _cancellation = new CancellationTokenSource();
+        _initialLoading = _fullLoading = _fullFailed = IsLoadingVisible = false;
+        Error = FullError = string.Empty;
+        Changed?.Invoke();
+    }
+
     /// <summary>
     /// 设置新文件并作废上一轮加载；所有权留在会话。
     /// 所需档位已在内存缓存时同步换上新图（一次 <see cref="Changed"/>，不经过空图），否则清空旧图后异步解码。
@@ -113,7 +135,9 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
     /// </summary>
     public void SetFile(IFileRef? file)
     {
-        if (file != null && _file != null && _file.StorageId == file.StorageId
+        bool refresh = _refreshAfterReopen;
+        _refreshAfterReopen = false;
+        if (!refresh && file != null && _file != null && _file.StorageId == file.StorageId
             && Image != null && string.IsNullOrEmpty(Error))
         {
             _file = file;
@@ -136,10 +160,18 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         }
         int? target = !_needsFull && _proxyLongEdge > 0 ? _proxyLongEdge : null;
         // STATE-01 保留前一张：缓存命中只剩上传耗时，旧画面留到新图上屏，不插入黑帧也不显示加载提示。
-        var cached = BitmapLoader.TryAcquireCached(file, target.HasValue ? DecodeSizeHint.ProxyTo(target.Value) : DecodeSizeHint.Full);
+        var cached = _storageUnavailable
+            ? BitmapLoader.TryAcquireOfflineImage(file)
+            : BitmapLoader.TryAcquireCached(file, target.HasValue ? DecodeSizeHint.ProxyTo(target.Value) : DecodeSizeHint.Full);
         if (cached != null)
         {
-            Replace(cached, target.HasValue && (cached.Width < cached.SourceWidth || cached.Height < cached.SourceHeight));
+            Replace(cached, (_storageUnavailable || target.HasValue)
+                && (cached.Width < cached.SourceWidth || cached.Height < cached.SourceHeight));
+            return;
+        }
+        if (_storageUnavailable)
+        {
+            Replace(null, false);
             return;
         }
         // STATE-01 黑屏加载：解码耗时不可控，切图即清旧图，不让上一张冒充当前照片。
@@ -447,7 +479,7 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         _needsFull = needsFull;
         // 预取档位跟随实际需求:适应态只预取代理,放大/分析栏可见时才让 ±1 邻居解 Full
         BitmapLoader.PrefetchFullWanted = needsFull;
-        if (_file == null || !string.IsNullOrEmpty(Error)) return;
+        if (_storageUnavailable || _file == null || !string.IsNullOrEmpty(Error)) return;
         // IMAGE-03：Full 失败后等待下一次触发（需求上升沿或代理目标增长）再重试，避免每次布局刷新都重试。
         if (_fullFailed && needsFull && (!wasNeedsFull || grow)) _fullFailed = false;
         // 首次真解码在途时不另起升级/换代理：同一张 RAW 并发解两遍只会两边都更慢（顶替预览在屏时同样适用）。
@@ -524,6 +556,7 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
             {
                 await UiDispatcher.InvokeAsync(() =>
                 {
+                    if (generation != _generation || cancellationToken.IsCancellationRequested) return;
                     _fullLoading = false;
                     if (initial) _initialLoading = false;
                     // 真解码被中断且屏上只有顶替预览时，顶替不得冒充成功（STATE-02）。
@@ -541,7 +574,7 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
             Console.Error.WriteLine($"[PhotoLoadSession] 加载失败: {exception}");
             await UiDispatcher.InvokeAsync(() =>
             {
-                if (generation != _generation) return;
+                if (generation != _generation || cancellationToken.IsCancellationRequested) return;
                 _fullLoading = false;
                 if (initial) _initialLoading = false;
                 if (initial && IsSubstitute) Replace(null, false);

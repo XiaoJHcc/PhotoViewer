@@ -87,6 +87,13 @@ public class MainViewModel : ViewModelBase, IDisposable
         get => _currentFile;
         set
         {
+            if (value != _currentFile && FolderVM.IsFolderUnavailable)
+            {
+                if (value == null || !FolderVM.AllFiles.Contains(value)) return;
+                var cached = BitmapLoader.TryAcquireOfflineImage(value.File);
+                if (cached == null) return;
+                cached.Release();
+            }
             // 切图取证(常驻,一行):与展示会话的加载日志对表可还原错位/丢显事故
             Console.WriteLine($"CurrentFile => {(value?.Name ?? "null")}");
             if (_currentFile != null) _currentFile.IsCurrentImage = false;
@@ -392,7 +399,10 @@ public class MainViewModel : ViewModelBase, IDisposable
             ?? PhotoGroupMap.Build([file], false, formats).GroupFor(file)!;
     }
 
-    public void ShowRatingSources(ImageFile file) => RatingSources.Show(file, GetRatingGroup(file));
+    public void ShowRatingSources(ImageFile file)
+    {
+        if (!FolderVM.IsFolderUnavailable) RatingSources.Show(file, GetRatingGroup(file));
+    }
 
     /// <summary>
     /// 设置图片星级（兼容旧签名）。统一写入组内全部实际来源（各文件内嵌 + 已存在的同名 sidecar）。
@@ -409,6 +419,8 @@ public class MainViewModel : ViewModelBase, IDisposable
     private async Task<RatingWriteOutcome?> SetRatingCoreAsync(ImageFile? file, int rating)
     {
         if (file == null) return null;
+        if (FolderVM.IsFolderUnavailable || file.FolderAccessToken.IsCancellationRequested)
+            return RatingWriteOutcome.Canceled;
         var ratingSw = Stopwatch.StartNew();
         Console.WriteLine($"[Rating] === BEGIN SetRating({file.Name}, {rating}) ===");
         LastRatingWriteError = null;
@@ -425,7 +437,9 @@ public class MainViewModel : ViewModelBase, IDisposable
                 sequence = ++_ratingRefreshSequence;
                 foreach (var member in group.Files) _ratingRefreshVersions[member.File.StorageId] = sequence;
             }
-            var result = await Rating.SetRatingAsync(group, rating, Settings.SafeSetRating);
+            var storageToken = file.FolderAccessToken;
+            var result = await Rating.SetRatingAsync(group, rating, Settings.SafeSetRating,
+                cancellationToken: storageToken);
             LastRatingWriteOutcome = result.Outcome;
             if (result.Outcome is RatingWriteOutcome.Superseded) return result.Outcome;
 
@@ -438,8 +452,13 @@ public class MainViewModel : ViewModelBase, IDisposable
             }
 
             LastRatingWriteError = result.FailureReason;
-            await RefreshRatingsFromDiskAsync(group, sequence);
             if (result.Outcome is RatingWriteOutcome.Canceled) return result.Outcome;
+            if (!storageToken.IsCancellationRequested)
+            {
+                await UiDispatcher.InvokeAsync(FolderVM.CheckCurrentFolderAccessAsync).Unwrap().ConfigureAwait(false);
+                if (!storageToken.IsCancellationRequested)
+                    await RefreshRatingsFromDiskAsync(group, sequence, storageToken);
+            }
             var failure = new RatingWriteFailure(
                 file,
                 rating,
@@ -484,19 +503,29 @@ public class MainViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private async Task RefreshRatingsFromDiskAsync(PhotoGroup group, long sequence)
+    private async Task RefreshRatingsFromDiskAsync(PhotoGroup group, long sequence, CancellationToken token)
     {
-        var readings = await Task.Run(async () =>
+        Dictionary<StorageItemId, IReadOnlyList<RatingSourceState>> readings;
+        try
         {
-            var values = new Dictionary<StorageItemId, IReadOnlyList<RatingSourceState>>();
-            foreach (var file in group.Files)
+            readings = await Task.Run(async () =>
             {
-                var (_, sources) = await RatingSourceReader.ReadAsync(
-                    file.File, sidecarIndex: null).ConfigureAwait(false);
-                values.Add(file.File.StorageId, sources);
-            }
-            return values;
-        });
+                var values = new Dictionary<StorageItemId, IReadOnlyList<RatingSourceState>>();
+                foreach (var file in group.Files)
+                {
+                    var (_, sources) = await RatingSourceReader.ReadAsync(
+                        file.File, sidecarIndex: null, throwOnStorageFailure: true, token).ConfigureAwait(false);
+                    values.Add(file.File.StorageId, sources);
+                }
+                return values;
+            });
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { return; }
+        catch (Exception ex) when (StorageException.IsAvailabilityFailure(ex))
+        {
+            Console.WriteLine($"[Rating] 无法核对整组评分，保留最近一次快照：{ex.Message}");
+            return;
+        }
         await PublishRatingsAsync(group, sequence, readings);
     }
 
@@ -508,7 +537,7 @@ public class MainViewModel : ViewModelBase, IDisposable
         {
             lock (_ratingRefreshLock)
             {
-                if (_disposed || group.Files.Any(file =>
+                if (_disposed || group.Files.Any(file => file.FolderAccessToken.IsCancellationRequested ||
                         !_ratingRefreshVersions.TryGetValue(file.File.StorageId, out var current) || current != sequence))
                     return;
 

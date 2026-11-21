@@ -120,6 +120,7 @@ public class ToolsViewModel : ViewModelBase
 
     private void SetDiagnosticSource(ImageFile? imageFile)
     {
+        if (imageFile?.FolderAccessToken.IsCancellationRequested == true) imageFile = null;
 #if PHOTOVIEWER_DINO
         DinoDebug.SetSource(imageFile);
 #else

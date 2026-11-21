@@ -76,8 +76,12 @@ internal sealed partial class WindowsMainWindow : Window
     private readonly TextBlock _hintStartPrefix;
     private readonly TextBlock _hintStartSeparator;
     private readonly TextBlock _hintStartSuffix;
+    private readonly StackPanel _toastStack;
     private readonly Border _statusToast;
     private readonly TextBlock _statusText;
+    private readonly Border _folderStatus;
+    private readonly TextBlock _folderStatusText;
+    private readonly Button _folderReopenButton;
     private readonly Border _busyPill;
     private readonly MenuFlyout _contextMenu;
     private ToggleMenuFlyoutItem _thumbnailMenuToggle = null!;
@@ -207,8 +211,6 @@ internal sealed partial class WindowsMainWindow : Window
                 WindowsLayout.StatusToastPaddingX, WindowsLayout.StatusToastPaddingY),
             MaxWidth = WindowsLayout.StatusToastMaxWidth,
             HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Bottom,
-            Margin = new Thickness(0, 0, 0, WindowsLayout.StatusToastBottomMargin),
             Visibility = Visibility.Collapsed,
             IsHitTestVisible = false,
             Child = _statusText,
@@ -234,6 +236,57 @@ internal sealed partial class WindowsMainWindow : Window
                 VerticalAlignment = VerticalAlignment.Center,
             },
         };
+
+        // STATE-05：已打开目录持续不可用时的非模态状态，沿用状态提示条的颜色、字号与圆角。
+        _folderStatusText = new TextBlock
+        {
+            Text = StatusMessages.FolderUnavailable,
+            FontSize = WindowsLayout.StatusToastFontSize,
+            Foreground = new SolidColorBrush(WindowsLayout.StatusToastForeground),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        _folderReopenButton = new Button
+        {
+            Content = StatusMessages.ReopenFolder,
+            FontSize = WindowsLayout.StatusToastFontSize,
+            Foreground = new SolidColorBrush(WindowsLayout.StatusToastForeground),
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(WindowsLayout.StatusToastStackGap, 0, 0, 0),
+            MinWidth = 0,
+            MinHeight = 0,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        WindowsControlStyles.ApplyToastTextAction(_folderReopenButton);
+        _folderReopenButton.Click += (_, _) => _ = _main.FolderVM.ReopenFolderAsync();
+        var folderStatusRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        folderStatusRow.Children.Add(_folderStatusText);
+        folderStatusRow.Children.Add(_folderReopenButton);
+        _folderStatus = new Border
+        {
+            Background = new SolidColorBrush(WindowsLayout.StatusToastBackground),
+            CornerRadius = new CornerRadius(WindowsLayout.StatusToastCornerRadius),
+            Padding = new Thickness(WindowsLayout.StatusToastPaddingX, WindowsLayout.StatusToastPaddingY,
+                WindowsLayout.StatusToastPaddingX, WindowsLayout.StatusToastPaddingY),
+            MaxWidth = WindowsLayout.StatusToastMaxWidth,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Visibility = Visibility.Collapsed,
+            Child = folderStatusRow,
+        };
+        // 短提示叠放在持续状态之上；药丸收起后整组回到距底 24。
+        _toastStack = new StackPanel
+        {
+            Orientation = Orientation.Vertical,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Margin = new Thickness(0, 0, 0, WindowsLayout.StatusToastBottomMargin),
+        };
+        _toastStack.Children.Add(_statusToast);
+        _toastStack.Children.Add(_folderStatus);
 
         // 空首屏:透明命中层盖住主图区,左键打开文件选择器;右键留给右键菜单(不能同时弹选择器)
         _emptyHitArea = new Border
@@ -264,7 +317,7 @@ internal sealed partial class WindowsMainWindow : Window
         _fitOverlay.Children.Add(_navigator);
         _fitOverlay.Children.Add(_hintPanel);
         _fitOverlay.Children.Add(_busyPill);
-        _fitOverlay.Children.Add(_statusToast);
+        _fitOverlay.Children.Add(_toastStack);
         _fitOverlay.Children.Add(_emptyHitArea);
         // SHELL-11：主图视图恒铺满整个窗口，栏位浮在其上；照片在适应区内适应，放大后可越过栏缘。
         _photoHost = new Grid { Background = new SolidColorBrush(WindowsLayout.ViewerBackground) };
@@ -340,6 +393,7 @@ internal sealed partial class WindowsMainWindow : Window
         _main.Settings.PresentationChanged += OnSettingsPresentationChanged;
         _main.FolderVM.PropertyChanged += OnFolderChanged;
         _main.FolderVM.OpenStateChanged += UpdateHint;
+        _main.FolderVM.FolderAvailabilityChanged += OnFolderAvailabilityChanged;
         _main.RatingWriteFailedDetailed += OnRatingWriteFailed;
         _main.OpenFailed += OnOpenFailed;
 #if PHOTOVIEWER_DINO
@@ -356,6 +410,7 @@ internal sealed partial class WindowsMainWindow : Window
 
         LoadUiPreferences();
         _session.SetFile(_main.CurrentFile?.File);
+        ApplyFolderAvailability(_main.FolderVM.IsFolderUnavailable);
         ApplyLayout();
         ApplyVisibility();
         UpdateHint();
@@ -415,6 +470,7 @@ internal sealed partial class WindowsMainWindow : Window
         _main.Settings.PresentationChanged -= OnSettingsPresentationChanged;
         _main.FolderVM.PropertyChanged -= OnFolderChanged;
         _main.FolderVM.OpenStateChanged -= UpdateHint;
+        _main.FolderVM.FolderAvailabilityChanged -= OnFolderAvailabilityChanged;
         _main.RatingWriteFailedDetailed -= OnRatingWriteFailed;
         _main.OpenFailed -= OnOpenFailed;
 #if PHOTOVIEWER_DINO
@@ -1862,9 +1918,33 @@ internal sealed partial class WindowsMainWindow : Window
     /// <param name="message">失败提示正文</param>
     private void OnOpenFailed(string message) => ShowStatus(message);
 
-    /// <summary>STATE-03：药丸可见时提示条整体上移到药丸上方，药丸收起后回到常规底边距。</summary>
+    /// <summary>STATE-05：共享层判定当前目录不可用后，切换持续状态并把访问冻结同步给加载会话。</summary>
+    private void OnFolderAvailabilityChanged() => ApplyFolderAvailability(_main.FolderVM.IsFolderUnavailable);
+
+    /// <summary>
+    /// 应用当前目录可用性：显示/收起持续状态，暂停需要访问该目录的解码，
+    /// 并收起属于上一状态且不可写的评分来源浮窗；不抢焦点、不弹模态。
+    /// </summary>
+    /// <param name="unavailable">目录是否不可用。</param>
+    private void ApplyFolderAvailability(bool unavailable)
+    {
+        _session.SetStorageUnavailable(unavailable);
+        _folderStatus.Visibility = unavailable ? Visibility.Visible : Visibility.Collapsed;
+        // 持续状态可见时短提示让出 stackGap，收起后回到贴近底部。
+        _statusToast.Margin = new Thickness(0, 0, 0,
+            unavailable ? WindowsLayout.StatusToastStackGap : 0);
+        if (unavailable)
+        {
+            _ratingSources.Close();
+        }
+
+        _controlBar.RefreshRatingAvailability();
+        UpdateStatusToastWidth();
+    }
+
+    /// <summary>STATE-03：药丸可见时提示组整体上移到药丸上方，药丸收起后回到常规底边距。</summary>
     private void UpdateStatusToastBottomMargin()
-        => _statusToast.Margin = new Thickness(0, 0, 0,
+        => _toastStack.Margin = new Thickness(0, 0, 0,
             _busyPill.Visibility == Visibility.Visible
                 ? WindowsLayout.StatusToastStackMargin
                 : WindowsLayout.StatusToastBottomMargin);
@@ -1886,13 +1966,15 @@ internal sealed partial class WindowsMainWindow : Window
         _statusTimer.Start();
     }
 
-    /// <summary>STATE-03：提示条宽取 min(500, 适应区宽),不超出观片区。</summary>
+    /// <summary>STATE-03：提示条宽取 min(500, 适应区宽),不超出观片区；持续状态同一上限。</summary>
     private void UpdateStatusToastWidth()
     {
         double available = _fitArea.Width;
-        _statusToast.MaxWidth = available > 0
+        double maxWidth = available > 0
             ? Math.Min(WindowsLayout.StatusToastMaxWidth, available)
             : WindowsLayout.StatusToastMaxWidth;
+        _statusToast.MaxWidth = maxWidth;
+        _folderStatus.MaxWidth = maxWidth;
     }
 
     /// <summary>状态提示到期后收起。</summary>

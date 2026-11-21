@@ -312,6 +312,20 @@ public static class BitmapLoader
         return image;
     }
 
+    internal static DecodedImage? TryAcquireOfflineImage(IFileRef file)
+    {
+        string id = file.StorageId.Value;
+        return TryAcquireAny(ImageSizeClass.Full) ?? TryAcquireAny(ImageSizeClass.Proxy);
+
+        DecodedImage? TryAcquireAny(ImageSizeClass size)
+        {
+            if (!_cache.TryGetValue(new BitmapCacheKey(id, size), out var item) || !item.Image.TryAcquire())
+                return null;
+            item.UpdateAccessTime();
+            return item.Image;
+        }
+    }
+
     /// <summary>缓存条目满足长边与保真度需求时携租约取出并刷新访问时间，否则返回 null。</summary>
     private static DecodedImage? TryAcquireReusable(BitmapCacheKey key, int requiredLongEdge, PixelEncoding requiredEncoding)
     {

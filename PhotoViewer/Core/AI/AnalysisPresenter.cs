@@ -144,6 +144,16 @@ public sealed class AnalysisPresenter : IDisposable
         var file = _host.CurrentFile;
         ObserveFile(file);
 
+        if (file?.FolderAccessToken.IsCancellationRequested == true)
+        {
+            bool changed = !ReferenceEquals(_loadingFile, file);
+            CancelPending();
+            if (changed) ClearDiagnostics();
+            _loadingFile = file;
+            RefreshHistogram();
+            return;
+        }
+
         if (!_host.AnalysisVisible || file == null)
         {
             CancelPending();
@@ -156,7 +166,7 @@ public sealed class AnalysisPresenter : IDisposable
         _cts?.Dispose();
         if (!ReferenceEquals(_loadingFile, file)) ClearDiagnostics();
         _loadingFile = file;
-        var cts = new CancellationTokenSource();
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(file.FolderAccessToken);
         _cts = cts;
         UiDispatcher.Post(() =>
         {

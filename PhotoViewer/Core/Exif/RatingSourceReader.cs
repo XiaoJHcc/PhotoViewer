@@ -1,4 +1,5 @@
 using System.Xml;
+using PhotoViewer.Core.Storage;
 using XmpCore;
 
 namespace PhotoViewer.Core;
@@ -70,13 +71,21 @@ public static class RatingSourceReader
     private const int MaxSidecarBytes = 64 << 20;
 
     /// <summary>全部来源，第一项恒为内嵌来源。</summary>
-    public static async Task<(XmpRatingSnapshot Embedded, IReadOnlyList<RatingSourceState> Sources)> ReadAsync(
-        Storage.IFileRef photo,
+    public static Task<(XmpRatingSnapshot Embedded, IReadOnlyList<RatingSourceState> Sources)> ReadAsync(
+        IFileRef photo,
         RatingSidecarIndex? sidecarIndex,
+        CancellationToken cancellationToken = default)
+        => ReadAsync(photo, sidecarIndex, throwOnStorageFailure: false, cancellationToken);
+
+    internal static async Task<(XmpRatingSnapshot Embedded, IReadOnlyList<RatingSourceState> Sources)> ReadAsync(
+        IFileRef photo,
+        RatingSidecarIndex? sidecarIndex,
+        bool throwOnStorageFailure,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(photo);
-        var embedded = await ReadEmbeddedAsync(photo, cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        var embedded = await ReadEmbeddedAsync(photo, throwOnStorageFailure, cancellationToken).ConfigureAwait(false);
         var sources = new List<RatingSourceState>(2)
         {
             new(XmpRatingSource.Embedded, photo, embedded),
@@ -84,15 +93,21 @@ public static class RatingSourceReader
 
         var sidecar = await ResolveSidecarAsync(photo, sidecarIndex, cancellationToken).ConfigureAwait(false);
         if (sidecar != null)
-            sources.Add(await ReadSidecarAsync(sidecar, cancellationToken).ConfigureAwait(false));
+            sources.Add(await ReadSidecarAsync(sidecar, throwOnStorageFailure, cancellationToken).ConfigureAwait(false));
 
         return (embedded, sources);
     }
 
     /// <summary>只读内嵌来源；sidecar 是否更“权威”不影响这里。</summary>
-    public static async Task<XmpRatingSnapshot> ReadEmbeddedAsync(
-        Storage.IFileRef photo,
+    public static Task<XmpRatingSnapshot> ReadEmbeddedAsync(
+        IFileRef photo,
         CancellationToken cancellationToken = default)
+        => ReadEmbeddedAsync(photo, throwOnStorageFailure: false, cancellationToken);
+
+    private static async Task<XmpRatingSnapshot> ReadEmbeddedAsync(
+        IFileRef photo,
+        bool throwOnStorageFailure,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -111,7 +126,7 @@ public static class RatingSourceReader
                 XmpRatingSource.Embedded,
                 $"内嵌 XMP 无法解析：{Platform.StatusMessages.ReasonFor(exception)}");
         }
-        catch (Exception exception)
+        catch (Exception exception) when (!throwOnStorageFailure || !StorageException.IsAvailabilityFailure(exception))
         {
             return XmpRatingSnapshot.Unreadable(
                 XmpRatingSource.Embedded,
@@ -120,15 +135,23 @@ public static class RatingSourceReader
     }
 
     /// <summary>读取一个已存在的 sidecar 文件作为独立来源。</summary>
-    public static async Task<RatingSourceState> ReadSidecarAsync(
-        Storage.IFileRef sidecar,
+    public static Task<RatingSourceState> ReadSidecarAsync(
+        IFileRef sidecar,
         CancellationToken cancellationToken = default)
+        => ReadSidecarAsync(sidecar, throwOnStorageFailure: false, cancellationToken);
+
+    internal static async Task<RatingSourceState> ReadSidecarAsync(
+        IFileRef sidecar,
+        bool throwOnStorageFailure,
+        CancellationToken cancellationToken)
     {
         try
         {
             var properties = await sidecar.GetBasicPropertiesAsync(cancellationToken).ConfigureAwait(false);
             if (!properties.Exists)
             {
+                if (throwOnStorageFailure)
+                    throw new StorageException(StorageError.ObjectGone, $"{sidecar.Name} 已不存在");
                 return new RatingSourceState(
                     XmpRatingSource.Sidecar,
                     sidecar,
@@ -181,7 +204,7 @@ public static class RatingSourceReader
                     XmpRatingSource.Sidecar,
                     $"sidecar 的 XMP 无法解析：{Platform.StatusMessages.ReasonFor(exception)}"));
         }
-        catch (Exception exception)
+        catch (Exception exception) when (!throwOnStorageFailure || !StorageException.IsAvailabilityFailure(exception))
         {
             return new RatingSourceState(
                 XmpRatingSource.Sidecar,

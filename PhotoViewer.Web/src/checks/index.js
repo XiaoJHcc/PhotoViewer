@@ -1673,6 +1673,127 @@ const CHECKS = [
         },
     },
     {
+        id: "STATE-05",
+        title: "当前文件夹不可用：保留快照、只读浏览、提示叠放与重新打开",
+        async run(shell, h) {
+            const { app } = shell;
+            const notice = h.dom(".pv-photo-folder");
+            const action = h.dom(".pv-photo-folder-action");
+            const toast = h.dom(".pv-photo-toast");
+            app.simulateFolderReopenFailure(null);
+            try {
+                app.openFolder("harbor");
+                await h.tick(80);
+                const usable = app.state.cards
+                    .map((card) => card.photo)
+                    .filter((photo) => !photo.fault?.decode && !photo.fault?.write && app.canOpen(photo));
+                h.assert(usable.length >= 3, "harbor 可浏览照片不足");
+                const [cachedA, cachedB, uncached] = usable;
+                const cardOf = (photo) => app.state.cards.find((card) => (
+                    card.photo.id === photo.id || card.companions.some((entry) => entry.id === photo.id)
+                ));
+                app.openFolder("harbor", { target: cachedA.id });
+                await h.until(() => app.state.session.surface !== null, 6000);
+                app.selectCard(cachedB.id);
+                await h.until(() => app.state.displayedId === cachedB.id && app.state.session.surface !== null, 6000);
+
+                const surface = app.state.session.surface;
+                const count = app.state.count;
+                const keys = app.state.cards.map((card) => card.key);
+                const rating = app.state.photo.rating;
+                app.simulateFolderLoss("目录已移动");
+                await h.tick(80);
+
+                h.assert(app.state.folderAccess.available === false, "文件夹没有进入不可用状态");
+                h.assert(app.state.session.surface === surface, "不可用清空了已上屏的主图");
+                h.assert(app.state.count === count, "不可用改变了胶片栏列表");
+                h.deepEqual(app.state.cards.map((card) => card.key), keys, "不可用改变了卡片顺序");
+                h.assert(app.state.photo.rating === rating, "不可用把评分当作无评分");
+                h.assert(!notice.hidden, "不可用没有显示持续状态条");
+                h.assert(notice.textContent.includes("文件夹不可用") && notice.textContent.includes("重新打开…"),
+                    `状态条文案不符：${notice.textContent}`);
+                h.assert(action.tagName === "BUTTON" && action.type === "button", "重新打开不是原生按钮");
+                h.assert(!notice.contains(document.activeElement), "状态条抢走了焦点");
+                const noticeStyle = getComputedStyle(notice);
+                const toastStyle = getComputedStyle(toast);
+                h.assert(noticeStyle.backgroundColor === toastStyle.backgroundColor, "状态条与提示条底色不同");
+                h.assert(noticeStyle.borderRadius === toastStyle.borderRadius, "状态条与提示条圆角不同");
+                h.assert(noticeStyle.fontSize === toastStyle.fontSize, "状态条与提示条字号不同");
+
+                // 只允许在已缓存的展示结果之间浏览：未缓存卡片与需要解码的路径都不生效。
+                h.click(h.filmCardByKey(cardOf(uncached).key));
+                await h.tick(80);
+                h.assert(app.state.displayedId === cachedB.id, "不可用时切到了未缓存照片");
+                h.assert(app.state.session.surface === surface, "不可用时为未缓存照片清掉了主图");
+                h.click(h.filmCardByKey(cardOf(cachedA).key));
+                await h.tick(80);
+                h.assert(app.state.displayedId === cachedA.id, "不可用时无法浏览已缓存照片");
+                h.assert(app.state.session.surface !== null, "不可用浏览缓存照片后主图为空");
+
+                h.dblclick(h.photoCanvas());
+                await h.tick(80);
+                h.assert(app.state.viewport.isFit === false, "不可用时无法缩放已加载主图");
+                app.fit();
+                await h.tick(40);
+
+                const original = app.state.photo.rating;
+                const target = original === 5 ? 1 : 5;
+                h.click(h.ratingButton(target));
+                await h.tick(160);
+                h.assert(app.state.photo.rating === original, "不可用仍写入了评分");
+
+                // STATE-05：短时提示叠放在持续状态条之上；状态条不随提示条计时消失。
+                app.notify("测试提示");
+                await h.tick(60);
+                h.assert(!toast.hidden, "不可用时提示条没有显示");
+                h.assert(toast.getBoundingClientRect().bottom <= notice.getBoundingClientRect().top + 0.5,
+                    "提示条没有叠放在状态条之上");
+                await h.tick(4300);
+                h.assert(!notice.hidden, "状态条随提示条一起消失");
+                h.assert(toast.hidden === true, "提示条没有按时消失");
+
+                // 取消选择器保留快照与提示。
+                h.click(action);
+                await h.until(() => h.dom(".pv-picker").hidden === false, 3000);
+                h.click(h.dom(".pv-picker-button:not(.is-primary)"));
+                await h.tick(80);
+                h.assert(h.dom(".pv-picker").hidden === true, "取消后选择器没有关闭");
+                h.assert(app.state.folderAccess.available === false, "取消重新打开丢失了不可用状态");
+                h.assert(!notice.hidden, "取消重新打开隐藏了状态条");
+                h.assert(app.state.session.surface !== null, "取消重新打开清空了主图");
+
+                // 授权失败保留快照与提示，并给出打开失败提示条。
+                app.simulateFolderReopenFailure("权限已撤销");
+                h.click(action);
+                await h.until(() => h.dom(".pv-picker").hidden === false, 3000);
+                h.click(h.dom(".pv-picker-button.is-primary"));
+                await h.until(() => app.state.session.toast !== null, 3000);
+                h.assert(app.state.folderAccess.available === false, "重新打开失败后离开了不可用状态");
+                h.assert(!notice.hidden, "重新打开失败后隐藏了状态条");
+                h.assert(app.state.session.toast.text === `无法读取文件夹：${app.state.folder.name}（权限已撤销）`,
+                    `重新打开失败文案不符：${app.state.session.toast.text}`);
+
+                // 授权成功后恢复正常操作。
+                app.simulateFolderReopenFailure(null);
+                h.click(action);
+                await h.until(() => h.dom(".pv-picker").hidden === false, 3000);
+                h.click(h.dom(".pv-picker-button.is-primary"));
+                await h.until(() => app.state.folderAccess.available === true, 4000);
+                h.assert(notice.hidden === true, "重新打开成功后状态条仍然显示");
+                const resumed = app.state.photo.rating;
+                const next = resumed === 5 ? 1 : 5;
+                const ok = await app.rate(app.state.displayedId, next);
+                h.assert(ok === true && app.state.photo.rating === next, "重新打开后评分写入没有恢复");
+            } finally {
+                app.simulateFolderReopenFailure(null);
+                const openPicker = h.dom(".pv-picker");
+                if (openPicker.hidden === false) h.click(h.dom(".pv-picker-button:not(.is-primary)"));
+                if (!app.state.folderAccess.available) app.openFolder("harbor");
+                await h.tick(40);
+            }
+        },
+    },
+    {
         id: "ANALYSIS-01",
         title: "菜单打开分析栏，瓦片等边且对焦点瓦片按对焦数据出现",
         async run(shell, h) {

@@ -945,6 +945,9 @@ internal static class OpenRequestChannelChecks
             }
         }
 
+        public Task CheckAccessAsync(CancellationToken cancellationToken = default) =>
+            _inner.CheckAccessAsync(cancellationToken);
+
         public Task<IFileRef?> FindFileAsync(string name, CancellationToken cancellationToken = default) =>
             // 只拒绝目录枚举；逐文件存在性探测仍走真实目录（权限失败时刷新可访问项需要它）。
             _inner.FindFileAsync(name, cancellationToken);

@@ -129,6 +129,7 @@ export function createCard(ctx, { mode = "film", tier = "large" } = {}) {
     let lastShowRating = null;
     let lastPhotoId = null;
     let lastPriority = null;
+    let lastThumbnailsPaused = false;
     let thumbToken = 0;
     let suppressClickUntil = 0;
 
@@ -371,13 +372,18 @@ export function createCard(ctx, { mode = "film", tier = "large" } = {}) {
         }
 
         const priority = info.priority ?? "visible";
-        if (photo.id !== lastPhotoId) {
+        // STATE-05：目录不可用时暂停缩略图解码；已画出的缩略图保留，恢复后重新请求。
+        const thumbnailsPaused = state.folderAccess?.available === false;
+        const changed = photo.id !== lastPhotoId;
+        if (changed) {
             lastPhotoId = photo.id;
             clearCanvas();
-            loadThumbnail(photo, priority);
-        } else if (lastPriority !== null && priorityRank(priority) < lastPriority) {
+        }
+        if (!thumbnailsPaused && (changed || lastThumbnailsPaused
+            || (lastPriority !== null && priorityRank(priority) < lastPriority))) {
             loadThumbnail(photo, priority);
         }
+        lastThumbnailsPaused = thumbnailsPaused;
     }
 
     function destroy() {

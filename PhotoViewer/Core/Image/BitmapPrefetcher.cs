@@ -471,14 +471,15 @@ public class BitmapPrefetcher
                 // 压力闸:Caution/恢复观察期起预取不执行(投递即空跑退出)
                 if (MemoryGovernor.CurrentLevel >= PressureLevel.Caution || MemoryGovernor.InRecoveryHold) return;
                 // 活跃闸:暂停时已入队但还没开跑的项到这里空跑退出,不再起任何后台解码
-                if (!IsApplicationActive) return;
+                var folderToken = file.FolderAccessToken;
+                if (!IsApplicationActive || folderToken.IsCancellationRequested) return;
 
                 // 沿 P0 并行的项一旦开跑就让它跑完：它正是即将上屏的那一张，轮次切换只阻止尚未开始的工作。
                 // 否则下一张的预取每次都在"快好了"时被丢弃（取消点只在解码/绘制之后），P0 再从零解一遍。
                 // 应用停止令牌对两类项都链接：后台状态不保留任何在途后台工作。
                 using var linkedCts = alongside
-                    ? CancellationTokenSource.CreateLinkedTokenSource(token, appToken)
-                    : CancellationTokenSource.CreateLinkedTokenSource(token, ct, appToken);
+                    ? CancellationTokenSource.CreateLinkedTokenSource(token, appToken, folderToken)
+                    : CancellationTokenSource.CreateLinkedTokenSource(token, ct, appToken, folderToken);
                 var lct = linkedCts.Token;
 
                 if (!alongside)
@@ -532,7 +533,8 @@ public class BitmapPrefetcher
         if (!CanScheduleBackgroundWork()) return;
         var appToken = ApplicationLifetimeToken;
         var file = _main.CurrentFile;
-        if (file == null) return;
+        if (file == null || file.FolderAccessToken.IsCancellationRequested) return;
+        var folderToken = file.FolderAccessToken;
 
         var path = file.File.StorageId.Value;
 
@@ -549,7 +551,7 @@ public class BitmapPrefetcher
             try
             {
                 // 应用停止令牌与切图令牌一起等待:进后台立刻放弃本轮,回前台由重排重新计划
-                using var roundCts = CancellationTokenSource.CreateLinkedTokenSource(ct, appToken);
+                using var roundCts = CancellationTokenSource.CreateLinkedTokenSource(ct, appToken, folderToken);
                 var wct = roundCts.Token;
 
                 await Task.Delay(FullWarmupDelayMs, wct).ConfigureAwait(false);
@@ -572,7 +574,7 @@ public class BitmapPrefetcher
                     if (!IsApplicationActive) return;
                     if (BitmapLoader.IsInCache(path, ImageSizeClass.Full)) return;
                     if (BitmapLoader.PrefetchFullWanted) return;
-                    using var itemCts = CancellationTokenSource.CreateLinkedTokenSource(token, ct, appToken);
+                    using var itemCts = CancellationTokenSource.CreateLinkedTokenSource(token, ct, appToken, folderToken);
                     var image = await BitmapLoader.GetBitmapAsync(file.File, DecodePriority.P2_Prefetch, itemCts.Token).ConfigureAwait(false);
                     image?.Release();
                 });

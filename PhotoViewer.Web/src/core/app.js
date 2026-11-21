@@ -11,7 +11,8 @@
  * fit/zoomPreset/zoomScale/zoomBy/pan/centerOn/navigateTo/toggleEnhance/runCommand/runMenu/requestOpen/
  * keyDown/keyUp/blur/setModifierState/wheelOnPhoto/mouseOnPhoto/filmUserScrolled/filmResized/bindFilmScroller/layoutReady/
  * setMenuOpen/setDropdownOpen/setTextFocus/updateSettings/hoverDetail/clickDiagnostic/
- * clickAnalysisBlank/locateDetail/extractAll/setHistogramSource/simulateMemoryWarning/setDpr/menuModel/notify/canOpen
+ * clickAnalysisBlank/locateDetail/extractAll/setHistogramSource/simulateMemoryWarning/setDpr/menuModel/notify/canOpen/
+ * simulateFolderLoss/simulateFolderReopenFailure
  *   app.filmAnimating             胶片栏定位动画是否在播放（调试读数）
  */
 import { FileList, RATING_FILTERS, SORT_KEYS, SORT_ORDERS } from "./filter.js";
@@ -199,6 +200,9 @@ class MainApp {
         };
         this._folder = null;
         this._singleMode = false;
+        this._folderUnavailable = false;
+        this._folderUnavailableReason = null;
+        this._reopenFailure = null;
         this._photos = [];
         this._displayedId = null;
         this._anchorId = null;
@@ -387,6 +391,12 @@ class MainApp {
     openFolder(folderId, { target } = {}) {
         const folder = this._library.folders.find((entry) => entry && entry.id === folderId);
         if (!folder) return false;
+        // STATE-05：重新打开当前目录时按目录自身的访问检查结果决定是否发布；失败保留快照与提示。
+        if (this._folderUnavailable && this._folder && folder.id === this._folder.id && this._reopenFailure) {
+            this._photoSession.openFailed(folder.name ?? folder.id, "folder", this._reopenFailure);
+            this._invalidate(["toast"]);
+            return false;
+        }
         const folderPhotos = Array.isArray(folder.photos) ? folder.photos : [];
         const requested = this._photoInFolder(folder, target);
         const preferredId = requested && this._allowed(requested) ? requested : null;
@@ -416,6 +426,11 @@ class MainApp {
         if (!found || !this._allowed(found)) return false;
         const folder = this._library.folders.find((entry) => entry.id === found.folderId);
         if (!folder || folder.enumerable === false) {
+            if (this._folderUnavailable && this._folder && found.folderId === this._folder.id && this._reopenFailure) {
+                this._photoSession.openFailed(found.name, "file", this._reopenFailure);
+                this._invalidate(["toast"]);
+                return false;
+            }
             return this._openSingle(found.folderId, found);
         }
         return this.openFolder(folder.id, { target: found });
@@ -430,6 +445,7 @@ class MainApp {
         if (!card) return false;
         const targetId = card.photo.id;
         if (targetId === this._displayedId && targetId === this._anchorId) return false;
+        if (!this._canBrowse(targetId)) return false;
         this._applyDisplayed(targetId, { mode: "batch", anchor: true, similarityAnchor: true });
         return true;
     }
@@ -442,6 +458,7 @@ class MainApp {
         const card = this._fileList.cardOf(photo.id);
         const targetId = card ? card.photo.id : photo.id;
         if (targetId === this._displayedId) return false;
+        if (!this._canBrowse(targetId)) return false;
         // SIM-05：只改主图身份（显示项），锚点、列表位置与面板结果都不动。
         this._applyDisplayed(targetId, { mode: "batch", anchor: false, similarityAnchor: false });
         return true;
@@ -452,7 +469,7 @@ class MainApp {
         const inList = this._displayedId && this._fileList.cardIndexOf(this._displayedId) >= 0;
         const base = inList ? this._displayedId : this._anchorId ?? this._displayedId;
         if (!base) return false;
-        const target = this._fileList.neighbor(base, delta);
+        const target = this._browseNeighbor(base, delta);
         // FILM-01：到端点不环绕，也不发出新的定位请求。
         if (!target) return false;
         this._applyDisplayed(target.photo.id, { mode: "batch", anchor: true, similarityAnchor: true });
@@ -465,7 +482,7 @@ class MainApp {
         let target = null;
         while (this._history.length > 0) {
             const id = this._history.pop();
-            if (id && this._photoById(id)) {
+            if (id && this._photoById(id) && this._canBrowse(id)) {
                 target = id;
                 break;
             }
@@ -517,6 +534,8 @@ class MainApp {
     rate(photoId, rating) {
         const id = photoId ?? this._displayedId;
         if (!id) return Promise.resolve(false);
+        // STATE-05：目录不可用时暂停评分写入，保留最后确认的星级。
+        if (this._folderUnavailable) return Promise.resolve(false);
         const card = this._fileList.cardOf(id);
         if (!card) return Promise.resolve(false);
         const value = clamp(Math.round(finite(Number(rating)) ? Number(rating) : 0), 0, 5);
@@ -935,6 +954,8 @@ class MainApp {
     extractAll() {
         // EDITION-05：标准版没有批量提取入口，也不写特征库。
         if (!this._capabilities.similarity) return Promise.resolve(false);
+        // STATE-05：目录不可用时暂停后台提取。
+        if (this._folderUnavailable) return Promise.resolve(false);
         return this._similarity.extractAll();
     }
 
@@ -946,6 +967,54 @@ class MainApp {
 
     simulateMemoryWarning() {
         return this._photoSession.memoryWarning();
+    }
+
+    // STATE-05：Web 没有真实目录，按目录自身访问检查失败注入不可用快照（演示与页内检查用）。
+    simulateFolderLoss(reason = "目录不可访问") {
+        if (!this._folder || this._folderUnavailable) return false;
+        this._folderUnavailable = true;
+        this._folderUnavailableReason = String(reason || "目录不可访问");
+        this._photoSession.setSuspended(true);
+        this._invalidate(["folder"]);
+        return true;
+    }
+
+    // STATE-05：模拟重新打开时的授权失败；传 null 恢复正常检查结果。
+    simulateFolderReopenFailure(reason = null) {
+        this._reopenFailure = reason === null || reason === undefined || String(reason).trim() === ""
+            ? null
+            : String(reason);
+        return this._reopenFailure;
+    }
+
+    _setFolderAvailable() {
+        const changed = this._folderUnavailable || this._folderUnavailableReason !== null;
+        this._folderUnavailable = false;
+        this._folderUnavailableReason = null;
+        this._photoSession.setSuspended(false);
+        if (changed) this._invalidate(["folder"]);
+        return changed;
+    }
+
+    // STATE-05：不可用时只允许在已缓存的展示结果之间浏览。
+    _canBrowse(id) {
+        if (!this._folderUnavailable || !id) return true;
+        if (id === this._displayedId) return true;
+        const proxy = this._viewport.proxyTargetLongEdge();
+        const wantFull = this._viewport.needsFull(proxy) || this._panes.analysis;
+        return this._photoSession.canShowCached(id, { wantFull });
+    }
+
+    _browseNeighbor(base, delta) {
+        if (!this._folderUnavailable) return this._fileList.neighbor(base, delta);
+        let current = base;
+        for (let step = 0; step < this._fileList.count; step += 1) {
+            const card = this._fileList.neighbor(current, delta);
+            if (!card) return null;
+            if (this._canBrowse(card.photo.id)) return card;
+            current = card.photo.id;
+        }
+        return null;
     }
 
     menuModel() {
@@ -992,6 +1061,8 @@ class MainApp {
     }
 
     _commitFolder({ id, name, single, photos, preferred }) {
+        // STATE-05：源重新发布成功即恢复访问；旧快照由下面的列表替换自然更新。
+        this._setFolderAvailable();
         this._photos = Array.isArray(photos) ? photos : [];
         this._folder = { id, name };
         this._singleMode = Boolean(single);
@@ -1310,6 +1381,10 @@ class MainApp {
             window: { ...this._window },
             layout: this._layout,
             folder: this._folder ? { ...this._folder } : null,
+            folderAccess: {
+                available: !this._folderUnavailable,
+                reason: this._folderUnavailableReason,
+            },
             singleMode: this._singleMode,
             isStartScreen: this.isStartScreen,
             photo: this._displayedPhoto(),

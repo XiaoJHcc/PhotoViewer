@@ -41,6 +41,8 @@ public class ImageFile : ReactiveObject
     private int _activeMetadataReads;
 
     public IFileRef File { get; }
+
+    internal CancellationToken FolderAccessToken { get; set; }
     public string Name => File.Name;
 
     /// <summary>
@@ -277,13 +279,12 @@ public class ImageFile : ReactiveObject
                 cancellationToken.ThrowIfCancellationRequested();
                 if (!basic.Exists)
                     throw new StorageException(StorageError.ObjectGone, $"{Name} 已不存在");
-                var exif = await ExifLoader.LoadExifDataAsync(File, RatingSidecarIndex).ConfigureAwait(false);
+                var exif = await ExifLoader.LoadExifDataAsync(
+                    File, RatingSidecarIndex, throwOnStorageFailure: true, cancellationToken).ConfigureAwait(false);
                 if (exif == null)
                 {
-                    await using var stream = await File.OpenReadAsync(cancellationToken).ConfigureAwait(false);
-                    var (_, sources) = await RatingSourceReader.ReadAsync(File, sidecarIndex: null, cancellationToken)
-                        .ConfigureAwait(false);
-                    var embedded = sources.First(source => source.Source == XmpRatingSource.Embedded).Snapshot;
+                    var (embedded, sources) = await RatingSourceReader.ReadAsync(
+                        File, sidecarIndex: null, throwOnStorageFailure: true, cancellationToken).ConfigureAwait(false);
                     exif = new ExifData
                     {
                         FilePath = File.StorageId.Value,
@@ -356,13 +357,14 @@ public class ImageFile : ReactiveObject
         
     public async Task LoadThumbnailAsync()
     {
-        if (Thumbnail != null || IsThumbnailLoading) return;
+        var token = FolderAccessToken;
+        if (token.IsCancellationRequested || Thumbnail != null || IsThumbnailLoading) return;
 
         IsThumbnailLoading = true;
         try
         {
             // 在后台线程中生成缩略图：约 120 短边的列表用缩略图。
-            var bitmap = await Task.Run(() => ThumbnailService.GetThumbnailAsync(File, ListThumbnailShortSide));
+            var bitmap = await Task.Run(() => ThumbnailService.GetThumbnailAsync(File, ListThumbnailShortSide, ct: token), token);
             
             // 在UI线程中设置结果
             await UiDispatcher.InvokeAsync(() =>
@@ -392,7 +394,7 @@ public class ImageFile : ReactiveObject
     /// </summary>
     public Task<ExifData?> LoadExifDataAsync()
     {
-        if (IsExifLoaded) return Task.FromResult(ExifData);
+        if (IsExifLoaded || FolderAccessToken.IsCancellationRequested) return Task.FromResult(ExifData);
 
         lock (_exifLoadLock)
         {
@@ -405,6 +407,7 @@ public class ImageFile : ReactiveObject
 
     private async Task<ExifData?> LoadExifDataCoreAsync()
     {
+        var token = FolderAccessToken;
         var version = Volatile.Read(ref _metadataVersion);
         BeginMetadataRead();
         try
@@ -414,7 +417,8 @@ public class ImageFile : ReactiveObject
             {
                 try
                 {
-                    return await ExifLoader.LoadExifDataAsync(File, RatingSidecarIndex);
+                    return await ExifLoader.LoadExifDataAsync(File, RatingSidecarIndex,
+                        throwOnStorageFailure: token.CanBeCanceled, token);
                 }
                 catch (Exception ex)
                 {
@@ -426,7 +430,7 @@ public class ImageFile : ReactiveObject
             // 在UI线程中设置结果；期间已刷新或被评分写入取代时整批丢弃，绝不让旧来源复活。
             await UiDispatcher.InvokeAsync(() =>
             {
-                if (!IsCurrentMetadataVersion(version)) return;
+                if (token.IsCancellationRequested || !IsCurrentMetadataVersion(version)) return;
                 if (exifData != null) ExifData = exifData;
                 IsExifLoaded = true;
             });
@@ -469,7 +473,8 @@ public class ImageFile : ReactiveObject
         {
             var index = sidecarIndex ?? RatingSidecarIndex;
             var (embedded, sources) = await Task.Run(
-                () => ExifLoader.LoadRatingSourcesAsync(File, index, cancellationToken),
+                () => RatingSourceReader.ReadAsync(File, index,
+                    throwOnStorageFailure: FolderAccessToken.CanBeCanceled, cancellationToken),
                 cancellationToken).ConfigureAwait(false);
 
             // 读取期间已被取消：不写入本次会话的旧结果。

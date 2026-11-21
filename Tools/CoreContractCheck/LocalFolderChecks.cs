@@ -114,6 +114,10 @@ internal static class LocalFolderChecks
             lease.Attach(new ProviderRef());
             return Task.CompletedTask;
         });
+
+        Directory.Move(directory, directory + "-offline");
+        await c.StorageFailsAsync("父目录失联不是同名文件不存在", StorageError.ObjectGone,
+            () => folder.FindFileAsync("a.jpg"));
     }
 
     private sealed class ProviderRef : IStorageItemRef

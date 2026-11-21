@@ -76,7 +76,67 @@ internal static class RefreshRegressionChecks
         c.Equal("工作副本缓存张数输入上界", 400, settings.BitmapCacheMaxCount);
         c.Equal("工作副本缓存内存输入上界", 32768, settings.BitmapCacheMaxMemory);
 
+        await VerifyDisconnectedFolderAsync(c, root);
         await VerifyFilterSessionAsync(c, root);
+    }
+
+    private static async Task VerifyDisconnectedFolderAsync(Checks c, string root)
+    {
+        c.Section("当前目录失联：评分快照与恢复");
+        var directory = Path.Combine(root, "disconnect-regression");
+        Directory.CreateDirectory(directory);
+        var photoPath = Path.Combine(directory, "shot.jpg");
+        var sidecarPath = Path.Combine(directory, "shot.xmp");
+        var offlinePath = directory + "-offline";
+        await File.WriteAllBytesAsync(photoPath, Jpeg(3));
+        await File.WriteAllBytesAsync(sidecarPath, Packet(3));
+
+        using var main = new MainViewModel();
+        var folder = new LocalFolderRef(directory);
+        await main.FolderVM.OpenFolderAsync(folder);
+        var photo = main.FolderVM.AllFiles.Single();
+        c.True("基线读取成功", await photo.RefreshMetadataAsync());
+        c.True("断开前双来源一致", photo.Rating == 3 && photo.RatingSources.Count == 2 && !photo.HasRatingConflict);
+
+        File.Move(sidecarPath, sidecarPath + "-offline");
+        await c.StorageFailsAsync("已枚举的 sidecar 在刷新前失联", StorageError.ObjectGone,
+            () => photo.RefreshMetadataAsync());
+        c.True("sidecar 重读失败不覆盖既有来源", photo.RatingSources.Count == 2 && !photo.HasRatingConflict);
+        File.Move(sidecarPath + "-offline", sidecarPath);
+
+        Directory.Move(directory, offlinePath);
+        var failures = new List<RatingWriteFailure>();
+        var openFailures = new List<string>();
+        main.RatingWriteFailedDetailed += failures.Add;
+        main.OpenFailed += openFailures.Add;
+        var outcome = await main.SetRatingWithResultAsync(photo, 5);
+        c.Equal("失联时评分写入沿用事务失败结果", RatingWriteOutcome.RolledBack, outcome);
+        c.True("失联时评分操作只报一次，保留真实失败原因", failures.Count == 1 &&
+            failures[0].Outcome == RatingWriteOutcome.RolledBack && !string.IsNullOrWhiteSpace(failures[0].Reason));
+        c.True("失败后的读盘不造成假冲突", photo.Rating == 3 && photo.RatingSources.Count == 2 && !photo.HasRatingConflict);
+        c.True("STATE-05 写入失败核对到目录失联", main.FolderVM.IsFolderUnavailable);
+        c.Equal("STATE-05 失联后的写入入口拒绝下一次修改", RatingWriteOutcome.Canceled,
+            await main.SetRatingWithResultAsync(photo, 1));
+        await main.FolderVM.OpenFolderAsync(folder);
+        c.True("失联重开给出既有提示并保留照片列表", openFailures.Count == 1 &&
+            main.FolderVM.IsFolderUnavailable && ReferenceEquals(main.CurrentFile, photo) && main.FolderVM.AllFiles.Count == 1);
+
+        Directory.Move(offlinePath, directory);
+        await File.WriteAllBytesAsync(sidecarPath, Packet(4));
+        c.True("STATE-05 设备路径可用后不自动恢复写入", main.FolderVM.IsFolderUnavailable);
+        var picker = new ReopenPicker();
+        FilePicker.Initialize(picker);
+        await main.FolderVM.ReopenFolderAsync();
+        c.True("STATE-05 取消重新打开保留快照", main.FolderVM.IsFolderUnavailable && ReferenceEquals(main.CurrentFile, photo));
+        picker.Folder = folder;
+        await main.FolderVM.ReopenFolderAsync();
+        var recovered = main.FolderVM.AllFiles.Single();
+        c.True("STATE-05 重开成功才恢复操作", !main.FolderVM.IsFolderUnavailable && ReferenceEquals(main.CurrentFile, recovered));
+        await recovered.RefreshMetadataAsync();
+        c.True("重新打开可读目录显示真实的评分差异", recovered.Rating == 3 && recovered.HasRatingConflict &&
+            recovered.RatingSources.Any(source => source.Source == XmpRatingSource.Sidecar && source.Value == 4));
+        c.Equal("重新打开后可以正常写入", RatingWriteOutcome.Applied, await main.SetRatingWithResultAsync(recovered, 5));
+        c.True("重连写入后来源已核实一致", !recovered.HasRatingConflict && recovered.RatingSources.All(source => source.Value == 5));
     }
 
     private static async Task VerifyFilterSessionAsync(Checks c, string root)
@@ -163,6 +223,13 @@ internal static class RefreshRegressionChecks
             action();
         }
         public Task<T> InvokeAsync<T>(Func<T> action, UiPriority priority = UiPriority.Normal) => Task.FromResult(action());
+    }
+
+    private sealed class ReopenPicker : IFilePickerService
+    {
+        public IFolderRef? Folder { get; set; }
+        public Task<IFolderRef?> PickFolderAsync(string title) => Task.FromResult(Folder);
+        public Task<IFileRef?> PickFileAsync(string title, IReadOnlyList<FilePickFilter> filters) => Task.FromResult<IFileRef?>(null);
     }
 
     private sealed class ParentlessFileRef(IFileRef inner) : IFileRef

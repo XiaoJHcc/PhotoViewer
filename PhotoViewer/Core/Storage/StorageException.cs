@@ -29,6 +29,15 @@ public sealed class StorageException : IOException
     public static StorageException ChangedExternally(string name) =>
         new(StorageError.ChangedExternally, $"{name} 已被其他程序修改");
 
+    internal static bool IsAvailabilityFailure(Exception exception) => exception switch
+    {
+        StorageException storage => storage.Error is StorageError.AccessDenied or StorageError.AccessRevoked
+            or StorageError.ObjectGone or StorageError.IoError,
+        EndOfStreamException or PathTooLongException => false,
+        IOException or UnauthorizedAccessException => true,
+        _ => false,
+    };
+
     public static StorageException From(Exception exception, string operation)
     {
         if (exception is StorageException storage) return storage;

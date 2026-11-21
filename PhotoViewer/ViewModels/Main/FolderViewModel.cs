@@ -42,6 +42,110 @@ public class FolderViewModel : ReactiveObject, IDisposable
     /// <summary>当前已提交的图片目录;单图模式为 null。</summary>
     public IFolderRef? CurrentFolder => _currentFolder;
 
+    private CancellationTokenSource? _folderMonitor;
+    private CancellationTokenSource? _folderAccess;
+    private FolderLoadSession? _committedSession;
+    private FolderAccessMonitor? _accessMonitor;
+
+    private sealed class FolderAccessMonitor(IFolderRef folder, CancellationToken token)
+    {
+        public IFolderRef Folder { get; } = folder;
+        public CancellationToken Token { get; } = token;
+        public int ProbeInFlight;
+    }
+    private volatile bool _isFolderUnavailable;
+    private bool _reopeningFolder;
+
+    /// <summary>STATE-05：当前已提交目录不可访问；选择新来源成功后才恢复。</summary>
+    public bool IsFolderUnavailable => _isFolderUnavailable;
+    public event Action? FolderAvailabilityChanged;
+    internal CancellationToken FolderAccessToken { get; private set; }
+
+    public async Task ReopenFolderAsync()
+    {
+        if (_disposed || !IsFolderUnavailable || _reopeningFolder) return;
+        _reopeningFolder = true;
+        try { await OpenFilePickerAsync(pickFolder: true); }
+        finally { _reopeningFolder = false; }
+    }
+
+    internal async Task CheckCurrentFolderAccessAsync()
+    {
+        var monitor = _accessMonitor;
+        if (_disposed || monitor == null || IsFolderUnavailable) return;
+        await CheckFolderAccessAsync(monitor).ConfigureAwait(false);
+    }
+
+    private void SetFolderMonitor(FolderLoadSession session, IFolderRef? folder)
+    {
+        _folderMonitor?.Cancel();
+        _folderMonitor?.Dispose();
+        _folderMonitor = null;
+        _accessMonitor = null;
+        _folderAccess?.Dispose();
+        _folderAccess = folder == null ? null : new CancellationTokenSource();
+        FolderAccessToken = _folderAccess?.Token ?? default;
+        _committedSession = session;
+        if (folder != null)
+        {
+            _folderMonitor = new CancellationTokenSource();
+            _accessMonitor = new FolderAccessMonitor(folder, _folderMonitor.Token);
+            _ = MonitorFolderAsync(_accessMonitor);
+        }
+    }
+
+    private async Task MonitorFolderAsync(FolderAccessMonitor monitor)
+    {
+        var token = monitor.Token;
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+            while (await timer.WaitForNextTickAsync(token).ConfigureAwait(false))
+            {
+                if (!BitmapPrefetcher.IsApplicationActive) continue;
+                await CheckFolderAccessAsync(monitor).ConfigureAwait(false);
+                if (IsFolderUnavailable) break;
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception error) { Console.Error.WriteLine($"[Folder] 访问检查失败：{error.Message}"); }
+    }
+
+    private async Task CheckFolderAccessAsync(FolderAccessMonitor monitor)
+    {
+        var token = monitor.Token;
+        if (Interlocked.Exchange(ref monitor.ProbeInFlight, 1) != 0) return;
+        try
+        {
+            await Task.Run(() => monitor.Folder.CheckAccessAsync(token), token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception error) when (StorageException.IsAvailabilityFailure(error))
+        {
+            await UiDispatcher.InvokeAsync(() =>
+            {
+                if (_disposed || token.IsCancellationRequested || !ReferenceEquals(_accessMonitor, monitor)) return;
+                SetFolderUnavailable(true);
+            }).ConfigureAwait(false);
+        }
+        catch (Exception error) { Console.Error.WriteLine($"[Folder] 访问检查失败：{error.Message}"); }
+        finally { Volatile.Write(ref monitor.ProbeInFlight, 0); }
+    }
+
+    private void SetFolderUnavailable(bool unavailable)
+    {
+        if (_isFolderUnavailable == unavailable) return;
+        _isFolderUnavailable = unavailable;
+        if (unavailable)
+        {
+            _committedSession?.Cancel();
+            _folderAccess?.Cancel();
+            Main.RatingSources.Close();
+            Main.Tools.Deactivate();
+        }
+        FolderAvailabilityChanged?.Invoke();
+    }
+
     private string _folderName = "";
     /// <summary>当前文件夹名称(若为单图模式则为文件名)</summary>
     public string FolderName
@@ -108,6 +212,10 @@ public class FolderViewModel : ReactiveObject, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _folderMonitor?.Cancel();
+        _folderMonitor?.Dispose();
+        _folderAccess?.Cancel();
+        _folderAccess?.Dispose();
         _activeSession = null;
         foreach (var session in _liveSessions.ToList()) session.Dispose();
         _liveSessions.Clear();
@@ -487,17 +595,17 @@ public class FolderViewModel : ReactiveObject, IDisposable
         bool targetIsExplicit,
         bool refreshMode = false)
     {
+        bool recovering = IsFolderUnavailable;
         var isRefresh = HasSameStorageId(folder, _currentFolder) && _allFiles.Count > 0;
-        // 只有切换到不同目录才整批释放旧缩略图（OPEN-08）；临时快照不改变该判断。
-        var clearThumbnailsOnCommit = !HasSameStorageId(folder, _currentFolder);
+        var clearThumbnailsOnCommit = recovering || !HasSameStorageId(folder, _currentFolder);
 
-        var session = BeginSession(folder, preferredFile);
+        var session = BeginSession(folder, recovering && isRefresh ? null : preferredFile);
         var stopwatch = Stopwatch.StartNew();
         Console.WriteLine("[Folder] === BEGIN OpenFolder: " + folder.StorageId.Value);
 
         // ── 阶段 1:优先显示目标图片（刷新不发布临时快照，但新目标仍先读好评分/来源） ──
         var targetFile = session.EnsureTargetImage();
-        var publishTarget = targetFile != null && !isRefresh && !refreshMode;
+        var publishTarget = targetFile != null && !isRefresh && !refreshMode && !recovering;
         var targetIsNew = preferredFile != null && FindLoadedFile(preferredFile) == null;
         if (targetFile != null && (publishTarget || targetIsNew))
         {
@@ -573,6 +681,24 @@ public class FolderViewModel : ReactiveObject, IDisposable
         Console.WriteLine($"[Folder] Phase2 (enumerate {session.WorkFiles.Count} files): {stopwatch.ElapsedMilliseconds}ms");
 
         var snapshot = session.WorkFiles.ToList();
+        if (recovering)
+        {
+            try
+            {
+                await Task.Run(() => folder.CheckAccessAsync(session.Token), session.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (session.IsCancellationRequested)
+            {
+                AbandonSession(session);
+                return false;
+            }
+            catch (Exception exception)
+            {
+                return await HandleEnumerateFailureAsync(session, folder, targetFile, targetIsExplicit,
+                    refreshMode, exception).ConfigureAwait(false);
+            }
+        }
+
         List<ImageFile>? reused = null;
         await UiDispatcher.InvokeAsync(() =>
         {
@@ -581,7 +707,9 @@ public class FolderViewModel : ReactiveObject, IDisposable
             // 同目录刷新：按 StorageId 复用仍存在的文件对象，保住缩略图、EXIF 与卡片身份；
             // 新出现的文件用本次枚举对象，已删除的文件自然退出列表。
             var files = snapshot;
-            if (isRefresh) files = MergeLoadedFiles(session, snapshot, out reused);
+            if (isRefresh && !recovering) files = MergeLoadedFiles(session, snapshot, out reused);
+            if (recovering && isRefresh)
+                foreach (var file in files) BitmapLoader.RemoveFromCache(file.File.StorageId.Value);
 
             // 一次提交：枚举成功后才替换列表、目录名与当前照片，失败时旧快照原样保留。
             PublishSnapshot(
@@ -593,7 +721,10 @@ public class FolderViewModel : ReactiveObject, IDisposable
                 retireSuperseded: true);
 
             // 刷新（同目录或显式重开）以当前/目标照片为首选；目标已不在新列表时退回首项。
-            var selection = ResolveCommittedSelection(files, targetFile, isRefresh || refreshMode);
+            var selection = recovering && isRefresh && preferredFile != null
+                ? files.FirstOrDefault(file => file.File.StorageId == preferredFile.StorageId) is { } recovered
+                    ? ResolveTargetSelection(recovered) : ResolveFirstFile(files)
+                : ResolveCommittedSelection(files, targetFile, isRefresh || refreshMode);
 
             // 阶段 2 定下的当前照片不再被后续阶段改写（OPEN-02）。
             SetCurrentFile(selection, session);
@@ -647,13 +778,17 @@ public class FolderViewModel : ReactiveObject, IDisposable
         // STATE-02：打开失败必须让用户看见对象与原因，不能只写日志。
         Main.ReportOpenFailure(StatusMessages.FolderOpenFailed(folder.Name, StatusMessages.ReasonFor(exception)));
 
-        if (refreshMode || targetFile == null || !targetIsExplicit)
+        if (!ReferenceEquals(_committedSession, session) && HasSameStorageId(folder, _currentFolder)
+            && StorageException.IsAvailabilityFailure(exception))
+            await UiDispatcher.InvokeAsync(CheckCurrentFolderAccessAsync).Unwrap().ConfigureAwait(false);
+
+        if (refreshMode || targetFile == null || !targetIsExplicit || IsFolderUnavailable)
         {
             // 刷新失败：旧列表、当前图、目录名与缩略图缓存原样保留；
             // 目录读不到时仍刷新当前仍可访问的对象，而不是把整个目录变成单图。
             var accessible = _allFiles;
             AbandonSession(session);
-            if (refreshMode && accessible.Count > 0)
+            if (refreshMode && !IsFolderUnavailable && accessible.Count > 0)
             {
                 // 枚举失败说明旧索引可能早于磁盘现状：清空后逐文件核实 sidecar，
                 // 已删除的来源不复活，新出现的来源也不漏。
@@ -694,6 +829,9 @@ public class FolderViewModel : ReactiveObject, IDisposable
         _allFiles = files;
         _currentFolder = folder;
         FolderName = folderName;
+        SetFolderMonitor(session, retireSuperseded ? folder : null);
+        foreach (var file in files) file.FolderAccessToken = FolderAccessToken;
+        SetFolderUnavailable(false);
 
         if (clearThumbnails)
         {

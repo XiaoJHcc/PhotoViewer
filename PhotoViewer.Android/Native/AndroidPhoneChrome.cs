@@ -524,6 +524,9 @@ internal sealed class AndroidRatingControl : MaterialCardView
     /// <summary>按下槽位（-1 表示没有；验收读取）。</summary>
     internal int PressedSlotForChecks => _pressedSlot;
 
+    /// <summary>评分槽位当前是否接受输入（验收读取）。</summary>
+    internal bool EnabledForChecks => _enabled;
+
     /// <summary>胶囊实际底色（验收读取）：与命令圆按钮同一按钮材质。</summary>
     internal Color FillColorForChecks => new(CardBackgroundColor?.DefaultColor ?? 0);
 

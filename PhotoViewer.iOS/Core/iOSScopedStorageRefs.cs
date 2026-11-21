@@ -108,20 +108,25 @@ internal sealed class iOSScopedFileRef : IFileRef, IIOSScopedStorageItem
 {
     private readonly LocalFileRef _inner;
     private readonly ISecurityScopeAccess _scope;
+    private readonly iOSScopedFolderRef? _parent;
 
     /// <summary>创建文件引用。</summary>
     /// <param name="localPath">规范化绝对路径。</param>
     /// <param name="scopedUrls">系统授予的原 URL（至少一个）。</param>
     /// <param name="scope">系统作用域调用面；产品路径留空即用平台实现。</param>
+    /// <param name="storageId">在作用域内取得的文件身份。</param>
+    /// <param name="parent">目录直接返回的子文件保留已知父目录。</param>
     internal iOSScopedFileRef(
         string localPath,
         IReadOnlyList<NSUrl> scopedUrls,
         ISecurityScopeAccess? scope = null,
-        StorageItemId? storageId = null)
+        StorageItemId? storageId = null,
+        iOSScopedFolderRef? parent = null)
     {
         _inner = storageId is { } id ? new LocalFileRef(localPath, id) : new LocalFileRef(localPath);
         SecurityScopedUrls = [.. scopedUrls];
         _scope = scope ?? PlatformSecurityScopeAccess.Instance;
+        _parent = parent;
     }
 
     /// <summary>系统交回的原 URL。</summary>
@@ -156,14 +161,14 @@ internal sealed class iOSScopedFileRef : IFileRef, IIOSScopedStorageItem
         => _inner.GetBasicPropertiesAsync(cancellationToken);
 
     /// <summary>
-    /// 父目录：只有在同一系统作用域内能真正枚举时才返回（外部单文件授权通常不含父目录），
-    /// 否则返回 null 让共享流程按 OPEN-03 直接以单图模式打开，不产生一次注定失败的枚举。
+    /// 目录子项直接返回已知父目录，由后续存储操作报告访问错误；独立选取的单文件按作用域试探父目录。
     /// </summary>
     /// <param name="cancellationToken">取消令牌。</param>
-    /// <returns>可枚举的父目录引用；不可枚举或没有父目录时为 null。</returns>
+    /// <returns>已知或可枚举的父目录引用；独立选取的文件没有可访问父目录时为 null。</returns>
     public Task<IFolderRef?> GetParentAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (_parent != null) return Task.FromResult<IFolderRef?>(_parent);
         if (_inner.TryGetLocalPath() is not { } localPath ||
             System.IO.Path.GetDirectoryName(localPath) is not { } parent)
         {
@@ -322,7 +327,7 @@ internal sealed class iOSScopedFolderRef : IFolderRef, IIOSScopedStorageItem
         return item switch
         {
             LocalFolderRef => new iOSScopedFolderRef(path, SecurityScopedUrls, _scope, storageId),
-            LocalFileRef => new iOSScopedFileRef(path, SecurityScopedUrls, _scope, storageId),
+            LocalFileRef => new iOSScopedFileRef(path, SecurityScopedUrls, _scope, storageId, parent: this),
             _ => item,
         };
     }

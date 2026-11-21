@@ -63,6 +63,12 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     private readonly TextView _hintDetail;
     private readonly TextView _enhanceBusy;
     private readonly TextView _statusLabel;
+    private readonly LinearLayout _folderStatus;
+    private readonly TextView _folderStatusLabel;
+    private readonly TextView _folderReopenButton;
+    private LayoutRect _statusRect;
+    private LayoutRect _folderStatusRect;
+    private bool _folderUnavailable;
     private readonly AndroidNavigationOverlay _navigation;
     // 手机形态槽位：栏背景、筛选/更多、上下张、星级、可选命令组与 EXIF 块。
     private readonly AndroidBarScrim _phoneTopBar;
@@ -166,6 +172,24 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     internal string? StatusTextForChecks => _statusLabel.Text;
     /// <summary>状态提示条是否可见（验收用）。</summary>
     internal bool StatusVisibleForChecks => _statusLabel.Visibility == ViewStates.Visible;
+    /// <summary>短提示条矩形（dp，验收用：核对叠放顺序）。</summary>
+    internal LayoutRect StatusRectForChecks => _statusRect;
+    /// <summary>STATE-05 持续状态是否可见（验收用）。</summary>
+    internal bool FolderStatusVisibleForChecks => _folderStatus.Visibility == ViewStates.Visible;
+    /// <summary>STATE-05 持续状态正文（验收用）。</summary>
+    internal string? FolderStatusTextForChecks => _folderStatusLabel.Text;
+    /// <summary>STATE-05 文字按钮文案（验收用）。</summary>
+    internal string? FolderReopenTextForChecks => _folderReopenButton.Text;
+    /// <summary>STATE-05 文字按钮是否可点按且可被读屏聚焦（验收用）。</summary>
+    internal bool FolderReopenClickableForChecks => _folderReopenButton.Clickable && _folderReopenButton.Focusable;
+    /// <summary>STATE-05 持续状态外框是否不接收焦点（验收用：呈现时不抢焦点）。</summary>
+    internal bool FolderStatusContainerFocusableForChecks => _folderStatus.Focusable;
+    /// <summary>STATE-05 持续状态矩形（dp，验收用）。</summary>
+    internal LayoutRect FolderStatusRectForChecks => _folderStatusRect;
+    /// <summary>当前形态下实际生效的评分输入是否可用（验收用）。</summary>
+    internal bool RatingInputEnabledForChecks => _form == ScreenForm.Wide
+        ? _controlBar.RatingInputEnabledForChecks
+        : _phoneRating.EnabledForChecks;
     /// <summary>主屏栏底（验收读取实际色层）：宽形态文件栏/工具区与手机四侧栏底。</summary>
     internal IReadOnlyList<(string Name, AndroidBarScrim Bar)> BarScrimsForChecks =>
     [
@@ -358,6 +382,52 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         _statusLabel.SetPadding(statusPaddingX, statusPaddingY, statusPaddingX, statusPaddingY);
         AddView(_statusLabel);
 
+        // STATE-05：已打开目录持续不可用时的非模态状态，沿用状态提示条的颜色、字号与圆角。
+        _folderStatusLabel = new TextView(activity)
+        {
+            Text = StatusMessages.FolderUnavailable,
+            TextSize = (float)DesignTokens.StatusToastFontSize,
+            Gravity = GravityFlags.CenterVertical,
+            Clickable = false,
+            Focusable = false,
+        };
+        _folderStatusLabel.SetTextColor(FromToken(DesignTokens.ColorStatusToastForeground));
+        _folderStatusLabel.SetTypeface(Typeface.Default, TypefaceStyle.Normal);
+        _folderStatusLabel.SetIncludeFontPadding(false);
+        _folderStatusLabel.SetPadding(0, 0, AndroidUiTheme.DpPx(this, DesignTokens.StatusToastStackGap), 0);
+        _folderReopenButton = new TextView(activity)
+        {
+            Text = StatusMessages.ReopenFolder,
+            TextSize = (float)DesignTokens.StatusToastFontSize,
+            Gravity = GravityFlags.CenterVertical,
+            Clickable = true,
+            Focusable = true,
+        };
+        _folderReopenButton.SetTextColor(FromToken(DesignTokens.ColorStatusToastForeground));
+        _folderReopenButton.SetTypeface(Typeface.Default, TypefaceStyle.Normal);
+        _folderReopenButton.SetIncludeFontPadding(false);
+        _folderReopenButton.SetPadding(0, 0, 0, 0);
+        _folderReopenButton.Background = new RippleDrawable(
+            AndroidX.Core.Content.ContextCompat.GetColorStateList(activity, Resource.Color.pv_glass_state_layer),
+            null, null);
+        _folderReopenButton.Click += (_, _) => _ = _main.FolderVM.ReopenFolderAsync();
+        _folderStatus = new LinearLayout(activity) { Orientation = Orientation.Horizontal };
+        _folderStatus.SetGravity(GravityFlags.CenterVertical);
+        _folderStatus.SetPadding(statusPaddingX, statusPaddingY, statusPaddingX, statusPaddingY);
+        _folderStatus.Focusable = false;
+        var folderStatusBackground = new GradientDrawable();
+        folderStatusBackground.SetColor(WithAlpha(
+            DesignTokens.ColorStatusToastBackground, DesignTokens.ColorStatusToastBackgroundAlpha));
+        folderStatusBackground.SetCornerRadius(
+            (float)AndroidUiTheme.Dp(activity, DesignTokens.StatusToastCornerRadius));
+        _folderStatus.Background = folderStatusBackground;
+        _folderStatus.Visibility = ViewStates.Gone;
+        _folderStatus.AddView(_folderStatusLabel,
+            new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WrapContent, LinearLayout.LayoutParams.WrapContent));
+        _folderStatus.AddView(_folderReopenButton,
+            new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WrapContent, LinearLayout.LayoutParams.WrapContent));
+        AddView(_folderStatus);
+
         _navigation = new AndroidNavigationOverlay(activity);
         _navigation.Wire((u, v) => _photo.CenterOnNormalizedPoint(u, v));
         _navigation.Visibility = ViewStates.Gone;
@@ -382,6 +452,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         _main.FileVM.FilterBar.PropertyChanged += OnFilterChanged;
         _main.FolderVM.AllFilesChanged += OnAllFilesChanged;
         _main.FolderVM.OpenStateChanged += OnOpenStateChanged;
+        _main.FolderVM.FolderAvailabilityChanged += OnFolderAvailabilityChanged;
 #if PHOTOVIEWER_DINO
         _main.FileVM.SimilarityPanel.PropertyChanged += OnSimilarityPanelChanged;
 #endif
@@ -389,6 +460,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         _main.OpenFailed += OnOpenFailed;
         _observedFile = _main.CurrentFile;
         if (_observedFile != null) _observedFile.PropertyChanged += OnCurrentFileChanged;
+        ApplyFolderAvailability(_main.FolderVM.IsFolderUnavailable);
         UpdateHint();
     }
 
@@ -886,8 +958,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         if (ratingShown)
         {
             _phoneRating.SetOrientation(portrait);
-            _phoneRating.SetState(_main.CurrentFile?.Rating ?? 0, _main.CurrentFile?.HasRatingConflict == true,
-                _main.CurrentFile != null);
+            UpdateRatingControls();
             LayoutChild(_phoneRating, slots.Rating, density);
         }
 
@@ -1291,6 +1362,13 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         return true;
     }
 
+    /// <summary>验收用：按当前形态经真实评分入口打开星级弹窗（产品路径不调用）。</summary>
+    internal void OpenRatingPopupForChecks()
+    {
+        if (_form == ScreenForm.Wide) OpenRatingPopupFromControlBar();
+        else OpenRatingPopupFromPhone();
+    }
+
     /// <summary>
     /// 控制栏星级控件：紧凑态起手即由控件请求打开弹窗（展开态只有冲突三角走这里），
     /// 展开方向由形态、行列与刘海侧决定，锚点取控件真实屏幕矩形。
@@ -1304,7 +1382,8 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
 
     private void OpenRatingPopup(ImageFile? file, RatingPopupAnchor anchorKind, AndroidRatingControl? control)
     {
-        if (file == null || control == null) return;
+        // STATE-05：目录不可用期间评分写入已冻结，不再打开只能失败的评分入口。
+        if (file == null || control == null || _folderUnavailable) return;
         var direction = RatingControlGeometry.PopupDirection(_form, _main.IsRowLayout, _notchOnLeft, anchorKind);
         _ratingPopup.Show(file, anchorKind, direction, control.Horizontal, control, () => _main.Settings.ShowRating && ReferenceEquals(_main.CurrentFile, file));
     }
@@ -1339,7 +1418,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
 
     private void OpenRatingPopupForCard(AndroidThumbnailCard card)
     {
-        if (card.BoundFile is not { } file) return;
+        if (card.BoundFile is not { } file || _folderUnavailable) return;
         var direction = RatingControlGeometry.PopupDirection(_form, _main.IsRowLayout, _notchOnLeft,
             RatingPopupAnchor.Card);
         _ratingPopup.Show(file, RatingPopupAnchor.Card, direction, true, card, () => _main.Settings.ShowRating && ReferenceEquals(card.BoundFile, file));
@@ -1438,10 +1517,14 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     {
         await _main.SetRatingAsync(file, rating);
         _controlBar.MarkDirty();
-        _phoneRating.SetState(_main.CurrentFile?.Rating ?? 0, _main.CurrentFile?.HasRatingConflict == true,
-            _main.CurrentFile != null);
+        UpdateRatingControls();
         RequestLayout();
     }
+
+    /// <summary>当前照片的星级与冲突态；STATE-05 不可用期间评分输入禁用（写入由共享层拦截）。</summary>
+    private void UpdateRatingControls()
+        => _phoneRating.SetState(_main.CurrentFile?.Rating ?? 0,
+            _main.CurrentFile?.HasRatingConflict == true, _main.CurrentFile != null && !_folderUnavailable);
 
     private void OnRateRequested(ImageFile file, int rating) => _ = RateAsync(file, rating);
 
@@ -1453,6 +1536,26 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     /// <param name="message">失败提示正文。</param>
     private void OnOpenFailed(string message)
         => ShowStatus(message, DesignTokens.MotionStatusToastDuration);
+
+    /// <summary>STATE-05：共享层判定当前目录不可用后，切换持续状态并把访问冻结同步给加载会话。</summary>
+    private void OnFolderAvailabilityChanged() => ApplyFolderAvailability(_main.FolderVM.IsFolderUnavailable);
+
+    /// <summary>
+    /// 应用当前目录可用性：显示/收起持续状态，暂停需要访问该目录的解码，
+    /// 并收起属于上一状态且不可写的星级弹窗；不抢焦点、不弹模态。
+    /// </summary>
+    /// <param name="unavailable">目录是否不可用。</param>
+    private void ApplyFolderAvailability(bool unavailable)
+    {
+        _folderUnavailable = unavailable;
+        _session.SetStorageUnavailable(unavailable);
+        _folderStatus.Visibility = unavailable ? ViewStates.Visible : ViewStates.Gone;
+        if (unavailable) CloseRatingPopup();
+        // 恢复可用后评分输入与命令可用态同样要回到正常，不只是不可用方向。
+        _controlBar.MarkDirty();
+        UpdateRatingControls();
+        RequestLayout();
+    }
 
     /// <summary>短暂显示状态提示（与共享底部提示同义）。</summary>
     /// <param name="text">文本。</param>
@@ -1487,8 +1590,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
                 _analysisPane.ClearDetail();
                 _filmstrip.CancelScrollUpToNow();
                 _controlBar.MarkDirty();
-                _phoneRating.SetState(_main.CurrentFile?.Rating ?? 0, _main.CurrentFile?.HasRatingConflict == true,
-                    _main.CurrentFile != null);
+                UpdateRatingControls();
                 StartSession();
                 RequestLayout();
                 break;
@@ -1561,8 +1663,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         {
             // RATING-04：入口几何/显隐变化由卡片自身重绘，不据此收起星级弹窗。
             _filmstrip.RefreshCardStates();
-            _phoneRating.SetState(_main.CurrentFile?.Rating ?? 0, _main.CurrentFile?.HasRatingConflict == true,
-                _main.CurrentFile != null);
+            UpdateRatingControls();
 #if PHOTOVIEWER_DINO
             _similarityPane.RefreshCardStates();
 #endif
@@ -1688,8 +1789,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         {
             _controlBar.MarkDirty();
             _controlBar.Invalidate();
-            _phoneRating.SetState(_main.CurrentFile?.Rating ?? 0, _main.CurrentFile?.HasRatingConflict == true,
-                _main.CurrentFile != null);
+            UpdateRatingControls();
         }
         if (args.PropertyName is nameof(ImageFile.ExifData))
         {
@@ -1918,19 +2018,44 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
 
         // STATE-03：单行或自动换行，最大宽 min(500, 宽−40)，高按实际文本量出。
         double statusMaxWidth = Math.Max(1, Math.Min(DesignTokens.StatusToastMaxWidth, pane.Width - 40));
-        _statusLabel.Measure(
-            MeasureSpec.MakeMeasureSpec((int)Math.Round(statusMaxWidth * density), MeasureSpecMode.AtMost),
-            MeasureSpec.MakeMeasureSpec((int)Math.Round(pane.Height * density), MeasureSpecMode.AtMost));
-        double statusWidth = _statusLabel.MeasuredWidth / density;
-        double statusHeight = _statusLabel.MeasuredHeight / density;
+        int statusMaxWidthPx = (int)Math.Round(statusMaxWidth * density);
+        int paneHeightPx = Math.Max(1, (int)Math.Round(pane.Height * density));
         // STATE-03：药丸可见时提示条整体上移到药丸上方，药丸收起后回到距底 24。
         double statusBottom = _enhanceBusy.Visibility == ViewStates.Visible
             ? DesignTokens.ImageBusyBottomOffset + DesignTokens.ImageBusyHeight + DesignTokens.StatusToastStackGap
             : DesignTokens.StatusToastBottomMargin;
-        LayoutChild(_statusLabel, new LayoutRect(
+
+        // STATE-05：持续状态占最底一层，短提示叠放在它之上；两者都不挡周围手势。
+        double folderStatusHeight = 0;
+        if (_folderStatus.Visibility == ViewStates.Visible)
+        {
+            _folderStatus.Measure(
+                MeasureSpec.MakeMeasureSpec(statusMaxWidthPx, MeasureSpecMode.AtMost),
+                MeasureSpec.MakeMeasureSpec(paneHeightPx, MeasureSpecMode.AtMost));
+            double folderStatusWidth = _folderStatus.MeasuredWidth / density;
+            folderStatusHeight = _folderStatus.MeasuredHeight / density;
+            _folderStatusRect = new LayoutRect(
+                pane.X + (pane.Width - folderStatusWidth) / 2,
+                pane.Y + pane.Height - folderStatusHeight - statusBottom - bottomInset,
+                folderStatusWidth, folderStatusHeight);
+            LayoutChild(_folderStatus, _folderStatusRect, density);
+            statusBottom += folderStatusHeight + DesignTokens.StatusToastStackGap;
+        }
+        else
+        {
+            _folderStatusRect = default;
+        }
+
+        _statusLabel.Measure(
+            MeasureSpec.MakeMeasureSpec(statusMaxWidthPx, MeasureSpecMode.AtMost),
+            MeasureSpec.MakeMeasureSpec(paneHeightPx, MeasureSpecMode.AtMost));
+        double statusWidth = _statusLabel.MeasuredWidth / density;
+        double statusHeight = _statusLabel.MeasuredHeight / density;
+        _statusRect = new LayoutRect(
             pane.X + (pane.Width - statusWidth) / 2,
             pane.Y + pane.Height - statusHeight - statusBottom - bottomInset,
-            statusWidth, statusHeight), density);
+            statusWidth, statusHeight);
+        LayoutChild(_statusLabel, _statusRect, density);
 
         bool show = _main.Settings.ShowZoomIndicator && !_photo.IsFit && _session.Image != null;
         _navigation.Visibility = show ? ViewStates.Visible : ViewStates.Gone;
@@ -1996,6 +2121,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             _main.FileVM.FilterBar.PropertyChanged -= OnFilterChanged;
             _main.FolderVM.AllFilesChanged -= OnAllFilesChanged;
             _main.FolderVM.OpenStateChanged -= OnOpenStateChanged;
+            _main.FolderVM.FolderAvailabilityChanged -= OnFolderAvailabilityChanged;
 #if PHOTOVIEWER_DINO
             _main.FileVM.SimilarityPanel.PropertyChanged -= OnSimilarityPanelChanged;
 #endif

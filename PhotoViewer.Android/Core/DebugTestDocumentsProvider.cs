@@ -50,6 +50,9 @@ public sealed class DebugTestDocumentsProvider : DocumentsProvider
     private static readonly object RevocationGate = new();
     private static readonly HashSet<string> RevokedRoots = new(StringComparer.Ordinal);
 
+    private static readonly object SilentEmptyGate = new();
+    private static string? SilentEmptyRoot;
+
     private static readonly string[] DefaultRootColumns =
     [
         DocumentsContract.Root.ColumnRootId,
@@ -108,6 +111,18 @@ public sealed class DebugTestDocumentsProvider : DocumentsProvider
         {
             if (string.IsNullOrEmpty(rootId)) RevokedRoots.Clear();
             else RevokedRoots.Add(rootId);
+        }
+    }
+
+    /// <summary>
+    /// 测试开关：让指定树根的目录枚举返回空游标（模拟云/远端 Provider 丢失目录却只报「没有子项」），
+    /// 用来区分真实空目录与不可达目录；<paramref name="rootId"/> 为空表示清空。
+    /// </summary>
+    internal static void SetSilentEmptyChildren(string? rootId)
+    {
+        lock (SilentEmptyGate)
+        {
+            SilentEmptyRoot = string.IsNullOrEmpty(rootId) ? null : rootId;
         }
     }
 
@@ -177,11 +192,15 @@ public sealed class DebugTestDocumentsProvider : DocumentsProvider
         EnterDocument(parentDocumentId);
         if (!TrySplit(parentDocumentId, out string rootId, out string? relative))
             throw new Java.IO.FileNotFoundException($"未知目录：{parentDocumentId}");
+
+        var columns = ResolveProjection(projection, DefaultDocumentColumns);
+        // 故障注入：目录已经不可达也照常给出空游标，客户端不能把「零行」直接当成空文件夹。
+        if (IsSilentEmptyChildren(rootId)) return new MatrixCursor(columns);
+
         string parentPath = PathFor(Context!, parentDocumentId);
         if (!Directory.Exists(parentPath))
             throw new Java.IO.FileNotFoundException($"目录不存在：{parentDocumentId}");
 
-        var columns = ResolveProjection(projection, DefaultDocumentColumns);
         var cursor = new MatrixCursor(columns);
         string prefix = relative == null ? rootId : rootId + "/" + relative;
         foreach (string entry in Directory.EnumerateFileSystemEntries(parentPath))
@@ -305,7 +324,8 @@ public sealed class DebugTestDocumentsProvider : DocumentsProvider
         else throw new Java.IO.FileNotFoundException($"文档不存在：{documentId}");
     }
 
-    /// <summary>测试开关：<c>revoke</c> 让指定树根拒绝访问，<c>grant</c> 清除（arg 为空时清空；不是系统授权）。</summary>
+    /// <summary>测试开关：<c>revoke</c> 让指定树根拒绝访问，<c>empty-children</c> 让指定树根的目录枚举返回空游标，
+    /// <c>grant</c> 清除全部故障注入（arg 为空时清空；不是系统授权）。</summary>
     public override Bundle? Call(string method, string? arg, Bundle? extras)
     {
         switch (method)
@@ -313,8 +333,12 @@ public sealed class DebugTestDocumentsProvider : DocumentsProvider
             case "revoke":
                 SetRevoked(arg);
                 return new Bundle();
+            case "empty-children":
+                SetSilentEmptyChildren(arg);
+                return new Bundle();
             case "grant":
                 SetRevoked(null);
+                SetSilentEmptyChildren(null);
                 return new Bundle();
             default:
                 return base.Call(method, arg, extras);
@@ -461,6 +485,15 @@ public sealed class DebugTestDocumentsProvider : DocumentsProvider
             || displayName.IndexOfAny(['/', '\\', '\0']) >= 0
             || displayName != displayName.Trim())
             throw new Java.Lang.IllegalArgumentException($"非法文件名：{displayName}");
+    }
+
+    /// <summary>故障注入：该树根的目录枚举是否应返回空游标。</summary>
+    private static bool IsSilentEmptyChildren(string rootId)
+    {
+        lock (SilentEmptyGate)
+        {
+            return string.Equals(SilentEmptyRoot, rootId, StringComparison.Ordinal);
+        }
     }
 
     private static bool TrySplit(string documentId, out string rootId, out string? relative)

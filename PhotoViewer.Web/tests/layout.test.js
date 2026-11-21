@@ -455,6 +455,24 @@ test("STATE-03：药丸可见时提示条整体上移，底距为 60", () => {
     assert.equal(clipped.w, 500);
 });
 
+test("STATE-05：文件夹不可用状态条贴底，提示条叠放在状态条之上", () => {
+    const pane = { x: 100, y: 50, w: 600, h: 400 };
+    const overlays = layout().overlays;
+    const notice = overlays.folderNoticeFrame(pane, 180, 16, false);
+    assert.equal(pane.y + pane.h - (notice.y + notice.h), 24);
+    assert.equal(notice.h, 16 + 6 * 2);
+    assert.equal(notice.w, 180 + 12 * 2);
+
+    const toast = overlays.toastFrame(pane, 200, 14, false, notice.h + 8);
+    assert.equal(pane.y + pane.h - (toast.y + toast.h), 24 + notice.h + 8);
+    assert.ok(toast.y + toast.h <= notice.y, "提示条没有叠放在状态条之上");
+
+    const abovePill = overlays.folderNoticeFrame(pane, 180, 16, true);
+    assert.equal(pane.y + pane.h - (abovePill.y + abovePill.h), 60);
+    const toastAbovePill = overlays.toastFrame(pane, 200, 14, true, abovePill.h + 8);
+    assert.equal(pane.y + pane.h - (toastAbovePill.y + toastAbovePill.h), 60 + abovePill.h + 8);
+});
+
 test("IMAGE-06：导航图贴适应区右下 12 点，长边 150 并含百分比行", () => {
     const pane = { x: 100, y: 50, w: 600, h: 400 };
     const nav = layout().overlays.navigatorFrame(pane, 300, 200);

@@ -9,7 +9,7 @@ import { el, place, setText, touches } from "./dom.js";
 import { orientationMatrix } from "../render/procedural.js";
 import { PhotoGesture, SwipeRecognizer } from "../core/input.js";
 
-const REGIONS = ["layout", "window", "viewport", "image", "current", "toast", "analysis", "settings"];
+const REGIONS = ["layout", "window", "viewport", "image", "current", "toast", "folder", "analysis", "settings"];
 const DRAW_REGIONS = ["layout", "window", "viewport", "image", "current", "settings"];
 const TOAST_LINE_HEIGHT = 16;
 const LOADING_LINE_HEIGHT = 16;
@@ -21,6 +21,8 @@ const EMPTY_DETAIL_PREFIX = "点击打开文件";
 const EMPTY_DETAIL_SEPARATOR = "/";
 const EMPTY_DETAIL_SUFFIX = "拖拽照片到此处";
 const LOADING_TEXT = "正在载入…";
+const FOLDER_UNAVAILABLE_TEXT = "文件夹不可用";
+const FOLDER_REOPEN_TEXT = "重新打开…";
 const NO_LINE_START = "、。，．,.;:：；！？!?）)】」』》〉”’…—～";
 const IMAGE_FILE = /\.(jpe?g|png|heic|heif|hif|tiff?|dng|arw|cr2|cr3|nef|raf|orf|rw2)$/i;
 
@@ -59,9 +61,13 @@ export function mountPhoto(host, ctx) {
     const navLabel = el("div", { class: "pv-photo-nav-label" });
     const navEl = el("div", { class: "pv-photo-nav", hidden: true, "aria-hidden": "true" }, navThumb, navFrame, navLabel);
     const busy = el("div", { class: "pv-photo-busy", role: "status", hidden: true }, "计算中…");
+    const folderAction = el("button", { type: "button", class: "pv-photo-folder-action" }, FOLDER_REOPEN_TEXT);
+    const folderNotice = el("div", { class: "pv-photo-folder", role: "status", hidden: true },
+        el("span", { class: "pv-photo-folder-text" }, FOLDER_UNAVAILABLE_TEXT),
+        folderAction);
     const toast = el("div", { class: "pv-photo-toast", role: "status", hidden: true });
 
-    host.append(canvas, highlight, hint, loading, errorLayer, navEl, busy, toast);
+    host.append(canvas, highlight, hint, loading, errorLayer, navEl, busy, folderNotice, toast);
     host.classList.add("pv-photo");
 
     const swipe = new SwipeRecognizer(t);
@@ -288,6 +294,23 @@ export function mountPhoto(host, ctx) {
         if (state.session.busy) place(busy, state.layout.overlays.busyPillFrame(pane));
     }
 
+    function folderNoticeFrame(state, pane) {
+        const fontSize = t("status.toast.fontSize");
+        const contentWidth = measureText(FOLDER_UNAVAILABLE_TEXT, fontSize)
+            + t("status.toast.stackGap")
+            + measureText(FOLDER_REOPEN_TEXT, fontSize);
+        return state.layout.overlays.folderNoticeFrame(pane, contentWidth, TOAST_LINE_HEIGHT, state.session.busy);
+    }
+
+    function syncFolderNotice(state, pane) {
+        const visible = state.folderAccess?.available === false;
+        folderNotice.hidden = !visible;
+        if (!visible) return null;
+        const frame = folderNoticeFrame(state, pane);
+        place(folderNotice, frame);
+        return frame;
+    }
+
     function syncToast(state, pane) {
         const notice = state.session.toast;
         toast.hidden = !notice;
@@ -298,7 +321,10 @@ export function mountPhoto(host, ctx) {
         const textWidth = lines.reduce((max, line) => Math.max(max, measureText(line, fontSize)), 0);
         const textHeight = lines.length * TOAST_LINE_HEIGHT;
         setText(toast, lines.join("\n"));
-        place(toast, state.layout.overlays.toastFrame(pane, textWidth, textHeight, state.session.busy));
+        // STATE-05：短时提示叠放在持续状态条之上。
+        const noticeFrame = state.folderAccess?.available === false ? folderNoticeFrame(state, pane) : null;
+        const stackOffset = noticeFrame ? noticeFrame.h + t("status.toast.stackGap") : 0;
+        place(toast, state.layout.overlays.toastFrame(pane, textWidth, textHeight, state.session.busy, stackOffset));
     }
 
     function syncHighlight(state) {
@@ -334,6 +360,7 @@ export function mountPhoto(host, ctx) {
         syncError(state, fit);
         syncNavigator(state, fit);
         syncBusy(state, fit);
+        syncFolderNotice(state, fit);
         syncToast(state, fit);
         syncHighlight(state);
         if (redraw) requestDraw();
@@ -579,6 +606,12 @@ export function mountPhoto(host, ctx) {
     host.addEventListener("dragleave", onDragLeave);
     host.addEventListener("drop", onDrop);
     hintTitle.addEventListener("click", onHintClick);
+    // STATE-05：状态条按钮不把指针交给主图手势，点击走正常打开入口的文件夹选择器。
+    folderAction.addEventListener("pointerdown", (event) => event.stopPropagation());
+    folderAction.addEventListener("click", (event) => {
+        event.stopPropagation();
+        app.requestOpen("folder");
+    });
 
     return {
         update,
@@ -605,6 +638,7 @@ export function mountPhoto(host, ctx) {
             errorLayer.remove();
             navEl.remove();
             busy.remove();
+            folderNotice.remove();
             toast.remove();
         },
     };

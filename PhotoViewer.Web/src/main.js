@@ -162,7 +162,16 @@ function render(regions) {
     for (const component of components) component.update(state, regions);
 }
 
-app.on("change", (regions) => render(regions));
+// STATE-05：目录不可用时停止在途缩略图解码，恢复后由胶片栏重新请求。
+let thumbnailsPaused = false;
+app.on("change", (regions) => {
+    if (regions.has("folder")) {
+        const paused = app.state.folderAccess.available === false;
+        if (paused && !thumbnailsPaused) thumbs.cancelAll();
+        thumbnailsPaused = paused;
+    }
+    render(regions);
+});
 app.on("request-open", ({ kind }) => picker.show(kind));
 
 // MENU-01/MENU-03：主图菜单是窗口级入口；桌面右键在主图区弹出（文件栏/控制栏/分析栏继承同一菜单，菜单内自管键盘）。

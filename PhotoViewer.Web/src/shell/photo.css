@@ -199,6 +199,44 @@
     background-color: color-mix(in srgb, var(--pv-color-status-toast-background) calc(var(--pv-color-status-toast-background-alpha) * 100%), transparent);
 }
 
+/* STATE-05：当前文件夹持续不可用，与提示条同色同尺寸；附原生文字按钮重新打开 */
+.pv-photo-folder {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--pv-status-toast-stackGap);
+    box-sizing: border-box;
+    padding: var(--pv-status-toast-paddingY) var(--pv-status-toast-paddingX);
+    border-radius: var(--pv-status-toast-cornerRadius);
+    font-size: var(--pv-status-toast-fontSize);
+    line-height: 16px;
+    color: var(--pv-color-status-toast-foreground);
+    background-color: var(--pv-color-status-toast-background);
+    background-color: color-mix(in srgb, var(--pv-color-status-toast-background) calc(var(--pv-color-status-toast-background-alpha) * 100%), transparent);
+}
+
+.pv-photo-folder-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pv-photo-folder-action {
+    flex: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    line-height: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+}
+
 /* ANALYSIS-04：悬停细节预览时标出源像素矩形 */
 .pv-photo-highlight {
     position: absolute;

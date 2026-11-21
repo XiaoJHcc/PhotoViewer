@@ -76,6 +76,19 @@ internal static class WindowsControlStyles
         WindowsLayout.SimilarityActionForeground,
         WindowsLayout.ExifValueForeground);
 
+    /// <summary>提示条内文字动作（STATE-05）：透明底、无描边，悬停/按下取评分槽位同一状态层色，文字保持提示条前景色。</summary>
+    /// <param name="button">文字动作按钮。</param>
+    public static void ApplyToastTextAction(Button button) => ApplyButtonStates(
+        button,
+        Transparent,
+        Transparent,
+        WindowsLayout.RatingHoverBackground,
+        Transparent,
+        WindowsLayout.RatingPressedBackground,
+        Transparent,
+        WindowsLayout.StatusToastForeground,
+        WindowsLayout.StatusToastForeground);
+
     /// <summary>
     /// 星级槽位（TOOLBAR-03、RATING-07）：按钮自身在常态、悬停、按下与禁用下都透明且无描边，
     /// 悬停与按下只由槽位内的内切正圆状态层表达，禁用与常态都不画状态层。

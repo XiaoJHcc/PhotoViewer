@@ -501,6 +501,17 @@ internal sealed class WindowsControlBar : Grid
     /// <summary>「显示评分」开关：关闭时整组从测量与排布中移除，命令组前移(TOOLBAR-03)。</summary>
     private bool RatingVisible => _main.ControlVM.ShowRating;
 
+    /// <summary>STATE-05：目录不可用期间评分命令与评分槽位冻结，缩放、翻页与打开照常可用。</summary>
+    private bool IsCommandWritable(string command)
+        => !(WindowsIcons.TryGetRatingStars(command, out _) && _main.FolderVM.IsFolderUnavailable);
+
+    /// <summary>STATE-05 可用性变化后就地刷新评分槽位与命令按钮，不重建控件。</summary>
+    internal void RefreshRatingAvailability()
+    {
+        RefreshRating();
+        UpdateCommandAvailability();
+    }
+
     /// <summary>按当前内容给出参与排布的分组尺寸；空分组不出现。</summary>
     /// <param name="horizontal">文档主轴是否为水平方向。</param>
     /// <returns>按 EXIF → 评分 → 命令顺序的分组尺寸。</returns>
@@ -688,7 +699,7 @@ internal sealed class WindowsControlBar : Grid
         {
             if (child is Button { Tag: string command } button)
             {
-                button.IsEnabled = hasFile || command == "Open";
+                button.IsEnabled = hasFile && IsCommandWritable(command) || command == "Open";
             }
         }
     }
@@ -811,7 +822,7 @@ internal sealed class WindowsControlBar : Grid
                 AutomationProperties.SetName(button, tooltip);
             }
 
-            button.IsEnabled = hasFile || item.Command == "Open";
+            button.IsEnabled = hasFile && IsCommandWritable(item.Command) || item.Command == "Open";
             desired.Add(item.Command);
         }
 
@@ -883,7 +894,7 @@ internal sealed class WindowsControlBar : Grid
             CornerRadius = new CornerRadius(ToolbarFlowLayout.CommandSize / 2),
             Content = content,
             Tag = command,
-            IsEnabled = _main.CurrentFile != null || command == "Open",
+            IsEnabled = _main.CurrentFile != null && IsCommandWritable(command) || command == "Open",
         };
         WindowsControlStyles.ApplyMainButtonFill(button);
         button.Click += (_, _) => _execute(command);
@@ -992,7 +1003,8 @@ internal sealed class WindowsControlBar : Grid
     {
         var file = _main.CurrentFile;
         var rating = file?.Rating ?? 0;
-        var hasFile = file != null;
+        // STATE-05：目录不可用时评分输入已冻结，槽位保留几何但走禁用外观。
+        var hasFile = file != null && !_main.FolderVM.IsFolderUnavailable;
         var hasConflict = file?.HasRatingConflict == true;
         for (var value = 0; value < _ratingSlots.Count; value++)
         {
