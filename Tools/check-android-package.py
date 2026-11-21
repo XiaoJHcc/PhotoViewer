@@ -22,6 +22,8 @@ ABI：只允许 arm64-v8a，出现 x86_64 / armeabi-v7a 一律失败。
 
 standard：不得包含 .onnx 模型、onnxruntime（原生、托管、AOT 或 assembly store 内记录）、
           MathNet（托管或 AOT）、DINOv3 许可证。
+两版共同：必须包含液态玻璃移植库的上游 Apache-2.0 许可与归属声明
+          （assets/Licenses/AndroidLiquidGlass-{LICENSE,NOTICE}.txt）。
 ai：      必须包含唯一模型 dinov3_vits16.onnx（字节数与 SHA-256 固定）、
           DINOv3-LICENSE.md、托管 Microsoft.ML.OnnxRuntime 与 MathNet.Numerics
           （普通 assemblies/、Debug 的 lib_*.dll.so、Release 的 libaot-*.so 或
@@ -75,6 +77,13 @@ MODEL_SHA256 = "bcba38490ec2eded4a240751bebac198903daba7263871e8fee3aa39b03352e8
 TARGET_ABI = "arm64-v8a"
 FORBIDDEN_ABIS = ("x86_64", "armeabi-v7a", "arm64", "x86")
 DINO_LICENSE_NAME = "dinov3-license.md"
+
+# 液态玻璃移植库（PhotoViewer.Android.Backdrop）的上游 Apache-2.0 许可与归属声明：
+# 标准版与 AI 版都必须随 APK 分发，路径取自头工程 AndroidAsset 的 Link。
+BACKDROP_LICENSE_PATHS = (
+    "assets/Licenses/AndroidLiquidGlass-LICENSE.txt",
+    "assets/Licenses/AndroidLiquidGlass-NOTICE.txt",
+)
 
 ONNX_MANAGED = "microsoft.ml.onnxruntime.dll"
 MATHNET_MANAGED = "mathnet.numerics.dll"
@@ -585,6 +594,27 @@ def check_component_authorities(identity: dict, expectations: dict, errors: list
     return {"providers": providers, "foreignAuthorities": foreign}
 
 
+def check_backdrop_licenses(records: list[dict], errors: list[str]) -> dict:
+    """核对液态玻璃移植库的上游许可与归属声明是否随 APK 分发（两个发行版都要有）。"""
+    found = {record["path"].lower(): record for record in records}
+    found_paths: dict[str, str] = {}
+    missing: list[str] = []
+    for path in BACKDROP_LICENSE_PATHS:
+        record = found.get(path.lower())
+        if record is None:
+            missing.append(path)
+            errors.append(
+                f"缺少第三方许可文件 {path}（AndroidLiquidGlass Apache-2.0，见 PhotoViewer.Android.Backdrop/NOTICE）"
+            )
+        else:
+            found_paths[path] = record["sha256"]
+    return {
+        "expected": list(BACKDROP_LICENSE_PATHS),
+        "found": found_paths,
+        "satisfied": not missing,
+    }
+
+
 def check_standard(records: list[dict], evidence: dict, errors: list[str]) -> None:
     for record in records:
         lower = record["path"].lower()
@@ -711,6 +741,7 @@ def scan(apk: Path, expectations: dict, external_tools: bool = True) -> dict:
     model_contract = None
     aapt2: dict = {"available": False}
     signature: dict = {"available": False}
+    backdrop_licenses: dict = {"expected": list(BACKDROP_LICENSE_PATHS), "found": {}, "satisfied": False}
     package = {"bytes": 0, "sha256": None, "entryCount": 0}
 
     if not apk.is_file():
@@ -734,6 +765,7 @@ def scan(apk: Path, expectations: dict, external_tools: bool = True) -> dict:
                         manifest_identity(archive.read("AndroidManifest.xml")), expectations, errors
                     )
                 components = check_component_authorities(identity, expectations, errors)
+                backdrop_licenses = check_backdrop_licenses(records, errors)
                 abis = check_abis(abi_directories(records), errors)
                 evidence = managed_evidence(archive, records, errors)
                 if expectations["edition"] == "standard":
@@ -773,6 +805,7 @@ def scan(apk: Path, expectations: dict, external_tools: bool = True) -> dict:
         "expectations": expectations,
         "identity": identity,
         "components": components,
+        "thirdPartyLicenses": backdrop_licenses,
         "abis": abis,
         "summary": summary,
         "fileCount": len(records),
@@ -1010,12 +1043,18 @@ def self_test() -> int:
 
         def apk(name: str, *, edition: str = "standard", label: str | None = None,
                 extra: dict[str, bytes] | None = None,
+                third_party: bool = True,
                 abi: str = TARGET_ABI, version_name: str = version, version_code: int = build,
                 package_id: str | None = None, utf8: bool = True,
                 authorities: list[str] | None = None) -> Path:
+            merged: dict[str, bytes] = (
+                {path: b"license" for path in BACKDROP_LICENSE_PATHS} if third_party else {}
+            )
+            if extra:
+                merged.update(extra)
             return make_apk(root / f"{name}/{name}.apk", package_id or PACKAGE_IDS[edition],
                             version_code, version_name, label or PRODUCT_NAMES[edition],
-                            extra=extra, abi=abi, utf8=utf8, authorities=authorities)
+                            extra=merged, abi=abi, utf8=utf8, authorities=authorities)
 
         standard_ok = apk("standard-ok", extra={"assemblies/PhotoViewer.dll": b"MZ"})
         cases.append(("标准版合规包通过", standard_ok, "standard", True, None))
@@ -1188,6 +1227,17 @@ def self_test() -> int:
             make_apk(root / "ai-x86/ai-x86.apk", PACKAGE_IDS["ai"], build, version,
                      PRODUCT_NAMES["ai"], extra=ai_extra, abi="x86_64"),
             "ai", False, "只允许 arm64-v8a",
+        ))
+
+        cases.append((
+            "标准版缺第三方许可失败",
+            apk("standard-no-backdrop-license", third_party=False),
+            "standard", False, "第三方许可",
+        ))
+        cases.append((
+            "AI 版缺第三方许可失败",
+            apk("ai-no-backdrop-license", edition="ai", extra=ai_extra, third_party=False),
+            "ai", False, "第三方许可",
         ))
 
         for label, apk_path, edition, expect_pass, needle in cases:

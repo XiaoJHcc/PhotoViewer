@@ -543,7 +543,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         return Context?.Resources?.Configuration?.Orientation == global::Android.Content.Res.Orientation.Landscape;
     }
 
-    /// <summary>挂上窗口后主动请求一次 Insets（SurfaceView 与其他子视图不消费，安全区只由根收口）。</summary>
+    /// <summary>挂上窗口后主动请求一次 Insets（TextureView 与其他子视图不消费，安全区只由根收口）。</summary>
     protected override void OnAttachedToWindow()
     {
         base.OnAttachedToWindow();
@@ -2168,7 +2168,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         }
     }
 
-    /// <summary>绿框的可见性标记；实际绘制在根视图 DispatchDraw，避免被 SurfaceView 子层裁剪。</summary>
+    /// <summary>绿框的可见性标记；实际绘制在根视图 DispatchDraw，与主屏其它叠层共用统一顺序。</summary>
     private sealed class DetailFrameView : View
     {
         public DetailFrameView(global::Android.Content.Context context) : base(context)

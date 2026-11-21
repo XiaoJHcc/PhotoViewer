@@ -136,6 +136,19 @@
         <!-- 共享工程按同一 edition 还原/编译：透传 edition，两版不会复用对方的 obj 资产。 -->
         <ProjectReference Include="..\PhotoViewer\PhotoViewer.csproj"
                           AdditionalProperties="PhotoViewerEdition=$(PhotoViewerEdition)" />
+        <!-- 液态玻璃取样库（阶段 0 起）：独立类库，只承载 AndroidLiquidGlass（Backdrop）移植。 -->
+        <ProjectReference Include="..\PhotoViewer.Android.Backdrop\PhotoViewer.Android.Backdrop.csproj" />
+    </ItemGroup>
+
+    <!--
+      上游 Apache-2.0 许可与归属声明随 APK 分发：库工程的 AndroidAsset 不保证被头工程继承，
+      这里显式打包（与 AI 版 DINOv3 许可证同法）。
+    -->
+    <ItemGroup>
+        <AndroidAsset Include="..\PhotoViewer.Android.Backdrop\LICENSE"
+                      Link="Assets\Licenses\AndroidLiquidGlass-LICENSE.txt" />
+        <AndroidAsset Include="..\PhotoViewer.Android.Backdrop\NOTICE"
+                      Link="Assets\Licenses\AndroidLiquidGlass-NOTICE.txt" />
     </ItemGroup>
 
     <!--

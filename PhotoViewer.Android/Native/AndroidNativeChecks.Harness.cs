@@ -69,6 +69,9 @@ internal static partial class AndroidNativeChecks
                 case "edition":
                     await RunEditionChecksAsync();
                     break;
+                case "glass":
+                    await RunGlassChecksAsync();
+                    break;
             }
         }
         catch (Exception exception)

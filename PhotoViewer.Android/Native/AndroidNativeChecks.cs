@@ -1322,5 +1322,5 @@ internal static partial class AndroidNativeChecks
     /// <summary>
     /// 独立模式按精确模式名匹配，不并入 <c>all</c>；素材入口见模块手册。
     /// </summary>
-    private static bool IsStandaloneMode => _mode is "faults" or "form" or "layout" or "input" or "storage" or "filter" or "zoom" or "color" or "perf" or "background" or "edition" or "rating-perf";
+    private static bool IsStandaloneMode => _mode is "faults" or "form" or "layout" or "input" or "storage" or "filter" or "zoom" or "color" or "perf" or "background" or "edition" or "rating-perf" or "glass";
 }

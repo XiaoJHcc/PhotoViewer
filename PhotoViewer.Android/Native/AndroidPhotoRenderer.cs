@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
+using Android.Graphics;
 using Android.Opengl;
 using Android.Views;
 using Java.Nio;
@@ -24,6 +25,9 @@ internal sealed class AndroidPhotoRenderer : IDisposable
     private const int GlLinear = 0x2601;
     private const int EglOpenGles3Bit = 0x40;
     private const int EglNone = 0x3038;
+    /// <summary>EGL 查询键：窗口表面实际缓冲的宽与高（像素）。</summary>
+    private const int EglSurfaceWidth = 0x3057;
+    private const int EglSurfaceHeight = 0x3056;
 
     private const string VertexShader = """
         attribute vec2 aPosition;
@@ -94,7 +98,14 @@ internal sealed class AndroidPhotoRenderer : IDisposable
     internal int FramebufferEncoding { get; private set; }
     internal long TextureBytes => Interlocked.Read(ref _textureBytes);
 
-    internal void Create(ISurfaceHolder surface, double density, bool allowP3 = true, bool allowPassthrough = true)
+    /// <summary>
+    /// 在给定窗口表面来源上建立 EGL 上下文与窗口表面（按设备与窗口能力协商 P3，失败回退 sRGB）。
+    /// </summary>
+    /// <param name="surface">EGL 窗口表面来源（包住 <see cref="SurfaceTexture"/> 的 <see cref="Surface"/>）；所有权在调用方，本方法不释放它。</param>
+    /// <param name="density">屏幕密度。</param>
+    /// <param name="allowP3">是否允许 P3 输出。</param>
+    /// <param name="allowPassthrough">是否允许 P3 passthrough。</param>
+    internal void Create(Surface surface, double density, bool allowP3 = true, bool allowPassthrough = true)
     {
         lock (_sync)
         {
@@ -173,7 +184,7 @@ internal sealed class AndroidPhotoRenderer : IDisposable
         }
     }
 
-    private EGLSurface? CreateWindowSurface(ISurfaceHolder surface, bool allowP3, bool allowPassthrough)
+    private EGLSurface? CreateWindowSurface(Surface surface, bool allowP3, bool allowPassthrough)
     {
         if (_display == null || _config == null) return null;
         string extensions = " " + EGL14.EglQueryString(_display, EGL14.EglExtensions) + " ";
@@ -195,11 +206,11 @@ internal sealed class AndroidPhotoRenderer : IDisposable
         _surfaceP3 = false;
         if (Has("EGL_KHR_gl_colorspace") && TryCreate(EglGlColorspaceSrgbKhr) is { } srgb)
             return srgb;
-        return EGL14.EglCreateWindowSurface(_display, _config, surface.Surface!, [EglNone], 0);
+        return EGL14.EglCreateWindowSurface(_display, _config, surface, [EglNone], 0);
 
         EGLSurface? TryCreate(int colorspace)
         {
-            var candidate = EGL14.EglCreateWindowSurface(_display, _config, surface.Surface!,
+            var candidate = EGL14.EglCreateWindowSurface(_display, _config, surface,
                 [EglGlColorspaceKhr, colorspace, EglNone], 0);
             if (candidate != null && candidate != EGL14.EglNoSurface) return candidate;
             Console.WriteLine($"[Native] EGL 色彩空间 0x{colorspace:X} 被拒绝，尝试下一输出（0x{EGL14.EglGetError():X}）");
@@ -207,7 +218,9 @@ internal sealed class AndroidPhotoRenderer : IDisposable
         }
     }
 
-    /// <summary>窗口尺寸变化：更新视口像素并重绘。</summary>
+    /// <summary>
+    /// 窗口尺寸变化：更新视口像素并重绘。表面来源换尺寸时 EGL 窗口表面不用重建，缓冲随下一次出队跟随。
+    /// </summary>
     /// <param name="width">宽（像素）。</param>
     /// <param name="height">高（像素）。</param>
     internal void Resize(int width, int height)
@@ -565,6 +578,7 @@ internal sealed class AndroidPhotoRenderer : IDisposable
                 GLES20.GlViewport(0, 0, _width, _height);
                 GLES20.GlDisable(GLES20.GlBlend);
                 GLES20.GlDisable(GLES20.GlDepthTest);
+                GLES20.GlDisable(GLES20.GlDither);
                 GLES20.GlClearColor(0f, 0f, 0f, 1f);
                 GLES20.GlClear(GLES20.GlColorBufferBit);
                 if (HasTexture && _program != 0 && viewport.ImageWidth > 0 && viewport.ImageHeight > 0)
@@ -665,6 +679,26 @@ internal sealed class AndroidPhotoRenderer : IDisposable
         {
             floats?.Dispose();
             buffer?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// 验收用：EGL 窗口表面的实际缓冲尺寸（像素）。表面纹理来源没有 <c>surfaceChanged</c> 那样的系统回调，
+    /// 这是核对「缓冲等于视图物理像素」的唯一直接读数；上下文未就绪时返回 0。
+    /// </summary>
+    internal (int Width, int Height) SurfaceExtentForChecks
+    {
+        get
+        {
+            lock (_sync)
+            {
+                if (_display == null || _surface == null || _surface == EGL14.EglNoSurface) return (0, 0);
+                var width = new int[1];
+                var height = new int[1];
+                bool queried = EGL14.EglQuerySurface(_display, _surface, EglSurfaceWidth, width, 0)
+                    && EGL14.EglQuerySurface(_display, _surface, EglSurfaceHeight, height, 0);
+                return queried ? (width[0], height[0]) : (0, 0);
+            }
         }
     }
 

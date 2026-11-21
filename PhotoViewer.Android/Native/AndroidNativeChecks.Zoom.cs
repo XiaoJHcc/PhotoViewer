@@ -6,7 +6,6 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Android.OS;
-using Android.Views;
 using PhotoViewer.Android.Core;
 using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Image;
@@ -350,13 +349,12 @@ internal static partial class AndroidNativeChecks
                 + $" uv={uvKept} sameBuffer={shared}");
 
             photo.FitToView();
-            var surfaceView = (SurfaceView)typeof(AndroidPhotoView)
-                .GetField("_surfaceView", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(photo)!;
+            var presentationSurface = photo.PresentationSurfaceForChecks;
             float[]? expectedValues = null;
             for (int round = 1; round <= 2; round++)
             {
-                renderer.Create(surfaceView.Holder!, photo.Density);
-                renderer.Resize(surfaceView.Width, surfaceView.Height);
+                renderer.Create(presentationSurface, photo.Density);
+                renderer.Resize(photo.Width, photo.Height);
                 renderer.SetImage(images[7]);
                 renderer.DrawFrame(photo.Viewport, photo.Density);
                 var rebuildState = renderer.VertexStateForChecks();

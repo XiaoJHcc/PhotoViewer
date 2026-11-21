@@ -27,6 +27,7 @@ PhotoViewer.Shared/           # 跨壳纯 C# 共享源（几何/命令表，链�
 PhotoViewer.Heif/             # libheif 色彩解码共享源（链接进 Windows/Android/Tools，Apple 不链接）
 PhotoViewer.iOS/              # iOS / iPadOS 头工程：UIKit + Metal 原生壳
 PhotoViewer.Android/          # Android 头工程：原生壳（Bootstrap/主题/门面）
+PhotoViewer.Android.Backdrop/ # Android 独立类库：Backdrop 单层录制、取样与平台效果链
 PhotoViewer.Web/              # Web 参考壳：只依据 Design/ 实现的主屏（ES module，零依赖，合成照片）
 Tools/                        # 诊断与维护工具
 Fixtures/                     # 验收素材（色卡/HEIF/RAW，四端验收与 Core 契约自检共用）
@@ -61,6 +62,7 @@ artifacts/                    # 本机验收证据与可再生产物（报告/�
 | [PhotoViewer.Mac/](PhotoViewer.Mac/AGENTS.md) | macOS 原生壳与平台接线 |
 | [PhotoViewer.iOS/](PhotoViewer.iOS/AGENTS.md) | iOS / iPadOS 原生壳与平台接线 |
 | [PhotoViewer.Android/](PhotoViewer.Android/AGENTS.md) | Android 原生壳（Bootstrap/主题/门面）与平台接线 |
+| [PhotoViewer.Android.Backdrop/](PhotoViewer.Android.Backdrop/AGENTS.md) | Android 独立类库：Backdrop 单层录制、取样与平台效果链（不引用产品工程） |
 | [PhotoViewer.Windows/](PhotoViewer.Windows/AGENTS.md) | Windows 原生壳与平台接线 |
 | [PhotoViewer.Web/](PhotoViewer.Web/AGENTS.md) | Web 参考壳：只依据设计文档实现的主屏，在线试用与规范检验 |
 | [Training/](Training/AGENTS.md) | 训练数据、模型导出与数据契约 |

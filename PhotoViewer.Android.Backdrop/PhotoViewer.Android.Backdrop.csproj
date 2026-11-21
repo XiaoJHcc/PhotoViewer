@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <!-- 独立 Android 类库：只承载 AndroidLiquidGlass（Backdrop）移植，不引用任何 PhotoViewer 工程。 -->
+        <TargetFramework>net10.0-android</TargetFramework>
+        <!-- 与头工程一致的最低 API；API 31 以下由 BackdropCapabilities 分级回退到色层。 -->
+        <SupportedOSPlatformVersion>24</SupportedOSPlatformVersion>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <IsPackable>false</IsPackable>
+        <!-- 不生成 Activity/Application；本模块只有 Views 与绘制器。 -->
+        <AndroidUseDefaultApplication>false</AndroidUseDefaultApplication>
+    </PropertyGroup>
+
+    <!--
+      上游 Apache-2.0 文本与归属声明随模块入库；头工程引用本库时需把两份文件作为
+      AndroidAsset 打进 APK（见本目录 AGENTS.md「许可与打包」）。
+    -->
+    <ItemGroup>
+        <None Update="LICENSE" CopyToOutputDirectory="Never" />
+        <None Update="NOTICE" CopyToOutputDirectory="Never" />
+    </ItemGroup>
+
+</Project>

@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Threading;
 using Android.Animation;
 using Android.App;
@@ -18,12 +19,14 @@ using PhotoViewer.Shared;
 namespace PhotoViewer.Android.Native;
 
 /// <summary>
-/// Android 主图宿主（A2）：<see cref="SurfaceView"/> + 自有 EGL 渲染核心，触摸手势直接驱动共享
+/// Android 主图宿主（A2）：<see cref="TextureView"/> + 自有 EGL 渲染核心，触摸手势直接驱动共享
 /// <see cref="PhotoViewport"/>（视图坐标 = dp，物理倍率 = density）。
+/// EGL 窗口表面建在 <see cref="TextureView"/> 的表面纹理上，因此主图与其余界面层同属一个窗口缓冲，
+/// 界面层可以取到主图像素；缓冲尺寸恒等于视图物理像素、视图不做缩放平移变换，物理 100% 不经二次重采样。
 /// 缩放/平移不用系统滚动容器：单指拖动只在放大态平移，双指捏合锚定焦点，双击/命令走
 /// <see cref="PhotoViewport.ToggleFit"/>；代理↔Full 热替换只换纹理，不碰视口状态。
 /// </summary>
-internal sealed partial class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IMemoryClient
+internal sealed partial class AndroidPhotoView : FrameLayout, TextureView.ISurfaceTextureListener, IMemoryClient
 {
     /// <summary>双击与命令缩放允许的物理倍率上限（与共享视口一致）。</summary>
     private const double MaximumPhysicalScale = 16;
@@ -35,7 +38,15 @@ internal sealed partial class AndroidPhotoView : FrameLayout, ISurfaceHolderCall
     private const double AnimationSeconds = .25;
 
     private readonly PhotoViewport _viewport = new();
-    private readonly SurfaceView _surfaceView;
+    private readonly TextureView _textureView;
+    /// <summary>当前可用的表面纹理：所有权在 <see cref="TextureView"/>，本视图只在销毁时丢引用，绝不释放它。</summary>
+    private SurfaceTexture? _surfaceTexture;
+    /// <summary>包住表面纹理的 EGL 窗口表面来源：本视图所有，销毁与重建时统一经 <see cref="ReleaseWindowSurface"/> 释放。</summary>
+    private Surface? _windowSurface;
+    /// <summary>表面纹理被界面层取用的累计次数（单调递增，只供验收取样）。</summary>
+    private int _textureUpdates;
+    /// <summary>最近一次表面纹理被取用的时间戳（<see cref="Stopwatch.GetTimestamp"/>，单调，0 表示还没取用过）。</summary>
+    private long _lastTextureUpdateTimestamp;
     private readonly GestureDetector _gestures;
     private readonly ScaleGestureDetector _scaleDetector;
     private readonly double _density;
@@ -126,7 +137,7 @@ internal sealed partial class AndroidPhotoView : FrameLayout, ISurfaceHolderCall
         }
     }
 
-    /// <summary>建立 SurfaceView、渲染器与手势识别。</summary>
+    /// <summary>建立主图纹理视图、渲染器与手势识别。</summary>
     /// <param name="context">宿主上下文（Activity）。</param>
     public AndroidPhotoView(Context context) : base(context)
     {
@@ -139,10 +150,11 @@ internal sealed partial class AndroidPhotoView : FrameLayout, ISurfaceHolderCall
         // 部分模拟器/设备返回 0；精确滚动仍需一个有效像素步长，0 会让触控板平移变成空操作。
         _scrollFactorPx = scrollFactor > .01f ? scrollFactor : 64;
         SetBackgroundColor(Color.Black);
-        _surfaceView = new SurfaceView(context);
-        _surfaceView.SetZOrderOnTop(false);
-        _surfaceView.Holder?.AddCallback(this);
-        AddView(_surfaceView, new LayoutParams(LayoutParams.MatchParent, LayoutParams.MatchParent));
+        _textureView = new TextureView(context);
+        // 主图区恒为整块不透明画面：显式走不透明合成路径，避免额外离屏缓冲与逐层混合。
+        _textureView.SetOpaque(true);
+        _textureView.SurfaceTextureListener = this;
+        AddView(_textureView, new LayoutParams(LayoutParams.MatchParent, LayoutParams.MatchParent));
         _gestures = new GestureDetector(context, new PhotoGestureListener(this));
         _scaleDetector = new ScaleGestureDetector(context, new PhotoScaleListener(this));
         // GPU 纹理不占 RssAnon，预算源要单独加上这份占用才与 MemoryLimiter 的可用量同口径。
@@ -327,19 +339,54 @@ internal sealed partial class AndroidPhotoView : FrameLayout, ISurfaceHolderCall
     internal bool FramebufferEncodingForChecks(int encoding) => _renderer.FramebufferEncoding == encoding;
     internal bool EglColorspaceForChecks(int colorspace) => _renderer.SurfaceColorspace == colorspace;
 
-    internal (byte R, byte G, byte B, byte A) ReadPixelForChecks(double u, double v, bool bypassOutputTransfer = false)
-        => _renderer.ReadPixelForChecks(_viewport, _density, u, v, bypassOutputTransfer);
+    /// <summary>验收用：当前 EGL 窗口表面的真实来源（未就绪时抛出，产品路径不读取）。</summary>
+    internal Surface PresentationSurfaceForChecks
+        => _windowSurface ?? throw new InvalidOperationException("主图表面未就绪");
 
+    /// <summary>验收用：EGL 窗口表面的实际缓冲尺寸（像素），用于核对缓冲等于视图物理像素。</summary>
+    internal (int Width, int Height) SurfaceExtentForChecks => _renderer.SurfaceExtentForChecks;
+
+    /// <summary>验收用：表面纹理被界面层取用的累计次数（单调递增，只用于「输入 → 界面层取用」的延迟取样）。</summary>
+    internal int TextureUpdatesForChecks => Volatile.Read(ref _textureUpdates);
+
+    /// <summary>
+    /// 验收用：最近一次表面纹理被取用的时间戳（<see cref="Stopwatch.GetTimestamp"/>，与检查侧同源同单调）；
+    /// 全程累计、不随表面重建清零，0 表示还没取用过。
+    /// </summary>
+    internal long LastTextureUpdateTimestampForChecks => Interlocked.Read(ref _lastTextureUpdateTimestamp);
+
+    /// <summary>
+    /// 回读当前照片在视口归一化坐标处的真实输出像素（默认帧缓冲，不是屏幕像素）。
+    /// 回读内部会补一次带 present 的绘制，这里顺带让界面层取用这一帧，避免窗口停在更早的内容上。
+    /// </summary>
+    /// <param name="u">显示横向归一化坐标。</param>
+    /// <param name="v">显示纵向归一化坐标。</param>
+    /// <param name="bypassOutputTransfer">是否跳过着色器对 sRGB 帧缓冲的逆传递。</param>
+    /// <returns>回读到的 RGBA 通道。</returns>
+    internal (byte R, byte G, byte B, byte A) ReadPixelForChecks(double u, double v, bool bypassOutputTransfer = false)
+    {
+        var pixel = _renderer.ReadPixelForChecks(_viewport, _density, u, v, bypassOutputTransfer);
+        _textureView.Invalidate();
+        return pixel;
+    }
+
+    /// <summary>
+    /// 验收用：在同一个表面纹理上销毁并重建 EGL 窗口表面与上下文，重传当前图。
+    /// 需要表面已就绪（没有真实表面时不做无表面的假重建），产品路径不调用。
+    /// </summary>
+    /// <param name="allowP3">是否允许 P3 表面。</param>
+    /// <param name="allowPassthrough">是否允许 P3 passthrough。</param>
     internal void RecreateSurfaceForChecks(bool allowP3, bool allowPassthrough = true)
     {
+        var surface = PresentationSurfaceForChecks;
         _surfaceReady = false;
         _surfaceVersion++;
         InvalidatePresentation();
         CancelDraw();
         _renderer.Dispose();
         _renderer = CreateRenderer();
-        _renderer.Create(_surfaceView.Holder!, _density, allowP3, allowPassthrough);
-        _renderer.Resize(_surfaceView.Width, _surfaceView.Height);
+        _renderer.Create(surface, _density, allowP3, allowPassthrough);
+        _renderer.Resize(Width, Height);
         _surfaceReady = true;
         if (_image != null)
         {
@@ -366,7 +413,23 @@ internal sealed partial class AndroidPhotoView : FrameLayout, ISurfaceHolderCall
     {
         CancelDraw();
         if (!_surfaceReady || _disposed) return;
-        if (_renderer.DrawFrame(_viewport, _density)) _renderedFrames++;
+        // 窗口不可见时表面纹理没有消费者，swap 会在 dequeueBuffer 上阻塞主线程：这一帧直接跳过，
+        // 重新可见时由 OnWindowVisibilityChanged 再排一帧。
+        if (WindowVisibility != ViewStates.Visible) return;
+        if (_renderer.DrawFrame(_viewport, _density))
+        {
+            _renderedFrames++;
+            // 表面纹理的内容只在视图重绘时被界面渲染线程取用：swap 之后必须安排一次重绘，否则新帧要等下一次无关重绘。
+            _textureView.Invalidate();
+        }
+    }
+
+    /// <summary>窗口重新可见时补一帧：不可见期间的绘制请求被跳过，画面仍是上一帧。</summary>
+    /// <param name="visibility">窗口可见性。</param>
+    protected override void OnWindowVisibilityChanged(ViewStates visibility)
+    {
+        base.OnWindowVisibilityChanged(visibility);
+        if (visibility == ViewStates.Visible) RequestDraw();
     }
 
     /// <summary>上报视口像素尺寸与 Full 需求。</summary>
@@ -376,17 +439,48 @@ internal sealed partial class AndroidPhotoView : FrameLayout, ISurfaceHolderCall
         ViewportChanged?.Invoke();
     }
 
-    /// <summary>Surface 创建：建立 EGL，重传当前图并通知宿主可以开始加载。</summary>
-    /// <param name="holder">表面持有者。</param>
-    public void SurfaceCreated(ISurfaceHolder holder)
+    /// <summary>
+    /// 表面可用：建立 EGL 窗口表面与上下文，重传当前图并通知宿主可以开始加载。
+    /// </summary>
+    /// <param name="surface">表面纹理（所有权在 <see cref="TextureView"/>，这里只借用）。</param>
+    /// <param name="width">表面宽（像素）。</param>
+    /// <param name="height">表面高（像素）。</param>
+    public void OnSurfaceTextureAvailable(SurfaceTexture surface, int width, int height)
     {
+        if (_disposed) return;
+        EstablishSurface(surface, width, height);
+    }
+
+    /// <summary>
+    /// 建立（或重建）EGL 窗口表面：按视图物理像素设定缓冲尺寸，把在途色域准备作废（表面可能换了色域能力），
+    /// 重传当前图并通知宿主可以开始加载。可用回调与「尺寸就绪但表面尚未建立」的补建路径共用同一段顺序。
+    /// </summary>
+    /// <param name="surface">表面纹理（所有权在 <see cref="TextureView"/>，这里只借用）。</param>
+    /// <param name="width">表面宽（像素）。</param>
+    /// <param name="height">表面高（像素）。</param>
+    private void EstablishSurface(SurfaceTexture surface, int width, int height)
+    {
+        // 回调带的尺寸在个别时序上可能还是 0（视图尚未完成布局）：退回本视图已量测的像素尺寸。
+        if (width < 1 || height < 1)
+        {
+            width = Width;
+            height = Height;
+        }
+        if (width < 1 || height < 1) return;
         try
         {
             _surfaceVersion++;
             InvalidatePresentation();
+            _surfaceTexture = surface;
+            SetSurfaceBufferSize(width, height);
+            // 先销毁可能残留的 EGL 表面，再撤旧的生产者引用，最后建新的表面来源：
+            // 任何时刻都不让 EGL 表面指向已释放的 Surface。
             _renderer.Dispose();
             _renderer = CreateRenderer();
-            _renderer.Create(holder, _density);
+            ReleaseWindowSurface();
+            _windowSurface = new Surface(surface);
+            _renderer.Create(_windowSurface, _density);
+            _renderer.Resize(width, height);
             _surfaceReady = true;
             PresentImage(_requestedImage ?? _image, _requestedGeneration);
             RefreshTextureBytes();
@@ -396,37 +490,117 @@ internal sealed partial class AndroidPhotoView : FrameLayout, ISurfaceHolderCall
         catch (Exception exception)
         {
             _surfaceReady = false;
+            // 建表面失败时先销毁已建的 EGL 表面，再撤本视图的生产者引用，最后把表面纹理交还 TextureView（不在这里释放它）。
             _renderer.Dispose();
+            ReleaseWindowSurface();
+            _surfaceTexture = null;
             RefreshTextureBytes();
             Console.Error.WriteLine($"[Native] 主图表面创建失败：{exception.Message}");
         }
     }
 
-    /// <summary>Surface 尺寸变化。</summary>
-    /// <param name="holder">表面持有者。</param>
-    /// <param name="format">像素格式。</param>
-    /// <param name="width">宽（像素）。</param>
-    /// <param name="height">高（像素）。</param>
-    public void SurfaceChanged(ISurfaceHolder holder, Format format, int width, int height)
+    /// <summary>
+    /// 表面缓冲尺寸变化：先把表面纹理的默认缓冲尺寸改到新尺寸，再刷新视口像素并补帧。
+    /// EGL 窗口表面不重建（缓冲随下一次出队跟随），纹理与纹理缓存都不丢；
+    /// 若表面此前因尺寸无效没有建成，则在这里补建。
+    /// </summary>
+    /// <param name="surface">表面纹理。</param>
+    /// <param name="width">新宽（像素）。</param>
+    /// <param name="height">新高（像素）。</param>
+    public void OnSurfaceTextureSizeChanged(SurfaceTexture surface, int width, int height)
     {
+        if (_disposed) return;
+        _surfaceTexture = surface;
+        SetSurfaceBufferSize(width, height);
+        if (!_surfaceReady)
+        {
+            EstablishSurface(surface, width, height);
+            return;
+        }
         _renderer.Resize(width, height);
         RequestDraw();
-        // 栏位显隐后 SurfaceView 的新缓冲可能在本帧尚未就绪：下一帧再绘制一次，避免停在旧尺寸的帧上。
+        // 与原先的表面尺寸变化同样处理：新尺寸的缓冲要到下一帧才稳定就绪，补两帧避免停在旧尺寸的帧上。
         Post(RequestDraw);
         PostDelayed(RequestDraw, 32);
     }
 
-    /// <summary>Surface 销毁：释放 EGL，等待下一次创建后重传纹理。</summary>
-    /// <param name="holder">表面持有者。</param>
-    public void SurfaceDestroyed(ISurfaceHolder holder)
+    /// <summary>
+    /// 表面销毁：释放 EGL 与窗口表面，把在途色域准备作废，并交还表面纹理的所有权。
+    /// 返回 <c>true</c> 表示由 <see cref="TextureView"/> 自己释放表面纹理——本视图绝不代它释放。
+    /// </summary>
+    /// <param name="surface">即将销毁的表面纹理。</param>
+    /// <returns>恒为 <c>true</c>。</returns>
+    public bool OnSurfaceTextureDestroyed(SurfaceTexture surface)
     {
+        // 已释放的视图：EGL 与窗口表面已在 Dispose 里收过，这里只把表面纹理交还 TextureView。
+        if (_disposed) return true;
         _surfaceReady = false;
         _surfaceVersion++;
         InvalidatePresentation();
         CancelDraw();
+        // 先销毁 EGL 窗口表面（内含 EglDestroySurface），再撤本视图的生产者引用，顺序不可颠倒。
         _renderer.Dispose();
         _renderer = CreateRenderer();
+        ReleaseWindowSurface();
+        _surfaceTexture = null;
         RefreshTextureBytes();
+        return true;
+    }
+
+    /// <summary>
+    /// 表面纹理更新：界面渲染线程已取用新帧。这里只记录单调计数与时间戳，
+    /// 供验收把「一次输入」与「该帧真正进入界面层」对应起来；不改任何渲染或视口状态。
+    /// </summary>
+    /// <param name="surface">刚更新的表面纹理。</param>
+    public void OnSurfaceTextureUpdated(SurfaceTexture surface)
+    {
+        Interlocked.Increment(ref _textureUpdates);
+        Interlocked.Exchange(ref _lastTextureUpdateTimestamp, Stopwatch.GetTimestamp());
+    }
+
+    /// <summary>
+    /// 释放当前 EGL 窗口表面来源并清空引用：先调 Java 的 <c>Surface.Release()</c> 立刻撤掉本进程的生产者引用，
+    /// 再 <c>Dispose()</c> 释放 JNI 引用（<c>Dispose</c> 自身不会调用 <c>Release</c>，少了前一步就只等 Java 终结器）。
+    /// 调用前必须已经销毁 EGL 窗口表面——顺序绝不能反过来。
+    /// </summary>
+    private void ReleaseWindowSurface()
+    {
+        var surface = _windowSurface;
+        _windowSurface = null;
+        if (surface == null) return;
+        try
+        {
+            surface.Release();
+        }
+        catch (Exception exception)
+        {
+            // 已经释放或包装器已失效：仍要把托管引用收干净，下一次可用回调会重新建。
+            Console.Error.WriteLine($"[Native] 主图表面来源释放失败：{exception.Message}");
+        }
+        finally
+        {
+            surface.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// 把表面纹理的默认缓冲尺寸设成视图物理像素：EGL 窗口表面按它分配缓冲，
+    /// 视图自身不做缩放平移变换，物理 100% 因此不经二次重采样。
+    /// </summary>
+    /// <param name="width">宽（像素）。</param>
+    /// <param name="height">高（像素）。</param>
+    private void SetSurfaceBufferSize(int width, int height)
+    {
+        if (_surfaceTexture == null || width < 1 || height < 1) return;
+        try
+        {
+            _surfaceTexture.SetDefaultBufferSize(width, height);
+        }
+        catch (Exception exception)
+        {
+            // 表面已交还或托管包装器已失效：本次不设尺寸，等下一次可用回调重新建立。
+            Console.Error.WriteLine($"[Native] 主图缓冲尺寸设置失败：{exception.Message}");
+        }
     }
 
     /// <summary>布局尺寸变化：刷新 dp 视口并保持适应态贴合。</summary>
@@ -452,8 +626,11 @@ internal sealed partial class AndroidPhotoView : FrameLayout, ISurfaceHolderCall
             // 栏位显隐/旋转会改主图分区：保持原来落在视口中心的图像点仍在中心，再按新边界钳制。
             _viewport.CenterOnNormalizedPoint(center.U, center.V);
         }
+        // 表面纹理的缓冲尺寸要显式跟随视图物理像素：布局变化与表面回调的到达顺序在设备间并不固定。
+        SetSurfaceBufferSize(w, h);
+        _renderer.Resize(w, h);
         RequestDraw();
-        // 布局变化后 SurfaceView 的缓冲可能在下一帧才跟上：再补一帧，避免缩略图/控制栏/分析栏开合时停在旧尺寸。
+        // 缓冲可能在下一帧才跟上：再补一帧，避免缩略图/控制栏/分析栏开合时停在旧尺寸。
         Post(RequestDraw);
         ViewportChanged?.Invoke();
     }
@@ -777,7 +954,10 @@ internal sealed partial class AndroidPhotoView : FrameLayout, ISurfaceHolderCall
                 AndroidMemoryBudgetProvider.ExternalFootprint = null;
             _renderer.Dispose();
             Interlocked.Exchange(ref _textureBytes, 0);
-            _surfaceView.Holder?.RemoveCallback(this);
+            // 先摘监听（不再收表面回调），再撤生产者引用；表面纹理仍归 TextureView，由基类释放视图时处理。
+            _textureView.SurfaceTextureListener = null;
+            ReleaseWindowSurface();
+            _surfaceTexture = null;
         }
         base.Dispose(disposing);
     }

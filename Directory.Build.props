@@ -39,10 +39,10 @@
   <PropertyGroup Condition="'$(MSBuildProjectName)' == 'PhotoViewer.Mac' Or '$(MSBuildProjectName)' == 'PhotoViewer.iOS' Or '$(MSBuildProjectName)' == 'PhotoViewer.Android' Or '$(MSBuildProjectName)' == 'PhotoViewer.Windows'">
     <PhotoViewerEditionExplicit Condition="'$(PhotoViewerEdition)' != ''">true</PhotoViewerEditionExplicit>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'PhotoViewer.Mac' Or '$(MSBuildProjectName)' == 'PhotoViewer.iOS' Or '$(MSBuildProjectName)' == 'PhotoViewer.Android' Or '$(MSBuildProjectName)' == 'PhotoViewer.Windows' Or '$(MSBuildProjectName)' == 'PhotoViewer'">
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'PhotoViewer.Mac' Or '$(MSBuildProjectName)' == 'PhotoViewer.iOS' Or '$(MSBuildProjectName)' == 'PhotoViewer.Android' Or '$(MSBuildProjectName)' == 'PhotoViewer.Windows' Or '$(MSBuildProjectName)' == 'PhotoViewer.Android.Backdrop' Or '$(MSBuildProjectName)' == 'PhotoViewer'">
     <DefaultItemExcludes>$(DefaultItemExcludes);bin/**;obj/**</DefaultItemExcludes>
   </PropertyGroup>
-  <PropertyGroup Condition="('$(PhotoViewerEdition)' == 'standard' Or '$(PhotoViewerEdition)' == 'ai') And ('$(MSBuildProjectName)' == 'PhotoViewer.Mac' Or '$(MSBuildProjectName)' == 'PhotoViewer.iOS' Or '$(MSBuildProjectName)' == 'PhotoViewer.Android' Or '$(MSBuildProjectName)' == 'PhotoViewer.Windows' Or '$(MSBuildProjectName)' == 'PhotoViewer')">
+  <PropertyGroup Condition="('$(PhotoViewerEdition)' == 'standard' Or '$(PhotoViewerEdition)' == 'ai') And ('$(MSBuildProjectName)' == 'PhotoViewer.Mac' Or '$(MSBuildProjectName)' == 'PhotoViewer.iOS' Or '$(MSBuildProjectName)' == 'PhotoViewer.Android' Or '$(MSBuildProjectName)' == 'PhotoViewer.Windows' Or '$(MSBuildProjectName)' == 'PhotoViewer.Android.Backdrop' Or '$(MSBuildProjectName)' == 'PhotoViewer')">
     <BaseOutputPath Condition="'$(BaseOutputPath)' == ''">bin/$(PhotoViewerEdition)/</BaseOutputPath>
     <BaseIntermediateOutputPath Condition="'$(BaseIntermediateOutputPath)' == ''">obj/$(PhotoViewerEdition)/</BaseIntermediateOutputPath>
   </PropertyGroup>
