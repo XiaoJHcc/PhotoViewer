@@ -30,6 +30,7 @@ internal sealed class AndroidFilterBar : FrameLayout
     internal static bool ShowsSimilarityToggle => AndroidAppCapabilities.HasDino;
 
     private readonly MainViewModel _main;
+    private readonly AndroidGlassControlLayer? _glassLayer;
     private readonly AndroidGlassButton _filterButton;
     private readonly AndroidGlassCombo _combo;
     private readonly AndroidGlassButton? _toggle;
@@ -163,9 +164,11 @@ internal sealed class AndroidFilterBar : FrameLayout
     /// <summary>构建筛选条并订阅共享筛选状态。</summary>
     /// <param name="context">宿主上下文（Activity）。</param>
     /// <param name="main">共享主 VM。</param>
-    public AndroidFilterBar(Context context, MainViewModel main) : base(context)
+    public AndroidFilterBar(Context context, MainViewModel main, AndroidGlassControlLayer? glassLayer = null)
+        : base(context)
     {
         _main = main;
+        _glassLayer = glassLayer;
         _filterButton = new AndroidGlassButton(context, AndroidIcons.Filter, "筛选");
         _filterButton.Click += (_, _) => OpenGroupedMenu(ScreenRectOf(_filterSegment));
         _filterButton.Visibility = ViewStates.Gone;
@@ -175,6 +178,8 @@ internal sealed class AndroidFilterBar : FrameLayout
         _combo.Second.Click += (_, _) => MoreRequested?.Invoke(_moreSegment);
         _combo.Visibility = ViewStates.Gone;
         AddView(_combo);
+        _glassLayer?.Register(_filterButton);
+        _glassLayer?.Register(_combo);
 #if PHOTOVIEWER_DINO
         _toggle = new AndroidGlassButton(context, "相似聚类", "相似聚类", iconFont: false);
         ConfigureToggle(_toggle);
@@ -186,6 +191,7 @@ internal sealed class AndroidFilterBar : FrameLayout
         };
         _toggle.Visibility = ViewStates.Gone;
         AddView(_toggle);
+        _glassLayer?.Register(_toggle);
 #else
         _toggle = null;
 #endif
@@ -716,6 +722,19 @@ internal sealed class AndroidFilterBar : FrameLayout
     /// <summary>筛选下拉行状态（验收用）：标签、分组、共享选中态、实际勾选字形与图标资源。</summary>
     internal readonly record struct FilterMenuRowForChecks(
         string Label, string Group, bool Selected, bool Marked, bool HasIcon, string IconDescription);
+
+    /// <summary>注销玻璃锚点并释放视图资源。</summary>
+    /// <param name="disposing">是否释放托管资源。</param>
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _glassLayer?.Unregister(_filterButton);
+            _glassLayer?.Unregister(_combo);
+            if (_toggle != null) _glassLayer?.Unregister(_toggle);
+        }
+        base.Dispose(disposing);
+    }
 
     /// <summary>子视图按共享矩形精确测量。</summary>
     /// <param name="widthMeasureSpec">宽约束。</param>

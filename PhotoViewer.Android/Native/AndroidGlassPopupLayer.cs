@@ -26,8 +26,8 @@ namespace PhotoViewer.Android.Native;
 /// </para>
 /// <para>
 /// 出入场只做淡入淡出，时长取系统 <c>config_shortAnimTime</c>；<c>animator_duration_scale</c> 为 0 时直接到位。
-/// 面板表面默认画正式色层（API 24–30 外观）；接入屏幕层玻璃配方时把
-/// <see cref="Backdrop"/> 指向屏幕层取样源并设置 <see cref="Surface"/>，不另开一条弹窗逻辑。
+/// 面板表面默认画正式色层；接入屏幕层玻璃配方时把 <see cref="Backdrop"/> 指向屏幕层取样源，
+/// 并把 <see cref="Surface"/> 设为 <see cref="AndroidGlassPopupMaterial"/>（每个弹层面板各一份）。
 /// </para>
 /// </remarks>
 internal sealed class AndroidGlassPopupLayer : FrameLayout
@@ -56,8 +56,6 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
         _panel.Focusable = true;
         _panel.FocusableInTouchMode = true;
         _panel.SetWillNotDraw(false);
-        _panel.ClipToOutline = true;
-        _panel.OutlineProvider = new RoundedOutline();
         AddView(_panel, new LayoutParams(LayoutParams.WrapContent, LayoutParams.WrapContent));
     }
 
@@ -66,7 +64,8 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
 
     /// <summary>
     /// 屏幕层取样源；为空表示只画正式色层，不取样（API 24–30 口径）。
-    /// 弹层本身位于该取样层之外，满足「玻璃元素不得在自取样子树内」的取样规则。
+    /// 弹层本身位于该取样层之外，满足「玻璃元素不得在自取样子树内」的取样规则；
+    /// 取样源由调用方持有与释放，宿主只读取。
     /// </summary>
     internal IBackdrop? Backdrop
     {
@@ -78,15 +77,36 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
         }
     }
 
-    /// <summary>面板表面材质；为空时宿主自画正式色层。</summary>
+    /// <summary>
+    /// 面板表面材质；为空时宿主自画正式色层。宿主接管所有权：
+    /// 替换时释放上一份 <see cref="IDisposable"/> 材质，宿主释放时释放当前材质。
+    /// </summary>
     internal IGlassPopupSurface? Surface
     {
         get => _surface;
         set
         {
+            if (ReferenceEquals(_surface, value)) return;
+            if (_disposed)
+            {
+                if (value is IDisposable late) late.Dispose();
+                return;
+            }
+            var previous = _surface;
             _surface = value;
+            if (previous is IDisposable disposable) disposable.Dispose();
             _panel.Invalidate();
         }
+    }
+
+    /// <summary>
+    /// 取样层完成新录制后请求面板重绘（屏幕层 <c>Recorded</c> 时由接线方调用）；
+    /// 打开期间由材质按内容代际重录本地取样，不再逐帧新建效果节点。
+    /// </summary>
+    internal void InvalidateSurface()
+    {
+        if (_disposed || (_session == null && _closing == null)) return;
+        _panel.Invalidate();
     }
 
     /// <summary>当前是否有逻辑上打开的弹层（淡出期间已算关闭）。</summary>
@@ -255,6 +275,7 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
             }
             RestoreBackground();
             FinishClosing();
+            DisposeSurface();
         }
         base.Dispose(disposing);
     }
@@ -275,6 +296,13 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
             return;
         }
         Animate(0f, FinishClosing);
+    }
+
+    private void DisposeSurface()
+    {
+        var surface = _surface;
+        _surface = null;
+        if (surface is IDisposable disposable) disposable.Dispose();
     }
 
     private void Animate(float target, Action? completed)
@@ -400,21 +428,35 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
     private readonly record struct HiddenChild(View Child, ImportantForAccessibility Accessibility,
         DescendantFocusability? Focus, bool Focusable, bool FocusableInTouchMode);
 
-    /// <summary>面板容器：画正式色层（或接入的玻璃材质），并按圆角裁切内容。</summary>
+    /// <summary>
+    /// 面板容器：按 G2 连续曲率裁切内容并画正式色层；接入 <see cref="IGlassPopupSurface"/> 后
+    /// 表面改由材质绘制，裁切轮廓与材质轮廓仍取同一圆角与尺寸。
+    /// </summary>
     private sealed class PanelView : FrameLayout
     {
         private readonly int[] _location = new int[2];
+        private readonly Paint _paint = new(PaintFlags.AntiAlias);
+        private readonly BackdropShapeOutline _outline;
+        private readonly BackdropShapeOutlineProvider _outlineProvider;
+        private BackdropRoundedRectangle _shape;
+        private float _cornerRadiusDp = float.NaN;
         private Color _fill;
         private Color _border;
         private float _borderWidth;
         private float _density = 1f;
+        private bool _disposed;
 
         public PanelView(global::Android.Content.Context context) : base(context)
         {
+            _shape = new BackdropRoundedRectangle(0f, BackdropCornerStyle.Continuous);
+            _outline = new BackdropShapeOutline(_shape);
+            _outlineProvider = new BackdropShapeOutlineProvider(_shape);
+            ClipToOutline = true;
+            OutlineProvider = _outlineProvider;
         }
 
         /// <summary>圆角半径（px）。</summary>
-        internal float RadiusPx { get; set; }
+        internal float RadiusPx { get; private set; }
 
         internal void Bind(AndroidGlassPopupRequest request)
         {
@@ -423,23 +465,39 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
             AddView(request.Content, new LayoutParams(LayoutParams.MatchParent, LayoutParams.MatchParent));
             _fill = request.Fill;
             _border = request.Border;
-            _borderWidth = (float)(request.BorderWidthDp * (Resources?.DisplayMetrics?.Density ?? 1));
             _density = Resources?.DisplayMetrics?.Density ?? 1f;
-            RadiusPx = (float)(request.CornerRadiusDp * _density);
+            _borderWidth = (float)(request.BorderWidthDp * _density);
+            float cornerRadiusDp = (float)request.CornerRadiusDp;
+            RadiusPx = cornerRadiusDp * _density;
+            if (float.IsNaN(_cornerRadiusDp) || MathF.Abs(cornerRadiusDp - _cornerRadiusDp) > 0.001f)
+            {
+                _cornerRadiusDp = cornerRadiusDp;
+                _shape = new BackdropRoundedRectangle(cornerRadiusDp, BackdropCornerStyle.Continuous);
+                _outline.Shape = _shape;
+                _outlineProvider.Shape = _shape;
+            }
+            _outline.Invalidate();
             Visibility = ViewStates.Visible;
             InvalidateOutline();
             Invalidate();
+        }
+
+        protected override void OnSizeChanged(int w, int h, int oldw, int oldh)
+        {
+            base.OnSizeChanged(w, h, oldw, oldh);
+            InvalidateOutline();
         }
 
         protected override void OnDraw(Canvas canvas)
         {
             base.OnDraw(canvas);
             if (Width < 1 || Height < 1) return;
+            _outline.Update(Width, Height, _density);
             var surface = Layer?.Surface;
             if (surface != null)
             {
                 var context = new GlassPopupSurfaceContext(this, canvas, Layer?.Backdrop,
-                    BackdropDrawContext.ForView(this, _location), Width, Height, RadiusPx, _density,
+                    BackdropDrawContext.ForView(this, _location), Width, Height, _cornerRadiusDp, RadiusPx, _density,
                     _fill, _border, _borderWidth);
                 surface.Draw(context);
                 return;
@@ -451,29 +509,36 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
 
         private void DrawColorLayer(Canvas canvas)
         {
-            using var paint = new Paint(PaintFlags.AntiAlias);
-            var rect = new RectF(0, 0, Width, Height);
-            paint.SetStyle(Paint.Style.Fill);
-            paint.Color = _fill;
-            canvas.DrawRoundRect(rect, RadiusPx, RadiusPx, paint);
-            if (_borderWidth <= 0 || _border.A == 0) return;
-            paint.SetStyle(Paint.Style.Stroke);
-            paint.StrokeWidth = _borderWidth;
-            paint.Color = _border;
-            float inset = _borderWidth / 2;
-            rect.Inset(inset, inset);
-            canvas.DrawRoundRect(rect, RadiusPx, RadiusPx, paint);
+            int save = canvas.Save();
+            try
+            {
+                canvas.ClipPath(_outline.Path);
+                _paint.SetStyle(Paint.Style.Fill);
+                _paint.Color = _fill;
+                canvas.DrawPath(_outline.Path, _paint);
+                if (_borderWidth <= 0 || _border.A == 0) return;
+                // 轮廓裁切保证线宽只有内侧一半可见，按两倍线宽描边即得配方线宽。
+                _paint.SetStyle(Paint.Style.Stroke);
+                _paint.StrokeWidth = MathF.Max(1f, _borderWidth * 2f);
+                _paint.Color = _border;
+                canvas.DrawPath(_outline.Path, _paint);
+            }
+            finally
+            {
+                canvas.RestoreToCount(save);
+            }
         }
-    }
 
-    /// <summary>面板圆角轮廓：裁切内容与后续玻璃材质都取同一形状。</summary>
-    private sealed class RoundedOutline : ViewOutlineProvider
-    {
-        public override void GetOutline(View? view, Outline? outline)
+        protected override void Dispose(bool disposing)
         {
-            if (view == null || outline == null) return;
-            float radius = view is PanelView panel ? panel.RadiusPx : 0;
-            outline.SetRoundRect(0, 0, view.Width, view.Height, radius);
+            if (disposing && !_disposed)
+            {
+                _disposed = true;
+                _outline.Path.Dispose();
+                _outlineProvider.Dispose();
+                _paint.Dispose();
+            }
+            base.Dispose(disposing);
         }
     }
 }
@@ -553,8 +618,8 @@ internal interface IGlassPopupSurface
 internal readonly struct GlassPopupSurfaceContext
 {
     internal GlassPopupSurfaceContext(View panel, Canvas canvas, IBackdrop? backdrop,
-        BackdropDrawContext draw, int widthPx, int heightPx, float cornerRadiusPx, float density,
-        Color fill, Color border, float borderWidthPx)
+        BackdropDrawContext draw, int widthPx, int heightPx, float cornerRadiusDp, float cornerRadiusPx,
+        float density, Color fill, Color border, float borderWidthPx)
     {
         Panel = panel;
         Canvas = canvas;
@@ -562,6 +627,7 @@ internal readonly struct GlassPopupSurfaceContext
         Draw = draw;
         WidthPx = widthPx;
         HeightPx = heightPx;
+        CornerRadiusDp = cornerRadiusDp;
         CornerRadiusPx = cornerRadiusPx;
         Density = density;
         Fill = fill;
@@ -579,6 +645,8 @@ internal readonly struct GlassPopupSurfaceContext
     internal BackdropDrawContext Draw { get; }
     internal int WidthPx { get; }
     internal int HeightPx { get; }
+    /// <summary>面板圆角半径（dp，请求原值）。</summary>
+    internal float CornerRadiusDp { get; }
     /// <summary>面板圆角半径（px）。</summary>
     internal float CornerRadiusPx { get; }
     internal float Density { get; }

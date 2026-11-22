@@ -14,7 +14,8 @@ using IOPath = System.IO.Path;
 namespace PhotoViewer.Android.Native;
 
 /// <summary>
-/// <c>pv-glass-stage product</c>：液态玻璃方案 1 阶段 2 的真实产品材质验收（SHELL-12@android）。
+/// <c>pv-glass-stage product</c>：液态玻璃方案 1 的真实产品验收（SHELL-12@android），覆盖照片层材质、
+/// 三层取样结构与玻璃控件层。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -73,6 +74,9 @@ internal static partial class AndroidNativeChecks
     private static double _glassExifDarkLuma = double.NaN;
     private static double _glassExifGrayLuma = double.NaN;
     private static double _glassExifBrightLuma = double.NaN;
+    private static double _glassButtonDarkLuma = double.NaN;
+    private static double _glassButtonGrayLuma = double.NaN;
+    private static double _glassButtonBrightLuma = double.NaN;
 
     /// <summary>
     /// 栏底色层的合成参数：不透明度与透射率取 <see cref="ExpectedBarOverlay"/> 的实际 alpha
@@ -131,7 +135,7 @@ internal static partial class AndroidNativeChecks
 
     /// <summary>
     /// 产品组：分级/结构 → 真实可见栏底的像素证明与动态跟随 → 带衬底 EXIF →（低版本）色层回退断言。
-    /// 收尾无条件恢复会话图、适应态与被临时隐藏的视图。
+    /// 收尾无条件恢复会话图、适应态与被临时移出的视图。
     /// </summary>
     private static async Task RunGlassProductChecksAsync()
     {
@@ -145,8 +149,10 @@ internal static partial class AndroidNativeChecks
             + $"（逐视图 ceil(宽+2×padding)×ceil(高+2×padding)，RGBA8；与主图纹理同一次上报，不重复计费）");
         _glassBarDarkLuma = _glassBarGrayLuma = _glassBarBrightLuma = double.NaN;
         _glassExifDarkLuma = _glassExifGrayLuma = _glassExifBrightLuma = double.NaN;
+        _glassButtonDarkLuma = _glassButtonGrayLuma = _glassButtonBrightLuma = double.NaN;
 
         CheckGlassProductStructure(root);
+        await CheckGlassControlLayerAsync(root);
         bool filmRestored = false;
         bool filmWasVisible = _main.IsThumbnailViewVisible;
         // 产品组只用现有主图宿主：这两处进程级状态在任何时刻都不该被本次验收改写（只做留底对照）。
@@ -161,7 +167,7 @@ internal static partial class AndroidNativeChecks
                 return;
             }
 
-            var hidden = new List<(View View, ViewStates Visibility)>();
+            var hidden = new List<GlassDetachedView>();
             bool hasBar = TryPickGlassBar(root, out var bar, out var barRect);
             if (!hasBar)
             {
@@ -196,12 +202,15 @@ internal static partial class AndroidNativeChecks
             }
 
             await CheckGlassExifProductAsync(root);
+            await CheckGlassButtonSwatchesAsync(root);
 
             GlassHostNote("三色衬底实测（sRGB 8 位亮度均值，供 platforms.md SHELL-12@android 校准；不改令牌）："
                 + $"栏底 黑={GlassProductLuma(_glassBarDarkLuma)} 灰={GlassProductLuma(_glassBarGrayLuma)}"
                 + $" 白={GlassProductLuma(_glassBarBrightLuma)}；"
                 + $"EXIF 黑={GlassProductLuma(_glassExifDarkLuma)} 灰={GlassProductLuma(_glassExifGrayLuma)}"
-                + $" 白={GlassProductLuma(_glassExifBrightLuma)}"
+                + $" 白={GlassProductLuma(_glassExifBrightLuma)}；"
+                + $"按钮 黑={GlassProductLuma(_glassButtonDarkLuma)} 灰={GlassProductLuma(_glassButtonGrayLuma)}"
+                + $" 白={GlassProductLuma(_glassButtonBrightLuma)}"
                 + "（令牌推导期望：栏底 32.8/58.4/83.8，EXIF 27.2/52.8/78.2）");
 
             Check("glass 产品 未改写预算读数委托与表面色域（只用现有主图宿主）",
@@ -231,10 +240,43 @@ internal static partial class AndroidNativeChecks
         bool real = material.IsRealMaterial;
 
         bool photoInsideLayer = IsGlassDescendant(layer, root.Photo);
-        bool bottomMost = root.ChildCount > 0 && ReferenceEquals(root.GetChildAt(0), layer);
-        Check("glass 产品 照片层是根视图最底层且包住主图", bottomMost && photoInsideLayer,
-            $"child0={root.GetChildAt(0)?.GetType().Name ?? "none"} 主图在照片层内={photoInsideLayer}"
-                + $" 层={layer.Width}x{layer.Height} 窗口={root.Width}x{root.Height}");
+        var screen = root.ScreenLayer;
+        var scene = root.SceneLayer;
+        var glass = root.GlassControlLayer;
+        bool screenAtRoot = root.ChildCount > 0 && ReferenceEquals(root.GetChildAt(0), screen);
+        bool screenOrder = screen.ChildCount >= 2
+            && ReferenceEquals(screen.GetChildAt(0), scene)
+            && ReferenceEquals(screen.GetChildAt(1), glass);
+        bool photoAtSceneBottom = scene.ChildCount > 0 && ReferenceEquals(scene.GetChildAt(0), layer);
+        bool popupOutside = root.ChildCount > 0
+            && ReferenceEquals(root.GetChildAt(root.ChildCount - 1), root.PopupLayer)
+            && !IsGlassDescendant(screen, root.PopupLayer);
+        Check("glass 产品 三层结构与弹层归属",
+            screenAtRoot && screenOrder && photoAtSceneBottom && photoInsideLayer && popupOutside,
+            $"root0={root.GetChildAt(0)?.GetType().Name ?? "none"} screen0={screen.ChildCount switch { > 0 => screen.GetChildAt(0)?.GetType().Name ?? "none", _ => "none" }}"
+                + $" screen1={(screen.ChildCount > 1 ? screen.GetChildAt(1)?.GetType().Name ?? "none" : "none")}"
+                + $" scene0={(scene.ChildCount > 0 ? scene.GetChildAt(0)?.GetType().Name ?? "none" : "none")}"
+                + $" 主图在照片层内={photoInsideLayer} 弹层在屏外={!IsGlassDescendant(screen, root.PopupLayer)}"
+                + $" 窗={root.Width}x{root.Height}");
+        Check("glass 产品 屏幕层/场景层/玻璃层铺满窗口",
+            screen.Width == root.Width && screen.Height == root.Height
+                && scene.Width == root.Width && scene.Height == root.Height
+                && glass.Width == root.Width && glass.Height == root.Height,
+            $"screen={screen.Width}x{screen.Height} scene={scene.Width}x{scene.Height}"
+                + $" glass={glass.Width}x{glass.Height} 窗={root.Width}x{root.Height}");
+        Check("glass 产品 玻璃控件层只取场景层",
+            ReferenceEquals(glass.Source, scene.Backdrop),
+            $"glass.Source={glass.Source.GetType().Name} scene.Backdrop={scene.Backdrop.GetType().Name}");
+        Check("glass 产品 屏幕层与场景层录制开关和分级一致",
+            screen.RecordsBackdrop == real && scene.RecordsBackdrop == real,
+            $"screen={screen.RecordsBackdrop} scene={scene.RecordsBackdrop} tier={BackdropCapabilities.Tier}");
+        bool popupSource = real
+            ? ReferenceEquals(root.PopupLayer.Backdrop, screen.Backdrop)
+            : root.PopupLayer.Backdrop == null;
+        Check("glass 产品 弹层玻璃材质取屏幕层最终画面",
+            popupSource && root.PopupLayer.Surface is AndroidGlassPopupMaterial,
+            $"source={root.PopupLayer.Backdrop?.GetType().Name ?? "null"} expected={screen.Backdrop.GetType().Name} "
+                + $"surface={root.PopupLayer.Surface?.GetType().Name ?? "null"}");
         int photos = CountGlassPhotoViews(root);
         Check("glass 产品 主图宿主唯一（没有第二个 AndroidPhotoView）", photos == 1, $"count={photos}");
         Check("glass 产品 照片层铺满窗口", layer.Width == root.Width && layer.Height == root.Height,
@@ -286,6 +328,231 @@ internal static partial class AndroidNativeChecks
                 + $"（顺序：ColorControls → Blur）");
 
         CheckGlassExifStructure(root, real);
+    }
+
+    /// <summary>
+    /// 主屏玻璃控件层：三层结构已在 <see cref="CheckGlassProductStructure"/> 核对；这里核对可见锚点与
+    /// 静止呈现矩形、配方令牌、分级、按压形变/回弹、悬停、焦点与禁用，不读取内部绘制像素。
+    /// </summary>
+    /// <param name="root">主屏根视图。</param>
+    private static async Task CheckGlassControlLayerAsync(AndroidNativeRootView root)
+    {
+        var layer = root.GlassControlLayer;
+        root.Invalidate();
+        await Task.Delay(120);
+
+        var visible = new List<GlassControlSnapshot>();
+        foreach (var snapshot in layer.ControlsForChecks())
+        {
+            if (!snapshot.Anchor.IsShown || snapshot.Anchor.Visibility != ViewStates.Visible) continue;
+            if (snapshot.Anchor.Width < 1 || snapshot.Anchor.Height < 1) continue;
+            visible.Add(snapshot);
+        }
+        Check("glass 控件层 存在可见玻璃控件", visible.Count > 0, $"count={visible.Count}");
+
+        var badRect = new List<string>();
+        var badRecipe = new List<string>();
+        var badTier = new List<string>();
+        var badSurface = new List<string>();
+        float blur = (float)DesignTokens.ShellGlassAndroidButtonBlurRadius;
+        float lensHeight = (float)DesignTokens.ShellGlassAndroidButtonLensHeight;
+        float lensAmount = (float)DesignTokens.ShellGlassAndroidButtonLensAmount;
+        float vibrancy = (float)DesignTokens.ShellGlassAndroidButtonVibrancySaturation;
+        float density = (float)AndroidUiTheme.Density(root.Context!);
+        foreach (var snapshot in visible)
+        {
+            var location = new int[2];
+            snapshot.Anchor.GetLocationInWindow(location);
+            var expected = new Rect(location[0], location[1],
+                location[0] + snapshot.Anchor.Width, location[1] + snapshot.Anchor.Height);
+            bool sameRect = snapshot.AnchorRect.Left == expected.Left
+                && snapshot.AnchorRect.Top == expected.Top
+                && snapshot.AnchorRect.Right == expected.Right
+                && snapshot.AnchorRect.Bottom == expected.Bottom;
+            if (!sameRect || snapshot.ClipRect.Width() <= 0 || snapshot.ClipRect.Height() <= 0)
+                badRect.Add($"{snapshot.Kind}:{snapshot.AnchorRect}/{expected} clip={snapshot.ClipRect}");
+
+            bool recipe = Math.Abs(snapshot.VibrancySaturation - vibrancy) < 1e-6
+                && Math.Abs(snapshot.BlurRadiusDp - blur) < 1e-6
+                && Math.Abs(snapshot.LensHeightDp - lensHeight) < 1e-6
+                && Math.Abs(snapshot.LensAmountDp - lensAmount) < 1e-6;
+            if (!recipe) badRecipe.Add($"{snapshot.Kind}:{snapshot.VibrancySaturation}/{snapshot.BlurRadiusDp}/{snapshot.LensHeightDp}/{snapshot.LensAmountDp}");
+
+            bool tier = snapshot.Tier == BackdropCapabilities.Tier
+                && snapshot.UsesMaterial == (BackdropCapabilities.Tier != BackdropTier.ColorLayer)
+                && snapshot.HasLens == (BackdropCapabilities.Tier == BackdropTier.Full)
+                && snapshot.HasShadow == (BackdropCapabilities.Tier == BackdropTier.Full)
+                && snapshot.HasHighlight == (BackdropCapabilities.Tier == BackdropTier.Full)
+                && (snapshot.Tier == BackdropTier.ColorLayer
+                    ? snapshot.Effect.IsEmpty
+                    : snapshot.Effect.RenderEffect != null);
+            if (!tier) badTier.Add($"{snapshot.Kind}:{snapshot.Tier}/{snapshot.UsesMaterial}/{snapshot.HasLens}");
+
+            bool surface = snapshot.Kind switch
+            {
+                GlassControlKind.Button => ((AndroidGlassButton)snapshot.Anchor).Checkable
+                    ? snapshot.SurfaceColor == ((AndroidGlassButton)snapshot.Anchor).GlassSurfaceColor
+                    : snapshot.SurfaceColor == AndroidUiTheme.GlassButtonFill,
+                _ => snapshot.SurfaceColor == AndroidUiTheme.GlassButtonFill,
+            };
+            if (!surface) badSurface.Add($"{snapshot.Kind}:{snapshot.SurfaceColor} expected={AndroidUiTheme.GlassButtonFill}");
+        }
+        Check("glass 控件层 锚点与静止呈现矩形一致", badRect.Count == 0,
+            badRect.Count == 0 ? $"可见控件={visible.Count}" : string.Join("；", badRect));
+        Check("glass 控件层 配方实际读取按钮令牌", badRecipe.Count == 0,
+            badRecipe.Count == 0
+                ? $"vibrancy={vibrancy} blur={blur}dp lens={lensHeight}/{lensAmount}dp"
+                : string.Join("；", badRecipe));
+        Check("glass 控件层 分级与效果层一致", badTier.Count == 0,
+            badTier.Count == 0 ? $"tier={BackdropCapabilities.Tier}" : string.Join("；", badTier));
+        Check("glass 控件层 表面色取按钮色层（可勾选入口按状态）", badSurface.Count == 0,
+            badSurface.Count == 0 ? $"fill={AndroidUiTheme.GlassButtonFill}" : string.Join("；", badSurface));
+
+        // 选一个可见按钮做交互；没有按钮时用合体的第一段。
+        View? target = null;
+        GlassControlSnapshot selected = default;
+        foreach (var snapshot in visible)
+        {
+            if (snapshot.Kind == GlassControlKind.Button && snapshot.Anchor.Enabled)
+            {
+                target = snapshot.Anchor;
+                selected = snapshot;
+                break;
+            }
+        }
+        if (target == null)
+        {
+            foreach (var snapshot in visible)
+            {
+                if (snapshot.Kind != GlassControlKind.Combo) continue;
+                var combo = (AndroidGlassCombo)snapshot.Anchor;
+                foreach (var segment in combo.SegmentsForChecks)
+                {
+                    if (!segment.Enabled) continue;
+                    target = segment;
+                    selected = snapshot;
+                    break;
+                }
+                if (target != null) break;
+            }
+        }
+        if (target == null)
+        {
+            GlassHostNote("glass 控件层 交互：当前形态没有可用的按钮/合体锚点，跳过按压与悬停检查");
+            return;
+        }
+
+        Check("glass 控件层 组件实际使用玻璃锚点（场景内不重复绘制）",
+            target is AndroidGlassButton b ? b.IsGlassAnchored
+                : selected.Anchor is AndroidGlassCombo c && c.IsGlassAnchored,
+            $"target={target.GetType().Name} selected={selected.Kind}");
+
+        // 焦点：真实视图仍可获得键盘焦点，绘制层读取同一锚点状态。
+        bool wasTouchFocus = target.FocusableInTouchMode;
+        target.FocusableInTouchMode = true;
+        bool requested = target.RequestFocus();
+        if (!requested) requested = target.RequestFocusFromTouch();
+        root.Invalidate();
+        await Task.Delay(120);
+        layer.TryGetControlForChecks(selected.Anchor, out var focusState);
+        Check("glass 控件层 键盘焦点仍落在真实锚点", focusState.Focused,
+            $"target={target.GetType().Name} requested={requested} focused={focusState.Focused}");
+        target.ClearFocus();
+        target.FocusableInTouchMode = wasTouchFocus;
+
+        long downTime = global::Android.OS.SystemClock.UptimeMillis();
+        int centerX = Math.Max(1, target.Width / 2);
+        int centerY = Math.Max(1, target.Height / 2);
+
+        // 悬停：强度取令牌的一半，位置为指针处；不放大、不位移。
+        layer.SetHoverForChecks(selected.Anchor, true, centerX, centerY);
+        root.Invalidate();
+        await Task.Delay(80);
+        layer.TryGetControlForChecks(selected.Anchor, out var hoverState);
+        bool hoverOk = hoverState.Hovered
+            && Math.Abs(hoverState.HoverIntensity - DesignTokens.ShellGlassAndroidButtonHoverIntensity) < 1e-6
+            && Math.Abs(hoverState.ScaleX - 1f) < 1e-4
+            && Math.Abs(hoverState.TranslationX) < 1e-4;
+        Check("glass 控件层 悬停高光为按压一半且不形变", hoverOk,
+            $"hovered={hoverState.Hovered} intensity={hoverState.HoverIntensity}"
+                + $" scale={hoverState.ScaleX:0.###} tx={hoverState.TranslationX:0.###}");
+        layer.SetHoverForChecks(selected.Anchor, false, centerX, centerY);
+
+        // 按下：无涟漪、按下即起手；移动产生橡皮筋位移与方向拉伸；取消后弹簧回弹。
+        var down = MotionEvent.Obtain(downTime, downTime, MotionEventActions.Down, centerX, centerY, 0);
+        target.DispatchTouchEvent(down);
+        down!.Recycle();
+        root.Invalidate();
+        await Task.Delay(100);
+        layer.TryGetControlForChecks(selected.Anchor, out var pressState);
+        Check("glass 控件层 按下即起手并放大", pressState.Pressed && pressState.PressProgress > 0.05f
+                && pressState.ScaleX > 1f,
+            $"pressed={pressState.Pressed} progress={pressState.PressProgress:0.###} scaleX={pressState.ScaleX:0.###}");
+
+        var move = MotionEvent.Obtain(downTime, downTime + 16,
+            MotionEventActions.Move, centerX + (int)Math.Round(12 * density), centerY, 0);
+        target.DispatchTouchEvent(move);
+        move!.Recycle();
+        root.Invalidate();
+        await Task.Delay(100);
+        layer.TryGetControlForChecks(selected.Anchor, out var moveState);
+        bool moved = Math.Abs(moveState.OffsetX) > 0.5f || Math.Abs(moveState.OffsetY) > 0.5f;
+        Check("glass 控件层 跟手位移与方向拉伸", moved
+                && selected.Kind != GlassControlKind.Rating,
+            $"offset={moveState.OffsetX:0.##}/{moveState.OffsetY:0.##} scaleX={moveState.ScaleX:0.###} scaleY={moveState.ScaleY:0.###}");
+
+        var cancel = MotionEvent.Obtain(downTime, downTime + 32, MotionEventActions.Cancel, centerX, centerY, 0);
+        target.DispatchTouchEvent(cancel);
+        cancel!.Recycle();
+        root.Invalidate();
+        await Task.Delay(1500);
+        layer.TryGetControlForChecks(selected.Anchor, out var restState);
+        Check("glass 控件层 取消后弹簧回弹", !restState.Pressed && restState.PressProgress < 0.1f,
+            $"pressed={restState.Pressed} progress={restState.PressProgress:0.###} scaleX={restState.ScaleX:0.###}");
+
+        // 禁用：玻璃照常绘制，但不进入按压。
+        bool wasEnabled = target.Enabled;
+        target.Enabled = false;
+        root.Invalidate();
+        await Task.Delay(60);
+        var disabledDown = MotionEvent.Obtain(downTime, downTime, MotionEventActions.Down, centerX, centerY, 0);
+        target.DispatchTouchEvent(disabledDown);
+        disabledDown!.Recycle();
+        root.Invalidate();
+        await Task.Delay(80);
+        layer.TryGetControlForChecks(selected.Anchor, out var disabledState);
+        Check("glass 控件层 禁用不播放按压", !disabledState.Pressed && disabledState.PressProgress < 0.05f,
+            $"pressed={disabledState.Pressed} progress={disabledState.PressProgress:0.###}");
+        target.Enabled = wasEnabled;
+
+        bool animators = !OperatingSystem.IsAndroidVersionAtLeast(26)
+            || global::Android.Animation.ValueAnimator.AreAnimatorsEnabled();
+        layer.TryGetControlForChecks(selected.Anchor, out var motionState);
+        Check("glass 控件层 减少动态效果随系统动画开关", motionState.AnimationsEnabled == animators,
+            $"state={motionState.AnimationsEnabled} system={animators}");
+
+        if (BackdropCapabilities.IsRenderEffectSupported) await CheckGlassPopupMaterialAsync(root);
+    }
+
+    private static async Task CheckGlassPopupMaterialAsync(AndroidNativeRootView root)
+    {
+        if (!await OpenGroupedMenuAsync(root))
+        {
+            Check("glass 弹层 真实筛选入口打开玻璃面板", false, "筛选下拉未打开");
+            return;
+        }
+        await Task.Delay(250);
+        var material = root.PopupLayer.Surface as AndroidGlassPopupMaterial;
+        long builds = material?.EffectBuildCountForChecks ?? -1;
+        await Task.Delay(180);
+        bool open = root.PopupLayer.IsOpen && root.FilterBar.IsDropdownOpen;
+        bool effect = material?.EffectForChecks.RenderEffect != null;
+        bool reused = material != null && material.EffectBuildCountForChecks == builds;
+        Check("glass 弹层 真实筛选入口生成并复用玻璃效果", open && effect && reused,
+            $"open={open} effect={effect} builds={builds}→{material?.EffectBuildCountForChecks}");
+        await GlassBackdropSaveScreenshotAsync(new Rect(0, 0, root.Width, root.Height), "glass-product-popup");
+        root.DismissFilterDropdown();
+        await WaitAsync(() => !root.PopupLayer.IsOpen, "玻璃弹层关闭", 3000);
     }
 
     /// <summary>两个 EXIF 块的变体、衬底色层与 tint 令牌断言（像素证明另在 <see cref="CheckGlassExifProductAsync"/>）。</summary>
@@ -347,7 +614,7 @@ internal static partial class AndroidNativeChecks
     /// <param name="barRect">栏底窗口矩形（px）。</param>
     private static async Task CheckGlassBarMaterialAsync(AndroidNativeRootView root,
         (string Name, AndroidBarScrim Bar) bar, Rect barRect,
-        List<(View View, ViewStates Visibility)> hidden)
+        List<GlassDetachedView> hidden)
     {
         var photo = root.Photo;
         var material = root.PhotoMaterial;
@@ -375,7 +642,7 @@ internal static partial class AndroidNativeChecks
             + $" 密度={density:F2} 模糊半径={material.BlurRadiusDp}dp≈{radiusPx}px"
             + $"（上下 inset={inset}px，左右各排除 2×半径={edgeInset}px：排除照片层 Clamp 边界外延）");
 
-        // 同一帧的直通对照：栏外未被任何材质覆盖的照片（其余视图已隐藏，只剩照片层与被测栏底）。
+        // 同一帧的直通对照：栏外未被任何材质覆盖的照片（其余视图已移出，只剩照片层与被测栏底）。
         // 对照区必须整体绕开材质视图（这里就是被测栏底整块），不能只避开内缩后的采样带。
         var materialRects = GlassVisibleMaterialRects(root);
         if (!TryGlassControlRect(window, sample, materialRects, horizontalProfile: true, out var control))
@@ -557,6 +824,52 @@ internal static partial class AndroidNativeChecks
                 + $" ｜ {GlassProductMaterialDraws(root)}");
     }
 
+    private static async Task CheckGlassButtonSwatchesAsync(AndroidNativeRootView root)
+    {
+        View? target = root.PhoneNavigation.IsShown
+            ? root.PhoneNavigation
+            : root.FilterBar.ComboForChecks.IsShown
+                ? root.FilterBar.ComboForChecks
+                : root.PhoneCommands.IsShown
+                    ? root.PhoneCommands
+                    : null;
+        if (target == null)
+        {
+            GlassHostNote("玻璃按钮三色校准：当前形态没有普通按钮可采样");
+            return;
+        }
+
+        double density = AndroidUiTheme.Density(root.Context!);
+        int inset = (int)Math.Ceiling(DesignTokens.ShellGlassAndroidButtonLensHeight * density) + 2;
+        int size = Math.Max(4, (int)Math.Round(2 * density));
+        var frame = GlassViewWindowRect(target);
+        var sample = new Rect(frame.Right - inset - size, frame.Top + inset,
+            frame.Right - inset, frame.Top + inset + size);
+        if (!new Rect(frame).Contains(sample))
+        {
+            GlassHostNote($"玻璃按钮三色校准：内区不可用 frame={frame} sample={sample}");
+            return;
+        }
+
+        var colorSpace = SurfaceImageColorSpace();
+        int imageWidth = root.Width + GlassProductPatternMargin;
+        int imageHeight = root.Height + GlassProductPatternMargin;
+        using var black = CreateGlassProductPattern(GlassProductPattern.FlatBlack, imageWidth, imageHeight, colorSpace);
+        await ShowGlassPatternAtPhysicalAsync(root, black!, root.Photo);
+        _glassButtonDarkLuma = (await MeasureGlassRectAsync(sample, [], target, isolate: false)).Mean;
+        using var gray = CreateGlassProductPattern(GlassProductPattern.FlatGray, imageWidth, imageHeight, colorSpace);
+        await ShowGlassPatternAtPhysicalAsync(root, gray!, root.Photo);
+        _glassButtonGrayLuma = (await MeasureGlassRectAsync(sample, [], target, isolate: false)).Mean;
+        using var white = CreateGlassProductPattern(GlassProductPattern.FlatWhite, imageWidth, imageHeight, colorSpace);
+        await ShowGlassPatternAtPhysicalAsync(root, white!, root.Photo);
+        _glassButtonBrightLuma = (await MeasureGlassRectAsync(sample, [], target, isolate: false)).Mean;
+        Check("glass 产品 按钮三色衬底真实材质读数有效",
+            _glassButtonBrightLuma > _glassButtonDarkLuma
+                && _glassButtonGrayLuma > _glassButtonDarkLuma
+                && _glassButtonGrayLuma < _glassButtonBrightLuma,
+            $"黑={_glassButtonDarkLuma:F1} 灰={_glassButtonGrayLuma:F1} 白={_glassButtonBrightLuma:F1} sample={sample}");
+    }
+
     /// <summary>
     /// 带衬底 EXIF 块的像素证明：用块内**无文字且不受圆角影响**的上缘带做与栏底相同的黑白/条纹/边缘测量；
     /// 几何上确实没有可信采样区时如实记 NOTE，绝不用结构断言冒充像素验收。
@@ -598,14 +911,14 @@ internal static partial class AndroidNativeChecks
         GlassHostNote($"产品 EXIF 取样：{target.Name} 无文字带={strip}（{stripDetail}）");
 
         var window = new Rect(0, 0, root.Width, root.Height);
-        var hidden = new List<(View View, ViewStates Visibility)>();
+        var hidden = new List<GlassDetachedView>();
         try
         {
             HideGlassBarContents(hidden, target.Block);
             await Task.Delay(80);
 
             // 对照区必须整体绕开 EXIF 块（上缘采样带本身就在块内，只避开采样带会量到块内模糊值），
-            // 同时不与其他可见材质相交；因此清单在隐藏无关视图之后再取。
+            // 同时不与其他可见材质相交；因此清单在移出无关视图之后再取。
             var materialRects = GlassVisibleMaterialRects(root);
             if (!TryGlassControlRect(window, strip, materialRects, horizontalProfile: true, out var control))
             {
@@ -759,7 +1072,7 @@ internal static partial class AndroidNativeChecks
             GlassHostNote($"glass 低版本 像素证明：{bar2.Name} 内区仅 {sample.Width()}x{sample.Height()}px，跳过");
             return;
         }
-        var hidden = new List<(View View, ViewStates Visibility)>();
+        var hidden = new List<GlassDetachedView>();
         try
         {
             HideGlassBarContents(hidden, bar2.Bar);
@@ -869,14 +1182,14 @@ internal static partial class AndroidNativeChecks
             => $"n={Length} 均值={Mean:F1} 振幅={Amplitude:F1} rms={Rms:F1} 边缘={EdgeWidthPx:F1}px";
     }
 
-    /// <summary>回读一个窗口矩形并给出平均亮度（用于黑白衬底的「取到照片」判定）。每次回读前先重新压住栏位内容。</summary>
+    /// <summary>回读一个窗口矩形并给出平均亮度（用于黑白衬底的「取到照片」判定）。每次回读前先重新隔离栏位内容。</summary>
     /// <param name="windowRect">窗口坐标矩形（px）。</param>
-    /// <param name="hidden">隐藏清单（贯穿整段测量，收尾统一还原）。</param>
+    /// <param name="hidden">移出清单（贯穿整段测量，收尾统一还原）。</param>
     /// <param name="keep">被测材质视图（自身与祖先链保持可见）。</param>
     private static async Task<GlassProductStats> MeasureGlassRectAsync(Rect windowRect,
-        List<(View View, ViewStates Visibility)> hidden, View keep)
+        List<GlassDetachedView> hidden, View keep, bool isolate = true)
     {
-        await RehideGlassBarContentsAsync(hidden, keep);
+        if (isolate) await RehideGlassBarContentsAsync(hidden, keep);
         var capture = await CaptureGlassRectAsync(windowRect);
         try
         {
@@ -909,14 +1222,14 @@ internal static partial class AndroidNativeChecks
 
     /// <summary>
     /// 回读一个窗口矩形并取一条 1D 亮度剖面（跨 3–5 条线平均，降噪不改变振幅口径）。
-    /// 每次回读前先重新压住栏位内容：切图与布局会让产品栏位内容重新显示，污染测量。
+    /// 每次回读前重新隔离栏位内容：隔离期间被重新挂回的视图会再次移出，避免污染测量。
     /// </summary>
     /// <param name="windowRect">窗口坐标矩形（px）。</param>
     /// <param name="horizontalProfile">true 沿水平方向取剖面（竖条纹/竖直边缘），false 沿垂直方向。</param>
-    /// <param name="hidden">隐藏清单（贯穿整段测量，收尾统一还原）。</param>
+    /// <param name="hidden">移出清单（贯穿整段测量，收尾统一还原）。</param>
     /// <param name="keep">被测材质视图（自身与祖先链保持可见）。</param>
     private static async Task<GlassProductProfile> MeasureGlassProfileAsync(Rect windowRect, bool horizontalProfile,
-        List<(View View, ViewStates Visibility)> hidden, View keep, string? shotName = null)
+        List<GlassDetachedView> hidden, View keep, string? shotName = null)
     {
         await RehideGlassBarContentsAsync(hidden, keep);
         var capture = await CaptureGlassRectAsync(windowRect, shotName);
@@ -1288,43 +1601,27 @@ internal static partial class AndroidNativeChecks
     }
 
     /// <summary>
-    /// 把主屏上除照片层与被测材质视图（含其祖先链）以外的可见子视图临时设为不可见。
-    /// 可重复调用：切图与布局会让产品栏位内容（胶片卡片、底部按钮等）重新显示，采样前必须再压一次，
-    /// 否则测量会被这些内容污染；每次新压住的视图都追加进同一份 <paramref name="hidden"/>，收尾一起还原。
+    /// 把场景层里除照片层与被测材质视图（含其祖先链）以外的子视图移出父容器，玻璃绘制层也从屏幕层移出。
+    /// 产品布局对已移出的视图无能为力，切图与布局不会再让它们回到绘制树；收尾由 <see cref="RestoreGlassOverlays"/> 按原位放回。
+    /// 可重复调用：若隔离期间确有视图被重新挂回（产品结构变化），会再次移出并追加进同一份清单。
     /// </summary>
-    /// <param name="hidden">原可见性清单。</param>
+    /// <param name="detached">移出清单（贯穿整段测量，收尾统一还原）。</param>
     /// <param name="keep">被测材质视图（自身与祖先链保留）。</param>
-    /// <returns>本次新隐藏的视图数。</returns>
-    private static int HideGlassBarContents(List<(View View, ViewStates Visibility)> hidden, View keep)
-    {
-        var root = _root!;
-        var keepChain = new HashSet<View>();
-        for (var current = keep; current != null && !ReferenceEquals(current, root); current = current.Parent as View)
-            keepChain.Add(current);
-        int added = 0;
-        for (int index = 0; index < root.ChildCount; index++)
-        {
-            var child = root.GetChildAt(index);
-            if (child == null || ReferenceEquals(child, root.PhotoLayer) || keepChain.Contains(child)) continue;
-            if (child.Visibility != ViewStates.Visible) continue;
-            hidden.Add((child, child.Visibility));
-            child.Visibility = ViewStates.Invisible;
-            added++;
-        }
-        return added;
-    }
+    /// <returns>本次新移出的视图数。</returns>
+    private static int HideGlassBarContents(List<GlassDetachedView> detached, View keep)
+        => DetachGlassViews(detached, keep);
 
     /// <summary>
-    /// 每次 PixelCopy 测量与诊断截图之前重新压住栏位内容，并在确有视图被重新隐藏时等界面落地。
-    /// 只压可见性、不换视图结构，产品照片层与被测材质保持原样。
+    /// 每次 PixelCopy 测量与诊断截图之前重新隔离栏位内容，并在确有视图被移出时等界面落地。
+    /// 隔离只改视图结构（移出/按原位放回），不改可见性、不透明度，被测材质照常绘制。
     /// </summary>
-    /// <param name="hidden">隐藏清单。</param>
+    /// <param name="detached">移出清单。</param>
     /// <param name="keep">被测材质视图。</param>
-    private static async Task RehideGlassBarContentsAsync(List<(View View, ViewStates Visibility)> hidden, View keep)
+    private static async Task RehideGlassBarContentsAsync(List<GlassDetachedView> detached, View keep)
     {
-        int added = HideGlassBarContents(hidden, keep);
+        int added = HideGlassBarContents(detached, keep);
         if (added == 0) return;
-        GlassHostNote($"glass 产品 回读前重新隐藏栏位内容 {added} 个（切图/布局会重新显示它们）");
+        GlassHostNote($"glass 产品 回读前再次移出栏位内容 {added} 个（隔离期间被重新挂回）");
         await Task.Delay(80);
     }
 
@@ -1337,13 +1634,13 @@ internal static partial class AndroidNativeChecks
     private static string GlassProductMaterialDraws(AndroidNativeRootView root)
         => $"材质OnDraw={root.PhotoMaterial.MaterialDrawCount}";
 
-    /// <summary>诊断截图：回读前先重新压住栏位内容，再落 PNG（文件名与路径写进报告 NOTE）。</summary>
+    /// <summary>诊断截图：回读前先重新隔离栏位内容，再落 PNG（文件名与路径写进报告 NOTE）。</summary>
     /// <param name="region">窗口坐标区域。</param>
     /// <param name="name">文件名前缀。</param>
-    /// <param name="hidden">隐藏清单。</param>
+    /// <param name="hidden">移出清单。</param>
     /// <param name="keep">被测材质视图。</param>
     private static async Task SaveGlassProductShotAsync(Rect region, string name,
-        List<(View View, ViewStates Visibility)> hidden, View keep)
+        List<GlassDetachedView> hidden, View keep)
     {
         await RehideGlassBarContentsAsync(hidden, keep);
         await GlassBackdropSaveScreenshotAsync(region, name);

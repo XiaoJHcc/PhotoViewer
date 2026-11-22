@@ -1,6 +1,6 @@
 # PhotoViewer.Android.Backdrop — Backdrop 液态玻璃移植库
 
-> 独立 `net10.0-android` 类库，最低 API 24。只承载 [Kyant0/AndroidLiquidGlass](https://github.com/Kyant0/AndroidLiquidGlass)（Backdrop）与其依赖 [Shapes](https://github.com/Kyant0/Shapes) 向 Android Views 的移植，**不引用任何 PhotoViewer 工程**，不含主屏几何、令牌、产品组件与产品逻辑。头工程以 `ProjectReference` 引用本库。
+> 独立 `net10.0-android` 类库，最低 API 24。只承载 [Kyant0/AndroidLiquidGlass](https://github.com/Kyant0/AndroidLiquidGlass)（Backdrop）与其依赖 [Shapes](https://github.com/Kyant0/Shapes) 向 Android Views 的移植，**不引用任何 PhotoViewer 工程**，不含主屏几何、令牌、产品组件与产品逻辑。头工程以 `ProjectReference` 引用本库；`Properties/AndroidManifest.xml` 是最小 Android 库清单，供 Release AAR 打包。
 
 ## 上游锁定
 
@@ -43,7 +43,7 @@
 | `backdrop/src/commonMain/kotlin/com/kyant/backdrop/shadow/Shadow.kt` | `BackdropShadow.cs` | 半径 24dp、下移半径/6、黑 10%、整体不透明度 1、默认混合模式 |
 | `backdrop/src/commonMain/kotlin/com/kyant/backdrop/shadow/ShadowModifier.kt` | `BackdropShadowRenderer.cs` | 离屏层按 `(ceil(w + 4r + dx), ceil(h + 4r + dy))` 录，层内画形状与清除遮罩，再画在 `(−2r, −2r)` |
 | `backdrop/src/commonMain/kotlin/com/kyant/backdrop/DrawBackdropModifier.kt` | `BackdropDrawer.cs` + `BackdropEffectLayer.cs` | 只移植「按效果链绘制背景」与玻璃元素自己的离屏效果层归属；高光/阴影由独立绘制器按该节点的先后关系组合，`onDrawBehind/Surface/Front`、`exportedBackdrop` 由接入层自行处理 |
-| `app/src/commonMain/kotlin/com/kyant/backdrop/catalog/utils/InteractiveHighlight.kt` | `BackdropInteractiveHighlight.cs` | 按压进度与位置弹簧（阻尼 0.5、刚度 300，阈值 0.001 / 0.01）、整面白 8% + 跟手径向白 15%、按下即起手、移动 `snapTo`、抬手弹回；含逐字 AGSL |
+| `app/src/commonMain/kotlin/com/kyant/backdrop/catalog/utils/InteractiveHighlight.kt` | `BackdropInteractiveHighlight.cs` | 按压进度与位置弹簧（默认阻尼 0.5、刚度 300，阈值 0.001 / 0.01）、整面白 8% + 跟手径向白 15%、按下即起手、移动 `snapTo`、抬手弹回；颜色/半径/弹簧/动画开关可由产品令牌参数化，默认值保持上游；另提供只画径向高光的 `DrawRadial` 供接入层悬停态使用；含逐字 AGSL |
 | `app/src/commonMain/kotlin/com/kyant/backdrop/catalog/utils/DragGestureInspector.kt` | `BackdropPressTracker.cs` | `Initial` + 主通道两次 Down 的语义落到 `MotionEvent`：Down 起手、Move 跟手、PointerUp 换手、Up 结束、Cancel 取消；不检查触控容差 |
 | `app/src/commonMain/kotlin/com/kyant/backdrop/catalog/components/LiquidButton.kt` | `BackdropInteractiveTransform.cs` | 只搬运 `layerBlock` 的形变公式：交叉轴按压放大、`maxOffset × tanh(initialDerivative × offset / maxOffset)`、按方向投影的 X/Y 拉伸；4dp、0.05 等由调用方按配方给出 |
 | `shapes/src/commonMain/kotlin/com/kyant/shapes/RoundedRectangularShape.kt` / `Capsule.kt` / `RoundedRectangle.kt` / `RoundedCornerStyle.kt` / `RectangleCornerRadii.kt` | `BackdropShape.cs` | `BackdropShape`、`BackdropCornerRadii`、`BackdropCornerStyle`、`Capsule`、`RoundedRectangle`、插值形状；圆角以 dp 给出，按密度换算 |
@@ -107,7 +107,7 @@
 - **形状与裁切**：`BackdropDrawer.Draw(..., Path clipPath)` 的路径用玻璃元素坐标，录制时先加 `padding` 再 `ClipPath`，即内容先被裁切再上效果；高光裁在 `BackdropShapeOutline.Path` 内，阴影按同一轮廓在形状外生成。接入层逐帧复用同一个 `BackdropShapeOutline`，避免重复构造 G2 路径。
 - **高光**：`BackdropHighlightRenderer.Draw` 在形状内描边，`Canvas.saveLayer` 承载整体 alpha 与混合模式；线宽、模糊、角度、衰减与上游同名参数对应。`Plain` 无着色器，`Default` / `Ambient` 在 API 33+ 用 AGSL，33 以下退回纯色。
 - **阴影**：`BackdropShadowRenderer.Draw` 在离屏层内先画模糊形状、再用清除模式挖掉本体，最后把层画在形状外；投影可以超出视图边界时由宿主提供不裁切的绘制范围。
-- **按压交互**：`BackdropPressTracker` 不检查触控容差，Down 即起手，Move 跟手，PointerUp 换手，Up/Cancel 收尾；它应挂在承担布局/触摸/读屏的锚点视图上，玻璃材质视图的视觉变换不影响触点局部坐标（上游指针坐标同样不受 `graphicsLayer` 影响）。`BackdropInteractiveHighlight` 用闭式解弹簧推进按压进度与位移，`BackdropInteractiveTransform` 按上游 `layerBlock` 公式给出缩放、拉伸与橡皮筋位移。帧由接入层驱动，本库不持有视图或计时器。
+- **按压交互**：`BackdropPressTracker` 不检查触控容差，Down 即起手，Move 跟手，PointerUp 换手，Up/Cancel 收尾；它应挂在承担布局/触摸/读屏的锚点视图上，玻璃材质视图的视觉变换不影响触点局部坐标（上游指针坐标同样不受 `graphicsLayer` 影响）。`BackdropInteractiveHighlight` 用闭式解弹簧推进按压进度与位移，颜色、径向半径与弹簧参数缺省取上游默认、可由调用方按令牌覆盖；`DrawRadial` 只画跟手径向高光，供悬停等接入层差异。`BackdropInteractiveTransform` 按上游 `layerBlock` 公式给出缩放、拉伸与橡皮筋位移。帧由接入层驱动，本库不持有视图或计时器。
 - **生命周期**：`BackdropEffectScope.Dispose()` 丢弃它持有的效果节点与着色器缓存，之后快照与 scope 都不可再用；`BackdropEffectScope.Reset()` 只重置效果链，不释放节点。`CombinedBackdrop` 不持有资源，不需要 `Dispose`。`LayerBackdropLayout` 释放自己的源层节点。高光/阴影绘制器各自 `Dispose`。
 - **每消费者一份 scope**：同一源层上的不同位置/尺寸控件必须各自持有 `BackdropEffectScope`。共用一份 scope（例如六处栏底共用一个材质对象）会让同一张效果节点在同一帧内被后画的消费者改写，先画的消费者在渲染时读到后者的内容。公共 API 无法从 `BackdropDrawContext` 可靠地猜出消费者身份，归属由调用方按控件建立。
 - **`TileMode`**：Java 枚举在绑定里是类而非常量，故本模块自带 `BackdropTileMode` 四值并映射到平台实例。
@@ -240,7 +240,7 @@ dotnet build /path/to/PhotoViewer.Android.Backdrop/PhotoViewer.Android.Backdrop.
 
 模块自身不含真机断言。头工程的 `pv-check glass` 是唯一验收入口：缺省 `all` = `host` + `product`。
 
-- `product`：**正式产品材质验收**（`PhotoViewer.Android/Native/AndroidNativeChecks.Glass.Product.cs`），跑在主屏现有照片层与共享材质上（6 个栏底、带衬底 EXIF），含结构/配方/分级断言与真实像素证明（黑/灰/白衬底、1px 条纹低通、阶跃边缘展开）和切图/缩放跟随。
+- `product`：**正式产品材质验收**（`PhotoViewer.Android/Native/AndroidNativeChecks.Glass.Product.cs`），跑在主屏现有照片层、场景层与屏幕层上，覆盖三层结构、6 个栏底、带衬底 EXIF、玻璃控件与窗口内弹层的结构/配方/分级、锚点/按压/焦点/回弹，以及黑/灰/白衬底、1px 条纹低通、阶跃边缘展开和切图/缩放跟随。
 - `sample` / `layers`：显式 legacy 机制检查（`AndroidNativeChecks.Glass.Backdrop.cs`），只在点名时运行，用临时装配的 `AndroidPhotoView` + `LayerBackdropLayout` 舞台取证、收尾整体拆除；不作为产品材质验收证据。
 
 ## 边界与已知限制

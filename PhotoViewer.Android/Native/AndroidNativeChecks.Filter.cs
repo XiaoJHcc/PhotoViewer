@@ -281,7 +281,7 @@ internal static partial class AndroidNativeChecks
         entry.RequestFocusFromTouch();
         await Task.Delay(150);
         bool entryFocused = entry.IsFocused;
-        var backgroundA11y = root.PhotoLayer.ImportantForAccessibility;
+        var backgroundA11y = root.ScreenLayer.ImportantForAccessibility;
         if (!await OpenGroupedMenuAsync(root))
         {
             Check("filter 模态隔离与焦点归还", false, "下拉未打开");
@@ -290,7 +290,7 @@ internal static partial class AndroidNativeChecks
         var session = filter.DropdownInstanceForChecks;
         var focus = session?.Panel.FindFocus();
         bool focusInPanel = session != null && focus != null && IsDescendantOf(session.Panel, focus);
-        bool backgroundHidden = root.PhotoLayer.ImportantForAccessibility == ImportantForAccessibility.NoHideDescendants;
+        bool backgroundHidden = root.ScreenLayer.ImportantForAccessibility == ImportantForAccessibility.NoHideDescendants;
         var before = main.CurrentFile;
         _activity!.DispatchKeyEvent(new KeyEvent(KeyEventActions.Down, Keycode.DpadRight));
         await Task.Delay(300);
@@ -298,13 +298,13 @@ internal static partial class AndroidNativeChecks
         bool dismissed = root.DismissFilterDropdown();
         await WaitAsync(() => root.PopupLayer.Visibility == ViewStates.Gone, "弹层淡出完成", 4000);
         await Task.Delay(250);
-        bool restored = root.PhotoLayer.ImportantForAccessibility == backgroundA11y;
+        bool restored = root.ScreenLayer.ImportantForAccessibility == backgroundA11y;
         bool focusReturned = entry.IsFocused;
         Check("filter 模态隔离与焦点归还",
             entryFocused && focusInPanel && backgroundHidden && shortcutsPaused && dismissed && restored && focusReturned,
             $"entryFocused={entryFocused} focusInPanel={focusInPanel} hidden={backgroundHidden} "
             + $"shortcuts={shortcutsPaused} dismissed={dismissed} restored={restored} "
-            + $"a11y={backgroundA11y}→{root.PhotoLayer.ImportantForAccessibility} focusBack={focusReturned} "
+            + $"a11y={backgroundA11y}→{root.ScreenLayer.ImportantForAccessibility} focusBack={focusReturned} "
             + $"focus={focus?.GetType().Name ?? "无"}");
     }
 

@@ -34,7 +34,8 @@ namespace PhotoViewer.Android.Native;
 /// 手机形态的槽位全部由共享 <see cref="PhoneScreenLayout"/> 给出（竖屏顶行/分析/胶片/底行，
 /// 横屏刘海侧列/分析/控制列）。主图视图在所有形态下铺满窗口，照片落在
 /// <see cref="PhotoViewport.SetFitInsets"/> 给出的适应区内，放大后可越过栏缘。
-/// 照片层是根视图最底层的录制容器：栏底与带衬底 EXIF 从它取样（SHELL-12@android）。
+/// 取样链路逐层嵌套：根视图 → 屏幕层 → 场景层 → 照片层。照片层录主图供栏底、带衬底 EXIF 与
+/// 栏底与带衬底 EXIF 取样（SHELL-12@android），玻璃控件层改从场景层取样，窗口内弹层在屏幕层之外。
 /// </summary>
 internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
 {
@@ -42,7 +43,10 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     private readonly PhotoLoadSession _session;
     private readonly AndroidPhotoView _photo;
     private readonly FrameLayout _photoPane;
+    private readonly LayerBackdropLayout _screenLayer;
+    private readonly LayerBackdropLayout _sceneLayer;
     private readonly LayerBackdropLayout _photoLayer;
+    private readonly AndroidGlassControlLayer _glassLayer;
     private readonly AndroidPhotoMaterial _photoMaterial;
     /// <summary>上一次让材质失效时的主图渲染代际；用于避免材质重绘与照片层重录互相触发。</summary>
     private int _materialFrames = -1;
@@ -135,8 +139,14 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     internal AndroidNavigationOverlay Navigation => _navigation;
     /// <summary>空态提示所在的主图分区。</summary>
     internal FrameLayout PhotoPane => _photoPane;
+    /// <summary>屏幕层录制容器（验收读取：根视图→屏幕层→场景层结构）。</summary>
+    internal LayerBackdropLayout ScreenLayer => _screenLayer;
+    /// <summary>场景层录制容器（玻璃控件层的唯一取样源）。</summary>
+    internal LayerBackdropLayout SceneLayer => _sceneLayer;
     /// <summary>照片层录制容器（验收读取：取样源身份与录制状态）。</summary>
     internal LayerBackdropLayout PhotoLayer => _photoLayer;
+    /// <summary>主屏玻璃控件绘制层（验收读取：锚点、配方与状态快照）。</summary>
+    internal AndroidGlassControlLayer GlassControlLayer => _glassLayer;
     /// <summary>共享照片层材质（验收读取：分级、配方、效果快照、取样源与绘制计数）。</summary>
     internal AndroidPhotoMaterial PhotoMaterial => _photoMaterial;
     /// <summary>当前布局安全区（dp）；横屏已忽略手势导航条底部。</summary>
@@ -246,44 +256,58 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         _photo = new AndroidPhotoView(activity);
         _main.FitToViewRequested += OnFitToViewRequested;
         _photoPane.AddView(_photo, new FrameLayout.LayoutParams(LayoutParams.MatchParent, LayoutParams.MatchParent));
-        // SHELL-12@android：照片层是唯一取样源——主图（TextureView）录进 RenderNode，栏底与带衬底 EXIF
-        // 都从这一层取样。层铺满窗口、位于根视图最底层；栏内容与取样方都不进这一层（上游取样规则）。
+        // SHELL-12@android：照片层录主图（TextureView）的 RenderNode，铺满窗口、在场景层最底层；
+        // 栏底、带衬底 EXIF 与玻璃控件层都从这一层取样，栏内容与取样方都不进这一层（上游取样规则）。
         _photoLayer = new LayerBackdropLayout(activity);
         _photoLayer.SetClipChildren(true);
         _photoLayer.AddView(_photoPane, new FrameLayout.LayoutParams(LayoutParams.MatchParent, LayoutParams.MatchParent));
-        AddView(_photoLayer, new LayoutParams(LayoutParams.MatchParent, LayoutParams.MatchParent));
+
+        // 取样层级：根视图 → 屏幕层 → 场景层 → 照片层。主屏现有内容与照片都进场景层；
+        // 玻璃控件层在屏幕层内、场景层之后，只从场景层取样；弹层宿主仍在屏幕层之外的根视图最上层。
+        _sceneLayer = new LayerBackdropLayout(activity);
+        _sceneLayer.SetClipChildren(true);
+        _sceneLayer.RecordsBackdrop = BackdropCapabilities.IsRenderEffectSupported;
+        _sceneLayer.AddView(_photoLayer, new FrameLayout.LayoutParams(LayoutParams.MatchParent, LayoutParams.MatchParent));
+        _screenLayer = new LayerBackdropLayout(activity);
+        _screenLayer.SetClipChildren(true);
+        _screenLayer.RecordsBackdrop = BackdropCapabilities.IsRenderEffectSupported;
+        _screenLayer.AddView(_sceneLayer, new FrameLayout.LayoutParams(LayoutParams.MatchParent, LayoutParams.MatchParent));
+        AddView(_screenLayer, new LayoutParams(LayoutParams.MatchParent, LayoutParams.MatchParent));
+        _glassLayer = new AndroidGlassControlLayer(activity, _sceneLayer);
+        _screenLayer.AddView(_glassLayer, new FrameLayout.LayoutParams(LayoutParams.MatchParent, LayoutParams.MatchParent));
+
         _photoMaterial = new AndroidPhotoMaterial(_photoLayer);
         _photoLayer.Recorded += OnPhotoLayerRecorded;
         // 共享效果层的离屏缓冲与主图纹理同属这一进程的 GPU 外部占用，一起记进预算源。
-        _photo.AdditionalFootprint = () => _photoMaterial.FootprintBytes;
+        _photo.AdditionalFootprint = () => _photoMaterial.FootprintBytes + _glassLayer.FootprintBytes;
 
         _fileBar = new AndroidBarScrim(activity, _photoMaterial);
-        AddView(_fileBar);
+        _sceneLayer.AddView(_fileBar);
         _fileDivider = new View(activity);
         _fileDivider.SetBackgroundColor(AndroidUiTheme.Divider);
-        AddView(_fileDivider);
+        _sceneLayer.AddView(_fileDivider);
         _controlBackground = new AndroidBarScrim(activity, _photoMaterial);
-        AddView(_controlBackground);
+        _sceneLayer.AddView(_controlBackground);
         _controlDivider = new View(activity);
         _controlDivider.SetBackgroundColor(AndroidUiTheme.Divider);
-        AddView(_controlDivider);
+        _sceneLayer.AddView(_controlDivider);
 
         _popupLayer = new AndroidGlassPopupLayer(activity);
-        _filterBar = new AndroidFilterBar(activity, main);
+        _filterBar = new AndroidFilterBar(activity, main, _glassLayer);
         _filterBar.PopupLayer = _popupLayer;
         _filterScrollHost = new AndroidControlBarScrollHost(activity, _filterBar);
         // 筛选条滚动时锚点跟着移走，已打开的下拉不能停在旧位置。
         _filterScrollHost.ScrollChanged += OnFilterScrollChanged;
-        AddView(_filterScrollHost);
+        _sceneLayer.AddView(_filterScrollHost);
         _filmstrip = new AndroidFilmstripView(activity, main);
-        AddView(_filmstrip);
+        _sceneLayer.AddView(_filmstrip);
         _filmstrip.RateRequested += OnRateRequested;
         _filmstrip.PopupHost = this;
-        _controlBar = new AndroidControlBar(activity, main, _photoMaterial);
+        _controlBar = new AndroidControlBar(activity, main, _photoMaterial, _glassLayer);
         _controlBar.Wire(Execute, rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); },
             ShowExifTools, OpenRatingPopupFromControlBar);
         _controlScrollHost = new AndroidControlBarScrollHost(activity, _controlBar);
-        AddView(_controlScrollHost);
+        _sceneLayer.AddView(_controlScrollHost);
         _ratingPopup = new AndroidRatingPopup(this, main, _popupLayer,
             () => _windowInsets.DeriveSafe(_main.IsScreenLandscape));
         _controlBar.RatingControl.Popup = _ratingPopup;
@@ -296,12 +320,12 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         _analysisPane.DetailChanged += UpdateDetailHighlight;
         _analysisPane.DetailFocusRequested += (u, v) => _photo.FocusOnPoint(u, v, 1);
         _analysisPane.Visibility = ViewStates.Gone;
-        AddView(_analysisPane);
+        _sceneLayer.AddView(_analysisPane);
 #if PHOTOVIEWER_DINO
         _similarityPane = new AndroidSimilarityPanel(activity, main);
         _similarityPane.PopupHost = this;
         _similarityPane.Visibility = ViewStates.Gone;
-        AddView(_similarityPane);
+        _sceneLayer.AddView(_similarityPane);
 #endif
 
         _phoneTopBar = new AndroidBarScrim(activity, _photoMaterial);
@@ -312,32 +336,36 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         foreach (var bar in new[] { _phoneTopBar, _phoneBottomBar, _phoneLeadingBar, _phoneTrailingBar })
         {
             bar.Visibility = ViewStates.Gone;
-            AddView(bar, 1);
+            _sceneLayer.AddView(bar, 1);
         }
         _phoneMoreButton = new AndroidGlassButton(activity, AndroidIcons.More, "更多");
         _phoneMoreButton.Click += (_, _) => ShowPhotoMenuAt(_phoneMoreButton);
         _phoneMoreButton.Visibility = ViewStates.Gone;
-        AddView(_phoneMoreButton);
+        _sceneLayer.AddView(_phoneMoreButton);
+        _glassLayer.Register(_phoneMoreButton);
         _phoneNavigation = new AndroidGlassCombo(activity, AndroidIcons.Previous, "上一张",
             AndroidIcons.Next, "下一张");
         _phoneNavigation.First.Click += (_, _) => Execute("Previous");
         _phoneNavigation.Second.Click += (_, _) => Execute("Next");
         _phoneNavigation.Visibility = ViewStates.Gone;
-        AddView(_phoneNavigation);
+        _sceneLayer.AddView(_phoneNavigation);
+        _glassLayer.Register(_phoneNavigation);
         _phoneCommands = new AndroidGlassCombo(activity);
         _phoneCommands.CommandActivated += Execute;
         _phoneCommands.Visibility = ViewStates.Gone;
-        AddView(_phoneCommands);
+        _sceneLayer.AddView(_phoneCommands);
+        _glassLayer.Register(_phoneCommands);
         _phoneRating = new AndroidRatingControl(activity);
         _phoneRating.RateRequested += rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); };
         _phoneRating.PopupRequested += OpenRatingPopupFromPhone;
         _phoneRating.Popup = _ratingPopup;
         _phoneRating.Visibility = ViewStates.Gone;
-        AddView(_phoneRating);
+        _sceneLayer.AddView(_phoneRating);
+        _glassLayer.Register(_phoneRating);
         _phoneExif = new AndroidExifBlock(activity, _photoMaterial);
         _phoneExif.ExifActivated += ShowExifTools;
         _phoneExif.Visibility = ViewStates.Gone;
-        AddView(_phoneExif);
+        _sceneLayer.AddView(_phoneExif);
         _filterBar.MoreRequested += rect =>
         {
             var location = new int[2];
@@ -353,7 +381,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         _detailHighlight = new DetailFrameView(activity);
         _detailHighlight.Visibility = ViewStates.Gone;
         _detailHighlight.Clickable = false;
-        AddView(_detailHighlight);
+        _sceneLayer.AddView(_detailHighlight);
 
         // STATE-01：首屏空态两行提示只做展示，命中交给主图点按；提示层不拦截点按与拖入。
         _hintLabel = new TextView(activity)
@@ -378,8 +406,8 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         _hintDetail.SetTextColor(AndroidUiTheme.TextSecondary);
         _hintDetail.SetTypeface(Typeface.Default, TypefaceStyle.Normal);
         _hintDetail.SetIncludeFontPadding(false);
-        AddView(_hintLabel);
-        AddView(_hintDetail);
+        _sceneLayer.AddView(_hintLabel);
+        _sceneLayer.AddView(_hintDetail);
 
         _enhanceBusy = new TextView(activity)
         {
@@ -393,7 +421,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         busyBackground.SetColor(Color.Argb(217, 34, 34, 34)!);
         busyBackground.SetCornerRadius(AndroidUiTheme.Dp(activity, DesignTokens.ImageBusyCornerRadius));
         _enhanceBusy.Background = busyBackground;
-        AddView(_enhanceBusy);
+        _sceneLayer.AddView(_enhanceBusy);
 
         _statusLabel = new TextView(activity)
         {
@@ -409,7 +437,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         int statusPaddingX = AndroidUiTheme.DpPx(this, DesignTokens.StatusToastPaddingX);
         int statusPaddingY = AndroidUiTheme.DpPx(this, DesignTokens.StatusToastPaddingY);
         _statusLabel.SetPadding(statusPaddingX, statusPaddingY, statusPaddingX, statusPaddingY);
-        AddView(_statusLabel);
+        _sceneLayer.AddView(_statusLabel);
 
         // STATE-05：已打开目录持续不可用时的非模态状态，沿用状态提示条的颜色、字号与圆角。
         _folderStatusLabel = new TextView(activity)
@@ -455,13 +483,17 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WrapContent, LinearLayout.LayoutParams.WrapContent));
         _folderStatus.AddView(_folderReopenButton,
             new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WrapContent, LinearLayout.LayoutParams.WrapContent));
-        AddView(_folderStatus);
+        _sceneLayer.AddView(_folderStatus);
 
         _navigation = new AndroidNavigationOverlay(activity);
         _navigation.Wire((u, v) => _photo.CenterOnNormalizedPoint(u, v));
         _navigation.Visibility = ViewStates.Gone;
-        AddView(_navigation);
-        // MENU-03 / FILTER-08 / RATING-04：三处弹层共用主窗口内最上层宿主，最后加入以保证压在全部内容之上。
+        _sceneLayer.AddView(_navigation);
+        // MENU-03 / FILTER-08 / RATING-04：三处弹层共用主窗口内最上层宿主，取屏幕层最终画面。
+        _popupLayer.Backdrop = BackdropCapabilities.IsRenderEffectSupported ? _screenLayer.Backdrop : null;
+        _popupLayer.Surface = new AndroidGlassPopupMaterial();
+        _sceneLayer.Recorded += OnSceneLayerRecorded;
+        _screenLayer.Recorded += OnScreenLayerRecorded;
         AddView(_popupLayer);
 
         _photo.PresentationFailed += reason => ShowStatus(
@@ -658,6 +690,11 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
                 CloseRatingPopup();
                 _phoneMoreButton.Visibility = ViewStates.Gone;
             }
+            // 三层录制容器与玻璃控件层都铺满窗口；场景内容与照片仍按原有根坐标落位。
+            var fullRect = new LayoutRect(0, 0, widthDp, heightDp);
+            LayoutChild(_screenLayer, fullRect, density);
+            LayoutChild(_sceneLayer, fullRect, density);
+            LayoutChild(_glassLayer, fullRect, density);
             if (_form == ScreenForm.Wide) LayoutWide(widthDp, heightDp, density);
             else LayoutPhone(widthDp, heightDp, density);
 
@@ -671,6 +708,8 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             // 筛选条滚动宿主的 BringToFront 会把它移到弹层之上；弹层仍须是最后一个子视图（绘制与命中最上层）。
             if (ChildCount > 0 && !ReferenceEquals(GetChildAt(ChildCount - 1), _popupLayer))
                 _popupLayer.BringToFront();
+            // 锚点几何与状态可能在本轮布局中变化；玻璃层与场景层分开绘制，显式重绘一次。
+            _glassLayer.Invalidate();
         }
         finally
         {
@@ -1161,6 +1200,16 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         _phoneTrailingBar.Invalidate();
         _phoneExif.Invalidate();
         _controlBar.ExifBlock.Invalidate();
+    }
+
+    private void OnSceneLayerRecorded(object? sender, EventArgs e)
+    {
+        if (!_disposed) _glassLayer.Invalidate();
+    }
+
+    private void OnScreenLayerRecorded(object? sender, EventArgs e)
+    {
+        if (!_disposed) _popupLayer.InvalidateSurface();
     }
 
     private void OnPhotoViewportChanged()
@@ -2203,14 +2252,20 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             _similarityPane.PopupHost = null;
 #endif
             _ratingPopup.Dispose();
+            _sceneLayer.Recorded -= OnSceneLayerRecorded;
+            _screenLayer.Recorded -= OnScreenLayerRecorded;
+            _popupLayer.Backdrop = null;
             _popupLayer.Dispose();
             _analysisPane.TileCountChanged -= RequestLayout;
             _analysisPane.DetailChanged -= UpdateDetailHighlight;
             _analysisPresenter.Dispose();
             _photoLayer.Recorded -= OnPhotoLayerRecorded;
             _photo.AdditionalFootprint = null;
+            _glassLayer.Dispose();
             _photo.Dispose();
             _photoLayer.Dispose();
+            _sceneLayer.Dispose();
+            _screenLayer.Dispose();
             _navigationToken++;
             _navigationBitmap?.Dispose();
             _navigationBitmap = null;

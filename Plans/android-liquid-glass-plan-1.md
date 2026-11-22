@@ -38,7 +38,7 @@
 | `layerBlock`（`GraphicsLayerScope`） | 视图渲染变换（平移、缩放、旋转、枢轴），背景按其逆变换取样，与上游 `InverseLayerScope` 同算法 |
 | 坐标关系 `localPositionOf` | `View.transformMatrixToGlobal` 求两视图间矩阵 |
 | `CompositingStrategy.Offscreen` / 形状裁切 | `RenderNode.SetUseCompositingLayer` 与轮廓裁切 |
-| Compose `spring(阻尼比, 刚度, 可见阈值)` | AndroidX `SpringAnimation` / `SpringForce`（同一阻尼谐振模型） |
+| Compose `spring(阻尼比, 刚度, 可见阈值)` | 同一阻尼谐振模型的闭式解 `BackdropSpring`（固定时间点采样，与 Compose / AndroidX 解析解一致） |
 | `Dp` / `Density` | `DisplayMetrics` 换算 |
 
 上游的取样规则原样保留：玻璃元素不得位于自己取样的 `LayerBackdrop` 子树内；嵌套与组合背景按上游语义工作。
@@ -156,6 +156,16 @@ API 31+ 使用真模糊，API 24–30 不取样、保留色层；所有 API 级�
 
 验收沿用原案：`pv-check glass`（层级、锚点与呈现矩形一致、配方取值、分级降级、按压曲线）；`layout` / `input` / `faults` / `filter` / `rating` 中相关断言全 PASS；`zoom` 心跳仍不超过 250ms；读屏模态与焦点归还；弹窗键盘导航、屏内夹取与星级触摸转交通过相关断言；三色校准读数在实际交付时写入 `platforms.md`，并保留作者观感；真机性能与功耗记录；翻页压测零超时；标准版与 AI 版均通过；文档与许可齐备。
 
+#### 阶段 3 实测结论
+
+- **完整材质**：主屏为根视图 → 屏幕层 → 场景层 → 照片层；玻璃锚点保留布局、触摸、滚动、读屏与焦点，控件层只取场景层，窗口内弹层只取屏幕层。圆按钮、合体、星级胶囊与 AI 相似开关已接入 G2、折射、高光、阴影、按压与弹簧；星级只放大不位移不拉伸。主图菜单、筛选下拉与星级弹窗全部为窗口内玻璃面板，`PopupWindow` 已移除。
+- **双版本真机**（小米 13，API 33）：标准版 Debug 与 AI 版 Release 的完整 `glass` 均 **60/60**。物理 100% 均为 0 / 1,859,760 像素差异；栏底黑 / 灰 / 白 = 33 / 59 / 84，EXIF = 27 / 53 / 78，栏上按钮 = 63 / 85 / 106.9。弹层效果跨帧复用，整窗截图保留。
+- **回归**：标准版 `layout` 93/93、`input` 29/29、`faults` 46/46、`filter` 34/34、`rating` 38/38、`perf` 72/72、`color` 119/119、`main` 38/38、`form` 22/22；AI 版分别为 93/93、29/29、34/34、38/38、24/24，另有 `edition` 12/12。`zoom` 仍为 40/3，三条失败与阶段 0/2 相同（顶点缓冲断言），HIF 实际会话心跳 84.9ms；`glass` 心跳低于 250ms。60 次对比翻页压测零超时。
+- **验收辅助**：嵌套层的像素隔离改为移出非被测视图并按原父容器/索引放回，主图与被测材质始终保留；不放宽任何像素断言。弹窗模态、点外不穿透、焦点归还、键盘导航与减少动态效果由 `filter` 34/34 覆盖。
+- **构建与许可**：Backdrop Debug / Release 均 0 警告 0 错误，标准版与 AI 版头工程构建通过；最小 Android 库清单保证 Release AAR 合法。标准版与 AI 版 APK 的身份、arm64、模型/许可与签名扫描通过，扫描器 30 项自检通过。
+- **未覆盖边界**：API 31/32 与 API 24–30 的分级实现已接线，但本轮只有 API 33 真机结果，低版本回退待复验；作者观感与 TalkBack 实际朗读、真机横屏待验。AI Debug 冷启动原生退出与标准版个别 .NET 程序集加载退出单独记录，未合并归因到玻璃断言。
+- 证据：`artifacts/acceptance/android-glass-phase3/`（双版本 `glass` 与回归报告、三色读数、弹窗/产品截图、APK 扫描、60 次翻页记录、启动异常日志）。
+
 估算：截至真模糊（阶段 0 + 阶段 2）8–13 个工作日，含阶段 3 总计 15–24 个工作日，验证后复估。短分支按可发布里程碑合入，不等待完整效果。各阶段行为先审批，再更新该阶段所需的设计规范与令牌，然后实施：阶段 2 是 SHELL-12 的 Android 栏底与带衬底 EXIF，以及 TOOLBAR-05/10 的 Android 相关条款；RATING-07、FILTER-08、MENU-03、FILM-07 的 Android 条目随阶段 3 审批。令牌改动跑生成校验；`platforms.md` 与 `status.md` 只在实际交付时更新，避免在交付前写成现状。
 
 阶段 2 是中间交付，不构成原案完成；原案完成以「界面行为」九项为准，其中 FILM-07 按原文单列定稿、不阻塞主线。缩减或改变最终范围须重新审批。
@@ -166,7 +176,7 @@ API 31+ 使用真模糊，API 24–30 不取样、保留色层；所有 API 级�
 - 主图：`Native/AndroidPhotoView*.cs`、`Native/AndroidPhotoRenderer.cs`（仅表面来源与出帧）。
 - 主屏与弹出：`Native/AndroidNativeRootView.cs`、`Native/AndroidPhoneChrome.cs`、`Native/AndroidControlBar.cs`、`Native/AndroidControlBarScrollHost.cs`、`Native/AndroidFilterBar.cs`、`Native/AndroidFilmstripView.cs`、`Native/AndroidRatingPopup.cs`、`Native/AndroidUiTheme.cs`、`AndroidNativeActivity.cs`（返回键顺序接新弹出层）。
 - 检查：`Native/AndroidNativeChecks.{Color,Zoom,Performance,Input,Layout,Filter,Faults,Rating}.cs`，新增 `glass` 模式。
-- 依赖：`Directory.Packages.props` 新增 `Xamarin.AndroidX.DynamicAnimation`（NuGet 现有 1.1.0.6）。
+- 依赖：弹簧由独立 Backdrop 库内的 `BackdropSpring` 闭式解实现，不新增 AndroidX DynamicAnimation 包。
 - 设计：`Design/spec/{shell,toolbar,rating,filter,menu,film}.md`、`Design/platforms.md`、`Design/tokens.json`、`Design/status.md`；`PhotoViewer.Android/AGENTS.md`、根 `AGENTS.md` 模块手册。
 
 ## 假设

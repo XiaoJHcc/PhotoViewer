@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using Android.Graphics;
@@ -21,7 +22,7 @@ namespace PhotoViewer.Android.Native;
 /// 色块与 <c>color</c> 期望、物理 100% 适应区逐字节比较（<see cref="GlassPixelComparison.ByteExact"/> 才判 PASS）、
 /// 输入响应的两段延迟（GL swap 交还 / 界面层取用）与 250ms 心跳，并把窗口位图格式与色域的原始读数写进报告。
 /// 另可用 <c>--es pv-glass-host-step capability|quadrants|physical|input|hide|all</c>（缺省 <c>all</c>）
-/// 只跑所选宿主步骤，用于定位污染产品材质的来源；<c>hide</c> 只做「隐藏全部根子视图→恢复」的最小动作，
+/// 只跑所选宿主步骤，用于定位污染产品材质的来源；<c>hide</c> 只做「移出场景层其余子视图与玻璃绘制层→按原位放回」的最小动作，
 /// 缺省 <c>all</c> 仍只跑原来那四步。缺省行为不变。</item>
 /// <item><c>product</c>：真实产品材质验收（SHELL-12@android）——根视图现有照片层与共享材质、6 个真实栏底与
 /// 带衬底 EXIF 的结构/配方/分级断言，加上真实可见栏底的像素证明（照片取样、低通、边缘展开）与切图/缩放跟随。</item>
@@ -70,9 +71,9 @@ internal static partial class AndroidNativeChecks
 
     /// <summary>
     /// 宿主组：能力/缓冲读数 → 整窗色块 → 物理 100% 逐字节 → 输入响应（swap / 界面层取用）→ 250ms 心跳。
-    /// 心跳循环覆盖整组，收尾无论成败都还原会话图与栏位可见性。
+    /// 心跳循环覆盖整组，收尾无论成败都还原会话图与被移出的栏位视图。
     /// <c>--es pv-glass-host-step capability|quadrants|physical|input|hide|all</c>（缺省 <c>all</c>）只跑所选步骤，
-    /// 用于定位哪一步会污染随后的产品材质；<c>hide</c> 只做「隐藏全部根子视图→恢复」这一最小动作，
+    /// 用于定位哪一步会污染随后的产品材质；<c>hide</c> 只做「移出场景层其余子视图与玻璃绘制层→按原位放回」这一最小动作，
     /// 缺省 <c>all</c> 仍只跑原来那四步，不把 <c>hide</c> 额外加入。
     /// </summary>
     private static async Task RunGlassHostChecksAsync()
@@ -284,14 +285,14 @@ internal static partial class AndroidNativeChecks
     /// <summary>
     /// 物理 100% 逐字节比较：用逐像素各异的合成图（铺满适应区），把视口对齐到整数像素后回读适应区，
     /// 与上传的源字节逐像素对照。<see cref="GlassPixelComparison.ByteExact"/> 是唯一 PASS 依据，
-    /// ±1/最大差/偏移只作诊断。比较期间把栏位临时设为不可见，仅为隔离照片层，收尾立刻还原。
+    /// ±1/最大差/偏移只作诊断。比较期间把场景层其余子视图与玻璃绘制层移出父容器，仅为隔离照片层，收尾按原位放回。
     /// </summary>
     private static async Task CheckGlassPhysicalPixelsAsync()
     {
         var photo = _root!.Photo;
         int width = photo.Width, height = photo.Height;
         if (width < 64 || height < 64) throw new InvalidOperationException($"主图视图尺寸异常 {width}x{height}");
-        var hidden = new List<(View View, ViewStates Visibility)>();
+        var hidden = new List<GlassDetachedView>();
         int hiddenCount = HideGlassOverlays(hidden);
         try
         {
@@ -307,7 +308,7 @@ internal static partial class AndroidNativeChecks
             // 栏位占用的区域按产品口径本来就不显示照片，不参与逐像素判定。
             AlignGlassImageOrigin(photo);
             // 设置通知可能在等待期间把栏位重新显示出来：绘制前再压一次（清单合并，收尾统一还原），
-            // 随后的等待同时覆盖「隐藏生效」与「照片帧进入窗口缓冲」。
+            // 随后的等待同时覆盖「移出生效」与「照片帧进入窗口缓冲」。
             hiddenCount += HideGlassOverlays(hidden);
             photo.Draw();
             await Task.Delay(160);
@@ -410,6 +411,8 @@ internal static partial class AndroidNativeChecks
             var comparison = await Task.Run(() =>
                 CompareGlassPhysicalScale(pattern, originX, originY, pixels, GlassOffsetSearchRadius));
             Check("物理100% 逐字节一致", comparison.ByteExact, comparison.Describe());
+            if (!comparison.ByteExact && capture.Bitmap != null)
+                SaveGlassProductShotBitmap(capture.Bitmap, "glass-host-physical-window");
             if (!comparison.ByteExact && glByteExact)
             {
                 // 只是差异定位的读数方向，不改变上面两条严格判定：渲染器输出逐字节一致而整窗不一致。
@@ -472,13 +475,13 @@ internal static partial class AndroidNativeChecks
     }
 
     /// <summary>
-    /// 二分用最小步骤：只做「隐藏全部根子视图（保留照片层）→ 等 160ms → 恢复可见性」，
-    /// 不注入合成图案、不缩放、不做 GL 回读也不做 <see cref="PixelCopy"/>。用来判断「全隐藏再恢复」
-    /// 本身是否会让后续取样退化为直通（<c>physical</c> 是唯一会同时隐藏全部取样视图的步骤）。
+    /// 二分用最小步骤：只做「移出场景层其余子视图与玻璃绘制层（保留照片层）→ 等 160ms → 按原位放回」，
+    /// 不注入合成图案、不缩放、不做 GL 回读也不做 <see cref="PixelCopy"/>。用来判断「全部移出再放回」
+    /// 本身是否会让后续取样退化为直通（<c>physical</c> 是唯一会同时移出全部取样视图的步骤）。
     /// </summary>
     private static async Task CheckGlassHideRestoreAsync()
     {
-        var hidden = new List<(View View, ViewStates Visibility)>();
+        var hidden = new List<GlassDetachedView>();
         int hiddenCount;
         try
         {
@@ -489,42 +492,121 @@ internal static partial class AndroidNativeChecks
         {
             RestoreGlassOverlays(hidden);
         }
-        GlassHostNote($"glass 全隐藏恢复：隐藏 {hiddenCount} 个根子视图（保留照片层）→ 等 160ms → 已恢复可见性；"
+        GlassHostNote($"glass 全隐藏恢复：移出 {hiddenCount} 个场景子视图/玻璃绘制层（保留照片层）→ 等 160ms → 已按原位放回；"
             + "本步不注入图案、不缩放、不做 GL 回读与 PixelCopy");
-        Check("glass 全隐藏恢复 可执行", hiddenCount > 0, $"本次隐藏={hiddenCount} 恢复清单={hidden.Count}");
+        Check("glass 全隐藏恢复 可执行", hiddenCount > 0, $"本次移出={hiddenCount} 恢复清单={hidden.Count}");
     }
 
     /// <summary>
-    /// 把主屏上除照片层以外的可见子视图临时设为不可见（不参与布局，只不绘制），让整窗回读只剩照片层。
-    /// 照片层是根视图的直接子视图（SHELL-12@android 的取样源），必须保留；不能再按 <c>Photo.Parent</c>
-    /// 反推——主图分区已经挂在照片层里，那样会把照片层本身也隐藏掉。
-    /// 可重复调用：期间被设置通知重新显示的栏位会在下一次调用里再被隐藏，并追加进同一份清单。
+    /// 玻璃验收隔离期间被移出父容器的视图：原父容器、原索引与移出前的可见性/不透明度，收尾按原位放回。
     /// </summary>
-    /// <param name="hidden">原可见性清单（调用方持有，收尾交给 <see cref="RestoreGlassOverlays"/>）。</param>
-    /// <returns>本次新隐藏的视图数。</returns>
-    private static int HideGlassOverlays(List<(View View, ViewStates Visibility)> hidden)
+    private sealed record GlassDetachedView(
+        View View, ViewGroup Parent, int Index, ViewStates Visibility, float Alpha);
+
+    /// <summary>
+    /// 玻璃验收的确定性隔离：把场景层里除照片层、被测材质视图及其祖先链以外的子视图临时
+    /// <see cref="ViewGroup.RemoveViewAt"/> 移出，并记录原父容器、原索引与外观；玻璃绘制层从屏幕层移出。
+    /// 视图已不在布局树内，产品布局无法再把它们显示回来；收尾交给 <see cref="RestoreGlassOverlays"/> 按原位放回。
+    /// </summary>
+    /// <param name="detached">移出清单（调用方持有，收尾统一还原；可跨多次调用累积）。</param>
+    /// <param name="keep">被测材质视图（自身与祖先链保留）；null 表示只保留照片层。</param>
+    /// <returns>本次移出的视图数。</returns>
+    private static int DetachGlassViews(List<GlassDetachedView> detached, View? keep)
     {
         var root = _root!;
-        var photoLayer = root.PhotoLayer;
-        int added = 0;
-        for (int index = 0; index < root.ChildCount; index++)
+        var scene = root.SceneLayer;
+        var keepChain = new HashSet<View>();
+        for (var current = keep; current != null && !ReferenceEquals(current, root); current = current.Parent as View)
+            keepChain.Add(current);
+
+        var targets = new List<(View View, int Index)>();
+        for (int index = 0; index < scene.ChildCount; index++)
         {
-            var child = root.GetChildAt(index);
-            if (child == null || ReferenceEquals(child, photoLayer)) continue;
-            if (child.Visibility != ViewStates.Visible) continue;
-            hidden.Add((child, child.Visibility));
-            child.Visibility = ViewStates.Invisible;
+            var child = scene.GetChildAt(index);
+            if (child == null || ReferenceEquals(child, root.PhotoLayer) || keepChain.Contains(child)) continue;
+            if (AlreadyDetached(detached, child)) continue;
+            targets.Add((child, index));
+        }
+
+        int added = 0;
+        // 从后往前移出：已移出的高索引不影响尚未移出项的原始索引。
+        for (int index = targets.Count - 1; index >= 0; index--)
+        {
+            var (view, childIndex) = targets[index];
+            detached.Add(new GlassDetachedView(view, scene, childIndex, view.Visibility, view.Alpha));
+            scene.RemoveViewAt(childIndex);
             added++;
+        }
+
+        var glass = root.GlassControlLayer;
+        if (!keepChain.Contains(glass) && !AlreadyDetached(detached, glass)
+            && glass.Parent is ViewGroup glassParent)
+        {
+            int glassIndex = glassParent.IndexOfChild(glass);
+            if (glassIndex >= 0)
+            {
+                detached.Add(new GlassDetachedView(glass, glassParent, glassIndex, glass.Visibility, glass.Alpha));
+                glassParent.RemoveViewAt(glassIndex);
+                added++;
+            }
+        }
+
+        if (added > 0)
+        {
+            root.SceneLayer.Invalidate();
+            root.ScreenLayer.Invalidate();
+            root.GlassControlLayer.Invalidate();
         }
         return added;
     }
 
-    /// <summary>还原栏位可见性。</summary>
-    /// <param name="hidden">原可见性清单。</param>
-    private static void RestoreGlassOverlays(List<(View View, ViewStates Visibility)> hidden)
+    /// <summary>该视图是否已在本次隔离的移出清单里（防止重复记录与重复放回）。</summary>
+    private static bool AlreadyDetached(List<GlassDetachedView> detached, View view)
     {
-        foreach (var (view, visibility) in hidden) view.Visibility = visibility;
+        foreach (var item in detached)
+            if (ReferenceEquals(item.View, view)) return true;
+        return false;
     }
+
+    /// <summary>
+    /// 把移出的视图按原父容器、原索引放回，并恢复移出前的可见性与不透明度；最后请求一次布局，
+    /// 让产品布局重新落到恢复后的视图上（切图/设置通知可能在隔离期间改过它们的状态）。
+    /// </summary>
+    /// <param name="detached">移出清单；还原后清空。</param>
+    private static void RestoreGlassOverlays(List<GlassDetachedView> detached)
+    {
+        if (detached.Count == 0) return;
+        foreach (var group in detached.GroupBy(item => item.Parent).ToArray())
+        {
+            foreach (var item in group.OrderBy(item => item.Index))
+            {
+                var view = item.View;
+                if (view.Parent == null)
+                {
+                    int index = Math.Clamp(item.Index, 0, item.Parent.ChildCount);
+                    item.Parent.AddView(view, index);
+                }
+                view.Visibility = item.Visibility;
+                view.Alpha = item.Alpha;
+            }
+        }
+        detached.Clear();
+        var root = _root;
+        if (root == null) return;
+        root.SceneLayer.Invalidate();
+        root.ScreenLayer.Invalidate();
+        root.GlassControlLayer.Invalidate();
+        root.RequestLayout();
+    }
+
+    /// <summary>
+    /// 宿主组隔离口径：只保留照片层，把场景层其余子视图与玻璃绘制层移出父容器，收尾按原位放回。
+    /// 照片层是根视图内唯一取样源，必须保留；不能再按 <c>Photo.Parent</c> 反推。
+    /// </summary>
+    /// <param name="detached">移出清单（调用方持有，收尾交给 <see cref="RestoreGlassOverlays"/>）。</param>
+    /// <returns>本次移出的视图数。</returns>
+    private static int HideGlassOverlays(List<GlassDetachedView> detached)
+        => DetachGlassViews(detached, keep: null);
 
     /// <summary>
     /// 输入响应：真实触摸派发一次拖动，分别测两个时刻——渲染器交出下一帧（GL swap 交还）与

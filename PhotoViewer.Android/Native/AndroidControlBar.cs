@@ -23,6 +23,7 @@ namespace PhotoViewer.Android.Native;
 internal sealed class AndroidControlBar : FrameLayout
 {
     private readonly MainViewModel _main;
+    private readonly AndroidGlassControlLayer? _glassLayer;
     private readonly AndroidExifBlock _exifView;
     private readonly AndroidRatingControl _ratingView;
     private readonly Dictionary<string, AndroidGlassButton> _commandViews = new(StringComparer.Ordinal);
@@ -155,9 +156,11 @@ internal sealed class AndroidControlBar : FrameLayout
     /// <param name="context">宿主上下文。</param>
     /// <param name="main">共享主 VM。</param>
     /// <param name="material">共享照片层材质（带衬底 EXIF 块取样用）；null 表示只用正式色层。</param>
-    public AndroidControlBar(Context context, MainViewModel main, AndroidPhotoMaterial? material = null) : base(context)
+    public AndroidControlBar(Context context, MainViewModel main, AndroidPhotoMaterial? material = null,
+        AndroidGlassControlLayer? glassLayer = null) : base(context)
     {
         _main = main;
+        _glassLayer = glassLayer;
         _exifView = new AndroidExifBlock(context, material);
         _exifView.ExifActivated += () => _openTools?.Invoke();
         _exifView.Visibility = ViewStates.Gone;
@@ -167,6 +170,7 @@ internal sealed class AndroidControlBar : FrameLayout
         _ratingView.PopupRequested += () => _openRatingPopup?.Invoke();
         _ratingView.Visibility = ViewStates.Gone;
         AddView(_ratingView);
+        _glassLayer?.Register(_ratingView);
         SetClipChildren(true);
     }
 
@@ -264,6 +268,7 @@ internal sealed class AndroidControlBar : FrameLayout
                 };
                 _commandViews.Add(hotkey.Command, button);
                 AddView(button);
+                _glassLayer?.Register(button);
             }
             button.ContentDescription = description;
             button.Enabled = enabled;
@@ -276,6 +281,7 @@ internal sealed class AndroidControlBar : FrameLayout
         {
             var button = _commandViews[command];
             _viewRects.Remove(button);
+            _glassLayer?.Unregister(button);
             RemoveView(button);
             button.Dispose();
             _commandViews.Remove(command);
@@ -558,10 +564,12 @@ internal sealed class AndroidControlBar : FrameLayout
         {
             foreach (var button in _commandViews.Values)
             {
+                _glassLayer?.Unregister(button);
                 RemoveView(button);
                 button.Dispose();
             }
             _commandViews.Clear();
+            _glassLayer?.Unregister(_ratingView);
             _viewRects.Clear();
             RemoveView(_exifView);
             _exifView.Dispose();

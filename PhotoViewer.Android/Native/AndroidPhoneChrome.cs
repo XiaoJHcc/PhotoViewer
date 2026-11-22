@@ -194,11 +194,20 @@ internal sealed class AndroidGlyphDrawable : Drawable
 /// Fluent UI System Icons 字形放在 Material 图标槽并按墨迹居中，尺寸固定 <c>shell.glass.button.size</c>（44），
 /// 不随内容拉宽；禁用只把内容降到 <c>color.toolbar.disabled.content.alpha</c>，底色与几何不变。
 /// </summary>
-internal sealed class AndroidGlassButton : MaterialButton
+internal sealed class AndroidGlassButton : MaterialButton, IGlassAnchorContent
 {
     private readonly string _glyph;
     private readonly string? _number;
     private readonly bool _iconFont;
+    private bool _glassAnchored;
+    private bool _suppressScene;
+    private bool _transparentFill;
+    private ColorStateList? _glassBackgroundTint;
+    private ColorStateList? _glassStrokeColor;
+    private int _glassStrokeWidth;
+
+    /// <summary>玻璃层内容或状态变化（由绘制层订阅，用于让玻璃层重绘）。</summary>
+    public event Action? GlassContentInvalidated;
 
     /// <summary>按钮边长（dp）。</summary>
     internal static double Size => DesignTokens.ShellGlassButtonSize;
@@ -238,18 +247,107 @@ internal sealed class AndroidGlassButton : MaterialButton
     /// <summary>当前使用的字形（验收读取）。</summary>
     internal string Glyph => _glyph;
 
+    /// <summary>本按钮的材质与图标是否由玻璃控件层绘制（验收读取）。</summary>
+    internal bool IsGlassAnchored => _glassAnchored;
+
+    /// <summary>玻璃层使用的表面色：常态取玻璃按钮色层，可勾选入口按 checked 态取值（验收读取）。</summary>
+    internal Color GlassSurfaceColor
+    {
+        get
+        {
+            if (_transparentFill) return Color.Transparent!;
+            if (!_glassAnchored || !Checkable) return AndroidUiTheme.GlassButtonFill;
+            return _glassBackgroundTint is { } tint
+                ? AndroidUiTheme.FromToken(unchecked((uint)tint.GetColorForState(GetDrawableState(), Color.Transparent)))
+                : AndroidUiTheme.GlassButtonFill;
+        }
+    }
+
+    /// <summary>玻璃层使用的描边色（仅可勾选入口的 checked 态；验收读取）。</summary>
+    internal Color GlassBorderColor
+    {
+        get
+        {
+            if (!_glassAnchored || _glassStrokeWidth <= 0 || _glassStrokeColor is not { } stroke)
+                return Color.Transparent!;
+            return AndroidUiTheme.FromToken(unchecked((uint)stroke.GetColorForState(
+                GetDrawableState(), Color.Transparent)));
+        }
+    }
+
+    /// <summary>玻璃层使用的描边宽度（px，验收读取）。</summary>
+    internal int GlassBorderWidth => _glassAnchored ? _glassStrokeWidth : 0;
+
+    /// <summary>
+    /// 把材质与图标交给玻璃控件层绘制：本视图保持透明，保留背景色/状态层供绘制层取色；
+    /// 按钮仍是真实视图，承担布局、点击、焦点与读屏。
+    /// </summary>
+    internal void UseGlassAnchor()
+    {
+        if (_glassAnchored) return;
+        _glassAnchored = true;
+        _suppressScene = true;
+        _glassBackgroundTint = BackgroundTintList;
+        _glassStrokeColor = StrokeColor;
+        _glassStrokeWidth = StrokeWidth;
+        BackgroundTintList = ColorStateList.ValueOf(Color.Transparent!);
+        StrokeWidth = 0;
+        RippleColor = null;
+        StateListAnimator = null;
+        Elevation = 0;
+        Invalidate();
+    }
+
+    /// <summary>玻璃控件层调用：在当前画布本地坐标绘制按钮内容（不含玻璃材质与背景）。</summary>
+    /// <param name="canvas">已平移到按钮本地原点的画布。</param>
+    internal void DrawGlassContent(Canvas canvas)
+    {
+        if (!_glassAnchored)
+        {
+            Draw(canvas);
+            return;
+        }
+        base.OnDraw(canvas);
+        base.DispatchDraw(canvas);
+    }
+
+    /// <inheritdoc />
+    public override void Invalidate()
+    {
+        base.Invalidate();
+        GlassContentInvalidated?.Invoke();
+    }
+
+    /// <summary>场景内不绘制自身内容；内容由玻璃控件层按锚点重绘。</summary>
+    /// <param name="canvas">画布。</param>
+    protected override void OnDraw(Canvas? canvas)
+    {
+        if (_suppressScene) return;
+        base.OnDraw(canvas!);
+    }
+
+    /// <summary>场景内不绘制子内容。</summary>
+    /// <param name="canvas">画布。</param>
+    protected override void DispatchDraw(Canvas? canvas)
+    {
+        if (_suppressScene) return;
+        base.DispatchDraw(canvas!);
+    }
+
     /// <summary>评分快捷命令的星级（null 表示非评分命令；"0" 为零清叉、不叠数字）。</summary>
     internal string? Number => _number;
 
-    /// <summary>按钮实际底色（验收读取）。</summary>
-    internal Color FillColorForChecks => new(BackgroundTintList?.DefaultColor ?? 0);
+    /// <summary>按钮实际底色（验收读取）：玻璃锚点返回绘制层表面色。</summary>
+    internal Color FillColorForChecks => _glassAnchored
+        ? (_transparentFill ? Color.Transparent! : GlassSurfaceColor)
+        : new(BackgroundTintList?.DefaultColor ?? 0);
 
     /// <summary>按钮在指定状态下的实际底色（验收读取；用于可勾选入口的未选中态）。</summary>
     /// <param name="state">视图状态。</param>
     /// <returns>该状态的底色。</returns>
     internal Color FillColorForStateForChecks(int[] state)
     {
-        var tint = BackgroundTintList;
+        var tint = _glassAnchored ? _glassBackgroundTint : BackgroundTintList;
         return tint == null ? Color.Transparent : new(tint.GetColorForState(state, Color.Transparent));
     }
 
@@ -291,7 +389,11 @@ internal sealed class AndroidGlassButton : MaterialButton
         int width = Width, height = Height;
         if (width <= 0 || height <= 0) return (width / 2f, height / 2f, new Rect());
         using var bitmap = Bitmap.CreateBitmap(width, height, Bitmap.Config.Argb8888!)!;
-        using (var canvas = new Canvas(bitmap)) Draw(canvas);
+        using (var canvas = new Canvas(bitmap))
+        {
+            if (_glassAnchored) DrawGlassContent(canvas);
+            else Draw(canvas);
+        }
         var pixels = new int[width * height];
         bitmap.GetPixels(pixels, 0, width, 0, 0, width, height);
         int left = width, top = height, right = -1, bottom = -1;
@@ -312,6 +414,7 @@ internal sealed class AndroidGlassButton : MaterialButton
     /// <summary>合体分段用透明底：状态层与涟漪仍由 Material 背景绘制，胶囊外形只由容器一层承担。</summary>
     internal void UseTransparentFill()
     {
+        _transparentFill = true;
         BackgroundTintList = ColorStateList.ValueOf(Color.Transparent);
         CornerRadius = 0;
     }
@@ -338,12 +441,17 @@ internal readonly record struct GlassComboSegment(
 /// 每段是独立可聚焦、可点按、带读屏名称的动作按钮（不是分段选择控件），镜像时只交换段的视觉顺序。
 /// 筛选/更多与上下张为固定两段，手机可选命令组按生效命令动态 1–3 段。
 /// </summary>
-internal sealed class AndroidGlassCombo : MaterialCardView
+internal sealed class AndroidGlassCombo : MaterialCardView, IGlassAnchorContent
 {
     private readonly List<AndroidGlassButton> _segments = [];
     private readonly List<string> _segmentKeys = [];
     private bool _vertical;
     private bool _mirrored;
+    private bool _glassAnchored;
+    private bool _suppressScene;
+
+    /// <summary>玻璃层内容或状态变化（段按钮的状态也会冒泡到这里）。</summary>
+    public event Action? GlassContentInvalidated;
 
     /// <summary>建空胶囊容器（手机可选命令组按生效命令填段）。</summary>
     /// <param name="context">宿主上下文。</param>
@@ -395,8 +503,61 @@ internal sealed class AndroidGlassCombo : MaterialCardView
     /// <summary>横排时前段是否落在容器末端（刘海在右的手机横屏镜像）。</summary>
     internal bool Mirrored => _mirrored;
 
-    /// <summary>胶囊容器实际底色（验收读取）。</summary>
-    internal Color FillColorForChecks => new(CardBackgroundColor?.DefaultColor ?? 0);
+    /// <summary>胶囊容器实际底色（验收读取）：玻璃锚点返回绘制层表面色。</summary>
+    internal Color FillColorForChecks => _glassAnchored
+        ? AndroidUiTheme.GlassButtonFill
+        : new(CardBackgroundColor?.DefaultColor ?? 0);
+
+    /// <summary>本合体的胶囊材质是否由玻璃控件层绘制（验收读取）。</summary>
+    internal bool IsGlassAnchored => _glassAnchored;
+
+    /// <summary>交给玻璃控件层绘制：整块胶囊材质由绘制层承担，段按钮只保留内容与命中。</summary>
+    internal void UseGlassAnchor()
+    {
+        if (_glassAnchored) return;
+        _glassAnchored = true;
+        _suppressScene = true;
+        SetCardBackgroundColor(Color.Transparent!);
+        StrokeWidth = 0;
+        CardElevation = 0;
+        foreach (var button in _segments) button.UseGlassAnchor();
+        Invalidate();
+    }
+
+    /// <summary>玻璃控件层调用：按真实段矩形绘制各段内容（不含胶囊材质）。</summary>
+    /// <param name="canvas">已平移到合体本地原点的画布。</param>
+    internal void DrawGlassContent(Canvas canvas)
+    {
+        foreach (var button in _segments)
+        {
+            if (button.Visibility != ViewStates.Visible) continue;
+            int save = canvas.Save();
+            try
+            {
+                canvas.Translate(button.Left, button.Top);
+                button.DrawGlassContent(canvas);
+            }
+            finally
+            {
+                canvas.RestoreToCount(save);
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public override void Invalidate()
+    {
+        base.Invalidate();
+        GlassContentInvalidated?.Invoke();
+    }
+
+    /// <summary>场景内不绘制段内容；内容由玻璃控件层按锚点重绘。</summary>
+    /// <param name="canvas">画布。</param>
+    protected override void DispatchDraw(Canvas? canvas)
+    {
+        if (_suppressScene) return;
+        base.DispatchDraw(canvas!);
+    }
 
     /// <summary>设置排布方向：横排各段左右相接，竖排各段上下相接。</summary>
     /// <param name="vertical">是否竖排。</param>
@@ -448,6 +609,8 @@ internal sealed class AndroidGlassCombo : MaterialCardView
                 {
                     if (button.Enabled && command != null) CommandActivated?.Invoke(command);
                 };
+                button.GlassContentInvalidated += OnSegmentInvalidated;
+                if (_glassAnchored) button.UseGlassAnchor();
                 AddView(button);
                 _segments.Add(button);
                 _segmentKeys.Add(SegmentKey(segment));
@@ -475,6 +638,8 @@ internal sealed class AndroidGlassCombo : MaterialCardView
 
     private static string SegmentKey(in GlassComboSegment segment)
         => $"{segment.Command}|{segment.Glyph}|{segment.Solid}|{segment.Number}";
+
+    private void OnSegmentInvalidated() => Invalidate();
 
     /// <summary>各段等分容器的轴长；镜像只改变视觉顺序。</summary>
     /// <param name="changed">是否变化。</param>
@@ -524,7 +689,7 @@ internal sealed class AndroidGlassCombo : MaterialCardView
 /// 展开态逐格悬停/按下在槽位内画内切正圆，胶囊外轮廓不变；
 /// 读屏经 <see cref="ExploreByTouchHelper"/> 暴露槽位、0–5 的可调节范围与增减动作。
 /// </summary>
-internal sealed class AndroidRatingControl : MaterialCardView
+internal sealed class AndroidRatingControl : MaterialCardView, IGlassAnchorContent
 {
     private readonly Paint _starActive;
     private readonly Paint _starInactive;
@@ -542,6 +707,11 @@ internal sealed class AndroidRatingControl : MaterialCardView
     private bool _forwarding;
     private bool _capsuleHovered;
     private RatingGesture? _ratingGesture;
+    private bool _glassAnchored;
+    private bool _suppressScene;
+
+    /// <summary>玻璃层内容或状态变化（星级、悬停/按下、焦点等）。</summary>
+    public event Action? GlassContentInvalidated;
 
     /// <summary>星级写回入口（0–5；冲突时 0 号不写值，改由宿主打开弹窗）。</summary>
     internal event Action<int>? RateRequested;
@@ -570,8 +740,39 @@ internal sealed class AndroidRatingControl : MaterialCardView
     /// <summary>评分槽位当前是否接受输入（验收读取）。</summary>
     internal bool EnabledForChecks => _enabled;
 
-    /// <summary>胶囊实际底色（验收读取）：与命令圆按钮同一按钮材质。</summary>
-    internal Color FillColorForChecks => new(CardBackgroundColor?.DefaultColor ?? 0);
+    /// <summary>胶囊实际底色（验收读取）：玻璃锚点返回绘制层表面色。</summary>
+    internal Color FillColorForChecks => _glassAnchored
+        ? AndroidUiTheme.GlassButtonFill
+        : new(CardBackgroundColor?.DefaultColor ?? 0);
+
+    /// <summary>本控件的胶囊材质是否由玻璃控件层绘制（验收读取）。</summary>
+    internal bool IsGlassAnchored => _glassAnchored;
+
+    /// <summary>当前是否接受评分输入（与 <see cref="EnabledForChecks"/> 同义，供交互层判断）。</summary>
+    internal bool InteractionEnabled => _enabled;
+
+    /// <summary>交给玻璃控件层绘制：材质由绘制层承担，星排、状态层与焦点环仍由本控件绘制。</summary>
+    internal void UseGlassAnchor()
+    {
+        if (_glassAnchored) return;
+        _glassAnchored = true;
+        _suppressScene = true;
+        SetCardBackgroundColor(Color.Transparent!);
+        StrokeWidth = 0;
+        CardElevation = 0;
+        Invalidate();
+    }
+
+    /// <summary>玻璃控件层调用：在当前画布本地坐标绘制星排、状态层与焦点环。</summary>
+    /// <param name="canvas">已平移到控件本地原点的画布。</param>
+    internal void DrawGlassContent(Canvas canvas) => DrawContent(canvas);
+
+    /// <inheritdoc />
+    public override void Invalidate()
+    {
+        base.Invalidate();
+        GlassContentInvalidated?.Invoke();
+    }
 
     /// <summary>逐格悬停/按下状态层颜色（验收读取）：与按钮同一状态层色板，取按下态。</summary>
     internal Color HighlightColorForChecks
@@ -706,9 +907,15 @@ internal sealed class AndroidRatingControl : MaterialCardView
 
     /// <summary>绘制胶囊内的星排或紧凑星簇；展开态先画槽位内的悬停/按下正圆。</summary>
     /// <param name="canvas">画布。</param>
-    protected override void DispatchDraw(Canvas canvas)
+    protected override void DispatchDraw(Canvas? canvas)
     {
+        if (_suppressScene || canvas is null) return;
         base.DispatchDraw(canvas);
+        DrawContent(canvas);
+    }
+
+    private void DrawContent(Canvas canvas)
+    {
         float density = (float)AndroidUiTheme.Density(Context!);
         double main = SlotMain / density;
         double cross = (Horizontal ? Height : Width) / density;

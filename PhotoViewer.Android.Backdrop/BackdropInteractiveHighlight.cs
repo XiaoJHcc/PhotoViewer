@@ -24,9 +24,10 @@ public delegate (float X, float Y) BackdropHighlightPosition(
 /// </summary>
 /// <remarks>
 /// <para>
-/// 弹簧参数与上游一致：按压进度与位置都是阻尼 0.5、刚度 300，可见阈值分别为 0.001 与 0.01。
-/// 按下即把位置钉在触点、进度弹向 1；移动时位置直接钉住（不经过弹簧）；抬手/取消时进度与
-/// 位置都弹回。着色器在 API 33 以下退化为整面白 25% × 进度，与上游分支相同。
+/// 弹簧参数默认与上游一致：按压进度与位置都是阻尼 0.5、刚度 300，可见阈值分别为 0.001 与 0.01；
+/// 颜色、径向半径系数与动画开关可由调用方按产品令牌参数化，缺省值仍是上游默认。按下即把位置钉在
+/// 触点、进度弹向 1；移动时位置直接钉住（不经过弹簧）；抬手/取消时进度与位置都弹回。
+/// 着色器在 API 33 以下使用调用方给出的回退整面颜色（缺省上游白 25% × 进度）。
 /// </para>
 /// <para>
 /// 本类只负责数学与绘制，不接管视图触摸；触摸语义由 <see cref="BackdropPressTracker"/> 或
@@ -35,21 +36,22 @@ public delegate (float X, float Y) BackdropHighlightPosition(
 /// </remarks>
 public sealed class BackdropInteractiveHighlight : IDisposable
 {
-    private const float PressDampingRatio = 0.5f;
-    private const float PressStiffness = 300f;
+    private const float DefaultDampingRatio = 0.5f;
+    private const float DefaultStiffness = 300f;
     private const float PressVisibilityThreshold = 0.001f;
     private const float PositionVisibilityThreshold = 0.01f;
 
     private static readonly BackdropHighlightPosition DefaultPosition =
         static (_, _, x, y) => (x, y);
 
-    private readonly BackdropSpring _pressProgress =
-        new(0f, PressDampingRatio, PressStiffness, PressVisibilityThreshold);
-    private readonly BackdropSpring _offsetX =
-        new(0f, PressDampingRatio, PressStiffness, PositionVisibilityThreshold);
-    private readonly BackdropSpring _offsetY =
-        new(0f, PressDampingRatio, PressStiffness, PositionVisibilityThreshold);
+    private readonly BackdropSpring _pressProgress;
+    private readonly BackdropSpring _offsetX;
+    private readonly BackdropSpring _offsetY;
     private readonly BackdropHighlightPosition _position;
+    private readonly Gfx.Color _surfaceColor;
+    private readonly Gfx.Color _radialColor;
+    private readonly Gfx.Color _fallbackSurfaceColor;
+    private readonly float _radialRadiusFactor;
     private readonly Gfx.Paint _paint = new() { AntiAlias = true };
     private readonly Gfx.PorterDuffXfermode _xfermode;
     private readonly BackdropRuntimeShader? _shader;
@@ -60,9 +62,34 @@ public sealed class BackdropInteractiveHighlight : IDisposable
 
     /// <summary>建一个跟手高光。</summary>
     /// <param name="position">位置换算；省略时不改坐标。</param>
-    public BackdropInteractiveHighlight(BackdropHighlightPosition? position = null)
+    /// <param name="surfaceColor">按压整面高光颜色（含 alpha），默认白 8%。</param>
+    /// <param name="radialColor">跟手径向高光颜色（含 alpha），默认白 15%。</param>
+    /// <param name="fallbackSurfaceColor">API 33 以下的整面高光颜色（含 alpha），默认白 25%。</param>
+    /// <param name="radialRadiusFactor">径向半径相对短边的倍数，默认 1.5。</param>
+    /// <param name="dampingRatio">弹簧阻尼比，默认 0.5。</param>
+    /// <param name="stiffness">弹簧刚度，默认 300。</param>
+    /// <param name="animationsEnabled">是否播放弹簧；false 时按下/抬手立即到位（减少动态效果）。</param>
+    public BackdropInteractiveHighlight(
+        BackdropHighlightPosition? position = null,
+        Gfx.Color? surfaceColor = null,
+        Gfx.Color? radialColor = null,
+        Gfx.Color? fallbackSurfaceColor = null,
+        float radialRadiusFactor = 1.5f,
+        float dampingRatio = DefaultDampingRatio,
+        float stiffness = DefaultStiffness,
+        bool animationsEnabled = true)
     {
         _position = position ?? DefaultPosition;
+        _surfaceColor = surfaceColor ?? Gfx.Color.Argb(20, 255, 255, 255);
+        _radialColor = radialColor ?? Gfx.Color.Argb(38, 255, 255, 255);
+        _fallbackSurfaceColor = fallbackSurfaceColor ?? Gfx.Color.Argb(64, 255, 255, 255);
+        _radialRadiusFactor = radialRadiusFactor;
+        AnimationsEnabled = animationsEnabled;
+        DampingRatio = dampingRatio;
+        Stiffness = stiffness;
+        _pressProgress = new BackdropSpring(0f, dampingRatio, stiffness, PressVisibilityThreshold);
+        _offsetX = new BackdropSpring(0f, dampingRatio, stiffness, PositionVisibilityThreshold);
+        _offsetY = new BackdropSpring(0f, dampingRatio, stiffness, PositionVisibilityThreshold);
         _xfermode = new Gfx.PorterDuffXfermode(Gfx.PorterDuff.Mode.Add);
         _paint.SetXfermode(_xfermode);
 
@@ -71,6 +98,24 @@ public sealed class BackdropInteractiveHighlight : IDisposable
             _shader = new BackdropRuntimeShader(BackdropShaders.InteractiveHighlight);
         }
     }
+
+    /// <summary>弹簧阻尼比。</summary>
+    public float DampingRatio { get; }
+
+    /// <summary>弹簧刚度。</summary>
+    public float Stiffness { get; }
+
+    /// <summary>是否播放弹簧动画。</summary>
+    public bool AnimationsEnabled { get; }
+
+    /// <summary>按压整面高光颜色（含 alpha）。</summary>
+    public Gfx.Color SurfaceColor => _surfaceColor;
+
+    /// <summary>跟手径向高光颜色（含 alpha）。</summary>
+    public Gfx.Color RadialColor => _radialColor;
+
+    /// <summary>API 33 以下的整面高光颜色（含 alpha）。</summary>
+    public Gfx.Color FallbackSurfaceColor => _fallbackSurfaceColor;
 
     /// <summary>按压进度 0–1。</summary>
     public float PressProgress => _pressProgress.Value;
@@ -85,7 +130,7 @@ public sealed class BackdropInteractiveHighlight : IDisposable
     public bool IsAnimating =>
         !_pressProgress.IsSettled || !_offsetX.IsSettled || !_offsetY.IsSettled;
 
-    /// <summary>按下：位置钉在触点，进度弹向 1。</summary>
+    /// <summary>按下：位置钉在触点，进度弹向 1（减少动态效果时立即到位）。</summary>
     /// <param name="x">触点 X（px）。</param>
     /// <param name="y">触点 Y（px）。</param>
     public void Begin(float x, float y)
@@ -94,7 +139,8 @@ public sealed class BackdropInteractiveHighlight : IDisposable
         _startY = y;
         _offsetX.SnapTo(0f);
         _offsetY.SnapTo(0f);
-        _pressProgress.AnimateTo(1f);
+        if (AnimationsEnabled) _pressProgress.AnimateTo(1f);
+        else _pressProgress.SnapTo(1f);
     }
 
     /// <summary>跟手：位置直接钉在触点（上游 <c>snapTo</c>），不经过弹簧。</summary>
@@ -106,10 +152,10 @@ public sealed class BackdropInteractiveHighlight : IDisposable
         _offsetY.SnapTo(y - _startY);
     }
 
-    /// <summary>抬手：进度与位置弹回。</summary>
+    /// <summary>抬手：进度与位置弹回（减少动态效果时立即收起）。</summary>
     public void End() => Release();
 
-    /// <summary>取消：进度与位置弹回。</summary>
+    /// <summary>取消：进度与位置弹回（减少动态效果时立即收起）。</summary>
     public void Cancel() => Release();
 
     /// <summary>推进一帧；返回是否仍需下一帧。</summary>
@@ -117,13 +163,15 @@ public sealed class BackdropInteractiveHighlight : IDisposable
     /// <returns>是否仍需下一帧。</returns>
     public bool Advance(float deltaSeconds)
     {
+        if (!AnimationsEnabled) return false;
+
         var press = _pressProgress.Advance(deltaSeconds);
         var x = _offsetX.Advance(deltaSeconds);
         var y = _offsetY.Advance(deltaSeconds);
         return press || x || y;
     }
 
-    /// <summary>把当前高光画到画布上；应在内容之前调用。</summary>
+    /// <summary>把当前按压高光画到画布上；应在内容之前调用。</summary>
     /// <param name="canvas">目标画布。</param>
     /// <param name="widthPx">视图宽（px）。</param>
     /// <param name="heightPx">视图高（px）。</param>
@@ -138,27 +186,51 @@ public sealed class BackdropInteractiveHighlight : IDisposable
         if (OperatingSystem.IsAndroidVersionAtLeast(33) && _shader is { } shader)
         {
             _paint.SetShader(null);
-            _paint.Color = AlphaWhite(0.08f * progress);
+            _paint.Color = ScaleAlpha(_surfaceColor, progress);
             canvas.DrawRect(0f, 0f, widthPx, heightPx, _paint);
 
             var position = _position(widthPx, heightPx, _startX + OffsetX, _startY + OffsetY);
-            var minDimension = MathF.Min(widthPx, heightPx);
-            shader.SetFloatUniform("size", widthPx, heightPx);
-            shader.SetColorUniform("color", AlphaWhite(0.15f * progress));
-            shader.SetFloatUniform("radius", minDimension * 1.5f);
-            shader.SetFloatUniform(
-                "position",
-                Math.Clamp(position.X, 0f, widthPx),
-                Math.Clamp(position.Y, 0f, heightPx));
-            _paint.SetShader(shader.PlatformShader);
-            canvas.DrawRect(0f, 0f, widthPx, heightPx, _paint);
+            DrawRadialShader(
+                canvas,
+                shader,
+                widthPx,
+                heightPx,
+                position.X,
+                position.Y,
+                ScaleAlpha(_radialColor, progress));
         }
         else
         {
             _paint.SetShader(null);
-            _paint.Color = AlphaWhite(0.25f * progress);
+            _paint.Color = ScaleAlpha(_fallbackSurfaceColor, progress);
             canvas.DrawRect(0f, 0f, widthPx, heightPx, _paint);
         }
+    }
+
+    /// <summary>
+    /// 只画跟手径向高光（无整面底色），用于悬停等接入层差异；API 33 以下无着色器时不画。
+    /// </summary>
+    /// <param name="canvas">目标画布。</param>
+    /// <param name="widthPx">视图宽（px）。</param>
+    /// <param name="heightPx">视图高（px）。</param>
+    /// <param name="xPx">高光中心 X（px）。</param>
+    /// <param name="yPx">高光中心 Y（px）。</param>
+    /// <param name="intensity">相对 <see cref="RadialColor"/> 的强度 0–1。</param>
+    public void DrawRadial(
+        Gfx.Canvas canvas,
+        float widthPx,
+        float heightPx,
+        float xPx,
+        float yPx,
+        float intensity)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(canvas);
+
+        if (intensity <= 0f || widthPx <= 0f || heightPx <= 0f) return;
+        if (!OperatingSystem.IsAndroidVersionAtLeast(33) || _shader is not { } shader) return;
+
+        DrawRadialShader(canvas, shader, widthPx, heightPx, xPx, yPx, ScaleAlpha(_radialColor, intensity));
     }
 
     /// <summary>释放画笔与着色器。</summary>
@@ -177,16 +249,46 @@ public sealed class BackdropInteractiveHighlight : IDisposable
         _xfermode.Dispose();
     }
 
-    private static Gfx.Color AlphaWhite(float alpha)
+    [System.Runtime.Versioning.SupportedOSPlatform("android33.0")]
+    private void DrawRadialShader(
+        Gfx.Canvas canvas,
+        BackdropRuntimeShader shader,
+        float widthPx,
+        float heightPx,
+        float xPx,
+        float yPx,
+        Gfx.Color color)
     {
-        var value = (int)MathF.Round(Math.Clamp(alpha, 0f, 1f) * 255f);
-        return Gfx.Color.Argb(value, 255, 255, 255);
+        var minDimension = MathF.Min(widthPx, heightPx);
+        shader.SetFloatUniform("size", widthPx, heightPx);
+        shader.SetColorUniform("color", color);
+        shader.SetFloatUniform("radius", minDimension * _radialRadiusFactor);
+        shader.SetFloatUniform(
+            "position",
+            Math.Clamp(xPx, 0f, widthPx),
+            Math.Clamp(yPx, 0f, heightPx));
+        _paint.SetShader(shader.PlatformShader);
+        canvas.DrawRect(0f, 0f, widthPx, heightPx, _paint);
+    }
+
+    private static Gfx.Color ScaleAlpha(Gfx.Color color, float factor)
+    {
+        int alpha = (int)MathF.Round(Math.Clamp(color.A / 255f * factor, 0f, 1f) * 255f);
+        return Gfx.Color.Argb(alpha, color.R, color.G, color.B);
     }
 
     private void Release()
     {
-        _pressProgress.AnimateTo(0f);
-        _offsetX.AnimateTo(0f);
-        _offsetY.AnimateTo(0f);
+        if (AnimationsEnabled)
+        {
+            _pressProgress.AnimateTo(0f);
+            _offsetX.AnimateTo(0f);
+            _offsetY.AnimateTo(0f);
+            return;
+        }
+
+        _pressProgress.SnapTo(0f);
+        _offsetX.SnapTo(0f);
+        _offsetY.SnapTo(0f);
     }
 }
