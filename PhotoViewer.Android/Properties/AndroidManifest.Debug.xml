@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Debug-only overlay: DocumentsProvider must advertise DOCUMENTS_PROVIDER, otherwise
-     DocumentsContract.isDocumentUri() refuses to treat its URIs as documents.
+<!-- 仅在 -p:PhotoViewerAndroidStorageChecks=true 的 Debug 验收构建合并：
+     DocumentsProvider 必须声明 DOCUMENTS_PROVIDER，否则 DocumentsContract.isDocumentUri()
+     不会把它的 URI 当作文档。普通 Debug 与 Release 的 APK 都不含本覆盖层。
      authority 不写在这里：它由 C# [ContentProvider] 的 ${pvPackageId} 占位生成，
      随实际 ApplicationId 变化，标准版与 AI 版可同机并存。 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">

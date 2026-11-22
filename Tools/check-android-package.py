@@ -18,6 +18,10 @@ badging 交叉核对，找到 apksigner 时只读取校验结果（无需私钥�
 共存：系统组件 authority 必须位于实际包名的命名空间内（`<package>.…`），
 否则另一发行版无法同机安装；Debug 验收 Provider 的 authority 由 ApplicationId 派生。
 
+验收 Provider：扫描实际清单中的 Provider 类名与 authority，拒绝注册
+`DebugTestDocumentsProvider` / `DebugTestMediaProvider`（`.debug.storage` / `.debug.media`）的包。
+它们只用于显式开启 `PhotoViewerAndroidStorageChecks=true` 的 Debug 验收构建。
+
 ABI：只允许 arm64-v8a，出现 x86_64 / armeabi-v7a 一律失败。
 
 standard：不得包含 .onnx 模型、onnxruntime（原生、托管、AOT 或 assembly store 内记录）、
@@ -32,7 +36,8 @@ ai：      必须包含唯一模型 dinov3_vits16.onnx（字节数与 SHA-256 �
 
 报告固定写入 edition / productId / package / expectations / identity / components /
 abis / summary / files / errors：package 是 APK 文件本身的字节数与 SHA-256，summary
-按分类给出文件数、字节数与聚合 SHA-256，files 逐条给出路径、字节数与 SHA-256。
+按分类给出文件数、字节数与聚合 SHA-256，files 逐条给出路径、字节数与 SHA-256，
+components 记录 providers、foreignAuthorities 与验收专用 Provider。
 检查失败时仍写报告并以 1 退出。
 """
 
@@ -92,6 +97,11 @@ BACKDROP_LICENSE_PATHS = (
 
 ONNX_MANAGED = "microsoft.ml.onnxruntime.dll"
 MATHNET_MANAGED = "mathnet.numerics.dll"
+
+# 验收专用 Provider（storage / rating-perf）：普通 Debug 与 Release 都不得注册。
+# 类名不随 edition 改变；authority 由 ApplicationId 派生，故按后缀识别。
+ACCEPTANCE_PROVIDER_CLASSES = ("DebugTestDocumentsProvider", "DebugTestMediaProvider")
+ACCEPTANCE_PROVIDER_AUTHORITY_SUFFIXES = (".debug.storage", ".debug.media")
 
 ATTR_LABEL = "label"
 ATTR_NAME = "name"
@@ -604,7 +614,17 @@ def check_component_authorities(identity: dict, expectations: dict, errors: list
                     f"组件 authority 不在实际包名 {package} 的命名空间内，无法与另一发行版同机并存："
                     f"{provider.get('name')} → {authority}"
                 )
-    return {"providers": providers, "foreignAuthorities": foreign}
+    acceptance = [
+        provider for provider in providers
+        if (provider.get("name") or "").rsplit(".", 1)[-1] in ACCEPTANCE_PROVIDER_CLASSES
+        or any(authority.endswith(ACCEPTANCE_PROVIDER_AUTHORITY_SUFFIXES)
+               for authority in (provider.get("authorities") or []))
+    ]
+    for provider in acceptance:
+        errors.append(f"APK 含验收专用 Provider：{provider.get('name')} / "
+                      f"{'、'.join(provider.get('authorities') or [])}")
+    return {"providers": providers, "foreignAuthorities": foreign,
+            "acceptanceProviders": {"providers": acceptance, "satisfied": not acceptance}}
 
 
 def check_backdrop_licenses(records: list[dict], errors: list[str]) -> dict:
@@ -961,11 +981,12 @@ def _end_element(name: str, string_index: dict) -> bytes:
 
 
 def build_axml(package: str, version_code: int, version_name: str, label: str,
-               utf8: bool = True, authorities: list[str] | None = None) -> bytes:
+               utf8: bool = True, authorities: list[str] | None = None,
+               provider_class: str | None = None) -> bytes:
     strings = ["manifest", "application", "package", ATTR_VERSION_CODE, ATTR_VERSION_NAME, ATTR_LABEL]
     if authorities:
         strings.extend(["provider", ATTR_NAME, ATTR_AUTHORITIES])
-        provider_name = package + ".SelfTestProvider"
+        provider_name = provider_class or package + ".SelfTestProvider"
         if provider_name not in strings:
             strings.append(provider_name)
     else:
@@ -997,12 +1018,13 @@ def build_axml(package: str, version_code: int, version_name: str, label: str,
 
 def make_apk(path: Path, package: str, version_code: int, version_name: str, label: str,
              extra: dict[str, bytes] | None = None, abi: str = TARGET_ABI, utf8: bool = True,
-             authorities: list[str] | None = None, include_icons: bool = True) -> Path:
+             authorities: list[str] | None = None, include_icons: bool = True,
+             provider_class: str | None = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("AndroidManifest.xml",
                          build_axml(package, version_code, version_name, label, utf8=utf8,
-                                    authorities=authorities))
+                                    authorities=authorities, provider_class=provider_class))
         archive.writestr("classes.dex", b"dex\n035\0")
         archive.writestr(f"lib/{abi}/libmonodroid.so", b"\x7fELF")
         if include_icons:
@@ -1065,7 +1087,8 @@ def self_test() -> int:
                 third_party: bool = True,
                 abi: str = TARGET_ABI, version_name: str = version, version_code: int = build,
                 package_id: str | None = None, utf8: bool = True,
-                authorities: list[str] | None = None, include_icons: bool = True) -> Path:
+                authorities: list[str] | None = None, include_icons: bool = True,
+                provider_class: str | None = None) -> Path:
             merged: dict[str, bytes] = (
                 {path: b"license" for path in BACKDROP_LICENSE_PATHS} if third_party else {}
             )
@@ -1074,7 +1097,7 @@ def self_test() -> int:
             return make_apk(root / f"{name}/{name}.apk", package_id or PACKAGE_IDS[edition],
                             version_code, version_name, label or PRODUCT_NAMES[edition],
                             extra=merged, abi=abi, utf8=utf8, authorities=authorities,
-                            include_icons=include_icons)
+                            include_icons=include_icons, provider_class=provider_class)
 
         standard_ok = apk("standard-ok", extra={"assemblies/PhotoViewer.dll": b"MZ"})
         cases.append(("标准版合规包通过", standard_ok, "standard", True, None))
@@ -1133,8 +1156,28 @@ def self_test() -> int:
         ))
         cases.append((
             "标准版组件 authority 在同一包名命名空间内通过",
-            apk("standard-authority", authorities=[PACKAGE_IDS["standard"] + ".debug.storage"]),
+            apk("standard-authority", authorities=[PACKAGE_IDS["standard"] + ".selfcheck"]),
             "standard", True, None,
+        ))
+        cases.append((
+            "普通 Debug 误带验收 DocumentsProvider 失败",
+            apk("standard-acceptance-provider",
+                authorities=[PACKAGE_IDS["standard"] + ".debug.storage"],
+                provider_class="cc.xiaojh.PhotoViewer.Core.DebugTestDocumentsProvider"),
+            "standard", False, "验收专用 Provider",
+        ))
+        cases.append((
+            "验收类名换 authority 也失败",
+            apk("standard-acceptance-class",
+                authorities=[PACKAGE_IDS["standard"] + ".selfcheck"],
+                provider_class="cc.xiaojh.PhotoViewer.Core.DebugTestDocumentsProvider"),
+            "standard", False, "验收专用 Provider",
+        ))
+        cases.append((
+            "验收 authority 换类名也失败",
+            apk("standard-acceptance-authority",
+                authorities=[PACKAGE_IDS["standard"] + ".debug.storage"]),
+            "standard", False, "验收专用 Provider",
         ))
         cases.append((
             "版本号不符失败",
@@ -1159,6 +1202,13 @@ def self_test() -> int:
         cases.append((
             "AI 版 AOT 布局合规通过",
             apk("ai-ok-aot", edition="ai", extra=ai_extra), "ai", True, None,
+        ))
+        cases.append((
+            "AI 版误带验收媒体 Provider 失败",
+            apk("ai-acceptance-media", edition="ai", extra=ai_extra,
+                authorities=[PACKAGE_IDS["ai"] + ".debug.media"],
+                provider_class="cc.xiaojh.PhotoViewer.Core.DebugTestMediaProvider"),
+            "ai", False, "验收专用 Provider",
         ))
 
         store_extra = {
@@ -1243,7 +1293,7 @@ def self_test() -> int:
         cases.append((
             "AI 版沿用标准版组件 authority 失败",
             apk("ai-foreign-authority", extra=ai_extra,
-                authorities=[PACKAGE_IDS["standard"] + ".debug.storage"]),
+                authorities=[PACKAGE_IDS["standard"] + ".selfcheck"]),
             "ai", False, "authority",
         ))
         cases.append((
@@ -1287,6 +1337,8 @@ def self_test() -> int:
             failures.append("报告身份未记录实际包名")
         if report["components"].get("foreignAuthorities"):
             failures.append("合规包的组件 authority 被误判为跨包")
+        if not (report["components"].get("acceptanceProviders") or {}).get("satisfied"):
+            failures.append("合规包被误判为含验收专用 Provider")
         if not report["package"].get("sha256"):
             failures.append("报告缺少 APK 文件 SHA-256")
         if not report["summary"]["categories"]:

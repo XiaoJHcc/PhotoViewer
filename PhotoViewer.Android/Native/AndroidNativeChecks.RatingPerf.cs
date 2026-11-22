@@ -37,7 +37,8 @@ namespace PhotoViewer.Android.Native;
 /// 重新读盘的墙钟。两者都不含夹具复制开销；写入窗口内的通知数与「冲突为真」次数一并记录，
 /// 用来判断转场/暂态里是否闪出假冲突。<c>rating-perf</c> 不设速度门槛：判定只看写入是否收敛、
 /// 通知期间是否出现假冲突，耗时全部写进报告供人读。</para>
-/// <para><c>DebugTestDocumentsProvider</c> 只在 Debug 构建注册，Release 跑本模式会如实报 FAIL 并结束。</para>
+/// <para><c>DebugTestDocumentsProvider</c> 只随 <c>-p:PhotoViewerAndroidStorageChecks=true</c> 的 Debug
+/// 构建注册；Release 与普通 Debug 跑本模式都会如实报 FAIL 并结束。</para>
 /// </remarks>
 internal static partial class AndroidNativeChecks
 {
@@ -112,8 +113,9 @@ internal static partial class AndroidNativeChecks
         if (provider == null)
         {
             Check("rating-perf 验收 Provider 可用", false,
-                $"未注册 {DebugTestDocumentsProvider.TestAuthority}（Release 构建不注册 DebugTestDocumentsProvider，"
-                + "rating-perf 只能在 Debug 构建运行）");
+                $"未注册 {DebugTestDocumentsProvider.TestAuthority}（只有 Debug 且显式传 "
+                + "-p:PhotoViewerAndroidStorageChecks=true 的构建注册 DebugTestDocumentsProvider；"
+                + "Release 与普通 Debug 都不注册）");
             return;
         }
         Check("rating-perf 验收 Provider 可用", true,

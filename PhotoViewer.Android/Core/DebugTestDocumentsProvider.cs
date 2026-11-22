@@ -13,13 +13,14 @@ namespace PhotoViewer.Android.Core;
 /// <summary>
 /// 验收专用 DocumentsProvider：用 App 私有目录做 backing store，提供真实 <c>content://</c> 文档树。
 /// 三棵固定树 —— <c>writable</c>（随机读写/新建/删除）、<c>readonly</c>（rw 拒绝）、
-/// <c>nonseekable</c>（只给不可定位的管道 fd）。仅 Debug 构建注册；DocumentsProvider 要求
-/// <c>exported=true</c> + <c>grantUriPermissions</c> + <c>MANAGE_DOCUMENTS</c> 读写权限
-/// （同 UID 访问不受该权限限制，只有本应用与系统 DocumentsUI 能读写这棵测试树）。
-/// Release 不注册 Provider。仅验收使用，不承载产品数据，也不是 MTP/USB 设备模拟。
+/// <c>nonseekable</c>（只给不可定位的管道 fd）。只在 <c>-p:PhotoViewerAndroidStorageChecks=true</c>
+/// 的 Debug 验收构建注册，避免系统文件选择器在日常运行时枚举验收文档树。
+/// DocumentsProvider 要求 <c>exported=true</c> + <c>grantUriPermissions</c> + <c>MANAGE_DOCUMENTS</c>
+/// 读写权限（同 UID 访问不受该权限限制，只有本应用与系统 DocumentsUI 能读写这棵测试树）。
+/// Release 不注册。仅验收使用，不承载产品数据，也不是 MTP/USB 设备模拟。
 /// authority 由实际 applicationId 派生，标准版与 AI 版各自独立，可同机并存。
 /// </summary>
-#if DEBUG
+#if DEBUG && PHOTOVIEWER_ANDROID_STORAGE_CHECKS
 [ContentProvider(
     new[] { DebugTestDocumentsProvider.TestAuthorityPlaceholder },
     Name = "cc.xiaojh.PhotoViewer.Core.DebugTestDocumentsProvider",
@@ -542,10 +543,11 @@ public sealed class DebugTestDocumentsProvider : DocumentsProvider
 /// 验收专用通用 <see cref="ContentProvider"/>：模拟 MediaStore 这类「Uri 里只有数字 ID、
 /// 显示名要靠 <c>_display_name</c> 查」的 provider（<c>content://authority/4201</c>），
 /// 用来核对 ACTION_VIEW 入口必须在后台读真实属性，而不是拿 Uri 末段当文件名。
-/// 不是 DocumentsProvider（<c>DocumentsContract.IsDocumentUri</c> 为 false），仅 Debug 注册，
-/// 只读、只服务登记过的数字 ID，不承载产品数据。authority 同样由实际 applicationId 派生。
+/// 不是 DocumentsProvider（<c>DocumentsContract.IsDocumentUri</c> 为 false），随
+/// <c>-p:PhotoViewerAndroidStorageChecks=true</c> 的 Debug 验收构建注册，只读、只服务登记过的
+/// 数字 ID，不承载产品数据。authority 同样由实际 applicationId 派生。
 /// </summary>
-#if DEBUG
+#if DEBUG && PHOTOVIEWER_ANDROID_STORAGE_CHECKS
 [ContentProvider(
     new[] { DebugTestMediaProvider.TestAuthorityPlaceholder },
     Name = "cc.xiaojh.PhotoViewer.Core.DebugTestMediaProvider",

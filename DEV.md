@@ -67,6 +67,8 @@ dotnet build PhotoViewer.Windows -c Release -p:PhotoViewerEdition=standard
 
 两个产品各自使用 `PhotoViewer.Android/bin/<standard|ai>/` 与 `obj/<standard|ai>/`，共享工程 `PhotoViewer/` 同样按版本隔离；命令行构建、运行与发布都必须显式传 `-p:PhotoViewerEdition=standard|ai`，缺失或传入非法值时报错。ApplicationId 分别为 `cc.xiaojh.PhotoViewer` / `cc.xiaojh.PhotoViewer.AI`，两版可并存安装且沙盒各自独立；显示名分别为 `PhotoViewer` / `PhotoViewer AI`（空格；APK 文件名仍用 `PhotoViewer-AI`），只构建 `android-arm64`。
 
+运行 `storage` / `rating-perf` 时，构建 Debug 包需额外传 `-p:PhotoViewerAndroidStorageChecks=true`，以注册验收专用 Provider。产物和中间文件分别位于 `bin/<edition>/checks/`、`obj/<edition>/checks/`；该参数仅支持 Debug。
+
 原生验收夹具先推到 `/data/local/tmp`，再用 `run-as <实际ApplicationId>` 复制到对应应用的 `files/pv-fixtures`。启动组件的前半段是实际 ApplicationId，后半段 Java 类名固定为 `cc.xiaojh.PhotoViewer.AndroidBootstrapActivity`：
 
 ```bash

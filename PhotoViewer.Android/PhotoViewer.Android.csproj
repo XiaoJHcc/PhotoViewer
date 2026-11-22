@@ -6,12 +6,11 @@
              显示名、ApplicationId 与分发包前缀都从这里映射；DINO 只是 edition 派生的能力开关。 -->
         <ApplicationTitle>$(PhotoViewerDisplayName)</ApplicationTitle>
         <ApplicationId>$(PhotoViewerPackageId)</ApplicationId>
-        <!-- Debug 验收 Provider 的 authority 在 C# 里以 ${pvPackageId} 占位，由清单生成时替换成实际 ApplicationId。 -->
+        <!-- 验收 Provider 的 authority 在 C# 里以 ${pvPackageId} 占位，由清单生成时替换成实际 ApplicationId。 -->
         <AndroidManifestPlaceholders>pvPackageId=$(PhotoViewerPackageId)</AndroidManifestPlaceholders>
         <DefineConstants Condition="'$(PhotoViewerEnableDino)' == 'true'">$(DefineConstants);PHOTOVIEWER_DINO</DefineConstants>
         <!-- 只发 arm64-v8a：APK 不得出现 x86_64 / armeabi-v7a。-->
         <RuntimeIdentifiers>android-arm64</RuntimeIdentifiers>
-        <AndroidUseAssemblyStore Condition="'$(PhotoViewerEnableDino)' != 'true'">false</AndroidUseAssemblyStore>
         <!-- ONNX Runtime AAR 要求 minSdk >= 24（Android 7.0）；A2-M1 起必须满足此门槛 -->
         <SupportedOSPlatformVersion>24</SupportedOSPlatformVersion>
         <Nullable>enable</Nullable>
@@ -30,14 +29,25 @@
          可直接安装运行，代价是包体积略大、构建稍慢。 -->
     <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
         <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
-        <!-- AI 版保留 Assembly Store；标准版改走逐程序集 DSO，避开缺少 DINO 程序集时
-             Assembly Store 在 ReactiveUI/后台类型初始化阶段的启动等待。 -->
-        <AndroidUseAssemblyStore Condition="'$(PhotoViewerEnableDino)' == 'true'">true</AndroidUseAssemblyStore>
+        <!-- 标准 Debug 保留逐程序集 DSO，避开此组合的 Assembly Store 启动等待。 -->
+        <AndroidUseAssemblyStore>$(PhotoViewerEnableDino)</AndroidUseAssemblyStore>
+    </PropertyGroup>
+
+    <!--
+      storage / rating-perf 专用构建：显式注册 Provider，放入独立的 checks 目录。
+      清单合并不跟踪覆盖层增删，独立中间目录可防止普通包复用验收清单。
+    -->
+    <PropertyGroup Condition="'$(PhotoViewerAndroidStorageChecks)' == 'true' And '$(Configuration)' == 'Debug'">
+        <DefineConstants>$(DefineConstants);PHOTOVIEWER_ANDROID_STORAGE_CHECKS</DefineConstants>
+        <IntermediateOutputPath>$(BaseIntermediateOutputPath)checks/</IntermediateOutputPath>
+        <OutputPath>$(BaseOutputPath)checks/</OutputPath>
     </PropertyGroup>
 
     <!-- Release 配置：启用 AOT 编译加快启动速度、减少 JIT 开销 -->
     <PropertyGroup Condition="'$(Configuration)' == 'Release'">
         <RunAOTCompilation>true</RunAOTCompilation>
+        <!-- 避开 Android 36.1.53 逐程序集 DSO 首次并发装载的映射竞态。 -->
+        <AndroidUseAssemblyStore>true</AndroidUseAssemblyStore>
         <!-- Profile-guided AOT 需要收集运行时数据，普通发布保持关闭 -->
         <AndroidEnableProfiledAot>false</AndroidEnableProfiledAot>
     </PropertyGroup>
@@ -46,8 +56,8 @@
         <AndroidResource Include="Icon.png">
             <Link>Resources\drawable\Icon.png</Link>
         </AndroidResource>
-        <!-- Debug 专用验收 Provider 的 intent-filter 覆盖层（Release 不合并）。 -->
-        <AndroidManifestOverlay Condition="'$(Configuration)' == 'Debug'"
+        <!-- 验收 Provider 的 intent-filter 覆盖层：只随 opt-in 的 Debug 验收构建合并。 -->
+        <AndroidManifestOverlay Condition="'$(PhotoViewerAndroidStorageChecks)' == 'true' And '$(Configuration)' == 'Debug'"
             Include="Properties\AndroidManifest.Debug.xml" />
     </ItemGroup>
 
@@ -221,7 +231,7 @@
   标准版与 AI 版共用一套 bin/obj 会互相复用还原资产与中间文件，两版的 bin/obj 已按 edition
   隔离（见根 Directory.Build.props）。裸构建/restore 缺少 edition 或给了非法值必须直接失败，
   不能悄悄落到标准版目录；restore 与构建都必须显式带 -p:PhotoViewerEdition=standard|ai。
-  PhotoViewerEnableDino 由 edition 派生，不接受单独覆盖。
+  PhotoViewerEnableDino 由 edition 派生，不接受单独覆盖；PhotoViewerAndroidStorageChecks 只在 Debug 生效。
 -->
 <Target Name="_RequireExplicitEdition"
         BeforeTargets="Restore;PrepareForBuild"
@@ -232,5 +242,7 @@
            Text="根 Directory.Build.props 未给出 $(PhotoViewerEdition) 对应的产品身份（PhotoViewerPackageId / PhotoViewerDisplayName / PhotoViewerDistributionName）。" />
     <Error Condition="('$(PhotoViewerEdition)' == 'standard' And '$(PhotoViewerEnableDino)' != 'false') Or ('$(PhotoViewerEdition)' == 'ai' And '$(PhotoViewerEnableDino)' != 'true')"
            Text="PhotoViewerEnableDino 由 PhotoViewerEdition 派生，不能单独覆盖；请只传 -p:PhotoViewerEdition=standard|ai。" />
+    <Error Condition="'$(PhotoViewerAndroidStorageChecks)' == 'true' And '$(Configuration)' != 'Debug'"
+           Text="PhotoViewerAndroidStorageChecks 只用于 Debug 验收构建；Release 不得注册验收 Provider。" />
 </Target>
 </Project>
