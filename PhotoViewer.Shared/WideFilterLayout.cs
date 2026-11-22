@@ -5,10 +5,10 @@ namespace PhotoViewer.Shared;
 /// <summary>宽形态筛选控件的形态（FILTER-07）：三段合体胶囊，或放不下时的单胶囊。</summary>
 public enum FilterControlMode
 {
-    /// <summary>三合体：排序 / 方向 / 星级三段原生弹出按钮同处一个交互式玻璃胶囊内。</summary>
+    /// <summary>顶栏三合体：排序 / 方向 / 星级三段原生弹出按钮同处一个交互式玻璃胶囊内。</summary>
     Segmented,
 
-    /// <summary>单胶囊：一个系统玻璃按钮弹出同一套分组菜单。</summary>
+    /// <summary>左栏固定形态或顶栏空间不足的回退：一个系统玻璃按钮弹出同一套分组菜单。</summary>
     Capsule,
 }
 
@@ -33,13 +33,16 @@ public readonly record struct WideFilterFrames(
     double MainLength);
 
 /// <summary>
-/// 宽形态筛选控件的平台中立几何（FILTER-07）：行布局整组在文件栏内容区内居中，三段放不下时改单胶囊；
-/// 列布局把控件固定为胶片卡片列宽，三段放得下就均分余量、放不下则单胶囊，相似聚类开关在下方同宽。
+/// 桌面宽形态筛选控件的平台中立几何（FILTER-07）：行布局三段等宽并整组居中，
+/// 每段建议宽 120，内容超宽时同步加宽；空间不足时改单胶囊，列布局固定为胶片卡片列宽的单胶囊。
 /// </summary>
 public static class WideFilterLayout
 {
     /// <summary>控件高度（玻璃按钮边长）。</summary>
     public static double Height => DesignTokens.ShellGlassButtonSize;
+
+    /// <summary>顶栏每段的建议宽度。</summary>
+    public static double PreferredSegmentWidth => DesignTokens.FilterSegmentPreferredWidth;
 
     /// <summary>控件与相似聚类开关之间的间距。</summary>
     public static double Gap => DesignTokens.ShellGlassGroupGap;
@@ -56,7 +59,7 @@ public static class WideFilterLayout
     /// <param name="leadingInset">列布局的前导让位（标题栏让位或安全区顶边）。</param>
     /// <param name="sortWidth">排序段自然宽度。</param>
     /// <param name="orderWidth">升降序段自然宽度。</param>
-    /// <param name="ratingWidth">星级筛选段自然宽度。</param>
+    /// <param name="ratingWidth">星级筛选段自然宽度（含当前条件、计数与间距）。</param>
     /// <param name="capsuleWidth">单胶囊形态的宽度（行布局由调用方给出）。</param>
     /// <param name="includeToggle">是否显示相似聚类开关（标准版为 false）。</param>
     /// <param name="toggleWidth">相似聚类开关宽度。</param>
@@ -65,12 +68,14 @@ public static class WideFilterLayout
         double sortWidth, double orderWidth, double ratingWidth, double capsuleWidth, bool includeToggle,
         double toggleWidth)
     {
-        double segmented = sortWidth + orderWidth + ratingWidth;
+        double segmentedWidth = Math.Max(PreferredSegmentWidth * 3,
+            Math.Max(sortWidth + orderWidth + ratingWidth,
+                Math.Max(sortWidth, Math.Max(orderWidth, ratingWidth)) * 3));
         double toggleRun = includeToggle ? Gap + toggleWidth : 0;
         if (row)
         {
-            bool fits = segmented + toggleRun <= contentWidth - Margin * 2;
-            double controlWidth = fits ? segmented : capsuleWidth;
+            bool fits = segmentedWidth + toggleRun <= contentWidth - Margin * 2;
+            double controlWidth = fits ? segmentedWidth : capsuleWidth;
             double total = controlWidth + toggleRun;
             double start = Math.Max(Margin, (contentWidth - total) / 2);
             var control = new LayoutRect(start, Margin, controlWidth, Height);
@@ -78,7 +83,7 @@ public static class WideFilterLayout
                 ? new LayoutRect(control.MaxX + Gap, Margin, toggleWidth, Height)
                 : default;
             var (sort, order, rating) = fits
-                ? Segments(sortWidth, orderWidth, ratingWidth)
+                ? Segments(controlWidth)
                 : (default, default, default);
             return new WideFilterFrames(
                 fits ? FilterControlMode.Segmented : FilterControlMode.Capsule,
@@ -86,24 +91,21 @@ public static class WideFilterLayout
         }
 
         var columnControl = new LayoutRect((contentWidth - cardWidth) / 2, leadingInset, cardWidth, Height);
-        bool columnFits = segmented <= cardWidth;
         var columnToggle = includeToggle
             ? new LayoutRect(columnControl.X, columnControl.MaxY + Gap, cardWidth, Height)
             : default;
-        var (columnSort, columnOrder, columnRating) = columnFits
-            ? Segments(sortWidth + (cardWidth - segmented) / 3, orderWidth + (cardWidth - segmented) / 3,
-                ratingWidth + (cardWidth - segmented) / 3)
-            : (default, default, default);
         double mainLength = leadingInset + Height + (includeToggle ? Gap + Height : 0) + Margin;
         return new WideFilterFrames(
-            columnFits ? FilterControlMode.Segmented : FilterControlMode.Capsule,
-            columnControl, columnSort, columnOrder, columnRating, columnToggle, mainLength);
+            FilterControlMode.Capsule,
+            columnControl, default, default, default, columnToggle, mainLength);
     }
 
-    /// <summary>三段沿控件主轴从左到右首尾相接，每段高度占满控件。</summary>
-    private static (LayoutRect Sort, LayoutRect Order, LayoutRect Rating) Segments(
-        double sortWidth, double orderWidth, double ratingWidth)
-        => (new LayoutRect(0, 0, sortWidth, Height),
-            new LayoutRect(sortWidth, 0, orderWidth, Height),
-            new LayoutRect(sortWidth + orderWidth, 0, ratingWidth, Height));
+    /// <summary>三段沿控件主轴从左到右首尾相接且等宽，每段高度占满控件。</summary>
+    private static (LayoutRect Sort, LayoutRect Order, LayoutRect Rating) Segments(double controlWidth)
+    {
+        double third = controlWidth / 3;
+        return (new LayoutRect(0, 0, third, Height),
+            new LayoutRect(third, 0, third, Height),
+            new LayoutRect(third * 2, 0, controlWidth - third * 2, Height));
+    }
 }

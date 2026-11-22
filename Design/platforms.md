@@ -156,13 +156,13 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
   - Android：`PhotoViewer.Android/Native/AndroidFilterBar.cs` 的 `AndroidFilterBar`（宽形态按共享 `MobileFilterLayout` 的「筛选 / 更多」96 合体，手机形态为 44 圆按钮或 88 合体；真实入口保留在 `AndroidPhoneChrome.cs` 的锚点视图中，玻璃材质由 `AndroidGlassControlLayer` 绘制，分组菜单承载在 `AndroidGlassPopupLayer` 的窗口内玻璃面板上）。
   - **FILTER-01@android**：宽形态与 iPad 同为「筛选 / 更多」96 合体（两段各 48、高 44），AI 版开关为可勾选玻璃锚点按钮，列布局 96×44、行布局取文字自然宽；手机竖屏为 44 圆入口，横屏为 88×44 合体，刘海在右时两段按槽位镜像。入口图标取 `icon.filter` / `icon.more`。开关未选中文字取 `color.text.primary`（与其他 Material 按钮一致），选中态取 `color.filter.toggle.checked.*`。
 - **FILTER-02、FILTER-03、FILTER-05、FILTER-10**：共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs`（筛选、排序、当前项映射）；筛选项定义在 `PhotoViewer/ViewModels/Main/File/FilterBarViewModel.cs`，星级投影在 `PhotoViewer/ViewModels/Main/File/PhotoListProjection.cs` 的 `MatchesRating`。9 项取值、并集多选与已拒绝/冲突口径见 [rating](#rating)（RATING-01）与 [spec/filter.md](spec/filter.md)（FILTER-03）。
-- **FILTER-04**：四端与 Web 均无筛选计数控件或占位；业务计数随列表投影同步。
+- **FILTER-04**：Windows 与 macOS 在星级入口内显示 `N张`，左侧为当前条件、右侧为计数；计数使用 `filter.count.fontSize` 与平台次级文字色，菜单不显示计数。iOS、Android 与 Web 在桌面试点阶段不显示计数。业务计数随列表投影同步。
 - **FILTER-06、FILTER-09**：开关状态 `PhotoViewer/ViewModels/Settings/SettingsViewModel.cs` 的 `SimilarityPanelExpanded`（经 `IViewStateStore` 跨会话保留，不进入设置文档）；可见性 `SimilarityPanelViewModel.IsPanelVisible`。
-- **FILTER-07**：移动端（iOS、Android）宽形态取共享 `PhotoViewer.Shared/MobileFilterLayout.cs`（筛选 / 更多与大档卡片同宽（96）、两段各 48；行布局整组含 AI 版开关按自然宽居中；列布局合体与 AI 版开关都靠主图侧的内容末端锚点，锚点与列宽取共享 `FilmSideGeometry`，开关 96 与卡片列同缘、隔 8 点）；macOS 与 Windows 宽形态取共享 `WideFilterLayout`（三合体或单胶囊），Web 按 `FILTER-07@web` 实现同一桌面形态。
-  - **FILTER-07@win**：列布局首控件顶部让位取 `filter.margin`（10）：Windows 列布局标题栏不覆盖文件栏，不取 macOS 的 42 点让位；段自然宽按 `dropdown.fontSize` 实测最长选项名加两侧 `dropdown.paddingLeft`。
+- **FILTER-07**：移动端（iOS、Android）宽形态取共享 `PhotoViewer.Shared/MobileFilterLayout.cs`（筛选 / 更多与大档卡片同宽（96）、两段各 48；行布局整组含 AI 版开关按自然宽居中；列布局合体与 AI 版开关都靠主图侧的内容末端锚点，锚点与列宽取共享 `FilmSideGeometry`，开关 96 与卡片列同缘、隔 8 点）；macOS 与 Windows 宽形态取共享 `WideFilterLayout`（行布局三段 1:1:1、每段建议宽 120，列布局固定单胶囊），Web 按 `FILTER-07@web` 保留试点前形态。
+  - **FILTER-07@win**：列布局首控件顶部让位取 `filter.margin`（10）：Windows 列布局标题栏不覆盖文件栏，不取 macOS 的 42 点让位；段自然宽按 `dropdown.fontSize` 实测最长选项名加两侧 `dropdown.paddingLeft`，星级段另计当前张数与 `filter.count.spacing`。
   - **FILTER-07@android**：宽形态逐项取 `MobileFilterLayout.Compute`；列布局首控件顶部让位取该列位置的系统栏遮挡加一份 `filter.margin`，整组自然宽超出安全内容区时才由滚动宿主横向承载。手机入口直接取 `PhoneScreenLayout` 的竖横屏槽位，横屏合体常驻并随刘海侧镜像。
 - **FILTER-08**：四端与 Web 共用相同的选择语义；保留各端现有菜单排版、组序与系统交互。
-  - **FILTER-08@mac**：使用 AppKit `NSMenu` 和 SF Symbols；原生单胶囊下拉只展示实际选项，不把入口标题列作选项。AppKit 无公开的逐段读屏值接口，完整星级条件由分段控件的读屏值表达。标准菜单的点击会结束原生跟踪会话，AppKit 没有公开的项级保持展开属性；继续点选需重新打开，先前条件保留。
+  - **FILTER-08@mac**：使用 AppKit `NSMenu` 和 SF Symbols；原生单胶囊下拉只展示实际选项，不把入口标题列作选项。AppKit 无公开的逐段读屏值接口，完整星级条件与张数由分段控件的读屏值表达。标准菜单的点击会结束原生跟踪会话，AppKit 没有公开的项级保持展开属性；继续点选需重新打开，先前条件保留。
   - **FILTER-08@win**：分段和单胶囊都用 WinUI `MenuFlyout`，通过菜单项的 `Icon` 呈现 Fluent 字形。菜单项点选后由系统收起，没有公开的项级保持展开属性；继续点选需重新打开，先前条件保留。状态变化只更新既有菜单项及入口标签，不重建菜单。
   - **FILTER-08@ios**：系统 `UIButton` 上下文菜单与 `UIMenu`，使用 SF Symbols。中尺寸排序项、星级条件、方向在三个内联分组；`KeepsMenuPresented` 与 `UpdateVisibleMenu` 保持菜单展开并提交当前状态。切换已滚动菜单的星级条件时，系统可能把当前项移到可见区域中央，保留该原生行为。筛选与更多入口互斥。
   - **FILTER-08@android**：玻璃锚点入口、窗口内玻璃面板与真实菜单行；全部菜单与星级标记取 `Design/icons.json` 的共享 Fluent 映射（无星级为禁止符号，数字档为对应数字圆）。点选即生效并在原弹层更新勾选，入口失效时关闭；点面板外只关闭且不穿透，焦点关闭后归还入口。更多段弹主图菜单（宽形态不含 EXIF 项）。

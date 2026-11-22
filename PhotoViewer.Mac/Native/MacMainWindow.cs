@@ -60,6 +60,10 @@ public sealed class MacMainWindow : IDisposable
     private readonly double _sortWidth;
     private readonly double _orderWidth;
     private readonly double _ratingWidth;
+    private readonly NSTextField _segmentRatingLabel;
+    private readonly NSTextField _segmentCountLabel;
+    private readonly NSTextField _capsuleRatingLabel;
+    private readonly NSTextField _capsuleCountLabel;
     private NSView _activeFilterTarget = null!;
 #if PHOTOVIEWER_DINO
     private readonly FilterToggleButton _similarityToggle;
@@ -153,6 +157,14 @@ public sealed class MacMainWindow : IDisposable
     internal NSMenu CapsuleFilterMenu => _capsuleMenu;
     /// <summary>当前筛选是否回退为单胶囊。</summary>
     internal bool FilterCapsuleMode => _filterCapsule;
+    /// <summary>当前入口左侧的星级条件摘要。</summary>
+    internal string FilterRatingEntryText => _filterCapsule ? _capsuleRatingLabel.StringValue : _segmentRatingLabel.StringValue;
+    /// <summary>当前入口右侧的筛选结果张数。</summary>
+    internal string FilteredCountText => _filterCapsule ? _capsuleCountLabel.StringValue : _segmentCountLabel.StringValue;
+    /// <summary>当前入口的张数文字视图，供字号、颜色与几何验收。</summary>
+    internal NSTextField FilterCountLabel => _filterCapsule ? _capsuleCountLabel : _segmentCountLabel;
+    /// <summary>当前入口的条件文字视图，供左右布局验收。</summary>
+    internal NSTextField FilterRatingLabel => _filterCapsule ? _capsuleRatingLabel : _segmentRatingLabel;
     /// <summary>筛选控件与相似开关在窗口坐标中的联合范围。</summary>
     internal CGRect FilterUnionFrame => new(_filterUnion.X, 0, _filterUnion.Width, DesignTokens.ShellTitlebarHeight);
     private LayoutRect _filterUnion;
@@ -279,7 +291,11 @@ public sealed class MacMainWindow : IDisposable
         _sortWidth = MeasureFilterWidth(filterBar.SortModes.Select(item => item.DisplayName).ToArray());
         _orderWidth = MeasureFilterWidth(filterBar.SortOrders.Select(item => item.DisplayName).ToArray());
         _ratingWidth = MeasureFilterWidth([.. filterBar.RatingFilters.Select(item => item.DisplayName), RatingMultiSelectTitle]);
-        _capsule = Popup(["筛选"]);
+        _capsule = Popup([string.Empty]);
+        _segmentRatingLabel = FilterEntryLabel(DesignTokens.DropdownFontSize, NSColor.Label, NSTextAlignment.Left);
+        _segmentCountLabel = FilterEntryLabel(DesignTokens.FilterCountFontSize, NSColor.SecondaryLabel, NSTextAlignment.Right);
+        _capsuleRatingLabel = FilterEntryLabel(DesignTokens.DropdownFontSize, NSColor.Label, NSTextAlignment.Left);
+        _capsuleCountLabel = FilterEntryLabel(DesignTokens.FilterCountFontSize, NSColor.SecondaryLabel, NSTextAlignment.Right);
         _filterSegments = new NSSegmentedControl
         {
             SegmentCount = 3,
@@ -288,6 +304,10 @@ public sealed class MacMainWindow : IDisposable
             SegmentDistribution = NSSegmentDistribution.Fill,
             BorderShape = NSControlBorderShape.Capsule,
         };
+        _filterSegments.AddSubview(_segmentRatingLabel);
+        _filterSegments.AddSubview(_segmentCountLabel);
+        _capsule.AddSubview(_capsuleRatingLabel);
+        _capsule.AddSubview(_capsuleCountLabel);
         SyncFilterSegments();
         _filterSegments.Activated += (_, _) => OpenFilterSegmentMenu(_filterSegments.SelectedSegment);
         _filterGlass = new MacGlassEffectView
@@ -333,7 +353,7 @@ public sealed class MacMainWindow : IDisposable
         _ratingMenu = menus.Rating;
         _capsuleMenu = menus.Capsule;
         _capsule.Menu = _capsuleMenu;
-        // 下拉按钮把第一项当作入口标题并从菜单里隐藏，标题不参与勾选。
+        // 原生 pullsDown 隐藏首项占位，条件、张数与菜单勾选互不承担对方职责。
         _capsule.PullsDown = true;
         _capsule.Hidden = true;
         _filmstripLayout = new MacFilmstripLayout();
@@ -471,6 +491,22 @@ public sealed class MacMainWindow : IDisposable
     /// <summary>创建只读且不拦截鼠标点击的原生标签。</summary>
     private static NSTextField Label(string text, double size)
         => new PassThroughLabel { StringValue = text, Editable = false, Selectable = false, Bordered = false, DrawsBackground = false, TextColor = NSColor.LightGray, Font = NSFont.SystemFontOfSize((nfloat)size) ?? throw new InvalidOperationException("系统字体不可用") };
+
+    /// <summary>FILTER-04：筛选入口文字不拦截命中，条件与张数分别使用主/次级系统文字色。</summary>
+    private static NSTextField FilterEntryLabel(double size, NSColor color, NSTextAlignment alignment)
+        => new PassThroughLabel
+        {
+            Editable = false,
+            Selectable = false,
+            Bordered = false,
+            DrawsBackground = false,
+            TextColor = color,
+            Font = NSFont.SystemFontOfSize((nfloat)size) ?? throw new InvalidOperationException("系统字体不可用"),
+            Alignment = alignment,
+            LineBreakMode = NSLineBreakMode.TruncatingTail,
+            MaximumNumberOfLines = 1,
+        };
+
     /// <summary>SHELL-02：标题栏文字——单行尾部截断，字体与颜色取平台标题栏文字样式，属于拖动区的一部分而不参与命中。</summary>
     private static NSTextField TitleLabel()
         => new PassThroughLabel
@@ -585,8 +621,10 @@ public sealed class MacMainWindow : IDisposable
             const bool includeSimilarityToggle = false;
 #endif
             double capsuleWidth = FilmCardGeometry.Width(FilmCardTier.Large);
+            _segmentCountLabel.SizeToFit();
+            double ratingWidth = Math.Ceiling(_ratingWidth + DesignTokens.FilterCountSpacing + (double)_segmentCountLabel.Frame.Width);
             var rowFilter = WideFilterLayout.Compute(true, width, cardWidth, leadingInset, _sortWidth, _orderWidth,
-                _ratingWidth, capsuleWidth, includeSimilarityToggle, toggleWidth);
+                ratingWidth, capsuleWidth, includeSimilarityToggle, toggleWidth);
             var columnFilter = WideFilterLayout.Compute(false, MainScreenLayout.FileBarContentWidth, cardWidth,
                 leadingInset, _sortWidth, _orderWidth, _ratingWidth, capsuleWidth, includeSimilarityToggle, toggleWidth);
             double filterMain = row ? rowFilter.MainLength : columnFilter.MainLength;
@@ -670,6 +708,9 @@ public sealed class MacMainWindow : IDisposable
                 _filterSegments.SetWidth((nfloat)filterFrames.Rating.Width, 2);
                 _activeFilterTarget = _filterSegments;
             }
+            LayoutFilterEntryContent(_segmentRatingLabel, _segmentCountLabel, filterFrames.Rating, reserveArrow: false);
+            LayoutFilterEntryContent(_capsuleRatingLabel, _capsuleCountLabel,
+                new LayoutRect(0, 0, filterFrames.Control.Width, filterFrames.Control.Height), reserveArrow: true);
 #if PHOTOVIEWER_DINO
             _similarityToggle.Hidden = _similarityGlass.Hidden = !_filterToggleVisible;
             if (_filterToggleVisible)
@@ -788,6 +829,25 @@ public sealed class MacMainWindow : IDisposable
     private static LayoutRect Offset(LayoutRect control, LayoutRect segment)
         => new(control.X + segment.X, control.Y + segment.Y, segment.Width, segment.Height);
 
+    /// <summary>FILTER-04：张数优先完整落在右侧，条件使用其余宽度并在过窄时尾部截断。</summary>
+    private static void LayoutFilterEntryContent(NSTextField label, NSTextField count, LayoutRect frame, bool reserveArrow)
+    {
+        double leading = reserveArrow ? DesignTokens.FilterCountSpacing : DesignTokens.DropdownPaddingLeft;
+        double trailing = reserveArrow
+            ? DesignTokens.DropdownChevronRightInset + DesignTokens.DropdownChevronSize
+            : DesignTokens.DropdownPaddingLeft;
+        count.SizeToFit();
+        double countWidth = Math.Ceiling((double)count.Frame.Width);
+        double countHeight = (double)count.Frame.Height;
+        double countX = frame.MaxX - trailing - countWidth;
+        count.Frame = new CGRect(countX, frame.Y + (frame.Height - countHeight) / 2, countWidth, countHeight);
+        label.SizeToFit();
+        double labelHeight = (double)label.Frame.Height;
+        double labelX = frame.X + leading;
+        double labelWidth = Math.Max(0, countX - DesignTokens.FilterCountSpacing - labelX);
+        label.Frame = new CGRect(labelX, frame.Y + (frame.Height - labelHeight) / 2, labelWidth, labelHeight);
+    }
+
     /// <summary>筛选段的自然宽：逐项选中后让原生控件按自身文本与箭头测宽，取最大值。</summary>
     private static double NaturalFilterWidth(NSPopUpButton popup)
     {
@@ -812,7 +872,7 @@ public sealed class MacMainWindow : IDisposable
     /// <summary>以原生弹出按钮测量筛选段标题的自然宽，取全部候选标题（含多选标题）的最大值。</summary>
     private static double MeasureFilterWidth(string[] titles) => NaturalFilterWidth(Popup(titles));
 
-    /// <summary>FILTER-08：三段入口显示当前值；星级多选时显示「多选」，完整条件作为控件无障碍值。</summary>
+    /// <summary>FILTER-04/08：第三段与单胶囊左条件右张数；完整条件与张数作为控件无障碍值。</summary>
     private void SyncFilterSegments()
     {
         var filter = _main.FileVM.FilterBar;
@@ -820,8 +880,17 @@ public sealed class MacMainWindow : IDisposable
         int orderIndex = filter.SortOrders.FindIndex(item => (SortOrder)item.Value == filter.SortOrder);
         _filterSegments.SetLabel(sortIndex >= 0 ? filter.SortModes[sortIndex].DisplayName : string.Empty, 0);
         _filterSegments.SetLabel(orderIndex >= 0 ? filter.SortOrders[orderIndex].DisplayName : string.Empty, 1);
-        _filterSegments.SetLabel(filter.RatingFilterLabel, 2);
-        ((NSView)_filterSegments).AccessibilityValue = new NSString(filter.RatingFilterSelectionText);
+        _filterSegments.SetLabel(string.Empty, 2);
+        _segmentRatingLabel.StringValue = filter.RatingFilterLabel;
+        _capsuleRatingLabel.StringValue = filter.RatingFilterLabel;
+        string count = $"{filter.FilteredCount}张";
+        _segmentCountLabel.StringValue = count;
+        _capsuleCountLabel.StringValue = count;
+        _segmentCountLabel.SizeToFit();
+        _capsuleCountLabel.SizeToFit();
+        ((NSView)_filterSegments).AccessibilityValue = new NSString($"{filter.RatingFilterSelectionText}，{count}");
+        ((NSView)_capsule).AccessibilityValue = new NSString(
+            $"排序方式：{_filterSegments.GetLabel(0)}，排序方向：{_filterSegments.GetLabel(1)}，星级筛选：{filter.RatingFilterSelectionText}，{count}");
     }
 
     /// <summary>由连续控件的段动作打开对应原生菜单，菜单贴在入口正下方并与入口左边缘对齐。</summary>
@@ -871,8 +940,8 @@ public sealed class MacMainWindow : IDisposable
         AddRatingOptions(rating);
 
         var capsule = FilterMenu("筛选");
-        // 下拉按钮的第一项只作为入口标题，AppKit 把它从菜单中隐藏，标题不参与勾选。
-        capsule.AddItem(new NSMenuItem("筛选", (_, _) => { }));
+        // 第一项只保留原生下拉占位，可见条件与张数由入口内的文字层绘制。
+        capsule.AddItem(new NSMenuItem(string.Empty, (_, _) => { }));
         capsule.AddItem(NSMenuItem.SeparatorItem);
         AddSortOptions(capsule);
         capsule.AddItem(NSMenuItem.SeparatorItem);
@@ -1352,8 +1421,8 @@ public sealed class MacMainWindow : IDisposable
         UpdateFilterMenuStates();
 #if PHOTOVIEWER_DINO
         _similarityToggle.IsOn = filter.IsSimilarityPanelOpen;
-        if (args.PropertyName == nameof(FilterBarViewModel.IsSimilarityPanelOpen)) Layout();
 #endif
+        if (args.PropertyName is nameof(FilterBarViewModel.IsSimilarityPanelOpen) or nameof(FilterBarViewModel.FilteredCount)) Layout();
     });
 #if PHOTOVIEWER_DINO
     /// <summary>项目数与停靠区内容变化时重算行布局面板宽度。</summary>

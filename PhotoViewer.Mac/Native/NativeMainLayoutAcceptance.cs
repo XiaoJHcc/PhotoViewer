@@ -296,6 +296,10 @@ internal static class NativeMainLayoutAcceptance
             filterView = window.FilterSegmentedGlass;
             if (segmented.SegmentCount != 3 || segmented.BorderShape != NSControlBorderShape.Capsule)
                 throw new InvalidOperationException($"{scope} 筛选连续控件段数或胶囊外形错误");
+            if (Math.Abs(frames.Sort.Width - frames.Order.Width) > Exact
+                || Math.Abs(frames.Rating.Width - frames.Sort.Width) > Exact
+                || Math.Abs(frames.Sort.Width - WideFilterLayout.PreferredSegmentWidth) > Exact)
+                throw new InvalidOperationException($"{scope} 筛选三段不是各 120 的 1:1:1：{frames.Sort.Width}/{frames.Order.Width}/{frames.Rating.Width}");
             RequireFrame(filterView.Frame, new CGRect(content.X + frames.Control.X, content.Y + frames.Control.Y,
                 frames.Control.Width, frames.Control.Height), $"{scope} 筛选连续控件外框");
             var expected = new[] { frames.Sort, frames.Order, frames.Rating };
@@ -314,6 +318,7 @@ internal static class NativeMainLayoutAcceptance
             throw new InvalidOperationException($"{scope} 筛选控件高不是 {frames.Control.Height}：{filterView.Frame}");
         if (filterView is not NSGlassEffectView filterGlass)
             throw new InvalidOperationException($"{scope} 筛选控件未使用原生玻璃外框");
+        VerifyFilterEntryContent(window, row, frames, scope);
         RequireGlassTint(filterGlass, $"{scope} 筛选控件");
 #if PHOTOVIEWER_DINO
         if (window.SimilarityToggle.Hidden)
@@ -344,6 +349,31 @@ internal static class NativeMainLayoutAcceptance
         var union = window.FilterUnionFrame;
         if (Math.Abs((double)union.X - (content.X + frames.Control.X)) > Exact || union.Width <= 0)
             throw new InvalidOperationException($"{scope} 标题挖空联合范围与筛选控件不一致：{union}");
+    }
+
+    /// <summary>FILTER-04：当前条件在左、较小次级张数在右；左栏始终为单胶囊。</summary>
+    private static void VerifyFilterEntryContent(MacMainWindow window, bool row, WideFilterFrames frames, string scope)
+    {
+        var filter = window.Main.FileVM.FilterBar;
+        if (!row && !window.FilterCapsuleMode)
+            throw new InvalidOperationException($"{scope} 左栏筛选没有固定使用单胶囊");
+        if (window.FilterRatingEntryText != filter.RatingFilterLabel)
+            throw new InvalidOperationException($"{scope} 筛选条件文案不符：{window.FilterRatingEntryText}");
+        string expectedCount = $"{filter.FilteredCount}张";
+        if (window.FilteredCountText != expectedCount)
+            throw new InvalidOperationException($"{scope} 筛选张数不符：{window.FilteredCountText}，预期 {expectedCount}");
+        if (Math.Abs((double)window.FilterCountLabel.Font.PointSize - DesignTokens.FilterCountFontSize) > Exact
+            || window.FilterCountLabel.TextColor?.IsEqual(NSColor.SecondaryLabel) != true)
+            throw new InvalidOperationException($"{scope} 筛选张数未使用较小字号与系统次级色");
+        var expectedFrame = window.FilterCapsuleMode
+            ? new LayoutRect(0, 0, frames.Control.Width, frames.Control.Height)
+            : frames.Rating;
+        var labelFrame = window.FilterRatingLabel.Frame;
+        var countFrame = window.FilterCountLabel.Frame;
+        if ((double)labelFrame.X < expectedFrame.X - Exact
+            || (double)(countFrame.X + countFrame.Width) > expectedFrame.MaxX + Exact
+            || (double)(labelFrame.X + labelFrame.Width) + DesignTokens.FilterCountSpacing > (double)countFrame.X + Exact)
+            throw new InvalidOperationException($"{scope} 条件与张数未按左右布局落在星级段内：label={labelFrame}, count={countFrame}");
     }
 
     /// <summary>核对文件栏/工具区材质出现条件与唯一外边界。</summary>

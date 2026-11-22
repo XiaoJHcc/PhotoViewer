@@ -339,10 +339,16 @@ public static class DesignTokens
     public const double FilterControlHeight = 32.0;
     /// <summary>filter.control.width（pt） FILTER-01：排序/升降序/星级筛选三个下拉控件的占位宽。</summary>
     public const double FilterControlWidth = 90.0;
+    /// <summary>filter.count.fontSize（pt） FILTER-04：桌面筛选入口的结果张数字号，弱于条件文字。</summary>
+    public const double FilterCountFontSize = 12.0;
+    /// <summary>filter.count.spacing（pt） FILTER-04：桌面筛选入口内当前条件与右侧结果张数的最小间距。</summary>
+    public const double FilterCountSpacing = 8.0;
     /// <summary>filter.gap（pt） FILTER-01：筛选条控件之间的间距。</summary>
     public const double FilterGap = 5.0;
     /// <summary>filter.margin（pt） FILTER-01：筛选条四周外边距（列布局为尾部外边距；行布局整组居中的最小边距，Android 仅自然宽度溢出时作为滚动文档前导起点）。</summary>
     public const double FilterMargin = 10.0;
+    /// <summary>filter.segment.preferredWidth（pt） FILTER-07：Windows 与 macOS 顶栏筛选三等分段的建议宽度；内容超宽时三段同步加宽。</summary>
+    public const double FilterSegmentPreferredWidth = 120.0;
     /// <summary>filter.toggle.cornerRadius（pt） FILTER-01：相似聚类 toggle 自绘药丸圆角。</summary>
     public const double FilterToggleCornerRadius = 6.0;
     /// <summary>filter.toggle.fontSize（pt） FILTER-06：相似聚类开关文字字号。</summary>

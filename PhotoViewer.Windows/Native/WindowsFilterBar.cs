@@ -17,7 +17,8 @@ namespace PhotoViewer.Windows.Native;
 /// <summary>
 /// 筛选控件（FILTER-01）：排序方式、排序方向与星级筛选收在同一个玻璃胶囊里。
 /// 桌面宽形态是三段合体（FILTER-07）——每段显示当前选项、各自弹出原生菜单；
-/// 三段放不下时退化为单一「筛选」胶囊，弹出同一套「排序 / 方向 / 星级」无标题分组菜单。
+/// 行布局三段等宽、每段建议宽 120，列布局与空间不足时使用单一胶囊；星级段与单胶囊均左条件、右张数（FILTER-04），
+/// 单胶囊弹出同一套「排序 / 方向 / 星级」无标题分组菜单。
 /// 排序方式与方向是原生单选（<see cref="RadioMenuFlyoutItem"/>），星级条件是各自独立的原生多选
 /// （<see cref="ToggleMenuFlyoutItem"/>），「全部」清空条件（FILTER-03）；菜单项带 Fluent 语义图标（FILTER-08）。
 /// 勾选一律由共享筛选状态回填，点选后就地校正，菜单重开时再同步一次。
@@ -67,6 +68,8 @@ internal sealed class WindowsFilterBar : Panel
     private readonly FilterRadioGroup _orderGroup;
     private readonly FilterRatingGroup _ratingGroup;
     private readonly TextBlock _capsuleLabel;
+    private readonly TextBlock _ratingCount;
+    private readonly TextBlock _capsuleCount;
     private readonly Button[] _segmentedEntries;
     private readonly Button[] _capsuleEntries;
 #if PHOTOVIEWER_DINO
@@ -108,12 +111,13 @@ internal sealed class WindowsFilterBar : Panel
         _ratingGroup = new FilterRatingGroup(_filter);
 
         _capsuleLabel = CreateEntryText(DesignTokens.DropdownFontSize, PrimaryForegroundBrushKey);
-        _capsuleLabel.Text = "筛选";
+        _ratingCount = CreateEntryText(DesignTokens.FilterCountFontSize, SecondaryForegroundBrushKey);
+        _capsuleCount = CreateEntryText(DesignTokens.FilterCountFontSize, SecondaryForegroundBrushKey);
 
         _sortEntry = CreateEntryButton(_sortGroup.Label);
         _orderEntry = CreateEntryButton(_orderGroup.Label);
-        _ratingEntry = CreateEntryButton(_ratingGroup.Label);
-        _capsuleEntry = CreateEntryButton(_capsuleLabel);
+        _ratingEntry = CreateEntryButton(CreateRatingEntryContent(_ratingGroup.Label, _ratingCount));
+        _capsuleEntry = CreateEntryButton(CreateRatingEntryContent(_capsuleLabel, _capsuleCount));
 
         _capsule = new Border
         {
@@ -214,7 +218,16 @@ internal sealed class WindowsFilterBar : Panel
     /// <summary>验收专用：星级段显示的摘要（全部 / 单选条件 / 多选）。</summary>
     internal string RatingLabel => _ratingGroup.Label.Text;
 
-    /// <summary>验收专用：星级入口的读屏名称（含完整条件）。</summary>
+    /// <summary>验收专用：当前星级入口右侧的结果张数。</summary>
+    internal string FilteredCountText => _mode == FilterControlMode.Segmented ? _ratingCount.Text : _capsuleCount.Text;
+
+    /// <summary>验收专用：当前张数文字视图。</summary>
+    internal TextBlock FilteredCountLabel => _mode == FilterControlMode.Segmented ? _ratingCount : _capsuleCount;
+
+    /// <summary>验收专用：单胶囊左侧的星级条件摘要。</summary>
+    internal string CapsuleRatingLabel => _capsuleLabel.Text;
+
+    /// <summary>验收专用：星级入口的读屏名称（含完整条件与张数）。</summary>
     internal string RatingAutomationName => AutomationProperties.GetName(RatingEntry);
 
 #if PHOTOVIEWER_DINO
@@ -339,8 +352,7 @@ internal sealed class WindowsFilterBar : Panel
     }
 
     /// <summary>
-    /// 三段自然宽：各段选项名在 <see cref="DesignTokens.DropdownFontSize"/> 下的最大文本宽加两侧内边距，上取整。
-    /// 选项固定故只算一次。
+    /// 排序与方向的候选文案固定，只量测一次；星级段每次按最长条件与当前张数计算自然宽。
     /// </summary>
     /// <returns>排序、方向、星级三段的自然宽。</returns>
     private (double Sort, double Order, double Rating) NaturalSegmentWidths()
@@ -350,19 +362,26 @@ internal sealed class WindowsFilterBar : Panel
             _naturalWidths = (
                 MeasureSegment(_filter.SortModes.Select(option => option.DisplayName)),
                 MeasureSegment(_filter.SortOrders.Select(option => option.DisplayName)),
-                MeasureSegment(_filter.RatingFilters.Select(option => option.DisplayName)));
+                0);
             _naturalWidthsMeasured = true;
         }
 
-        return _naturalWidths;
+        double ratingWidth = Math.Ceiling(MeasureText(
+                _filter.RatingFilters.Select(option => option.DisplayName).Concat(["多选"]), DesignTokens.DropdownFontSize)
+            + DesignTokens.FilterCountSpacing
+            + MeasureText([$"{_filter.FilteredCount}张"], DesignTokens.FilterCountFontSize))
+            + DesignTokens.DropdownPaddingLeft * 2;
+        return (_naturalWidths.Sort, _naturalWidths.Order, ratingWidth);
     }
 
-    /// <summary>单段自然宽：用离树 <see cref="TextBlock"/> 量测该段最长选项名，再加左右内边距。</summary>
-    /// <param name="names">该段的选项显示名。</param>
-    /// <returns>自然宽（点）。</returns>
+    /// <summary>单段自然宽：最长选项名加左右内边距。</summary>
     private static double MeasureSegment(IEnumerable<string> names)
+        => Math.Ceiling(MeasureText(names, DesignTokens.DropdownFontSize)) + DesignTokens.DropdownPaddingLeft * 2;
+
+    /// <summary>用离树 <see cref="TextBlock"/> 量测一组候选文案的最大宽度。</summary>
+    private static double MeasureText(IEnumerable<string> names, double fontSize)
     {
-        var probe = new TextBlock { FontSize = DesignTokens.DropdownFontSize };
+        var probe = new TextBlock { FontSize = fontSize };
         double textWidth = 0;
         foreach (var name in names)
         {
@@ -371,7 +390,7 @@ internal sealed class WindowsFilterBar : Panel
             textWidth = Math.Max(textWidth, probe.DesiredSize.Width);
         }
 
-        return Math.Ceiling(textWidth) + DesignTokens.DropdownPaddingLeft * 2;
+        return textWidth;
     }
 
     /// <summary>按几何给出的矩形量测子控件：段按钮按自身段宽，单胶囊按整块宽。</summary>
@@ -517,6 +536,26 @@ internal sealed class WindowsFilterBar : Panel
         TextTrimming = TextTrimming.CharacterEllipsis,
     };
 
+    /// <summary>FILTER-04：条件在左并允许截断，张数在右以较小次级文字完整显示。</summary>
+    private static Grid CreateRatingEntryContent(TextBlock label, TextBlock count)
+    {
+        label.TextAlignment = TextAlignment.Left;
+        count.TextAlignment = TextAlignment.Right;
+        count.TextTrimming = TextTrimming.None;
+        count.Margin = new Thickness(DesignTokens.FilterCountSpacing, 0, 0, 0);
+        Grid.SetColumn(label, 0);
+        Grid.SetColumn(count, 1);
+        var content = new Grid
+        {
+            Margin = new Thickness(DesignTokens.DropdownPaddingLeft, 0, DesignTokens.DropdownPaddingLeft, 0),
+        };
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        content.Children.Add(label);
+        content.Children.Add(count);
+        return content;
+    }
+
     /// <summary>段间分隔线：1 点宽的纯色条，不参与命中。</summary>
     /// <returns>分隔线条。</returns>
     private static Border CreateDivider() => new()
@@ -612,6 +651,7 @@ internal sealed class WindowsFilterBar : Panel
             case nameof(FilterBarViewModel.SortMode):
             case nameof(FilterBarViewModel.SortOrder):
             case nameof(FilterBarViewModel.SelectedRatingFilters):
+            case nameof(FilterBarViewModel.FilteredCount):
                 SyncFromViewModel();
                 break;
 #if PHOTOVIEWER_DINO
@@ -634,6 +674,11 @@ internal sealed class WindowsFilterBar : Panel
             SyncGroup(_sortGroup);
             SyncGroup(_orderGroup);
             _ratingGroup.SyncChecks();
+            _capsuleLabel.Text = _filter.RatingFilterLabel;
+            string count = $"{_filter.FilteredCount}张";
+            _ratingCount.Text = count;
+            _capsuleCount.Text = count;
+            InvalidateMeasure();
 #if PHOTOVIEWER_DINO
             _similarityToggle.IsChecked = _filter.IsSimilarityPanelOpen;
 #endif
@@ -683,11 +728,12 @@ internal sealed class WindowsFilterBar : Panel
     private void UpdateAutomationNames()
     {
         string rating = _filter.RatingFilterSelectionText;
+        string count = $"{_filter.FilteredCount}张";
         AutomationProperties.SetName(_sortEntry, $"{_sortGroup.AutomationLabel}：{_sortGroup.Label.Text}");
         AutomationProperties.SetName(_orderEntry, $"{_orderGroup.AutomationLabel}：{_orderGroup.Label.Text}");
-        AutomationProperties.SetName(_ratingEntry, $"{_ratingGroup.AutomationLabel}：{rating}");
+        AutomationProperties.SetName(_ratingEntry, $"{_ratingGroup.AutomationLabel}：{rating}，{count}");
         AutomationProperties.SetName(_capsuleEntry,
-            $"筛选，排序方式：{_sortGroup.Label.Text}，排序方向：{_orderGroup.Label.Text}，星级筛选：{rating}");
+            $"筛选，排序方式：{_sortGroup.Label.Text}，排序方向：{_orderGroup.Label.Text}，星级筛选：{rating}，{count}");
     }
 
     /// <summary>排序键的语义前置图标（FILTER-08）。</summary>

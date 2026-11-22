@@ -1559,6 +1559,8 @@ internal sealed partial class WindowsMainWindow
         await WaitForSmokeAsync(() => _main.FileVM.ThumbnailList.FilteredFiles.Count == 0, "五星筛选空列表");
         await Task.Delay(150);
         _root.UpdateLayout();
+        RequireSmoke(_filterBar.FilteredCountText == "0张" && _filterBar.RatingLabel == "五星",
+            $"空结果筛选没有同步显示 0张: {_filterBar.RatingLabel}/{_filterBar.FilteredCountText}");
         RequireSmoke(_filmstrip.VisibleViewport.ActualWidth > 1 && _filmstrip.VisibleViewport.ActualHeight > 1,
             "空列表断言时胶片条视口无效");
         var visibleText = DescribeTextBlocks(_filmstrip, _filmstrip.VisibleViewport, out var visibleCount);
@@ -1918,7 +1920,7 @@ internal sealed partial class WindowsMainWindow
         await Task.Delay(150);
         _root.UpdateLayout();
         RequireSmoke(!_filterBar.Children.OfType<ToggleButton>().Any(), "标准版筛选条仍有 toggle 控件");
-        checks.Add("PASS standard filter bar: 3 actual items (sort/order/rating), no count slot, no similarity toggle slot, stored expanded state ignored and not written");
+        checks.Add("PASS standard filter bar: 3 actual items (sort/order/rating), count stays inside the rating entry, no similarity toggle slot, stored expanded state ignored and not written");
 #endif
 
         await RunAnalysisDbPathCheckAsync(checks);
@@ -3347,10 +3349,24 @@ internal sealed partial class WindowsMainWindow
             RequireSmoke(items.All(item => item.Icon != null), "星级菜单项缺少语义图标");
             RequireSmoke(items[0].IsChecked && items.Skip(1).All(item => !item.IsChecked),
                 "星级菜单初始未只勾选「全部」");
-            string filterText = DescribeTextBlocks(_filterBar, null, out _);
-            RequireSmoke(!filterText.Contains("共", StringComparison.Ordinal)
-                && !_filterBar.RatingAutomationName.Contains("共", StringComparison.Ordinal),
-                $"筛选条仍残留计数: {filterText}");
+            var rowFrames = _filterBar.ComputeFrames(true, 1000);
+            RequireSmoke(rowFrames.Mode == FilterControlMode.Segmented
+                && Math.Abs(rowFrames.Sort.Width - rowFrames.Order.Width) < 0.001
+                && Math.Abs(rowFrames.Rating.Width - rowFrames.Sort.Width) < 0.001
+                && Math.Abs(rowFrames.Sort.Width - WideFilterLayout.PreferredSegmentWidth) < 0.001,
+                $"顶栏筛选三段不是各 120 的 1:1:1: {rowFrames.Sort.Width}/{rowFrames.Order.Width}/{rowFrames.Rating.Width}");
+            RequireSmoke(_filterBar.ComputeFrames(false, 116).Mode == FilterControlMode.Capsule,
+                "左栏筛选没有固定使用单按钮");
+            string expectedCount = $"{filter.FilteredCount}张";
+            RequireSmoke(_filterBar.FilteredCountText == expectedCount
+                && _filterBar.RatingAutomationName.Contains(expectedCount, StringComparison.Ordinal),
+                $"筛选结果张数未同步: {_filterBar.FilteredCountText}, expected={expectedCount}");
+            RequireSmoke(_filterBar.FilteredCountLabel.FontSize == DesignTokens.FilterCountFontSize
+                && ReferenceEquals(_filterBar.FilteredCountLabel.Foreground,
+                    Application.Current.Resources["TextFillColorSecondaryBrush"]),
+                "筛选张数未使用较小字号与次级文字色");
+            RequireSmoke(_filterBar.CapsuleRatingLabel == filter.RatingFilterLabel,
+                $"单按钮左侧不是当前筛选条件: {_filterBar.CapsuleRatingLabel}");
 
             // 空条件点「全部」：WinUI 会先翻转切换项；共享条件不变，勾选必须回到「全部」。
             ToggleFilterMenuItem(items[0]);
@@ -3369,6 +3385,10 @@ internal sealed partial class WindowsMainWindow
             RequireSmoke(items[1].IsChecked && items[7].IsChecked && !items[0].IsChecked,
                 "多选星级条件未同时勾选或「全部」未取消");
             RequireSmoke(_filterBar.RatingLabel == "多选", $"星级段摘要不是多选: {_filterBar.RatingLabel}");
+            expectedCount = $"{filter.FilteredCount}张";
+            RequireSmoke(_filterBar.FilteredCountText == expectedCount
+                && _filterBar.CapsuleRatingLabel == "多选",
+                $"多选后条件或张数未同步: {_filterBar.CapsuleRatingLabel}/{_filterBar.FilteredCountText}");
             string multiLabel = _filterBar.RatingLabel;
             string selectionText = filter.RatingFilterSelectionText;
             RequireSmoke(selectionText == "无星级、已拒绝", $"星级完整条件文案不符: {selectionText}");
@@ -3395,6 +3415,9 @@ internal sealed partial class WindowsMainWindow
             _root.UpdateLayout();
             RequireSmoke(items[3].IsChecked && !items[0].IsChecked && _filterBar.RatingLabel == "二星",
                 "共享状态变化未回填星级勾选");
+            RequireSmoke(_filterBar.FilteredCountText == $"{filter.FilteredCount}张"
+                && _filterBar.CapsuleRatingLabel == "二星",
+                "共享状态变化后单按钮条件或张数未同步");
             var menu = _filterBar.RatingMenu;
             var entry = _filterBar.RatingEntry;
             items[5].IsChecked = true;
@@ -3423,7 +3446,7 @@ internal sealed partial class WindowsMainWindow
                 "排序键/方向勾选数不是各 1");
             RequireSmoke(!sortItems.Select(item => item.GroupName).Intersect(orderItems.Select(item => item.GroupName)).Any(),
                 "排序键与方向共用了单选组名");
-            checks.Add($"PASS FILTER-03/08: rating ToggleMenuFlyoutItems select independent conditions ({selectionText}) without radio coupling, 全部 stays checked when clicked with no condition, label={multiLabel} and automation text carry the full selection; all checks resync from shared state on change and on menu reopen; sort/order remain single-select RadioMenuFlyoutItems with Fluent icons");
+            checks.Add($"PASS FILTER-03/04/07/08: row segments are exactly 1:1:1 at the 120pt preferred width and column uses one capsule; rating entries show condition on the left and synchronized {expectedCount} on the right in smaller secondary text; rating ToggleMenuFlyoutItems select independent conditions ({selectionText}) without radio coupling, label={multiLabel} and automation text carry the full selection and count; all checks resync from shared state on change and on menu reopen; sort/order remain single-select RadioMenuFlyoutItems with Fluent icons");
         }
         finally
         {

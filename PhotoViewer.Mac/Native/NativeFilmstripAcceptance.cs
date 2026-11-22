@@ -704,10 +704,15 @@ internal static class NativeFilmstripAcceptance
             throw new InvalidOperationException($"星级多选未按并集更新：{string.Join(",", filter.SelectedRatingFilters)}");
         if (filter.RatingFilterLabel != "多选")
             throw new InvalidOperationException($"星级多选标题不是「多选」：{filter.RatingFilterLabel}");
-        if (!capsule && window.FilterSegments.GetLabel(2) != "多选")
-            throw new InvalidOperationException($"星级段未显示「多选」：{window.FilterSegments.GetLabel(2)}");
-        if (!capsule && window.FilterSegments.AccessibilityValue?.ToString() != filter.RatingFilterSelectionText)
-            throw new InvalidOperationException($"星级段读屏值未包含完整条件：{window.FilterSegments.AccessibilityValue}");
+        if (window.FilterRatingEntryText != "多选")
+            throw new InvalidOperationException($"星级入口未显示「多选」：{window.FilterRatingEntryText}");
+        string expectedCount = $"{filter.FilteredCount}张";
+        if (window.FilteredCountText != expectedCount)
+            throw new InvalidOperationException($"星级入口张数未同步：{window.FilteredCountText}, expected={expectedCount}");
+        string accessibility = window.FilterSegments.AccessibilityValue?.ToString() ?? string.Empty;
+        if (!accessibility.Contains(filter.RatingFilterSelectionText, StringComparison.Ordinal)
+            || !accessibility.Contains(expectedCount, StringComparison.Ordinal))
+            throw new InvalidOperationException($"星级段读屏值未包含完整条件与张数：{window.FilterSegments.AccessibilityValue}");
         Invoke(Item(RatingTitle("Eq3")));
         Invoke(Item(RatingTitle("Eq4")));
         await Task.Delay(80);
