@@ -21,7 +21,8 @@ using IOPath = System.IO.Path;
 namespace PhotoViewer.Android.Native;
 
 /// <summary>
-/// <c>--es pv-check storage</c>（验收专用）：经 <see cref="DebugTestDocumentsProvider"/> 的真实
+/// <c>--es pv-check storage</c>（验收专用，需以 <c>-p:PhotoViewerAndroidStorageChecks=true</c> 构建）：
+/// 经 <see cref="DebugTestDocumentsProvider"/> 的真实
 /// <c>content://</c> 文档树核对 SAF 存储引用与写入链路——文档身份、嵌套目录枚举、缺失 size/mtime、
 /// 外部改动后的属性刷新与写入后的新鲜 revision、内嵌/同名 sidecar XMP 写回（ARW 写内嵌且不创建 sidecar、
 /// 已有 sidecar 随整组同步）、只读与非可定位拒绝、原子替换拒绝、Provider 拒绝访问与恢复，
@@ -80,6 +81,15 @@ internal static partial class AndroidNativeChecks
         await WaitForScreenAsync();
         var activity = _activity!;
         var resolver = activity.ContentResolver ?? Application.Context.ContentResolver!;
+        var provider = activity.PackageManager?.ResolveContentProvider(
+            DebugTestDocumentsProvider.TestAuthority, PackageInfoFlags.MatchDefaultOnly);
+        if (provider == null)
+        {
+            Check("storage 验收 Provider 可用", false,
+                $"未注册 {DebugTestDocumentsProvider.TestAuthority}：只有 Debug 且显式传 "
+                + "-p:PhotoViewerAndroidStorageChecks=true 的构建注册验收 Provider，Release 与普通 Debug 都不注册");
+            return;
+        }
         var providerUri = AndroidUri.Parse($"content://{DebugTestDocumentsProvider.TestAuthority}")!;
         try
         {

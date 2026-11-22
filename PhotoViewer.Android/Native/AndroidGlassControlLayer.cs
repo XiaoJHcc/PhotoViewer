@@ -196,8 +196,8 @@ internal sealed class AndroidGlassControlLayer : View
     }
 
     /// <summary>
-    /// 锚点可见区域：从本层窗口矩形开始，与锚点上方真正裁切内容的滚动宿主窗口矩形相交；
-    /// 不含锚点自身与纯布局容器，因此按压投影可以溢出控件边界，但不会越过滚动宿主裁切。
+    /// 锚点可见区域：从本层窗口矩形开始，与锚点上方确实可滚动的宿主窗口矩形相交；
+    /// 不含锚点自身、纯布局容器与未溢出的滚动宿主，因此按压投影可以溢出控件边界，但不会越过真实滚动裁切。
     /// </summary>
     private Rect ComputeClip(View anchor)
     {
@@ -210,7 +210,7 @@ internal sealed class AndroidGlassControlLayer : View
         while (parent != null && !ReferenceEquals(parent, this))
         {
             if (!parent.IsShown || parent.Visibility != ViewStates.Visible) return new Rect();
-            if (parent is AndroidControlBarScrollHost)
+            if (parent is AndroidControlBarScrollHost { IsScrollable: true })
             {
                 parent.GetLocationInWindow(_parentLocation);
                 var bounds = new Rect(

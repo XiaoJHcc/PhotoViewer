@@ -41,8 +41,8 @@ internal static partial class AndroidNativeChecks
         await RunStepAsync("filter 分组菜单", CheckGroupedMenuAsync);
         await RunStepAsync("filter 入窗弹层", CheckInWindowPopupAsync);
         await RunStepAsync("filter 点外不穿透", CheckOutsideTapAsync);
-        await RunStepAsync("filter 模态与焦点归还", CheckModalFocusAsync);
-        await RunStepAsync("filter 键盘导航", CheckKeyboardNavigationAsync);
+        await RunStepAsync("filter 模态与焦点策略", CheckModalFocusAsync);
+        await RunStepAsync("filter 更多菜单焦点策略", CheckMoreMenuFocusAsync);
         await RunStepAsync("filter 弹层屏内夹取", CheckPopupClampAsync);
         await RunStepAsync("filter 星级多选", CheckGroupedRatingMultiSelectAsync);
         await RunStepAsync("filter 无关设置", CheckGroupedUnrelatedSettingAsync);
@@ -50,6 +50,8 @@ internal static partial class AndroidNativeChecks
         await RunStepAsync("filter 行选择", CheckGroupedRowSelectionAsync);
         await RunStepAsync("filter 锚点隐藏", CheckGroupedHiddenClosesAsync);
         await RunStepAsync("filter 旋转与窄屏", CheckGroupedRotationAndNarrowAsync);
+        // 键盘导航显式以 RequestFocusFromTouch 进入键盘模式，放在最后，避免后续触摸检查留在强制模式。
+        await RunStepAsync("filter 键盘导航", CheckKeyboardNavigationAsync);
     }
 
     /// <summary>FILTER-02/FILTER-09：默认拍摄时间升序，排序与方向文案固定。</summary>
@@ -245,11 +247,12 @@ internal static partial class AndroidNativeChecks
         root.PopupLayer.GetLocationOnScreen(origin);
         var panel = new Rect(session.Frame);
         panel.Offset(origin[0], origin[1]);
-        bool outside = entryRect.Width() > 0 && !panel.Contains(entryRect.CenterX(), entryRect.CenterY());
+        var (outsideX, outsideY) = OutsidePoint(panel, root);
+        bool outside = !panel.Contains(outsideX, outsideY);
         var before = main.CurrentFile;
         long now = SystemClock.UptimeMillis();
-        bool downHandled = DispatchRootTouch(root, MotionEventActions.Down, entryRect.CenterX(), entryRect.CenterY(), now);
-        bool upHandled = DispatchRootTouch(root, MotionEventActions.Up, entryRect.CenterX(), entryRect.CenterY(), now + 60);
+        bool downHandled = DispatchRootTouch(root, MotionEventActions.Down, outsideX, outsideY, now);
+        bool upHandled = DispatchRootTouch(root, MotionEventActions.Up, outsideX, outsideY, now + 60);
         await Task.Delay(350);
         bool closed = !filter.IsDropdownOpen && !root.PopupLayer.IsOpen;
         // 穿透会在同一位置再次点开入口；再等一个淡出周期确认没有被重新打开。
@@ -263,53 +266,120 @@ internal static partial class AndroidNativeChecks
     }
 
     /// <summary>
-    /// 模态：打开后背景对读屏隐藏、焦点进入面板、照片全局快捷键暂停；关闭后焦点回到入口、背景恢复。
+    /// 模态：打开后背景对读屏隐藏、焦点进入面板；关闭后恢复背景。
+    /// 触摸模式只把焦点停在面板本身、关闭后不抢入口；键盘模式聚焦首行并在关闭后归还入口。
+    /// 检查不合成 <see cref="View.RequestFocusFromTouch"/>，按初始实际模式断言并核对模式全程保持。
     /// </summary>
     private static async Task CheckModalFocusAsync()
     {
         var root = _root!;
-        var main = _main!;
         var filter = root.FilterBar;
         root.DismissFilterDropdown();
         await Task.Delay(180);
         var entry = FilterEntryView(filter);
         if (entry == null)
         {
-            Check("filter 模态隔离与焦点归还", false, "入口视图不可用");
+            Check("filter 模态隔离与焦点策略", false, "入口视图不可用");
             return;
         }
-        entry.RequestFocusFromTouch();
-        await Task.Delay(150);
-        bool entryFocused = entry.IsFocused;
+        bool touchModeBefore = entry.IsInTouchMode;
         var backgroundA11y = root.ScreenLayer.ImportantForAccessibility;
         if (!await OpenGroupedMenuAsync(root))
         {
-            Check("filter 模态隔离与焦点归还", false, "下拉未打开");
+            Check("filter 模态隔离与焦点策略", false, "下拉未打开");
             return;
         }
         var session = filter.DropdownInstanceForChecks;
-        var focus = session?.Panel.FindFocus();
-        bool focusInPanel = session != null && focus != null && IsDescendantOf(session.Panel, focus);
+        if (session == null)
+        {
+            Check("filter 模态隔离与焦点策略", false, "下拉实例不可用");
+            return;
+        }
+        bool touchModeOpen = entry.IsInTouchMode;
+        var panel = session.Panel;
+        var focus = panel.FindFocus();
+        bool focusInPanel = focus != null
+            && (ReferenceEquals(panel, focus) || IsDescendantOf(panel, focus));
+        bool focusPolicy = touchModeOpen
+            ? ReferenceEquals(panel, focus)
+            : focus != null && !ReferenceEquals(panel, focus) && ReferenceEquals(focus, FirstFocusableIn(panel));
         bool backgroundHidden = root.ScreenLayer.ImportantForAccessibility == ImportantForAccessibility.NoHideDescendants;
-        var before = main.CurrentFile;
-        _activity!.DispatchKeyEvent(new KeyEvent(KeyEventActions.Down, Keycode.DpadRight));
-        await Task.Delay(300);
-        bool shortcutsPaused = ReferenceEquals(main.CurrentFile, before) && filter.IsDropdownOpen;
-        bool dismissed = root.DismissFilterDropdown();
-        await WaitAsync(() => root.PopupLayer.Visibility == ViewStates.Gone, "弹层淡出完成", 4000);
+        var (outsideX, outsideY) = OutsidePoint(session.Frame, root);
+        DispatchRootTouch(root, MotionEventActions.Down, outsideX, outsideY, SystemClock.UptimeMillis());
+        DispatchRootTouch(root, MotionEventActions.Up, outsideX, outsideY, SystemClock.UptimeMillis() + 40);
+        await WaitAsync(() => !filter.IsDropdownOpen && root.PopupLayer.Visibility == ViewStates.Gone, "弹层淡出完成", 4000);
+        bool dismissed = !filter.IsDropdownOpen;
         await Task.Delay(250);
         bool restored = root.ScreenLayer.ImportantForAccessibility == backgroundA11y;
-        bool focusReturned = entry.IsFocused;
-        Check("filter 模态隔离与焦点归还",
-            entryFocused && focusInPanel && backgroundHidden && shortcutsPaused && dismissed && restored && focusReturned,
-            $"entryFocused={entryFocused} focusInPanel={focusInPanel} hidden={backgroundHidden} "
-            + $"shortcuts={shortcutsPaused} dismissed={dismissed} restored={restored} "
-            + $"a11y={backgroundA11y}→{root.ScreenLayer.ImportantForAccessibility} focusBack={focusReturned} "
+        bool touchModeClosed = entry.IsInTouchMode;
+        bool focusRestored = touchModeClosed ? !entry.IsFocused : entry.IsFocused;
+        View glassAnchor = filter.ComboForChecks.Visibility == ViewStates.Visible
+            ? filter.ComboForChecks
+            : filter.FilterButtonForChecks;
+        bool focusRingCorrect = root.GlassControlLayer.TryGetControlForChecks(glassAnchor, out var glass)
+            && glass.FocusRingVisible == !touchModeClosed;
+        bool defaultHighlightDisabled = !OperatingSystem.IsAndroidVersionAtLeast(26) || !entry.DefaultFocusHighlightEnabled;
+        bool touchModePreserved = touchModeBefore == touchModeOpen && touchModeOpen == touchModeClosed;
+        Check("filter 模态隔离与焦点策略（触摸停面板、键盘归还焦点与蓝框）",
+            focusInPanel && focusPolicy && backgroundHidden && dismissed && restored
+                && focusRestored && focusRingCorrect && defaultHighlightDisabled && touchModePreserved,
+            $"touchMode={touchModeBefore}→{touchModeOpen}→{touchModeClosed} "
+            + $"focusInPanel={focusInPanel} panelFocus={ReferenceEquals(panel, focus)} hidden={backgroundHidden} "
+            + $"dismissed={dismissed} restored={restored} "
+            + $"a11y={backgroundA11y}→{root.ScreenLayer.ImportantForAccessibility} focusBack={entry.IsFocused} "
+            + $"focusRing={glass.FocusRingVisible} defaultHighlight={defaultHighlightDisabled} "
             + $"focus={focus?.GetType().Name ?? "无"}");
     }
 
+    private static async Task CheckMoreMenuFocusAsync()
+    {
+        var root = _root!;
+        var filter = root.FilterBar;
+        root.DismissPhotoMenu();
+        root.DismissFilterDropdown();
+        await Task.Delay(180);
+        View entry = root.PhoneMoreButton.IsShown ? root.PhoneMoreButton : filter.ComboForChecks.Second;
+        View glassAnchor = ReferenceEquals(entry, root.PhoneMoreButton) ? entry : filter.ComboForChecks;
+        bool touchModeBefore = entry.IsInTouchMode;
+        bool clicked = entry.PerformClick();
+        await WaitAsync(() => root.PopupLayer.IsOpen, "更多菜单打开", 5000);
+        var session = root.PopupLayer.SessionForChecks;
+        if (session == null)
+        {
+            Check("filter 更多菜单焦点策略与模式保持", false, "弹层实例不可用");
+            return;
+        }
+        bool touchModeOpen = entry.IsInTouchMode;
+        var panel = session.Panel;
+        var focus = panel.FindFocus();
+        bool focusInPanel = focus != null
+            && (ReferenceEquals(panel, focus) || IsDescendantOf(panel, focus));
+        bool focusPolicy = touchModeOpen
+            ? ReferenceEquals(panel, focus)
+            : focus != null && !ReferenceEquals(panel, focus) && ReferenceEquals(focus, FirstFocusableIn(panel));
+        var (outsideX, outsideY) = OutsidePoint(session.Frame, root);
+        DispatchRootTouch(root, MotionEventActions.Down, outsideX, outsideY, SystemClock.UptimeMillis());
+        DispatchRootTouch(root, MotionEventActions.Up, outsideX, outsideY, SystemClock.UptimeMillis() + 40);
+        await WaitAsync(() => !root.PopupLayer.IsOpen && root.PopupLayer.Visibility == ViewStates.Gone,
+            "更多菜单淡出完成", 4000);
+        bool touchModeClosed = entry.IsInTouchMode;
+        bool focusRestored = touchModeClosed ? !entry.IsFocused : entry.IsFocused;
+        bool touchModePreserved = touchModeBefore == touchModeOpen && touchModeOpen == touchModeClosed;
+        bool focusRingCorrect = root.GlassControlLayer.TryGetControlForChecks(glassAnchor, out var glass)
+            && glass.FocusRingVisible == !touchModeClosed;
+        bool defaultHighlightDisabled = !OperatingSystem.IsAndroidVersionAtLeast(26) || !entry.DefaultFocusHighlightEnabled;
+        Check("filter 更多菜单焦点策略与模式保持",
+            clicked && focusInPanel && focusPolicy && focusRestored && touchModePreserved
+                && focusRingCorrect && defaultHighlightDisabled,
+            $"clicked={clicked} touchMode={touchModeBefore}→{touchModeOpen}→{touchModeClosed} "
+            + $"focusInPanel={focusInPanel} panelFocus={ReferenceEquals(panel, focus)} focusBack={entry.IsFocused} "
+            + $"focusRing={glass.FocusRingVisible} defaultHighlight={defaultHighlightDisabled} "
+            + $"entry={entry.GetType().Name}");
+    }
+
     /// <summary>
-    /// 键盘导航：菜单行可聚焦、焦点搜索停在面板内；回车执行当前行且保持展开，Esc 关闭。
+    /// 键盘导航：显式进入键盘模式后打开面板——弹层聚焦首行，关闭时焦点归还入口并显示玻璃焦点环；
+    /// 菜单行可聚焦、焦点搜索停在面板内；回车执行当前行且保持展开，Esc 关闭。
     /// </summary>
     private static async Task CheckKeyboardNavigationAsync()
     {
@@ -318,6 +388,19 @@ internal static partial class AndroidNativeChecks
         var bar = _main!.FileVM.FilterBar;
         root.DismissFilterDropdown();
         await Task.Delay(180);
+        var entry = FilterEntryView(filter);
+        if (entry == null)
+        {
+            Check("filter 键盘导航与激活", false, "入口视图不可用");
+            return;
+        }
+        View glassAnchor = filter.ComboForChecks.Visibility == ViewStates.Visible
+            ? filter.ComboForChecks
+            : filter.FilterButtonForChecks;
+        // 这里显式进入键盘模式是检查目标本身；本步在所有触摸检查之后运行，不会影响它们。
+        entry.RequestFocusFromTouch();
+        await Task.Delay(120);
+        bool keyboardMode = !entry.IsInTouchMode;
         if (!await OpenGroupedMenuAsync(root))
         {
             Check("filter 键盘导航与激活", false, "下拉未打开");
@@ -333,6 +416,10 @@ internal static partial class AndroidNativeChecks
             root.DismissFilterDropdown();
             return;
         }
+        var panel = session.Panel;
+        var focus = panel.FindFocus();
+        bool firstRowFocused = !entry.IsInTouchMode && focus != null
+            && !ReferenceEquals(panel, focus) && ReferenceEquals(focus, FirstFocusableIn(panel));
         row.RequestFocusFromTouch();
         await Task.Delay(120);
         bool rowFocused = row.IsFocused;
@@ -356,13 +443,22 @@ internal static partial class AndroidNativeChecks
         bool escUp = root.PopupLayer.DispatchKeyEvent(new KeyEvent(KeyEventActions.Up, Keycode.Escape));
         await Task.Delay(300);
         bool closed = !filter.IsDropdownOpen && !root.PopupLayer.IsOpen;
+        bool keyboardPreserved = !entry.IsInTouchMode;
+        bool focusRestored = entry.IsFocused;
+        bool focusRingCorrect = root.GlassControlLayer.TryGetControlForChecks(glassAnchor, out var glass)
+            && glass.FocusRingVisible;
+        bool defaultHighlightDisabled = !OperatingSystem.IsAndroidVersionAtLeast(26) || !entry.DefaultFocusHighlightEnabled;
         bar.SortMode = previousSort;
-        Check("filter 键盘导航与激活",
-            rowFocused && downHandled && upHandled && applied && marked && moves && focusedNext
-            && escDown && escUp && closed,
-            $"rowFocused={rowFocused} enter={downHandled}/{upHandled} applied={applied} marked={marked} "
+        Check("filter 键盘导航与激活（首行聚焦、关闭归还入口与焦点环）",
+            keyboardMode && firstRowFocused && rowFocused && downHandled && upHandled && applied && marked
+                && moves && focusedNext && escDown && escUp && closed
+                && keyboardPreserved && focusRestored && focusRingCorrect && defaultHighlightDisabled,
+            $"keyboardMode={keyboardMode}→{keyboardPreserved} firstRow={firstRowFocused} "
+            + $"panelFocus={ReferenceEquals(panel, focus)} rowFocused={rowFocused} "
+            + $"enter={downHandled}/{upHandled} applied={applied} marked={marked} "
             + $"next={next?.GetType().Name ?? "无"} moves={moves} focusedNext={focusedNext} "
-            + $"esc={escDown}/{escUp} closed={closed} sort={bar.SortMode}");
+            + $"esc={escDown}/{escUp} closed={closed} focusBack={entry.IsFocused} "
+            + $"focusRing={glass.FocusRingVisible} defaultHighlight={defaultHighlightDisabled} sort={bar.SortMode}");
     }
 
     /// <summary>
@@ -372,7 +468,7 @@ internal static partial class AndroidNativeChecks
     {
         var root = _root!;
         var filter = root.FilterBar;
-        var metrics = root.Resources?.DisplayMetrics;
+        int displayWidth = root.Width, displayHeight = root.Height;
         root.DismissPhotoMenu();
         root.DismissFilterDropdown();
         await Task.Delay(200);
@@ -383,16 +479,16 @@ internal static partial class AndroidNativeChecks
         var origin = new int[2];
         root.PopupLayer.GetLocationOnScreen(origin);
         var focused = session?.Panel.FindFocus();
-        bool focusInPanel = session != null && focused != null && IsDescendantOf(session.Panel, focused);
+        bool focusInPanel = session != null && focused != null
+            && (ReferenceEquals(session.Panel, focused) || IsDescendantOf(session.Panel, focused));
         bool inWindow = session != null && IsDescendantOf(root, session.Panel)
             && frame.Width() > 0 && frame.Height() > 0
             && frame.Left >= 0 && frame.Top >= 0 && frame.Right <= root.Width && frame.Bottom <= root.Height;
-        bool inScreen = metrics == null
-            || (frame.Left + origin[0] >= 0 && frame.Top + origin[1] >= 0
-                && frame.Right + origin[0] <= metrics.WidthPixels && frame.Bottom + origin[1] <= metrics.HeightPixels);
+        bool inScreen = frame.Left + origin[0] >= 0 && frame.Top + origin[1] >= 0
+            && frame.Right + origin[0] <= displayWidth && frame.Bottom + origin[1] <= displayHeight;
         Check("filter 主图菜单屏内夹取", inWindow && inScreen && focusInPanel,
             $"frame={frame} window={root.Width}x{root.Height} origin={origin[0]},{origin[1]} "
-            + $"display={metrics?.WidthPixels}x{metrics?.HeightPixels} focus={focusInPanel}");
+            + $"display={displayWidth}x{displayHeight} focus={focusInPanel}");
         root.DismissPhotoMenu();
         await Task.Delay(250);
 
@@ -402,12 +498,24 @@ internal static partial class AndroidNativeChecks
             return;
         }
         var anchor = filter.DropdownAnchorForChecks;
-        bool clamped = metrics == null || (anchor.X >= 0 && anchor.Y >= 0
-            && anchor.X + anchor.Width <= metrics.WidthPixels && anchor.Y + anchor.Height <= metrics.HeightPixels);
+        bool clamped = anchor.X >= 0 && anchor.Y >= 0
+            && anchor.X + anchor.Width <= displayWidth && anchor.Y + anchor.Height <= displayHeight;
         Check("filter 下拉屏内夹取", clamped,
-            $"anchor={anchor} display={metrics?.WidthPixels}x{metrics?.HeightPixels}");
+            $"anchor={anchor} display={displayWidth}x{displayHeight}");
         root.DismissFilterDropdown();
         await Task.Delay(300);
+    }
+
+    private static (int X, int Y) OutsidePoint(Rect panel, AndroidNativeRootView root)
+    {
+        int x = panel.Left >= 24 ? panel.Left - 20 : panel.Right + 20;
+        int y = panel.CenterY();
+        if (x < 0 || x >= root.Width)
+        {
+            x = panel.CenterX();
+            y = panel.Top >= 24 ? panel.Top - 20 : panel.Bottom + 20;
+        }
+        return (Math.Clamp(x, 0, root.Width - 1), Math.Clamp(y, 0, root.Height - 1));
     }
 
     /// <summary>筛选入口的真实视图（合体可见时取筛选段，竖屏取圆按钮）。</summary>
@@ -445,6 +553,17 @@ internal static partial class AndroidNativeChecks
         for (var parent = view?.Parent; parent != null; parent = parent.Parent)
             if (ReferenceEquals(parent, ancestor)) return true;
         return false;
+    }
+
+    /// <summary>子树里第一个可聚焦且已排布的视图（与弹层宿主的首行口径一致，验收用）。</summary>
+    private static View? FirstFocusableIn(View view)
+    {
+        if (view.Visibility != ViewStates.Visible || !view.Enabled) return null;
+        if (view is ViewGroup group)
+            for (int index = 0; index < group.ChildCount; index++)
+                if (group.GetChildAt(index) is { } child && FirstFocusableIn(child) is { } found)
+                    return found;
+        return view.Focusable && view.Width > 0 && view.Height > 0 ? view : null;
     }
 
     /// <summary>向根视图派发一次屏幕坐标触摸（走真实命中与分发）。</summary>
@@ -699,12 +818,15 @@ internal static partial class AndroidNativeChecks
         var activity = _activity!;
         var filter = root.FilterBar;
         var previousOrientation = activity.RequestedOrientation;
+        bool startedLandscape = root.Width > root.Height;
         // 残留的固定布局模式会让行/列与方向脱钩：这一节固定用自动档，结束时还原。
         var previousLayoutMode = main.Settings.LayoutMode;
         bool previousVisible = main.IsThumbnailViewVisible;
 
         try
         {
+            activity.RequestedOrientation = global::Android.Content.PM.ScreenOrientation.Portrait;
+            await WaitAsync(() => root.Height > root.Width, "旋转前竖屏布局", 20000);
             main.Settings.LayoutMode = LayoutMode.Auto;
             await Task.Delay(300);
             if (!await OpenGroupedMenuAsync(root))
@@ -722,6 +844,13 @@ internal static partial class AndroidNativeChecks
                 + $"rotate={(DateTime.UtcNow - rotateStarted).TotalSeconds:0.0}s");
 
             activity.RequestedOrientation = previousOrientation;
+            if (startedLandscape)
+            {
+                await WaitAsync(() => root.Width > root.Height, "恢复横屏布局", 20000);
+                Check("filter 窄屏几何（横屏起始不执行竖屏窄屏）", true,
+                    $"初始方向={previousOrientation}；旋转收起已单独验证");
+                return;
+            }
             await WaitAsync(() => root.Height > root.Width, "回竖屏布局", 20000);
             await Task.Delay(600);
 
@@ -774,7 +903,8 @@ internal static partial class AndroidNativeChecks
             root.DismissFilterDropdown();
             main.IsThumbnailViewVisible = previousVisible;
             activity.RequestedOrientation = previousOrientation;
-            await WaitAsync(() => root.Height > root.Width, "回竖屏布局", 20000);
+            await WaitAsync(() => startedLandscape ? root.Width > root.Height : root.Height > root.Width,
+                "恢复初始方向", 20000);
             await Task.Delay(400);
             main.Settings.LayoutMode = previousLayoutMode;
             await Task.Delay(200);

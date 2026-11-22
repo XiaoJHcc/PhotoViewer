@@ -40,6 +40,11 @@ public sealed class AndroidNativeActivity : AppCompatActivity
     {
         base.OnCreate(savedInstanceState);
         WindowCompat.SetDecorFitsSystemWindows(Window!, false);
+        if (OperatingSystem.IsAndroidVersionAtLeast(28) && Window!.Attributes is { } attributes)
+        {
+            attributes.LayoutInDisplayCutoutMode = LayoutInDisplayCutoutMode.ShortEdges;
+            Window!.Attributes = attributes;
+        }
         // 明确请求广色域窗口（API 26+）；不设置时窗口默认按 sRGB 合成，EGL 也拿不到 P3 表面。
         if (OperatingSystem.IsAndroidVersionAtLeast(26))
             Window!.ColorMode = ActivityColorMode.WideColorGamut;

@@ -53,6 +53,7 @@ internal readonly record struct GlassControlSnapshot(
     bool Pressed,
     bool Hovered,
     bool Focused,
+    bool FocusRingVisible,
     bool Enabled,
     float HoverIntensity,
     bool AnimationsEnabled);
@@ -189,6 +190,8 @@ internal sealed class AndroidGlassControlMaterial : IDisposable
         }
     }
 
+    internal bool FocusRingVisible => Focused && !_anchor.IsInTouchMode;
+
     internal bool Enabled
     {
         get
@@ -231,6 +234,7 @@ internal sealed class AndroidGlassControlMaterial : IDisposable
         _pressed,
         _hovered,
         Focused,
+        FocusRingVisible,
         Enabled,
         _hoverIntensity,
         _interaction.AnimationsEnabled);
@@ -474,7 +478,7 @@ internal sealed class AndroidGlassControlMaterial : IDisposable
 
     private void DrawFocus(Canvas canvas, float width, float height, float density)
     {
-        if (_kind == GlassControlKind.Rating) return;
+        if (_kind == GlassControlKind.Rating || _anchor.IsInTouchMode) return;
         float inset = Math.Max(0f, density);
         if (_kind == GlassControlKind.Combo)
         {

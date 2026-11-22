@@ -62,7 +62,7 @@ public static class DesignTokens
     /// <summary>color.bar.overlay（color） SHELL-12：主屏栏底独立色层的中性深灰；基准值供 Web。</summary>
     public const uint ColorBarOverlay = 0xFF292929u;
     /// <summary>color.bar.overlay@android（color）：android 平台差异值（见 Design/platforms.md）。</summary>
-    public const uint ColorBarOverlayAndroid = 0xFF292929u;
+    public const uint ColorBarOverlayAndroid = 0xFF262626u;
     /// <summary>color.bar.overlay@macos（color）：macos 平台差异值（见 Design/platforms.md）。</summary>
     public const uint ColorBarOverlayMac = 0xFF2B2B2Bu;
     /// <summary>color.divider（color） SHELL-01：分区/控件分隔线与描边色。</summary>
@@ -668,13 +668,13 @@ public static class DesignTokens
     /// <summary>shell.bar.blur.radius（pt） SHELL-12：窗口内栏位背景模糊半径；Android 为栏底与带衬底 EXIF 取样的照片层模糊半径。</summary>
     public const double ShellBarBlurRadius = 30.0;
     /// <summary>shell.bar.blur.radius@android（pt）：android 平台差异值（见 Design/platforms.md）。</summary>
-    public const double ShellBarBlurRadiusAndroid = 8.0;
+    public const double ShellBarBlurRadiusAndroid = 80.0;
     /// <summary>shell.bar.blur.radius@macos（pt）：macos 平台差异值（见 Design/platforms.md）。</summary>
     public const double ShellBarBlurRadiusMac = 30.0;
     /// <summary>shell.bar.overlay.opacity（ratio） SHELL-12：主屏栏底独立色层的不透明度；基准值供 Web。</summary>
     public const double ShellBarOverlayOpacity = 0.8;
     /// <summary>shell.bar.overlay.opacity@android（ratio）：android 平台差异值（见 Design/platforms.md）。</summary>
-    public const double ShellBarOverlayOpacityAndroid = 0.8;
+    public const double ShellBarOverlayOpacityAndroid = 0.792156862745098;
     /// <summary>shell.bar.overlay.opacity@macos（ratio）：macos 平台差异值（见 Design/platforms.md）。</summary>
     public const double ShellBarOverlayOpacityMac = 0.8;
     /// <summary>shell.divider.thickness（pt） SHELL-01：文件栏/主图、主图/控制栏之间的分隔线厚度。</summary>
@@ -683,6 +683,8 @@ public static class DesignTokens
     public const double ShellFilebarContentWidth = 116.0;
     /// <summary>shell.filter.leadingInset（pt） SHELL-02：Windows 与 macOS 列布局筛选条首控件顶边让位 = shell.titlebar.height + filter.margin（避开标题栏与窗口控件）；iOS/Android 使用真实安全区与普通 filter.margin。行布局整组居中，Android 仅在自然宽度溢出时前导起排并滚动。</summary>
     public const double ShellFilterLeadingInset = 42.0;
+    /// <summary>shell.glass.android.bar.tone.gamma（ratio） SHELL-12：Android 13+ 栏底照片层取样的统一 sRGB gamma，在提饱和之后、模糊之前应用；按 iOS 黑 / 50% 灰 / 白三色材质响应校准，EXIF 不使用该参数，API 31/32 保持线性回退。</summary>
+    public const double ShellGlassAndroidBarToneGamma = 0.642;
     /// <summary>shell.glass.android.bar.vibrancy.saturation（ratio） SHELL-12：Android 栏底与带衬底 EXIF 的照片层取样提饱和倍数（vibrancy），在模糊之前应用。</summary>
     public const double ShellGlassAndroidBarVibrancySaturation = 1.5;
     /// <summary>shell.glass.android.button.blur.radius（pt） TOOLBAR-10：Android 主屏玻璃按钮取样后的模糊半径。</summary>
@@ -732,7 +734,7 @@ public static class DesignTokens
     /// <summary>shell.glass.button.tint.opacity（ratio） TOOLBAR-10：主屏按钮常态底材染色的不透明度，不降低按钮内容不透明度；基准值供 Web。</summary>
     public const double ShellGlassButtonTintOpacity = 0.135;
     /// <summary>shell.glass.button.tint.opacity@android（ratio）：android 平台差异值（见 Design/platforms.md）。</summary>
-    public const double ShellGlassButtonTintOpacityAndroid = 0.135;
+    public const double ShellGlassButtonTintOpacityAndroid = 0.132;
     /// <summary>shell.glass.button.tint.opacity@macos（ratio）：macos 平台差异值（见 Design/platforms.md）。</summary>
     public const double ShellGlassButtonTintOpacityMac = 0.195;
     /// <summary>shell.glass.button.tint.opacity@windows（ratio）：windows 平台差异值（见 Design/platforms.md）。</summary>
@@ -743,8 +745,6 @@ public static class DesignTokens
     public const double ShellGlassGroupGap = 8.0;
     /// <summary>shell.phone.command.size（pt） SHELL-08：手机形态可选命令胶囊的单段触控边长（Android 为 dp）。</summary>
     public const double ShellPhoneCommandSize = 44.0;
-    /// <summary>shell.phone.command.size@android（pt）：android 平台差异值（见 Design/platforms.md）。</summary>
-    public const double ShellPhoneCommandSizeAndroid = 48.0;
     /// <summary>shell.phone.edgeMargin（pt） SHELL-08：手机竖屏顶部行、底部行与耳区的边缘距离；横屏入口取 filter.margin，工具区取 toolbar.padding。</summary>
     public const double ShellPhoneEdgeMargin = 16.0;
     /// <summary>shell.phone.rowInset（pt） SHELL-11：手机形态行到安全区/栏缘的间距，也是栏背景超出元素的余量。</summary>

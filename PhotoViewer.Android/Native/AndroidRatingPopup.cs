@@ -116,7 +116,6 @@ internal sealed class AndroidRatingPopup : IDisposable
             return false;
         }
         _session = opened;
-        panel.FocusFirst();
         _host.PostOnAnimation(_poll);
         return true;
     }
@@ -487,7 +486,6 @@ internal sealed class AndroidRatingPopup : IDisposable
             if (_rows.Count != 0) RenderRow(0, value ?? _entries[0].Rating);
         }
 
-        internal void FocusFirst() => _rows[0][_horizontal ? 0 : StarCount - 1].RequestFocus();
         internal Rect SlotRect(int entry, int value) => entry >= 0 && entry < _rows.Count && value is >= 0 and < StarCount
             ? new Rect(_rows[entry][value].Left, _rows[entry][value].Top - ScrollY,
                 _rows[entry][value].Right, _rows[entry][value].Bottom - ScrollY) : new Rect();

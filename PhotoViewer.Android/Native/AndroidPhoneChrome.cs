@@ -42,7 +42,7 @@ internal sealed class AndroidBarScrim : View
     public AndroidBarScrim(Context context, AndroidPhotoMaterial? material = null) : base(context)
     {
         _material = material;
-        _materialConsumer = material?.CreateConsumer();
+        _materialConsumer = material?.CreateConsumer(material.BarToneGamma);
         ImportantForAccessibility = ImportantForAccessibility.No;
     }
 
@@ -847,6 +847,7 @@ internal sealed class AndroidRatingControl : MaterialCardView, IGlassAnchorConte
         }
         _focusPaint = AndroidUiTheme.Paint(AndroidUiTheme.Accent, Math.Max(1, AndroidUiTheme.Dp(context, 2)));
         Focusable = true;
+        if (OperatingSystem.IsAndroidVersionAtLeast(26)) DefaultFocusHighlightEnabled = false;
         ImportantForAccessibility = ImportantForAccessibility.Yes;
         _accessibility = new RatingAccessibilityHelper(this);
         ViewCompat.SetAccessibilityDelegate(this, _accessibility);
@@ -993,7 +994,7 @@ internal sealed class AndroidRatingControl : MaterialCardView, IGlassAnchorConte
                     (Horizontal ? control.Y : control.X) + capsuleCross / 2, density, alpha);
             }
         }
-        if (IsFocused)
+        if (IsFocused && !IsInTouchMode)
         {
             var focus = new RectF(
                 (float)(control.X * density) + density, (float)(control.Y * density) + density,

@@ -279,10 +279,11 @@ public sealed class BackdropEffectScope : IDisposable
     }
 
     /// <summary>取当前链的快照；快照携带本 scope 的离屏效果层所有者。</summary>
-    public BackdropEffect Build()
+    /// <param name="paddingOverridePx">矩形消费者需要以自身边界作为 Clamp 边缘时可覆盖外扩量；null 保持配方计算值。</param>
+    public BackdropEffect Build(float? paddingOverridePx = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        return new BackdropEffect(RenderEffect, PaddingPx, _effectLayer);
+        return new BackdropEffect(RenderEffect, paddingOverridePx ?? PaddingPx, _effectLayer);
     }
 
     /// <summary>释放本消费者的离屏效果层与着色器缓存；调用后本 scope 不再可绘制。</summary>

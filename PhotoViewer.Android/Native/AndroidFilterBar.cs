@@ -124,8 +124,8 @@ internal sealed class AndroidFilterBar : FrameLayout
     /// <summary>冲突三角之外的浮层协调：下拉打开前通知宿主收起其它临时浮窗（RATING-04）。</summary>
     internal event Action? DropdownOpening;
 
-    /// <summary>「更多」段点按：交给宿主弹出与长按相同的主图菜单（菜单内容由共享目录给出）。</summary>
-    internal event Action<LayoutRect>? MoreRequested;
+    /// <summary>「更多」段点按：交给宿主弹出主图菜单，并传入焦点归还用的入口。</summary>
+    internal event Action<LayoutRect, View>? MoreRequested;
 
     /// <summary>
     /// 筛选入口在屏幕矩形处弹出同一套三组菜单（排序/方向单选、星级多选；点选立即应用并保持展开）。
@@ -175,7 +175,7 @@ internal sealed class AndroidFilterBar : FrameLayout
         AddView(_filterButton);
         _combo = new AndroidGlassCombo(context, AndroidIcons.Filter, "筛选", AndroidIcons.More, "更多");
         _combo.First.Click += (_, _) => OpenGroupedMenu(ScreenRectOf(_filterSegment));
-        _combo.Second.Click += (_, _) => MoreRequested?.Invoke(_moreSegment);
+        _combo.Second.Click += (_, _) => MoreRequested?.Invoke(_moreSegment, _combo.Second);
         _combo.Visibility = ViewStates.Gone;
         AddView(_combo);
         _glassLayer?.Register(_filterButton);

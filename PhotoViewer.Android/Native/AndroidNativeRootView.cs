@@ -366,7 +366,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         _phoneExif.ExifActivated += ShowExifTools;
         _phoneExif.Visibility = ViewStates.Gone;
         _sceneLayer.AddView(_phoneExif);
-        _filterBar.MoreRequested += rect =>
+        _filterBar.MoreRequested += (rect, entry) =>
         {
             var location = new int[2];
             _filterBar.GetLocationOnScreen(location);
@@ -375,7 +375,8 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             double density = AndroidUiTheme.Density(Context!);
             ShowPhotoMenu(
                 (float)(location[0] - photoLocation[0] + (rect.X + rect.Width / 2) * density),
-                (float)(location[1] - photoLocation[1] + (rect.Y + rect.Height) * density));
+                (float)(location[1] - photoLocation[1] + (rect.Y + rect.Height) * density),
+                entry);
         };
 
         _detailHighlight = new DetailFrameView(activity);
@@ -884,7 +885,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             ? ExifBlockGeometry.Size(enabledExif.Count, horizontal: true)
             : ExifBlockGeometry.Size(enabledExif.Count, horizontal: false, bare: true);
         var corners = _windowInsets.Corners;
-        // SETTINGS-08 / TOOLBAR-04：手机可选命令组按用户勾选顺序跳过上下张后取前三，按钮 48dp。
+        // SETTINGS-08 / TOOLBAR-04：手机可选命令组按用户勾选顺序跳过上下张后取前三，与同栏控件同为 44dp。
         var commandSegments = BuildPhoneCommandSegments();
         PhoneLayoutInput Input(EdgeInsets lead, EdgeInsets control) => new(
             Landscape: !portrait,
@@ -914,7 +915,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             GroupGap: DesignTokens.ShellGlassGroupGap,
             ShowRating: _main.Settings.ShowRating,
             CommandCount: commandSegments.Count,
-            CommandButtonSize: DesignTokens.ShellPhoneCommandSizeAndroid);
+            CommandButtonSize: DesignTokens.ShellPhoneCommandSize);
 
         // SHELL-10：系统安全区与屏幕圆角是两种独立避让。先只按安全区排出各贴角元素的实际位置，
         // 再按元素外形（44 高胶囊与圆按钮的半圆端）在该位置求圆角避让线，与安全区取较大者交回共享几何。
