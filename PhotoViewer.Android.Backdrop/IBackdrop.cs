@@ -20,3 +20,13 @@ public interface IBackdrop
     /// <param name="context">取样上下文。</param>
     void DrawBackdrop(Gfx.Canvas canvas, in BackdropDrawContext context);
 }
+
+/// <summary>
+/// 内部内容代际：消费者效果层据此判断源层是否需要重录。没有稳定代际的自定义取样源不实现本接口，
+/// 效果层每次绘制都会重录。
+/// </summary>
+internal interface IBackdropContentVersion
+{
+    /// <summary>单调递增的内容代际；&lt; 0 表示不可缓存。</summary>
+    long ContentVersion { get; }
+}

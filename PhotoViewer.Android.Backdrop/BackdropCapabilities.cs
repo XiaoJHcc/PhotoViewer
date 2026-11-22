@@ -15,7 +15,7 @@ public enum BackdropTier
     /// <summary>API 31–32：单层取样 + 模糊与色彩矩阵；无折射与着色器高光。</summary>
     Blur = 1,
 
-    /// <summary>API 33+：另有 <c>RuntimeShader</c>，供阶段 3 的折射与高光使用。</summary>
+    /// <summary>API 33+：另有 <c>RuntimeShader</c>，供折射与着色器高光使用。</summary>
     Full = 2,
 }
 

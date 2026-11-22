@@ -141,8 +141,8 @@ internal static partial class AndroidNativeChecks
         GlassHostNote($"产品材质分级 {BackdropCapabilities.Describe()}");
         GlassHostNote($"产品形态 form={root.Form} 行布局={_main!.IsRowLayout}"
             + $" 窗口={root.Width}x{root.Height} 密度={AndroidUiTheme.Density(_activity!):F2}");
-        GlassHostNote($"共享效果层估算 footprint={material.FootprintBytes >> 10}KiB"
-            + $"（层物理尺寸+模糊外扩，RGBA8；与主图纹理同一次上报，不重复计费）");
+        GlassHostNote($"各消费者效果层估算 footprint={material.FootprintBytes >> 10}KiB"
+            + $"（逐视图 ceil(宽+2×padding)×ceil(高+2×padding)，RGBA8；与主图纹理同一次上报，不重复计费）");
         _glassBarDarkLuma = _glassBarGrayLuma = _glassBarBrightLuma = double.NaN;
         _glassExifDarkLuma = _glassExifGrayLuma = _glassExifBrightLuma = double.NaN;
 
@@ -1332,7 +1332,7 @@ internal static partial class AndroidNativeChecks
     /// <param name="value">亮度均值。</param>
     private static string GlassProductLuma(double value) => double.IsNaN(value) ? "n/a" : value.ToString("F1");
 
-    /// <summary>共享材质绘制次数（诊断，不参与判定）。</summary>
+    /// <summary>所有消费者材质绘制次数之和（诊断，不参与判定）。</summary>
     /// <param name="root">主屏根视图。</param>
     private static string GlassProductMaterialDraws(AndroidNativeRootView root)
         => $"材质OnDraw={root.PhotoMaterial.MaterialDrawCount}";

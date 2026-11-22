@@ -33,6 +33,7 @@ namespace PhotoViewer.Android.Native;
 internal sealed class AndroidBarScrim : View
 {
     private readonly AndroidPhotoMaterial? _material;
+    private readonly AndroidPhotoMaterial.Consumer? _materialConsumer;
     private readonly int[] _location = new int[2];
 
     /// <summary>建一个栏底材质视图。</summary>
@@ -41,6 +42,7 @@ internal sealed class AndroidBarScrim : View
     public AndroidBarScrim(Context context, AndroidPhotoMaterial? material = null) : base(context)
     {
         _material = material;
+        _materialConsumer = material?.CreateConsumer();
         ImportantForAccessibility = ImportantForAccessibility.No;
     }
 
@@ -48,7 +50,7 @@ internal sealed class AndroidBarScrim : View
     internal Color ColorForChecks => AndroidUiTheme.BarOverlay;
 
     /// <summary>本视图是否走真实照片层材质（验收读取；API 24–30 恒为 false）。</summary>
-    internal bool UsesPhotoMaterialForChecks => _material is { IsRealMaterial: true };
+    internal bool UsesPhotoMaterialForChecks => _materialConsumer is not null;
 
     /// <summary>本视图实际取样的源（验收读取：与根视图照片层同一份 <see cref="IBackdrop"/>；不取样时为 null）。</summary>
     internal IBackdrop? BackdropSourceForChecks => _material?.Source;
@@ -63,13 +65,25 @@ internal sealed class AndroidBarScrim : View
         try
         {
             canvas.ClipRect(0, 0, Width, Height);
-            _material?.Draw(canvas, BackdropDrawContext.ForView(this, _location));
+            _materialConsumer?.Draw(canvas, BackdropDrawContext.ForView(this, _location));
             canvas.DrawColor(AndroidUiTheme.BarOverlay);
         }
         finally
         {
             canvas.RestoreToCount(save);
         }
+    }
+
+    /// <summary>释放本视图的效果 scope 并注销离屏占用。</summary>
+    /// <param name="disposing">是否释放托管资源。</param>
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _materialConsumer?.Dispose();
+        }
+
+        base.Dispose(disposing);
     }
 }
 
@@ -1055,6 +1069,7 @@ internal sealed class AndroidExifBlock : View
     private readonly Paint _valuePaint;
     private readonly MaterialShapeDrawable _backdrop;
     private readonly AndroidPhotoMaterial? _material;
+    private readonly AndroidPhotoMaterial.Consumer? _materialConsumer;
     private readonly int[] _location = new int[2];
     private readonly Path _materialClip = new();
     private readonly RectF _materialBounds = new();
@@ -1072,6 +1087,7 @@ internal sealed class AndroidExifBlock : View
     public AndroidExifBlock(Context context, AndroidPhotoMaterial? material = null) : base(context)
     {
         _material = material;
+        _materialConsumer = material?.CreateConsumer();
         _labelPaint = AndroidUiTheme.TextPaint(context, DesignTokens.ToolbarExifLabelFontSize, AndroidUiTheme.TextSecondary);
         _valuePaint = AndroidUiTheme.TextPaint(context, DesignTokens.ToolbarExifValueFontSize, AndroidUiTheme.TextPrimary, bold: true);
         var shape = new ShapeAppearanceModel.Builder()
@@ -1098,7 +1114,7 @@ internal sealed class AndroidExifBlock : View
     internal Color MaterialTintForChecks => AndroidUiTheme.ExifGlassTint;
 
     /// <summary>本视图是否走真实照片层材质（验收读取；无衬底变体与 API 24–30 恒为 false）。</summary>
-    internal bool UsesPhotoMaterialForChecks => !_bare && _material is { IsRealMaterial: true };
+    internal bool UsesPhotoMaterialForChecks => !_bare && _materialConsumer is not null;
 
     /// <summary>本视图实际取样的源（验收读取：与根视图照片层同一份 <see cref="IBackdrop"/>；不取样时为 null）。</summary>
     internal IBackdrop? BackdropSourceForChecks => UsesPhotoMaterialForChecks ? _material?.Source : null;
@@ -1180,7 +1196,7 @@ internal sealed class AndroidExifBlock : View
 
     /// <summary>
     /// 带衬底变体的真实材质：按本视图圆角裁出照片层取样，再叠深灰色层。
-    /// 圆角只在本视图画布上裁，不传给共享取样绘制器——那会改写所有取样方共用的离屏效果层录制。
+    /// 圆角只在本视图画布上裁；效果层已按本视图独立，不需要把形状传给共享绘制器。
     /// </summary>
     private void DrawPhotoMaterial(Canvas canvas)
     {
@@ -1192,12 +1208,24 @@ internal sealed class AndroidExifBlock : View
         try
         {
             canvas.ClipPath(_materialClip);
-            _material?.Draw(canvas, BackdropDrawContext.ForView(this, _location));
+            _materialConsumer?.Draw(canvas, BackdropDrawContext.ForView(this, _location));
             canvas.DrawColor(AndroidUiTheme.ExifGlassTint);
         }
         finally
         {
             canvas.RestoreToCount(save);
         }
+    }
+
+    /// <summary>释放本视图的效果 scope 并注销离屏占用（无衬底变体同样适用）。</summary>
+    /// <param name="disposing">是否释放托管资源。</param>
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _materialConsumer?.Dispose();
+        }
+
+        base.Dispose(disposing);
     }
 }

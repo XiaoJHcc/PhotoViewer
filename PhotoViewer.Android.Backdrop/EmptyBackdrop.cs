@@ -3,7 +3,7 @@ using Gfx = Android.Graphics;
 namespace PhotoViewer.Android.Backdrop;
 
 /// <summary>空取样源，对应上游 <c>emptyBackdrop()</c>：不画任何内容。</summary>
-public sealed class EmptyBackdrop : IBackdrop
+public sealed class EmptyBackdrop : IBackdrop, IBackdropContentVersion
 {
     /// <summary>共享实例。</summary>
     public static EmptyBackdrop Instance { get; } = new();
@@ -14,6 +14,8 @@ public sealed class EmptyBackdrop : IBackdrop
 
     /// <inheritdoc />
     public bool IsCoordinatesDependent => false;
+
+    long IBackdropContentVersion.ContentVersion => 0L;
 
     /// <inheritdoc />
     public void DrawBackdrop(Gfx.Canvas canvas, in BackdropDrawContext context)

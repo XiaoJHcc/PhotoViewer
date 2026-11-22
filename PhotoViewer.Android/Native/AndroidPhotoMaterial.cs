@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Threading;
 using Android.Graphics;
 using PhotoViewer.Android.Backdrop;
 using PhotoViewer.Core.Design;
@@ -6,7 +8,7 @@ using PhotoViewer.Core.Design;
 namespace PhotoViewer.Android.Native;
 
 /// <summary>
-/// 共享照片层材质（SHELL-12@android）：主屏六处栏底与带衬底 EXIF 块共用的同一份照片层取样与效果链。
+/// 共享照片层材质（SHELL-12@android）：主屏栏底与带衬底 EXIF 共用同一份照片层取样与配方。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -15,24 +17,23 @@ namespace PhotoViewer.Android.Native;
 /// API 24–30 不取样，调用方画正式色层（层也不录制，省掉一半绘制）。
 /// </para>
 /// <para>
-/// 效果链快照与平台 <c>RenderEffect</c> 只在密度、照片层尺寸或配方变化时重建。所有取样方共用这一份快照，
-/// 取样源内部那张离屏效果层因此不会被不同取样方反复改写，也不会逐帧新建效果对象。
+/// 每个绘制视图通过 <see cref="CreateConsumer"/> 持有自己的 <see cref="Consumer"/>：一份
+/// <see cref="BackdropEffectScope"/>、一份效果快照与一张按本视图 <c>context</c> 尺寸录制的离屏效果层。
+/// 配方仍由本对象统一给出；效果快照按本视图的密度与 <c>WidthPx / HeightPx</c> 求值，不能用源层录制尺寸。
+/// 同一源层上的不同控件因此各有本地取样结果，不会在同一帧互相覆盖。
 /// </para>
 /// <para>
-/// 取样会把**整层**画出来，调用方必须先在画布上裁到自身边界或形状，且 <c>save</c> / <c>restore</c> 成对。
-/// 圆角形状由取样方自己 <c>ClipPath</c>：共享取样源只有一个离屏效果层，把裁切形状传给
-/// <see cref="BackdropDrawer.Draw"/> 会让不同取样方互相覆盖对方的效果层录制。
+/// 取样画的是整层，调用方先裁到自身边界或形状，<c>save</c> / <c>restore</c> 成对；圆角也由各视图自己裁。
 /// </para>
 /// </remarks>
 internal sealed class AndroidPhotoMaterial
 {
     private readonly LayerBackdropLayout _layer;
-    private readonly BackdropEffectScope _scope = new();
-    private readonly float _density;
     private readonly float _saturation = (float)DesignTokens.ShellGlassAndroidBarVibrancySaturation;
     private readonly float _blurDp = (float)DesignTokens.ShellBarBlurRadiusAndroid;
-    private BackdropEffect _effect = BackdropEffect.None;
-    private (float Density, int Width, int Height) _effectKey = (-1f, -1, -1);
+    private readonly object _consumersGate = new();
+    private readonly List<Consumer> _consumers = [];
+    private BackdropEffect _representativeEffect = BackdropEffect.None;
     private int _drawCount;
 
     /// <summary>把共享材质接到照片层上。</summary>
@@ -41,7 +42,6 @@ internal sealed class AndroidPhotoMaterial
     {
         ArgumentNullException.ThrowIfNull(layer);
         _layer = layer;
-        _density = layer.Resources?.DisplayMetrics?.Density ?? 1f;
         // SHELL-12：API 24–30 不取样，外观由各栏位色层承担；层不必录制。
         layer.RecordsBackdrop = IsRealMaterial;
     }
@@ -61,59 +61,160 @@ internal sealed class AndroidPhotoMaterial
     /// <summary>配方：模糊半径（dp，<c>shell.bar.blur.radius@android</c>）。</summary>
     internal float BlurRadiusDp => _blurDp;
 
-    /// <summary>当前效果链快照（验收用）。</summary>
-    internal BackdropEffect Effect => _effect;
+    /// <summary>最近一次绘制的代表效果快照（验收用）。</summary>
+    internal BackdropEffect Effect
+    {
+        get
+        {
+            lock (_consumersGate)
+            {
+                return _representativeEffect;
+            }
+        }
+    }
 
-    /// <summary>真实材质取样绘制次数（验收用）。</summary>
-    internal int MaterialDrawCount => _drawCount;
+    /// <summary>所有消费者真实材质取样绘制次数之和（验收用）。</summary>
+    internal int MaterialDrawCount => Volatile.Read(ref _drawCount);
 
     /// <summary>
-    /// 离屏效果层的估算占用：照片层物理尺寸加四边模糊外扩，按 RGBA8。
-    /// 主图纹理已由 <see cref="AndroidPhotoView"/> 单独记账，这里只计这份共享效果层，不重复计入照片像素。
-    /// 低版本不取样，恒为 0。
+    /// 为每个取样视图创建一个消费者：独立的 scope、效果快照与离屏效果层。
+    /// API 24–30 返回 <c>null</c>。视图销毁时必须 <see cref="Consumer.Dispose"/>。
+    /// </summary>
+    /// <returns>消费者；低版本为 <c>null</c>。</returns>
+    internal Consumer? CreateConsumer()
+    {
+        if (!IsRealMaterial) return null;
+
+        var consumer = new Consumer(this);
+        lock (_consumersGate)
+        {
+            _consumers.Add(consumer);
+        }
+
+        return consumer;
+    }
+
+    /// <summary>
+    /// 所有已创建消费者的离屏效果层估算占用之和：逐视图
+    /// <c>ceil(WidthPx + 2 × padding) × ceil(HeightPx + 2 × padding) × 4</c>。
+    /// 尚未绘制或尺寸未知的消费者计 0；低版本恒为 0。主图纹理由
+    /// <see cref="AndroidPhotoView"/> 单独记账，这里不重复计入照片像素。
     /// </summary>
     internal long FootprintBytes
     {
         get
         {
             if (!IsRealMaterial || !_layer.RecordsBackdrop) return 0;
-            int width = _layer.Width, height = _layer.Height;
-            if (width <= 0 || height <= 0) return 0;
-            long padding = (long)Math.Ceiling(_blurDp * _density);
-            long paddedWidth = width + (padding * 2);
-            long paddedHeight = height + (padding * 2);
-            return paddedWidth * paddedHeight * 4;
+
+            lock (_consumersGate)
+            {
+                long total = 0;
+                foreach (var consumer in _consumers)
+                {
+                    total += consumer.FootprintBytes;
+                }
+
+                return total;
+            }
+        }
+    }
+
+    private void OnConsumerDrawn(Consumer consumer, in BackdropEffect effect, in BackdropDrawContext context)
+    {
+        long bytes = 0;
+        if (!effect.IsEmpty && context.WidthPx > 0f && context.HeightPx > 0f)
+        {
+            long width = (long)Math.Ceiling(context.WidthPx + (2.0 * effect.PaddingPx));
+            long height = (long)Math.Ceiling(context.HeightPx + (2.0 * effect.PaddingPx));
+            if (width > 0 && height > 0)
+            {
+                bytes = width * height * 4;
+            }
+        }
+
+        lock (_consumersGate)
+        {
+            _representativeEffect = effect;
+            consumer.SetFootprint(bytes);
+        }
+
+        Interlocked.Increment(ref _drawCount);
+    }
+
+    private void Unregister(Consumer consumer)
+    {
+        lock (_consumersGate)
+        {
+            _consumers.Remove(consumer);
         }
     }
 
     /// <summary>
-    /// 把照片层取样按共享配方画到画布上。调用方先裁到自身边界或形状，并成对 <c>save</c> / <c>restore</c>。
+    /// 单个取样视图持有的材质消费者：独立的效果 scope、效果快照与离屏效果层。
     /// </summary>
-    /// <param name="canvas">目标画布。</param>
-    /// <param name="context">取样上下文（画布原点取自取样方自身）。</param>
-    internal void Draw(Canvas canvas, in BackdropDrawContext context)
+    internal sealed class Consumer : IDisposable
     {
-        var source = _layer.Backdrop;
-        if (!IsRealMaterial || !_layer.RecordsBackdrop || !source.HasContent) return;
-        if (!canvas.IsHardwareAccelerated) return;
+        private readonly AndroidPhotoMaterial _owner;
+        private readonly BackdropEffectScope _scope = new();
+        private BackdropEffect _effect = BackdropEffect.None;
+        private (float Density, float Width, float Height) _effectKey = (-1f, -1f, -1f);
+        private long _footprintBytes;
+        private bool _disposed;
 
-        BackdropDrawer.Draw(canvas, source, EffectFor(context), context);
-        _drawCount++;
-    }
-
-    /// <summary>取当前效果链快照；只在密度、照片层录制尺寸或配方变化时重建。</summary>
-    private BackdropEffect EffectFor(in BackdropDrawContext context)
-    {
-        var key = (context.Density, _layer.Backdrop.RecordedWidth, _layer.Backdrop.RecordedHeight);
-        if (key == _effectKey) return _effect;
-
-        _effectKey = key;
-        _scope.Apply(scope =>
+        internal Consumer(AndroidPhotoMaterial owner)
         {
-            scope.ColorControls(saturation: _saturation);
-            scope.Blur(scope.DpToPx(_blurDp));
-        }, key.Density, key.Item2, key.Item3);
-        _effect = _scope.Build();
-        return _effect;
+            _owner = owner;
+        }
+
+        /// <summary>本消费者效果层的估算占用；尚未绘制为 0。</summary>
+        internal long FootprintBytes => _footprintBytes;
+
+        /// <summary>
+        /// 按本视图画布与取样上下文绘制共享配方。调用方先裁到自身边界或形状。
+        /// </summary>
+        /// <param name="canvas">目标画布。</param>
+        /// <param name="context">取样上下文（画布原点取自本视图自身）。</param>
+        internal void Draw(Canvas canvas, in BackdropDrawContext context)
+        {
+            if (_disposed) return;
+
+            var source = _owner._layer.Backdrop;
+            if (!_owner.IsRealMaterial || !_owner._layer.RecordsBackdrop || !source.HasContent) return;
+            if (!canvas.IsHardwareAccelerated) return;
+
+            var effect = EffectFor(context);
+            BackdropDrawer.Draw(canvas, source, effect, context);
+            _owner.OnConsumerDrawn(this, effect, context);
+        }
+
+        /// <summary>取本视图的效果链快照；只在本视图密度或尺寸变化时重建。</summary>
+        private BackdropEffect EffectFor(in BackdropDrawContext context)
+        {
+            var key = (Density: context.Density, Width: context.WidthPx, Height: context.HeightPx);
+            if (key == _effectKey) return _effect;
+
+            _effectKey = key;
+            _scope.Apply(scope =>
+            {
+                scope.ColorControls(saturation: _owner._saturation);
+                scope.Blur(scope.DpToPx(_owner._blurDp));
+            }, key.Density, key.Width, key.Height);
+            _effect = _scope.Build();
+            return _effect;
+        }
+
+        internal void SetFootprint(long bytes) => _footprintBytes = bytes;
+
+        /// <summary>注销占用并释放本视图的效果 scope；之后本消费者不再绘制。</summary>
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+
+            _owner.Unregister(this);
+            _scope.Dispose();
+            _effect = BackdropEffect.None;
+            _footprintBytes = 0;
+        }
     }
 }

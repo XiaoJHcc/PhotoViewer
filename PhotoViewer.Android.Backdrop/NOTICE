@@ -13,22 +13,61 @@ https://github.com/Kyant0/AndroidLiquidGlass
 
 移植自以下上游文件（路径相对仓库根）：
   backdrop/src/androidMain/kotlin/com/kyant/backdrop/Platform.kt
+  backdrop/src/androidMain/kotlin/com/kyant/backdrop/RuntimeShader.kt
+  backdrop/src/androidMain/kotlin/com/kyant/backdrop/internal/Paint.kt
   backdrop/src/androidMain/kotlin/com/kyant/backdrop/internal/RenderEffect.kt
   backdrop/src/commonMain/kotlin/com/kyant/backdrop/Backdrop.kt
   backdrop/src/commonMain/kotlin/com/kyant/backdrop/BackdropEffectScope.kt
+  backdrop/src/commonMain/kotlin/com/kyant/backdrop/RuntimeShader.kt
+  backdrop/src/commonMain/kotlin/com/kyant/backdrop/RuntimeShaderCache.kt
+  backdrop/src/commonMain/kotlin/com/kyant/backdrop/backdrops/CombinedBackdrop.kt
+  backdrop/src/commonMain/kotlin/com/kyant/backdrop/backdrops/EmptyBackdrop.kt
   backdrop/src/commonMain/kotlin/com/kyant/backdrop/backdrops/LayerBackdrop.kt
   backdrop/src/commonMain/kotlin/com/kyant/backdrop/backdrops/LayerBackdropModifier.kt
-  backdrop/src/commonMain/kotlin/com/kyant/backdrop/backdrops/EmptyBackdrop.kt
   backdrop/src/commonMain/kotlin/com/kyant/backdrop/effects/Blur.kt
   backdrop/src/commonMain/kotlin/com/kyant/backdrop/effects/ColorFilter.kt
-  backdrop/src/commonMain/kotlin/com/kyant/backdrop/DrawBackdropModifier.kt（仅「按效果链绘制背景」的最小部分）
+  backdrop/src/commonMain/kotlin/com/kyant/backdrop/effects/Lens.kt
+  backdrop/src/commonMain/kotlin/com/kyant/backdrop/effects/RenderEffect.kt
+  backdrop/src/commonMain/kotlin/com/kyant/backdrop/highlight/Highlight.kt
+  backdrop/src/commonMain/kotlin/com/kyant/backdrop/highlight/HighlightModifier.kt
+  backdrop/src/commonMain/kotlin/com/kyant/backdrop/highlight/HighlightStyle.kt
+  backdrop/src/commonMain/kotlin/com/kyant/backdrop/internal/InverseLayerScope.kt
+  backdrop/src/commonMain/kotlin/com/kyant/backdrop/internal/Outline.kt
+  backdrop/src/commonMain/kotlin/com/kyant/backdrop/internal/ShapeProvider.kt
+  backdrop/src/commonMain/kotlin/com/kyant/backdrop/internal/Shaders.kt
+  backdrop/src/commonMain/kotlin/com/kyant/backdrop/shadow/Shadow.kt
+  backdrop/src/commonMain/kotlin/com/kyant/backdrop/shadow/ShadowModifier.kt
+  backdrop/src/commonMain/kotlin/com/kyant/backdrop/DrawBackdropModifier.kt（效果顺序与默认高光/阴影取值）
+  app/src/commonMain/kotlin/com/kyant/backdrop/catalog/components/LiquidButton.kt（layerBlock 形变公式）
+  app/src/commonMain/kotlin/com/kyant/backdrop/catalog/utils/InteractiveHighlight.kt
+  app/src/commonMain/kotlin/com/kyant/backdrop/catalog/utils/DragGestureInspector.kt
 
-修改说明：Kotlin/Compose Multiplatform → C#/Android Views；只保留单层录制、模糊、饱和度与
-colorControls、能力分级；不含高光、阴影、内阴影、折射（lens）、组合背景、层变换与 Compose
-示例组件。上游未被移植文件的完整清单与逐文件映射见同目录 AGENTS.md。
+修改说明：Kotlin/Compose Multiplatform → C#/Android Views；保留多层录制与组合取样、层缩放/旋转的
+逆变换、模糊与色彩矩阵、透镜折射（含色散）、高光与外部阴影、AGSL 运行时着色器、G2 形状路径与
+按压交互弹簧。不含 CanvasBackdrop、InnerShadow、exportedBackdrop、示例页面，也不含
+LiquidToggle / LiquidSlider / LiquidBottomTabs 与仅供这些组件的 DampedDragAnimation。
+上游 AGSL 着色器逐字保留（仅空行的行尾空白按本仓库格式清理）。
 
-上游依赖 io.github.kyant0:shapes 1.2.1
-（https://github.com/Kyant0/Shapes ，Maven Central POM 声明 Apache License 2.0，Copyright Kyant）
-只在实际使用其 G2 形状代码（阶段 3）时才进入本模块；当前版本不包含该作品，只锁定版本与许可。
+===============================================================================
+Shapes
+===============================================================================
+Copyright 2026 Kyant
+Licensed under the Apache License, Version 2.0
+https://github.com/Kyant0/Shapes
+锁定版本：1.2.1（标签提交 ad83e4ad9ca6219cb0091fdc75d9b349865bf12b）
 
-完整许可证文本见同目录 LICENSE（与上游 LICENSE 逐字节相同）。
+移植自以下上游文件（路径相对仓库根）：
+  shapes/src/commonMain/kotlin/com/kyant/shapes/Capsule.kt
+  shapes/src/commonMain/kotlin/com/kyant/shapes/RoundedRectangle.kt
+  shapes/src/commonMain/kotlin/com/kyant/shapes/RoundedRectangleOutline.kt
+  shapes/src/commonMain/kotlin/com/kyant/shapes/RoundedRectangularShape.kt
+  shapes/src/commonMain/kotlin/com/kyant/shapes/RoundedCornerStyle.kt
+  shapes/src/commonMain/kotlin/com/kyant/shapes/ContinuousCurvatureRoundedRectangleCornerBuilder.kt
+  shapes/src/commonMain/kotlin/com/kyant/shapes/Lerp.kt
+  shapes/src/commonMain/kotlin/com/kyant/shapes/RectangleCornerRadii.kt
+
+修改说明：只保留 Capsule / RoundedRectangle 及其插值与轮廓输出；输出 android.graphics.Path 与
+ViewOutlineProvider，圆角半径由调用方按绘制密度换算，不引入 Compose Shape / Outline 类型。
+
+完整许可证文本见同目录 LICENSE（与 AndroidLiquidGlass 的 LICENSE 逐字节相同，覆盖上述两个上游作品；
+Shapes 仓库 LICENSE 的许可条款相同，末尾版权行为 Copyright 2026 Kyant）。

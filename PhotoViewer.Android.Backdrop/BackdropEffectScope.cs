@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.Versioning;
 using Gfx = Android.Graphics;
 
 namespace PhotoViewer.Android.Backdrop;
@@ -25,7 +26,7 @@ public enum BackdropTileMode
 /// <summary>
 /// 效果链构建器，对应上游 <c>BackdropEffectScope</c> 与
 /// <c>com.kyant.backdrop.effects</c> 的 <c>blur</c> / <c>vibrancy</c> / <c>colorControls</c> /
-/// <c>opacity</c> / <c>colorFilter</c> / <c>effect</c>。
+/// <c>opacity</c> / <c>colorFilter</c> / <c>effect</c> / <c>runtimeShaderEffect</c> / <c>lens</c>。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -34,16 +35,29 @@ public enum BackdropTileMode
 /// <c>createColorFilterEffect(filter, previous)</c>，两者都把已有链当输入。
 /// </para>
 /// <para>
-/// 本最小链**不含 AGSL**：模糊与饱和度都由平台 <c>RenderEffect</c> + <c>ColorMatrix</c> 完成。
-/// 上游用到 AGSL 的是 <c>effects/Lens.kt</c>、<c>internal/Shaders.kt</c> 与 <c>highlight/</c>（阶段 3）。
+/// 模糊与色彩矩阵由平台 <c>RenderEffect</c> + <c>ColorMatrix</c> 完成；折射与自定义效果走
+/// AGSL <c>RuntimeShader</c>，字符串在 <see cref="BackdropShaders"/>，API 33 以下自动跳过。
 /// </para>
 /// <para>
 /// 低于 API 31 时全部方法静默跳过（与上游 <c>if (!isRenderEffectSupported()) return</c> 相同），
 /// 配方代码因此可以各版本共用，由 <see cref="BackdropTier"/> 决定是否绘制色层。
 /// </para>
+/// <para>
+/// **每个绘制消费者一份 scope。** scope 持有一张可复用的离屏效果层，<see cref="Build"/> 的快照
+/// 携带该节点；不同位置或尺寸的控件若共用同一份 scope，节点尺寸与录制内容会在同一帧内互相覆盖。
+/// 同一控件跨帧复用 scope，只在配方/尺寸变化时重新 <see cref="Apply"/> 与 <see cref="Build"/>。
+/// 不使用时调用 <see cref="Dispose"/> 释放离屏节点。
+/// </para>
 /// </remarks>
-public sealed class BackdropEffectScope
+public sealed class BackdropEffectScope : IDisposable
 {
+    private static readonly Gfx.ColorFilter VibrantColorFilter =
+        CreateColorControlsFilter(brightness: 0f, contrast: 1f, saturation: 1.5f);
+
+    private readonly BackdropRuntimeShaderCache _runtimeShaders = new();
+    private readonly BackdropEffectLayer _effectLayer = new();
+    private bool _disposed;
+
     /// <summary>上游 <c>vibrancy</c> 的饱和度常量。</summary>
     public const float VibrancySaturation = 1.5f;
 
@@ -59,24 +73,38 @@ public sealed class BackdropEffectScope
     /// <summary>取样绘制区域高（px）。</summary>
     public float HeightPx { get; set; }
 
+    /// <summary>
+    /// 玻璃元素的形状，供 <see cref="Lens"/> 取圆角半径，对应上游 <c>BackdropEffectScope.shape</c>。
+    /// 由调用方在 <see cref="Apply"/> 之前设置，不随配方求值改变。
+    /// </summary>
+    public BackdropShape? Shape { get; set; }
+
     /// <summary>录制区域四周的外扩量（px），链中出现非 <see cref="BackdropTileMode.Clamp"/> 边缘或已有前序效果时按最大模糊半径取值。</summary>
     public float PaddingPx { get; private set; }
 
     /// <summary>链路末端效果。</summary>
     public Gfx.RenderEffect? RenderEffect { get; private set; }
 
+    /// <summary>验收用：最近一次 Lens 写入着色器的 size / offset 值。</summary>
+    internal (float Width, float Height, float OffsetX, float OffsetY)? LastLensUniforms { get; private set; }
+
     /// <summary>dp → px。</summary>
     public float DpToPx(float dp) => dp * Density;
 
-    /// <summary>回到初始状态（对应上游 <c>reset()</c>）。</summary>
+    /// <summary>回到初始状态（对应上游 <c>reset()</c>）。形状是调用方的配置，一并清空。</summary>
+    /// <remarks>只重置效果链；消费者效果层节点保留到 <see cref="Dispose"/>。</remarks>
     public void Reset()
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         Density = 1f;
         FontScale = 1f;
         WidthPx = 0f;
         HeightPx = 0f;
+        Shape = null;
         PaddingPx = 0f;
         RenderEffect = null;
+        LastLensUniforms = null;
+        _runtimeShaders.Clear();
     }
 
     /// <summary>
@@ -101,8 +129,8 @@ public sealed class BackdropEffectScope
             : blur!;
     }
 
-    /// <summary>提饱和（上游 <c>vibrancy()</c>：饱和度 1.5 的色彩矩阵）。</summary>
-    public void Vibrancy() => ColorControls(saturation: VibrancySaturation);
+    /// <summary>提饱和（上游 <c>vibrancy()</c>：饱和度 1.5 的色彩矩阵，复用同一滤镜）。</summary>
+    public void Vibrancy() => ColorFilter(VibrantColorFilter);
 
     /// <summary>
     /// 亮度 / 对比度 / 饱和度（上游 <c>colorControls</c>）。三参数全为默认时不入链。
@@ -143,7 +171,7 @@ public sealed class BackdropEffectScope
             : Gfx.RenderEffect.CreateColorFilterEffect(colorFilter)!;
     }
 
-    /// <summary>直接追加平台效果（上游 <c>effect</c>；阶段 3 的着色器效果可复用）。</summary>
+    /// <summary>直接追加平台效果（上游 <c>effect</c>）。</summary>
     /// <param name="renderEffect">效果。</param>
     public void Effect(Gfx.RenderEffect renderEffect)
     {
@@ -156,6 +184,80 @@ public sealed class BackdropEffectScope
     }
 
     /// <summary>
+    /// 透镜折射（上游 <c>effects/Lens.kt</c>）：按形状圆角与内缩深度折射背景，可叠加景深与色散。
+    /// </summary>
+    /// <remarks>
+    /// 与上游一致，先按折射高度收回模糊留下的外扩（<c>padding = max(padding − refractionHeight, 0)</c>），
+    /// 再把同一 <see cref="PaddingPx"/> 的负值作为着色器 <c>offset</c>。API 33 以下静默跳过；
+    /// 形状拿不到圆角半径时抛 <see cref="NotSupportedException"/>，与上游文案相同。
+    /// </remarks>
+    /// <param name="refractionHeightPx">折射作用的高度（px）。</param>
+    /// <param name="refractionAmountPx">折射位移强度（px）。</param>
+    /// <param name="depthEffect">是否叠加向中心的景深折射。</param>
+    /// <param name="chromaticAberration">是否使用带色散的着色器。</param>
+    public void Lens(
+        float refractionHeightPx,
+        float refractionAmountPx,
+        bool depthEffect = false,
+        bool chromaticAberration = false)
+    {
+        if (!OperatingSystem.IsAndroidVersionAtLeast(33)) return;
+        if (refractionHeightPx <= 0f || refractionAmountPx <= 0f) return;
+
+        if (PaddingPx > 0f)
+        {
+            PaddingPx = MathF.Max(PaddingPx - refractionHeightPx, 0f);
+        }
+
+        var cornerRadii = Shape?.GetCornerRadii(WidthPx, HeightPx, Density);
+        if (cornerRadii is not { } radii)
+        {
+            throw new NotSupportedException(
+                "Only RoundedRectangularShape or CornerBasedShape is supported in lens effects.");
+        }
+
+        var shader = chromaticAberration
+            ? _runtimeShaders.Obtain("RefractionWithDispersion", BackdropShaders.RoundedRectRefractionWithDispersion)
+            : _runtimeShaders.Obtain("Refraction", BackdropShaders.RoundedRectRefraction);
+        shader.SetFloatUniform("size", WidthPx, HeightPx);
+        shader.SetFloatUniform("offset", -PaddingPx, -PaddingPx);
+        shader.SetFloatUniform("cornerRadii", radii.ToArray());
+        shader.SetFloatUniform("refractionHeight", refractionHeightPx);
+        shader.SetFloatUniform("refractionAmount", -refractionAmountPx);
+        shader.SetFloatUniform("depthEffect", depthEffect ? 1f : 0f);
+        if (chromaticAberration)
+        {
+            shader.SetFloatUniform("chromaticAberration", 1f);
+        }
+
+        LastLensUniforms = (WidthPx, HeightPx, -PaddingPx, -PaddingPx);
+        Effect(Gfx.RenderEffect.CreateRuntimeShaderEffect(shader.PlatformShader, "content")!);
+    }
+
+    /// <summary>
+    /// 追加一段 AGSL 效果（上游 <c>runtimeShaderEffect</c>），按 <paramref name="key"/> 复用着色器。
+    /// </summary>
+    /// <param name="key">着色器缓存键。</param>
+    /// <param name="shaderString">AGSL 源码。</param>
+    /// <param name="uniformShaderName">作为输入内容的 uniform shader 名。</param>
+    /// <param name="configure">设置 uniform 的回调；在创建效果前调用。</param>
+    public void RuntimeShaderEffect(
+        string key,
+        string shaderString,
+        string uniformShaderName,
+        Action<BackdropRuntimeShader>? configure = null)
+    {
+        if (!OperatingSystem.IsAndroidVersionAtLeast(33)) return;
+        ArgumentException.ThrowIfNullOrEmpty(key);
+        ArgumentException.ThrowIfNullOrEmpty(shaderString);
+        ArgumentException.ThrowIfNullOrEmpty(uniformShaderName);
+
+        var shader = _runtimeShaders.Obtain(key, shaderString);
+        configure?.Invoke(shader);
+        Effect(Gfx.RenderEffect.CreateRuntimeShaderEffect(shader.PlatformShader, uniformShaderName)!);
+    }
+
+    /// <summary>
     /// 求值一次配方：重置链后按顺序执行 <paramref name="effects"/>（对应上游 <c>apply</c>）。
     /// </summary>
     /// <param name="effects">配方。</param>
@@ -164,6 +266,7 @@ public sealed class BackdropEffectScope
     /// <param name="heightPx">取样区域高。</param>
     public void Apply(Action<BackdropEffectScope> effects, float density, float widthPx, float heightPx)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(effects);
 
         Density = density;
@@ -171,11 +274,29 @@ public sealed class BackdropEffectScope
         HeightPx = heightPx;
         PaddingPx = 0f;
         RenderEffect = null;
+        LastLensUniforms = null;
         effects(this);
     }
 
-    /// <summary>取当前链的快照。</summary>
-    public BackdropEffect Build() => new(RenderEffect, PaddingPx);
+    /// <summary>取当前链的快照；快照携带本 scope 的离屏效果层所有者。</summary>
+    public BackdropEffect Build()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return new BackdropEffect(RenderEffect, PaddingPx, _effectLayer);
+    }
+
+    /// <summary>释放本消费者的离屏效果层与着色器缓存；调用后本 scope 不再可绘制。</summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        PaddingPx = 0f;
+        RenderEffect = null;
+        LastLensUniforms = null;
+        _runtimeShaders.Clear();
+        _effectLayer.Dispose();
+    }
 
     /// <summary>上游 <c>TileMode</c> → 平台枚举实例；<c>Decal</c> 自 API 31 起存在，只由已分级的模糊路径调用。</summary>
     [System.Runtime.Versioning.SupportedOSPlatform("android31.0")]
