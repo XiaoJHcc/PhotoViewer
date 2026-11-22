@@ -13,7 +13,7 @@ namespace PhotoViewer.Android.Native;
 /// <summary>
 /// <c>--es pv-check layout</c>（验收专用）：记录当前字体档/密度/窗口尺寸，并在竖屏、横屏、回竖屏三种状态下
 /// 复核分区（非负、在屏内、边界相接）、筛选条、控制栏节点几何与首卡尺寸；横竖屏状态与布局模式按设置对拍，
-/// 安全区按原始 Insets 逐向重算（横屏忽略手势导航条底部、保留三键导航与刘海遮挡、不隐藏导航栏）。
+/// 安全区按原始 Insets 逐向重算（横屏隐藏手势条且不占位，保留三键导航与刘海；回竖屏恢复）。
 /// 只读当前配置——字体档与密度由外部（<c>adb shell settings put system font_scale</c> / <c>wm density</c>）改档后重启再跑。
 /// </summary>
 internal static partial class AndroidNativeChecks
@@ -63,9 +63,7 @@ internal static partial class AndroidNativeChecks
                 + $"form={root.Form} mode={main.Settings.LayoutMode} px={root.Width}x{root.Height}");
             Check("layout 横屏隐藏系统状态栏", !nativeActivity.IsStatusBarVisibleForChecks(),
                 $"statusVisible={nativeActivity.IsStatusBarVisibleForChecks()} safe={root.SafeInsets}");
-            // 只忽略手势导航条占位，不隐藏导航栏。
-            Check("layout 横屏不隐藏导航栏", NavigationBarVisible(activity) == navigationBaseline,
-                $"portrait={navigationBaseline} landscape={NavigationBarVisible(activity)} safe={root.SafeInsets}");
+            CheckLandscapeNavigationBar(root, activity, navigationBaseline, "横屏");
             CheckDisplayCutoutWindow(activity, "横屏");
             CheckRootForm(root, "横屏");
             CheckGeometry(root, main, density, "横屏");
@@ -88,6 +86,7 @@ internal static partial class AndroidNativeChecks
             else if (reversed)
             {
                 await Task.Delay(500);
+                CheckLandscapeNavigationBar(root, activity, navigationBaseline, "横屏刘海右");
                 CheckRootForm(root, "横屏刘海右");
                 CheckGeometry(root, main, density, "横屏刘海右");
                 CheckSafeInsets(root, landscape: true, "横屏刘海右");
@@ -104,7 +103,7 @@ internal static partial class AndroidNativeChecks
             await Task.Delay(500);
             Check("layout 回竖屏恢复系统状态栏", nativeActivity.IsStatusBarVisibleForChecks(),
                 $"statusVisible={nativeActivity.IsStatusBarVisibleForChecks()} safe={root.SafeInsets}");
-            Check("layout 回竖屏导航栏可见性不变", NavigationBarVisible(activity) == navigationBaseline,
+            Check("layout 回竖屏恢复导航栏可见性", NavigationBarVisible(activity) == navigationBaseline,
                 $"portrait={navigationBaseline} back={NavigationBarVisible(activity)} safe={root.SafeInsets}");
             bool expectedPortraitRow = ExpectedRowLayout(main, landscape: false);
             Check("layout 竖屏方向与布局模式",
@@ -214,7 +213,7 @@ internal static partial class AndroidNativeChecks
             + $"bars={raw.SystemBars} cutout={raw.Cutout} navB={raw.NavigationBottom:0.#} tappableB={raw.TappableBottom:0.#}");
 
         bool ignoreBottom = landscape && raw.IsGestureNavigation;
-        double bottom = ignoreBottom ? raw.Cutout.Bottom : Math.Max(raw.SystemBars.Bottom, raw.Cutout.Bottom);
+        double bottom = Math.Max(ignoreBottom ? raw.NonNavigationBottom : raw.SystemBars.Bottom, raw.Cutout.Bottom);
         Check(ignoreBottom ? $"{phase} 横屏忽略手势导航条底部" : $"{phase} 保留底部系统栏遮挡",
             Near(safe.Bottom, bottom),
             $"bottom={safe.Bottom:0.#} expected={bottom:0.#} systemB={raw.SystemBars.Bottom:0.#} "
@@ -228,21 +227,25 @@ internal static partial class AndroidNativeChecks
     /// </summary>
     private static void CheckSyntheticInsetDerivation()
     {
-        static AndroidWindowInsets Raw(double barsBottom, double tappableBottom, double cutoutBottom = 0, double cutoutLeft = 0)
+        static AndroidWindowInsets Raw(double barsBottom, double tappableBottom, bool gesture,
+            double cutoutBottom = 0, double cutoutLeft = 0, double nonNavigationBottom = 0)
             => new(new AndroidInsets(0, 0, 0, barsBottom), new AndroidInsets(cutoutLeft, 0, 0, cutoutBottom),
-                barsBottom, tappableBottom);
+                barsBottom, tappableBottom, gesture, nonNavigationBottom);
 
-        var gestureLandscape = Raw(24, 0).DeriveSafe(landscape: true);
-        var threeButtonLandscape = Raw(48, 48).DeriveSafe(landscape: true);
-        var gestureCutoutLandscape = Raw(24, 0, cutoutBottom: 8, cutoutLeft: 51.8).DeriveSafe(landscape: true);
-        var threeButtonPortrait = Raw(48, 48).DeriveSafe(landscape: false);
+        var gesture = Raw(16, 16, gesture: true); // OEM 把手势条也计入可点区。
+        var buttons = Raw(48, 48, gesture: false);
+        var gestureCutout = Raw(24, 0, gesture: true, cutoutBottom: 8, cutoutLeft: 51.8).DeriveSafe(landscape: true);
+        var gestureOverlay = Raw(24, 0, gesture: true, nonNavigationBottom: 12).DeriveSafe(landscape: true);
         Check("layout 安全区派生分支（合成 Insets）",
-            Near(gestureLandscape.Bottom, 0) && Near(threeButtonLandscape.Bottom, 48)
-                && Near(gestureCutoutLandscape.Bottom, 8) && Near(gestureCutoutLandscape.Left, 51.8)
-                && Near(threeButtonPortrait.Bottom, 48),
-            $"手势横屏B={gestureLandscape.Bottom:0.#} 三键横屏B={threeButtonLandscape.Bottom:0.#} "
-            + $"手势+底部刘海横屏B={gestureCutoutLandscape.Bottom:0.#}/L={gestureCutoutLandscape.Left:0.#} "
-            + $"三键竖屏B={threeButtonPortrait.Bottom:0.#}");
+            Near(gesture.DeriveSafe(landscape: true).Bottom, 0)
+                && Near(gesture.DeriveSafe(landscape: false).Bottom, 16)
+                && Near(buttons.DeriveSafe(landscape: true).Bottom, 48)
+                && Near(buttons.DeriveSafe(landscape: false).Bottom, 48)
+                && Near(gestureCutout.Bottom, 8) && Near(gestureCutout.Left, 51.8)
+                && Near(gestureOverlay.Bottom, 12),
+            $"手势横/竖={gesture.DeriveSafe(true).Bottom}/{gesture.DeriveSafe(false).Bottom} "
+            + $"三键横/竖={buttons.DeriveSafe(true).Bottom}/{buttons.DeriveSafe(false).Bottom} "
+            + $"底部刘海={gestureCutout.Bottom} 其他底部系统栏={gestureOverlay.Bottom}");
 
         // SHELL-10：圆角避让线让元素半圆端恰好内切屏幕圆弧。取大圆角真机量级的合成半径，
         // 逐个近缘距离核对：有让位时端头圆心到圆角圆心的距离等于 r − ρ；无让位时端头圆心已离开圆角方块。
@@ -284,9 +287,17 @@ internal static partial class AndroidNativeChecks
             $"contentMaxY={root.Panes.ControlContent.MaxY:0.#} screen={heightDp:0.#} row={main.IsRowLayout} safe={root.SafeInsets}");
     }
 
-    /// <summary>导航栏是否可见：横屏只忽略手势条占位，不隐藏导航栏。</summary>
-    /// <param name="activity">宿主 Activity。</param>
-    /// <returns>导航栏可见性。</returns>
+    private static void CheckLandscapeNavigationBar(AndroidNativeRootView root,
+        global::Android.App.Activity activity, bool portraitVisible, string phase)
+    {
+        var raw = root.WindowInsetsForChecks;
+        bool visible = NavigationBarVisible(activity);
+        Check($"layout {phase} 手势条隐藏、三键导航保持显示",
+            visible == (!raw.IsGestureNavigation && portraitVisible),
+            $"gesture={raw.IsGestureNavigation} portrait={portraitVisible} landscape={visible} safe={root.SafeInsets}");
+    }
+
+    /// <summary>读取真实窗口的导航栏可见性。</summary>
     private static bool NavigationBarVisible(global::Android.App.Activity activity)
     {
         var insets = activity.Window?.DecorView?.RootWindowInsets;

@@ -97,6 +97,9 @@ internal sealed class AndroidGlassControlMaterial : IDisposable
     private Rect _anchorRect = new();
     private Rect _clipRect = new();
     private bool _pressed;
+    private bool _releasePending;
+    private long _pressStartedMs;
+    private long _pressFeedbackUntilMs;
     private bool _hovered;
     private bool _disposed;
     private float _hoverX;
@@ -280,15 +283,26 @@ internal sealed class AndroidGlassControlMaterial : IDisposable
         foreach (var segment in segments) Attach(segment);
     }
 
-    internal bool Advance(float deltaSeconds)
+    private bool ShowingPress => _pressed || _releasePending;
+
+    internal bool Advance(long now, float deltaSeconds)
     {
         if (_disposed) return false;
-        if (_pressed && !CanPress(_touchTarget))
+        if (ShowingPress && !CanPress(_touchTarget)) OnPressCancelled();
+        if (ShowingPress && _pressFeedbackUntilMs == 0)
         {
-            _pressed = false;
-            _interaction.Cancel();
+            _pressFeedbackUntilMs = now + ViewConfiguration.PressedStateDuration;
+            deltaSeconds = Math.Max(0f, (now - _pressStartedMs) / 1000f);
         }
-        return _interaction.Advance(deltaSeconds);
+
+        bool animating = _interaction.Advance(deltaSeconds);
+        if (_releasePending && now >= _pressFeedbackUntilMs)
+        {
+            _releasePending = false;
+            _interaction.End();
+            animating = _interaction.IsAnimating;
+        }
+        return animating || _releasePending;
     }
 
     internal void SetHoverForChecks(bool hovered, float x, float y)
@@ -319,12 +333,6 @@ internal sealed class AndroidGlassControlMaterial : IDisposable
         RefreshEffect(density, width, height);
 
         bool canPress = CanPress(_touchTarget);
-        if (!canPress && _pressed)
-        {
-            _pressed = false;
-            _interaction.Cancel();
-        }
-        bool animating = _interaction.IsAnimating;
         var transform = BackdropInteractiveTransform.Compute(
             width,
             height,
@@ -402,7 +410,7 @@ internal sealed class AndroidGlassControlMaterial : IDisposable
                 }
                 DrawFlatState(canvas);
                 if (UsesMaterial) _interaction.Draw(canvas, widthPx, heightPx);
-                if (HasHighlight && _hovered && !_pressed)
+                if (HasHighlight && _hovered && !ShowingPress)
                 {
                     _interaction.DrawRadial(canvas, widthPx, heightPx, _hoverX, _hoverY, _hoverIntensity);
                 }
@@ -420,8 +428,6 @@ internal sealed class AndroidGlassControlMaterial : IDisposable
         {
             canvas.RestoreToCount(save);
         }
-
-        if (animating) _owner.PostInvalidateOnAnimation();
     }
 
     private void RefreshEffect(float density, int width, int height)
@@ -465,8 +471,8 @@ internal sealed class AndroidGlassControlMaterial : IDisposable
     private void DrawFlatState(Canvas canvas)
     {
         if (BackdropCapabilities.Tier == BackdropTier.Full) return;
-        bool pressed = _pressed && BackdropCapabilities.Tier == BackdropTier.ColorLayer;
-        bool hovered = _hovered && !_pressed;
+        bool pressed = ShowingPress && BackdropCapabilities.Tier == BackdropTier.ColorLayer;
+        bool hovered = _hovered && !ShowingPress;
         if (!pressed && !hovered) return;
 
         int[] state = pressed ? [global::Android.Resource.Attribute.StatePressed]
@@ -528,7 +534,11 @@ internal sealed class AndroidGlassControlMaterial : IDisposable
         }
         int index = IndexOfTarget(target);
         if (index >= 0) _targets.RemoveAt(index);
-        if (ReferenceEquals(_touchTarget, target)) _touchTarget = null;
+        if (ReferenceEquals(_touchTarget, target))
+        {
+            _touchTarget = null;
+            if (!_disposed) OnPressCancelled();
+        }
     }
 
     /// <summary>按引用查找已挂目标：已释放视图不能再参与值相等比较。</summary>
@@ -557,6 +567,9 @@ internal sealed class AndroidGlassControlMaterial : IDisposable
     {
         if (!CanPress(_touchTarget) || _disposed) return;
         _pressed = true;
+        _releasePending = false;
+        _pressStartedMs = global::Android.OS.SystemClock.UptimeMillis();
+        _pressFeedbackUntilMs = 0;
         _interaction.Begin(x + _touchOffsetX, y + _touchOffsetY);
         _owner.Invalidate();
     }
@@ -572,14 +585,18 @@ internal sealed class AndroidGlassControlMaterial : IDisposable
     {
         if (!_pressed) return;
         _pressed = false;
-        _interaction.End();
+        // 快点的 Down/Up 可能在同一帧到达。只延后视觉释放，Material 按钮仍立即处理抬手。
+        _releasePending = _pressFeedbackUntilMs == 0
+            || global::Android.OS.SystemClock.UptimeMillis() < _pressFeedbackUntilMs;
+        if (!_releasePending) _interaction.End();
         _owner.Invalidate();
     }
 
     private void OnPressCancelled()
     {
-        if (!_pressed) return;
+        if (!ShowingPress) return;
         _pressed = false;
+        _releasePending = false;
         _interaction.Cancel();
         _owner.Invalidate();
     }

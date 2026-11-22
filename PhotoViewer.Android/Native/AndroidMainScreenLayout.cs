@@ -48,15 +48,15 @@ internal readonly record struct AndroidCornerRadii(double TopLeft, double TopRig
 /// <param name="SystemBars">系统状态栏与导航栏 Insets。</param>
 /// <param name="Cutout">显示挖孔 Insets。</param>
 /// <param name="NavigationBottom">导航栏底部 Insets。</param>
-/// <param name="TappableBottom">导航栏可点元素底部 Insets（三键导航与导航栏同位，手势导航为 0）。</param>
+/// <param name="TappableBottom">可点元素底部 Insets（诊断读取）。</param>
+/// <param name="IsGestureNavigation">当前系统是否使用手势导航，与导航条当前可见性无关。</param>
+/// <param name="NonNavigationBottom">导航栏以外的系统栏底部 Insets。</param>
 /// <param name="Cutouts">显示挖孔矩形（dp，窗口坐标）；API 29 以下为空。</param>
 /// <param name="Corners">屏幕四角半径（dp）；API 31 以下或窗口无圆角时为 0。</param>
 internal readonly record struct AndroidWindowInsets(AndroidInsets SystemBars, AndroidInsets Cutout,
-    double NavigationBottom, double TappableBottom,
+    double NavigationBottom, double TappableBottom, bool IsGestureNavigation, double NonNavigationBottom = 0,
     IReadOnlyList<AndroidCutoutRect>? Cutouts = null, AndroidCornerRadii Corners = default)
 {
-    /// <summary>手势导航：导航栏底部大于可点区底部；三键导航的可点按钮覆盖整条导航栏，两者同位。</summary>
-    internal bool IsGestureNavigation => NavigationBottom > TappableBottom + .5;
 
     /// <summary>
     /// 派生布局安全区：与系统栏、刘海取并集；横屏只忽略手势导航条底部，
@@ -66,9 +66,8 @@ internal readonly record struct AndroidWindowInsets(AndroidInsets SystemBars, An
     /// <returns>布局安全区。</returns>
     internal AndroidInsets DeriveSafe(bool landscape)
     {
-        double bottom = landscape && IsGestureNavigation
-            ? Cutout.Bottom
-            : Math.Max(SystemBars.Bottom, Cutout.Bottom);
+        double bottom = Math.Max(landscape && IsGestureNavigation ? NonNavigationBottom : SystemBars.Bottom,
+            Cutout.Bottom);
         return new AndroidInsets(
             Math.Max(SystemBars.Left, Cutout.Left),
             Math.Max(SystemBars.Top, Cutout.Top),

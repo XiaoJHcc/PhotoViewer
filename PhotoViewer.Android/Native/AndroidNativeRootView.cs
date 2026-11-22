@@ -538,15 +538,20 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         var compat = WindowInsetsCompat.ToWindowInsetsCompat(insets, this)!;
         var bars = compat.GetInsets(WindowInsetsCompat.Type.SystemBars())!;
         var cutout = compat.GetInsets(WindowInsetsCompat.Type.DisplayCutout())!;
-        // 导航栏与可点元素底部同位即三键导航；手势导航只有导航栏底部，没有可点按钮。
-        var navigation = compat.GetInsets(WindowInsetsCompat.Type.NavigationBars())!;
+        int navigationType = WindowInsetsCompat.Type.NavigationBars();
+        var navigation = compat.GetInsets(navigationType)!;
         var tappable = compat.GetInsets(WindowInsetsCompat.Type.TappableElement())!;
+        var nonNavigation = compat.GetInsets(WindowInsetsCompat.Type.SystemBars() & ~navigationType)!;
         double density = AndroidUiTheme.Density(Context!);
+        bool gesture = AndroidSystemBars.IsGestureNavigation(Context!, compat);
+        bool navigationModeChanged = gesture != _windowInsets.IsGestureNavigation;
         _windowInsets = new AndroidWindowInsets(
             new AndroidInsets(bars.Left / density, bars.Top / density, bars.Right / density, bars.Bottom / density),
             new AndroidInsets(cutout.Left / density, cutout.Top / density, cutout.Right / density, cutout.Bottom / density),
-            navigation.Bottom / density, tappable.Bottom / density,
+            navigation.Bottom / density, tappable.Bottom / density, gesture, nonNavigation.Bottom / density,
             ReadCutoutRects(insets, density), ReadCornerRadii(insets, density));
+        if (navigationModeChanged && Context is Activity activity)
+            AndroidSystemBars.Apply(activity, gesture);
         DeriveSafeInsets(LandscapeForInsets());
         // Insets 读数变化后一律重排：旋转期间系统栏可见性切换会让方向与读数先后到达，
         // 只按“安全区是否变化”决定会留下上一方向的缓存值。

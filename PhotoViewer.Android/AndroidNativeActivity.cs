@@ -93,7 +93,7 @@ public sealed class AndroidNativeActivity : AppCompatActivity
             + "系统是否接受由运行期实际缓冲决定，此处不作断言");
     }
 
-    /// <summary>横屏隐藏状态栏，竖屏恢复；配置变化不重建 Activity，因此在这里同步系统栏。</summary>
+    /// <summary>配置变化不重建 Activity，按新方向同步状态栏与手势条。</summary>
     public override void OnConfigurationChanged(global::Android.Content.Res.Configuration newConfig)
     {
         base.OnConfigurationChanged(newConfig);

@@ -90,7 +90,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
   - macOS：`PhotoViewer.Mac/Native/MacMainWindow.cs` 的 `MacMainWindow`，宽形态分区取共享 `ShellPaneLayout.Partition`；主图铺满窗口，`MetalPhotoView.SetFitInsets` 分离视图与适应区。
   - iOS：`PhotoViewer.iOS/Native/iOSNativeRootViewController.cs`，共享 `ShellPaneLayout` + 真实安全区。
   - Windows：`PhotoViewer.Windows/Native/WindowsMainWindow.cs` 的 `LayoutShell`，宽形态分区取共享 `ShellPaneLayout.Partition`；`WindowsPhotoView` 铺满窗口，`SetFitInsets` 分离视图与适应区，栏位以绝对矩形浮在主图上。
-  - Android：`PhotoViewer.Android/Native/AndroidNativeRootView.cs` + `AndroidMainScreenLayout`；insets 分别读取 `NavigationBars` / `TappableElement` 区分手势条与三键导航，横屏只忽略手势条底部，刘海与三键导航遮挡仍保留。
+  - Android：`PhotoViewer.Android/Native/AndroidNativeRootView.cs` + `AndroidMainScreenLayout`；读取系统导航模式，无法读取时按 `NavigationBars` / `TappableElement` 的稳定 Insets 区分手势条与三键导航；横屏只忽略手势条底部，刘海与三键导航遮挡仍保留。
   - **SHELL-01@mac**：列布局筛选条前导 `shell.filter.leadingInset`（42）让开盖住文件栏的标题栏与交通灯（见 FILTER-07）。
   - **SHELL-01@ios**：iPad 左右布局的内容不避让顶部与底部系统安全区——胶片条纵贯窗口上下缘、卡片可从左上角筛选 / 更多浮动组下方滚过（筛选条整体登记为系统滚动边缘元素），右侧控制栏与分析栏同样纵贯；只有浮动筛选组按自身列位置的系统窗口控件带向下让位，不把这份让位套到胶片条或右侧栏。左列靠主图侧对齐：筛选组、胶片卡片外框与相似聚类开关共用同一条内容末端锚点（`FilmSideGeometry`），列宽由列表避让后的占用与入口占用取较大值。上下布局继续使用顶部安全区；所有横屏主屏均不扣底部手势条，竖屏底部安全区不变。
 - **SHELL-02**：悬停标题栏、行布局窄宽度常驻栏与拖动区。常驻回退（筛选挖空与窗口控制器区间相交）、挖空与背景的判定在共享 `PhotoViewer.Shared/TitleBarLayout.cs`，各端只提供筛选可点控件与窗口控制器的实际水平范围。
@@ -107,8 +107,8 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
   | `#808080` | `#4A4C4C` | `#4C4C4C` | `#4C4C4C` |
   | `#FFFFFF` | `#646565` | `#656565` | `#656565` |
 
-  - iOS：根控制器隐藏状态栏（`PrefersStatusBarHidden`），窗口级入口由主图长按菜单承担。
-  - Android：`Theme.PhotoViewer.Native` 固定深色、edge-to-edge + insets，无标题栏双击语义；横屏资源主题从启动画面起隐藏状态栏，`AndroidSystemBars` 在 Bootstrap 与原生 Activity 中按方向隐藏/恢复，根视图继续按真实 insets 排布。
+  - iOS：根控制器隐藏状态栏（`PrefersStatusBarHidden`），按根视图尺寸通过 `PrefersHomeIndicatorAutoHidden` 请求横屏自动隐藏 Home 指示条，返回竖屏使用 UIKit 默认显隐；实际显隐由系统管理。窗口级入口由主图长按菜单承担。
+  - Android：`Theme.PhotoViewer.Native` 固定深色、edge-to-edge + insets，无标题栏双击语义；横屏资源主题从启动画面起隐藏状态栏，`AndroidSystemBars` 通过窗口 Insets 控制器按方向隐藏/恢复状态栏和手势条，边缘滑动临时唤出；三键导航保持显示，根视图按 SHELL-01 计算安全区。
   - **SHELL-02@ios / @android**：无窗口装饰与标题栏双击语义，属平台差异。
 - **SHELL-03**：全屏与尺寸。macOS `MacMainWindow` 的 `IsFullScreen` / `DidEnterFullScreen` / `SaveFullscreen`，Windows `OverlappedPresenter` 四态，iOS/Android 无应用内全屏入口。
   - **SHELL-03@ios / @android**：不提供应用内全屏入口。

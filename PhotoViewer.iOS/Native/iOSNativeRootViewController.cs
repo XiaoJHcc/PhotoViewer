@@ -137,6 +137,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private UIEdgeInsets _formFitInsets;
     private double? _stageWidthFraction;
     private UIInterfaceOrientationMask? _supportedOrientations;
+    private bool _homeIndicatorAutoHidden;
     private string _phoneBandSummary = string.Empty;
     /// <summary>胶片条顶端滚动边缘元素（横屏筛选/更多合体；只建一次，进出横屏时挂接/摘下）。</summary>
     private readonly UIScrollEdgeElementContainerInteraction _filmstripTopEdge;
@@ -539,6 +540,12 @@ internal sealed class iOSNativeRootViewController : UIViewController
     public override void ViewDidLayoutSubviews()
     {
         base.ViewDidLayoutSubviews();
+        bool autoHidden = PrefersHomeIndicatorAutoHidden;
+        if (_homeIndicatorAutoHidden != autoHidden)
+        {
+            _homeIndicatorAutoHidden = autoHidden;
+            SetNeedsUpdateOfHomeIndicatorAutoHidden();
+        }
         Layout();
         StartSession();
     }
@@ -560,6 +567,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// </summary>
     /// <returns>始终隐藏。</returns>
     public override bool PrefersStatusBarHidden() => true;
+
+    /// <summary>SHELL-02：横屏请求 UIKit 自动隐藏 Home 指示条，竖屏使用默认显隐。</summary>
+    public override bool PrefersHomeIndicatorAutoHidden
+        => ViewIfLoaded?.Bounds is { } bounds && bounds.Width > bounds.Height;
 
     /// <summary>重新可见时取回键盘焦点：设置 sheet 关闭后由系统调用，保证快捷键立即可用。</summary>
     /// <param name="animated">系统动画标记。</param>

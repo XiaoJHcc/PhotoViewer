@@ -160,6 +160,7 @@ internal static partial class AndroidNativeChecks
         _glassButtonDarkLuma = _glassButtonGrayLuma = _glassButtonBrightLuma = double.NaN;
 
         CheckGlassProductStructure(root);
+        await CheckGlassNavigationTapAsync(root);
         await CheckGlassControlLayerAsync(root);
         bool filmRestored = false;
         bool filmWasVisible = _main.IsThumbnailViewVisible;
@@ -571,6 +572,72 @@ internal static partial class AndroidNativeChecks
             $"state={motionState.AnimationsEnabled} system={animators}");
 
         if (BackdropCapabilities.IsRenderEffectSupported) await CheckGlassPopupMaterialAsync(root);
+    }
+
+    /// <summary>同一轮 UI 派发内完成按下和抬起，覆盖快到没有中间绘制帧的真实分段点按。</summary>
+    private static async Task CheckGlassNavigationTapAsync(AndroidNativeRootView root)
+    {
+        var navigation = root.PhoneNavigation;
+        if (!navigation.IsShown || navigation.Width == 0)
+        {
+            GlassHostNote("glass 上下张快点：当前布局未显示合体按钮");
+            return;
+        }
+
+        var main = _main!;
+        var files = main.FileVM.ThumbnailList.FilteredFiles;
+        var original = main.CurrentFile;
+        bool hasPair = files.Count >= 2 && original != null;
+        try
+        {
+            if (hasPair) main.CurrentFile = files[1];
+            for (int i = 0; i < 2; i++)
+            {
+                var segment = navigation.SegmentsForChecks[i];
+                string label = i == 0 ? "上一张" : "下一张";
+                var location = new int[2];
+                segment.GetLocationOnScreen(location);
+                float x = location[0] + segment.Width / 2f;
+                float y = location[1] + segment.Height / 2f;
+                var layer = root.GlassControlLayer;
+                int clicks = 0;
+                void OnClick(object? sender, EventArgs args) => clicks++;
+                segment.Click += OnClick;
+                try
+                {
+                    long now = global::Android.OS.SystemClock.UptimeMillis();
+                    bool down = DispatchRootTouch(root, MotionEventActions.Down, x, y, now);
+                    bool began = layer.TryGetControlForChecks(navigation, out var start) && start.Pressed;
+                    bool up = DispatchRootTouch(root, MotionEventActions.Up, x, y, now);
+                    float progress = 0f, scale = 1f;
+                    for (int frame = 0; frame < 12; frame++)
+                    {
+                        await Task.Delay(16);
+                        if (!layer.TryGetControlForChecks(navigation, out var state)) continue;
+                        progress = Math.Max(progress, state.PressProgress);
+                        scale = Math.Max(scale, state.ScaleX);
+                    }
+                    bool expectScale = start.AnimationsEnabled && BackdropCapabilities.IsRenderEffectSupported;
+                    Check($"glass {label} 快点有按压反馈", down && up && began && progress > 0.05f
+                            && (!expectScale || scale > 1f),
+                        $"down={down} up={up} began={began} progress={progress:0.###} scale={scale:0.###}");
+                    bool correctFile = !hasPair || ReferenceEquals(main.CurrentFile, files[i]);
+                    Check($"glass {label} 快点只点击一次且正常翻页", clicks == 1 && correctFile,
+                        $"clicks={clicks} file={main.CurrentFile?.Name} expected={(hasPair ? files[i].Name : "（无双图夹具）")}");
+                    await WaitAsync(() => layer.TryGetControlForChecks(navigation, out var rest)
+                        && !rest.Pressed && Math.Abs(rest.PressProgress) < 0.001f,
+                        $"{label} 快点反馈回弹", 2000);
+                }
+                finally
+                {
+                    segment.Click -= OnClick;
+                }
+            }
+        }
+        finally
+        {
+            if (hasPair) main.CurrentFile = original;
+        }
     }
 
     private static async Task CheckGlassPopupMaterialAsync(AndroidNativeRootView root)

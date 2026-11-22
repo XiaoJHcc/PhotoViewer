@@ -181,6 +181,11 @@ internal static class iOSNativeFormCheck
             foreach (var config in configs)
             {
                 await ApplyConfigAsync(root, main, config);
+                var bounds = root.View!.Bounds;
+                bool autoHideHomeIndicator = root.PrefersHomeIndicatorAutoHidden;
+                if (autoHideHomeIndicator != (bounds.Width > bounds.Height))
+                    throw new InvalidOperationException($"{config.Name} Home 指示条的自动隐藏请求与窗口方向不符");
+                lines.Add($"PASS {config.Name}：Home 指示条自动隐藏请求={autoHideHomeIndicator}");
                 lines.Add($"PASS 配置 {config.Name}：形态 {root.Form}，窗口 {Size(root.Stage.Bounds.Size)}，" +
                     $"方向 {CurrentOrientation(root)}，刘海在左={root.NotchOnLeft}");
                 if (root.Form != ScreenForm.Wide) await VerifyFilmTierAsync(root, main, config.Name, lines);

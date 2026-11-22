@@ -187,7 +187,7 @@ internal sealed class AndroidGlassControlLayer : View
                 _location[1],
                 _location[0] + anchor.Width,
                 _location[1] + anchor.Height);
-            animating |= state.Advance(deltaSeconds);
+            animating |= state.Advance(now, deltaSeconds);
             state.Draw(canvas, rect, clip, _layerLocation[0], _layerLocation[1], density);
         }
 
