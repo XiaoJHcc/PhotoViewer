@@ -101,20 +101,27 @@
 
 ## TOOLBAR-10 视觉与反馈 · 应当
 
-- 以 iOS 27 系列原生玻璃按钮在栏上的常态底色为颜色参照，在纯黑、50% 灰、纯白衬底上按 SHELL-12 的采样与折中口径比较；iOS 直接使用系统材质，不设叠加 alpha。macOS 的原生玻璃染白；Web 保留背景模糊并叠白，Android 用 Material 按钮底色叠白。先定栏底，再只调平台对应的 `shell.glass.button.tint.opacity`，颜色固定为 `color.toolbar.button.tint`（纯白）：主屏圆按钮、合体胶囊、星级胶囊与相似聚类开关共用这一值。Windows 只替换主屏控件的常态填充，不改变原生亚克力背衬、描边或悬停、按下、禁用、焦点与开关选中样式。
-- 圆按钮与合体按钮按 SHELL-12 用平台原生按钮材质与系统状态外观。Web 的桌面宽形态继续参照 macOS 的按钮形状、材质层次与状态反馈，颜色按本条单独校准。本条的自绘底色、描边与圆角只约束自绘部分。EXIF 块是深色半透明圆角矩形（圆角 `toolbar.exif.cornerRadius`），有平台深色模糊材质时取该材质，没有时取 `color.toolbar.block.background`（#222222）；Android 在 API 31 及以上的照片层模糊上按 `shell.glass.android.exif.tint.opacity@android` 叠该底色，API 24–30 取不透明底色（SHELL-12、TOOLBAR-05）；星级控件的胶囊按 RATING-07 取平台原生按钮材质，自绘平台与命令圆按钮取同一按钮材质；自绘命令圆按钮常态只绘制按钮材质，不画描边；圆角 `toolbar.cornerRadius`（6）只由控件自身一层裁切产生，不叠卡中卡双层圆角，也不把自绘圆角与系统按钮 bezel 或系统描边裁切叠加成二次裁角。
+- 以 iOS 27 系列原生玻璃按钮在栏上的常态底色为颜色参照，在纯黑、50% 灰、纯白衬底上按 SHELL-12 的采样与折中口径比较；iOS 直接使用系统材质，不设叠加 alpha。macOS 的原生玻璃染白；Web 保留背景模糊并叠白；Android 的玻璃按钮表面取 `color.toolbar.button.tint` × `shell.glass.button.tint.opacity@android` 叠在取样之上，API 24–30 取同一色层的正式回退外观。先定栏底，再只调平台对应的 `shell.glass.button.tint.opacity`，颜色固定为 `color.toolbar.button.tint`（纯白）：主屏圆按钮、合体胶囊、星级胶囊与相似聚类开关共用这一值。Windows 只替换主屏控件的常态填充，不改变原生亚克力背衬、描边或悬停、按下、禁用、焦点与开关选中样式。
+- 圆按钮与合体按钮在 iOS、macOS 与 Windows 上按 SHELL-12 用平台原生按钮材质与系统状态外观，Android 用下方的玻璃按钮配方，自绘平台用本条的按钮材质。Web 的桌面宽形态继续参照 macOS 的按钮形状、材质层次与状态反馈，颜色按本条单独校准。本条的自绘底色、描边与圆角只约束自绘部分。EXIF 块是深色半透明圆角矩形（圆角 `toolbar.exif.cornerRadius`），有平台深色模糊材质时取该材质，没有时取 `color.toolbar.block.background`（#222222）；Android 在 API 31 及以上的照片层模糊上按 `shell.glass.android.exif.tint.opacity@android` 叠该底色，API 24–30 取不透明底色（SHELL-12、TOOLBAR-05）；星级控件的胶囊按 RATING-07 与同区域的圆按钮、合体取同一按钮材质；自绘命令圆按钮常态只绘制按钮材质，不画描边；圆角 `toolbar.cornerRadius`（6）只由控件自身一层裁切产生，不叠卡中卡双层圆角，也不把自绘圆角与系统按钮 bezel 或系统描边裁切叠加成二次裁角。
 - 评分星形字号 `toolbar.rating.glyph.fontSize`（16），0 号清零叉 `toolbar.rating.clearGlyph.fontSize`（12），冲突警示三角 `rating.warning` 取 `toolbar.rating.glyph.fontSize`（16）并占同一 0 号槽位（`color.star.conflict`）；星形不因槽位小而缩小到不可辨，换成三角不改变槽位几何与命中区。
-- 每个小控件有常态、悬停、按下、禁用、焦点五态。任何状态切换都不得引起布局抖动、残留旧态或裁切内容：不改尺寸与占位、不缩放、不绘制到父容器之外；焦点用可见焦点环或描边表达，本身不被裁切。
-- 自绘控件按令牌绘制状态色，只改底色、描边与前景色，不加过渡动画，避免连续划过按钮时闪烁。原生控件可以使用系统状态色与轻量状态动效（L4），但占位、命中区与令牌几何一致。
+- 每个小控件有常态、悬停、按下、禁用、焦点五态。任何状态切换都不得引起布局抖动、残留旧态或裁切内容：不改布局尺寸与占位；除本条与 RATING-07 明确规定的玻璃按压形变外不缩放；玻璃投影与按压形变可以超出控件绘制边界，但不参与布局、命中区与相邻元素落位；焦点用可见焦点环或描边表达，本身不被裁切。自绘控件按令牌绘制状态色，只改底色、描边与前景色，不加过渡动画，避免连续划过按钮时闪烁。原生控件可以使用系统状态色与轻量状态动效（L4），但占位、命中区与令牌几何一致。
 - 常态/悬停/按下：
   - 命令按钮：悬停 `color.toolbar.command.hover.background`（#3D3D3D）+ 描边 `color.toolbar.command.hover.border`（#666666），按下 `color.toolbar.command.pressed.background`（#2A2A2A）；描边只在指针进入后出现，与 macOS 按钮的悬停边框同一出现方式。
   - 评分按钮：常态与禁用均为透明底；悬停与按下在槽位内画一个内切正圆（直径取槽位短边，不越出槽位），与原生平台逐格的系统正圆悬停同形。槽位在星级胶囊内时正圆取容器内状态层 `color.menu.item.hover` / `.pressed`（叠加在胶囊材质上）；评分按钮直接排在栏位上时取 `color.toolbar.rating.hover.background`（#333333）与 `color.toolbar.rating.pressed.background`（#3A3A3A）。
   - 胶囊容器内的分段（筛选合体与单胶囊、手机合体按钮）：悬停与按下的状态层随段形——在段内按同心圆角内缩，端段与胶囊同为半圆端，填 `color.menu.item.hover` / `.pressed`，不画直角或小圆角矩形。
   - 相似聚类开关：未选中悬停 `color.filter.toggle.hover`（#333333）/文字 `color.filter.toggle.hover.foreground`（#CCCCCC）；选中悬停底色 `color.filter.toggle.checked.hover.background`（#26477A）、文字 `color.filter.toggle.checked.hover.foreground`（#CFE0F5）。任何状态都不得让文字回落到黑色。
+- **Android 玻璃按钮**（API 31 及以上取样，API 33 及以上完整；API 24–30 使用正式色层外观）：
+  - **配方**：vibrancy（`shell.glass.android.button.vibrancy.saturation`，1.5）→ blur（`shell.glass.android.button.blur.radius`，2dp）→ lens（`shell.glass.android.button.lens.height` 12dp、`shell.glass.android.button.lens.amount` 24dp）；形状为 G2 连续曲率胶囊；表面取 `color.toolbar.button.tint` × `shell.glass.button.tint.opacity@android`；边缘高光取 `shell.glass.android.button.highlight.color`（白 50%，加色混合）、`.width`（0.5dp，模糊半径取线宽一半）、`.angle`（45°）、`.falloff`（1）；投影取 `shell.glass.android.button.shadow.radius`（24dp）、`.offsetY`（4dp）、`.color`（黑 10%）。圆按钮、筛选/更多合体、星级胶囊与 AI 版相似聚类开关共用这套参数；合体整块胶囊一起形变。玻璃按钮的悬停与按下由玻璃高光与形变承担，不叠加本条列出的平面悬停/按下底色；焦点与禁用仍按上述状态规则。
+  - **按压与拖动**：按下即起手，取消涟漪；按进度放大，交叉轴尺寸增加 `shell.glass.android.button.press.grow`（4dp）；随手指位移取短边 × tanh(`shell.glass.android.button.drag.translationFactor` × 偏移 / 短边)（系数 0.05），并沿拖动方向追加 `shell.glass.android.button.drag.stretch`（4dp）的拉伸；整面高光取 `shell.glass.android.button.press.surface.color`（白 8%），跟手径向高光取 `shell.glass.android.button.press.radial.color`（白 15%）、半径取短边 × `shell.glass.android.button.press.radial.radius`（1.5），中心落在手指处；两者加色混合。松手按阻尼 `shell.glass.android.button.spring.damping`（0.5）、刚度 `shell.glass.android.button.spring.stiffness`（300）回弹。按压期间不叠加平面按下底色；星级胶囊只放大与跟手高光，不位移、不拉伸（RATING-07）。
+  - **滚动宿主**：可滚动控制栏内的玻璃按钮在手指越过系统触控容差后把后续拖动交给滚动宿主，按钮自身的按压态回弹收束，不继续跟随、不抢占滚动。
+  - **悬停**：指针进入时在指针处显示同一跟手径向高光，强度取 `shell.glass.android.button.hover.intensity`（按压的一半），不放大、不位移、不拉伸；键盘焦点沿用现有焦点态。
+  - **禁用**：玻璃照常绘制，只把内容降到 `color.toolbar.disabled.content.alpha`（0.42），不播放按压动画；尺寸、占位与命中区不变。
+  - **减少动态效果**：系统动画时长缩放为 0 时不放大、不位移、不拉伸，高光即显即隐，不播放弹簧。
+  - **版本分级**：API 33 及以上为完整液态玻璃；API 31–32 保留饱和度、模糊、表面色与 G2 形状，不呈现折射与着色器高光，跟手径向高光不出现，按压放大、位移、拉伸、回弹与整面高光保留；API 24–30 不取样，按钮使用正式色层外观，保留既有状态反馈，不呈现玻璃按压光学。所有版本的版式、命中区与状态语义一致。
 - 自绘控件禁用**不换底色、不换描边、不改尺寸**，只把内容（字形/文字）降到 `color.toolbar.disabled.content.alpha`（0.42）；不得用 `Opacity≈0.1` 近似隐藏。原生控件可用系统禁用外观（系统色），但必须仍清楚可辨、尺寸与占位不变，不得近似隐藏。无照片时评分组与照片相关命令呈禁用态，"打开文件"仍可用。
 - 焦点态取系统焦点色或平台焦点描边；焦点环不改变几何、不被父容器裁切，鼠标点击不强制留下常驻焦点环。
 - 控件保持方形实际绘制区域（`shell.glass.button.size`，44），原生按钮边框不得只画出扁条。
-- 小型控件（下拉、菜单、tooltip）外观可以走平台原生，但占位尺寸必须与 TOOLBAR-02 / FILTER 的几何一致；有原生控件的平台不另画一套下拉。没有原生下拉、菜单与 tooltip、只能自绘的平台，这三类弹出控件按旧壳 Avalonia Fluent 深色外观（`dropdown.*`、`popup.*`、`menu.*`、`tooltip.*`）绘制（README §3）。
+- 小型控件（下拉、菜单、tooltip）外观可以走平台原生，但占位尺寸必须与 TOOLBAR-02 / FILTER 的几何一致；有原生控件的平台不另画一套下拉。没有原生下拉、菜单与 tooltip、只能自绘的平台，这三类弹出控件按旧壳 Avalonia Fluent 深色外观（`dropdown.*`、`popup.*`、`menu.*`、`tooltip.*`）绘制（README §3）；Android 的筛选下拉、主图菜单与星级弹窗另按 MENU-03、FILTER-08 与 RATING-07 在主窗口内的玻璃面板上呈现，几何与状态色仍取上述令牌。
 - 观片环境固定深色，语义色取平台（PRIN-08、PRIN-09）。
 
 ## TOOLBAR-11 焦点与键盘 · 必须

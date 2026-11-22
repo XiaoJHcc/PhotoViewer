@@ -557,6 +557,22 @@ public static class DesignTokens
     public const double NavPercentTopGap = 8.0;
     /// <summary>popup.cornerRadius（pt） MENU-03：弹层（下拉列表、菜单、提示）圆角；弹层无阴影。</summary>
     public const double PopupCornerRadius = 5.0;
+    /// <summary>popup.glass.android.blur.radius（pt） MENU-03：Android 窗口内玻璃弹层的取样模糊半径。</summary>
+    public const double PopupGlassAndroidBlurRadius = 8.0;
+    /// <summary>popup.glass.android.colorControls.saturation（ratio） MENU-03：Android 窗口内玻璃弹层的取样饱和度（colorControls），在模糊之前应用。</summary>
+    public const double PopupGlassAndroidColorControlsSaturation = 1.5;
+    /// <summary>popup.glass.android.highlight.color（color） MENU-03：Android 窗口内玻璃弹层边缘高光颜色（白 38%），加色（Plus）混合。</summary>
+    public const uint PopupGlassAndroidHighlightColor = 0x61FFFFFFu;
+    /// <summary>popup.glass.android.highlight.width（pt） MENU-03：Android 窗口内玻璃弹层边缘高光描边线宽；模糊半径取线宽的一半。</summary>
+    public const double PopupGlassAndroidHighlightWidth = 0.5;
+    /// <summary>popup.glass.android.lens.amount（pt） MENU-03：Android 窗口内玻璃弹层边缘折射强度；折射含景深。</summary>
+    public const double PopupGlassAndroidLensAmount = 48.0;
+    /// <summary>popup.glass.android.lens.height（pt） MENU-03：Android 窗口内玻璃弹层边缘折射带高度。</summary>
+    public const double PopupGlassAndroidLensHeight = 24.0;
+    /// <summary>popup.glass.android.surface.color（color） MENU-03：Android 窗口内玻璃弹层的表面底色。</summary>
+    public const uint PopupGlassAndroidSurfaceColor = 0xFF121212u;
+    /// <summary>popup.glass.android.surface.opacity（ratio） MENU-03：Android 窗口内玻璃弹层表面底色的不透明度。</summary>
+    public const double PopupGlassAndroidSurfaceOpacity = 0.4;
     /// <summary>popup.padding（pt） MENU-03：弹层上下内边距（左右为 0）。</summary>
     public const double PopupPadding = 4.0;
     /// <summary>popup.ratingSources.arrowMargin（pt） RATING-04：判断评分来源浮窗展开空间时保留的箭头余量。</summary>
@@ -661,6 +677,46 @@ public static class DesignTokens
     public const double ShellFilterLeadingInset = 42.0;
     /// <summary>shell.glass.android.bar.vibrancy.saturation（ratio） SHELL-12：Android 栏底与带衬底 EXIF 的照片层取样提饱和倍数（vibrancy），在模糊之前应用。</summary>
     public const double ShellGlassAndroidBarVibrancySaturation = 1.5;
+    /// <summary>shell.glass.android.button.blur.radius（pt） TOOLBAR-10：Android 主屏玻璃按钮取样后的模糊半径。</summary>
+    public const double ShellGlassAndroidButtonBlurRadius = 2.0;
+    /// <summary>shell.glass.android.button.drag.stretch（pt） TOOLBAR-10：Android 玻璃按钮沿拖动方向在按压放大之上追加的拉伸量；按控件高度换算为倍率。</summary>
+    public const double ShellGlassAndroidButtonDragStretch = 4.0;
+    /// <summary>shell.glass.android.button.drag.translationFactor（ratio） TOOLBAR-10：Android 玻璃按钮随手指位移的橡皮筋系数：短边 × tanh(系数 × 偏移 / 短边)。</summary>
+    public const double ShellGlassAndroidButtonDragTranslationFactor = 0.05;
+    /// <summary>shell.glass.android.button.highlight.angle（deg） TOOLBAR-10：Android 主屏玻璃按钮边缘高光沿轮廓的方位角。</summary>
+    public const double ShellGlassAndroidButtonHighlightAngle = 45.0;
+    /// <summary>shell.glass.android.button.highlight.color（color） TOOLBAR-10：Android 主屏玻璃按钮边缘高光颜色（白 50%），加色（Plus）混合。</summary>
+    public const uint ShellGlassAndroidButtonHighlightColor = 0x80FFFFFFu;
+    /// <summary>shell.glass.android.button.highlight.falloff（ratio） TOOLBAR-10：Android 主屏玻璃按钮边缘高光的衰减。</summary>
+    public const double ShellGlassAndroidButtonHighlightFalloff = 1.0;
+    /// <summary>shell.glass.android.button.highlight.width（pt） TOOLBAR-10：Android 主屏玻璃按钮边缘高光描边线宽；模糊半径取线宽的一半。</summary>
+    public const double ShellGlassAndroidButtonHighlightWidth = 0.5;
+    /// <summary>shell.glass.android.button.hover.intensity（ratio） TOOLBAR-10：Android 玻璃按钮悬停时跟手径向高光相对按压全量的强度；不放大、不位移、不拉伸。</summary>
+    public const double ShellGlassAndroidButtonHoverIntensity = 0.5;
+    /// <summary>shell.glass.android.button.lens.amount（pt） TOOLBAR-10：Android 主屏玻璃按钮边缘折射强度。</summary>
+    public const double ShellGlassAndroidButtonLensAmount = 24.0;
+    /// <summary>shell.glass.android.button.lens.height（pt） TOOLBAR-10：Android 主屏玻璃按钮边缘折射带高度。</summary>
+    public const double ShellGlassAndroidButtonLensHeight = 12.0;
+    /// <summary>shell.glass.android.button.press.grow（pt） TOOLBAR-10：Android 玻璃按钮按压时交叉轴增加的尺寸；按控件高度换算为放大倍率。</summary>
+    public const double ShellGlassAndroidButtonPressGrow = 4.0;
+    /// <summary>shell.glass.android.button.press.radial.color（color） TOOLBAR-10：Android 玻璃按钮跟手径向高光颜色（白 15%），加色（Plus）混合。</summary>
+    public const uint ShellGlassAndroidButtonPressRadialColor = 0x26FFFFFFu;
+    /// <summary>shell.glass.android.button.press.radial.radius（ratio） TOOLBAR-10：Android 玻璃按钮跟手径向高光的半径与控件短边之比。</summary>
+    public const double ShellGlassAndroidButtonPressRadialRadius = 1.5;
+    /// <summary>shell.glass.android.button.press.surface.color（color） TOOLBAR-10：Android 玻璃按钮按压进度驱动的整面高光（白 8%），加色（Plus）混合。</summary>
+    public const uint ShellGlassAndroidButtonPressSurfaceColor = 0x14FFFFFFu;
+    /// <summary>shell.glass.android.button.shadow.color（color） TOOLBAR-10：Android 主屏玻璃按钮投影颜色（黑 10%）。</summary>
+    public const uint ShellGlassAndroidButtonShadowColor = 0x1A000000u;
+    /// <summary>shell.glass.android.button.shadow.offsetY（pt） TOOLBAR-10：Android 主屏玻璃按钮投影向下偏移。</summary>
+    public const double ShellGlassAndroidButtonShadowOffsetY = 4.0;
+    /// <summary>shell.glass.android.button.shadow.radius（pt） TOOLBAR-10：Android 主屏玻璃按钮投影半径。</summary>
+    public const double ShellGlassAndroidButtonShadowRadius = 24.0;
+    /// <summary>shell.glass.android.button.spring.damping（ratio） TOOLBAR-10：Android 玻璃按钮按压进度、位移与回弹弹簧的阻尼比。</summary>
+    public const double ShellGlassAndroidButtonSpringDamping = 0.5;
+    /// <summary>shell.glass.android.button.spring.stiffness TOOLBAR-10：Android 玻璃按钮按压进度、位移与回弹弹簧的刚度，与上游 spring 的 stiffness 同单位。</summary>
+    public const double ShellGlassAndroidButtonSpringStiffness = 300.0;
+    /// <summary>shell.glass.android.button.vibrancy.saturation（ratio） TOOLBAR-10：Android 主屏玻璃按钮取样前的提饱和倍数（vibrancy），圆按钮、合体、星级胶囊与相似聚类开关共用。</summary>
+    public const double ShellGlassAndroidButtonVibrancySaturation = 1.5;
     /// <summary>shell.glass.android.exif.tint.opacity（ratio） TOOLBAR-05：Android API 31+ 照片层模糊衬底上的 EXIF 深灰色层不透明度，叠在 color.toolbar.block.background 上；API 24–30 不取样，仍用不透明正式色层。0.80 为首版校准起点，后续只能凭纯黑 / 50% 灰 / 纯白三色实测调整。</summary>
     public const double ShellGlassAndroidExifTintOpacity = 0.8;
     /// <summary>shell.glass.button.size（pt） SHELL-08：圆玻璃按钮与合体按钮每段的边长；同时保证 44×44 的最小命中区。</summary>

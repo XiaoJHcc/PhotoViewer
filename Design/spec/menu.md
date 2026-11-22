@@ -2,7 +2,7 @@
 
 **意图**：不离开观片位置就能切换栏位与雾天增强、进入工具与设置；菜单只复用已有命令与共享状态，不引入第二份状态，也不改变当前照片与列表位置。
 
-数值令牌：原生菜单的几何由平台控件决定；自绘菜单（Web、Android）取 `popup.*`、`menu.*`（旧壳 Avalonia Fluent 深色外观）。平台实现与差异见 [platforms.md](../platforms.md#menu)，验收状态见 [status.md](../status.md#menu)。
+数值令牌：原生菜单的几何由平台控件决定；自绘菜单（Web、Android）的几何与状态色取 `popup.*`、`menu.*`（旧壳 Avalonia Fluent 深色外观），Android 玻璃面板的材质另取 `popup.glass.android.*`。平台实现与差异见 [platforms.md](../platforms.md#menu)，验收状态见 [status.md](../status.md#menu)。
 
 ## MENU-01 主图菜单的项、顺序与分组 · 必须
 
@@ -55,6 +55,8 @@
 - 菜单展开期间暂停照片全局快捷键（与文本输入、录制控件同一守卫，[input](input.md) INPUT-01），关闭后恢复；菜单内部的方向键、回车、Esc 由菜单消费。
 - **应当**：使用平台原生菜单控件；自绘实现须登记为平台差异，并同样满足本条的定位、勾选与键盘要求（MENU-03@android、MENU-03@web）。
 - 自绘菜单外观：弹层底 `color.popup.background`、1 点描边 `color.popup.border`、圆角 `popup.cornerRadius`、上下内边距 `popup.padding`、无阴影、最小宽 `menu.minWidth`；项高 `menu.item.height`、左右内边距 `menu.item.paddingX`、字号 `menu.item.fontSize`，悬停/按下整行直角高亮 `color.menu.item.hover/pressed`，文字不变色；勾选标记 `common.check` 占左侧 `menu.check.size` 列、字号 `menu.check.fontSize`（菜单内有任一勾选项时所有项让出该列）；命令图标位于勾选列右侧，占 `menu.icon.size` 列、字号 `menu.icon.fontSize`，与文本间距 `menu.icon.gap`；快捷键右对齐、`color.menu.shortcut`；分隔线 `color.menu.separator` 1 点、左右内缩 `menu.separator.inset`；禁用文字 `color.menu.foreground.disabled`。右键菜单左上角对齐指针；下拉弹层以按钮宽为最小宽，不取 `menu.minWidth`。
+- Android 的主图长按菜单与「更多」菜单在主窗口内的玻璃面板上呈现，面板透出其下的照片、栏位与玻璃按钮。打开时铺一层覆盖全窗的透明拦截层：点面板外只关闭菜单，该次点按不穿透（不翻页、不缩放、不改评分）；返回键按既有顺序先关闭菜单；读屏把焦点移入菜单、背景内容对读屏隐藏且不可交互，关闭后焦点回到入口。出入场只做淡入淡出，时长取系统 `config_shortAnimTime`，减少动态效果时直接到位。位置、夹取、项集合、勾选、键盘语义、禁用规则与触摸转交不变；菜单项悬停/按下仍取 `color.menu.item.hover` / `.pressed`，不因玻璃材质改写。
+- Android 玻璃面板的配方依次为 colorControls 饱和度 `popup.glass.android.colorControls.saturation`（1.5）→ blur `popup.glass.android.blur.radius`（8dp）→ lens `popup.glass.android.lens.height`（24dp）、`popup.glass.android.lens.amount`（48dp，含景深）→ Plain 高光 `popup.glass.android.highlight.width` / `popup.glass.android.highlight.color`（线宽 0.5dp，白 38%，加色混合）→ 表面 `popup.glass.android.surface.color`（#121212）× `popup.glass.android.surface.opacity`（0.4）。形状取 `popup.cornerRadius` 的 G2 圆角，不加背景压暗与阴影。API 33 及以上为完整玻璃；API 31–32 只有饱和度、模糊与表面色，无折射与着色器高光；API 24–30 使用正式色层外观，所有版本都在主窗口内呈现。
 - 平台差异见 platforms.md（MENU-03@android）。
 
 ## MENU-04 弹出不改变观片布局 · 必须
@@ -68,7 +70,7 @@
 
 - 卡片没有上下文菜单，也不提供任何卡片级菜单项集合。触屏长按卡片、指针辅助点按（含右键）卡片，都打开星级弹窗（RATING-07），不弹主图菜单。
 - 星级弹窗的条目格式按 RATING-04：完整文件名，放得下时附拍摄时间，冲突时按来源逐条列出。这也是触屏查看完整文件名的入口。
-- 长按不得在抬起时被点选消费——不因弹出弹窗而切换主图；弹窗不改变卡片几何、胶片栏滚动偏移与当前项。
+- 长按不得在抬起时被点选消费——不因弹出弹窗而切换主图；打开弹窗后同一次触摸按 RATING-07 继续交给弹窗星排；弹窗不改变卡片几何、胶片栏滚动偏移与当前项。
 - 弹窗内点值整组写入（RATING-01/03），写回失败见 [state](state.md)。
 - 平台差异见 platforms.md（MENU-05@ios、MENU-05@android）。
 
