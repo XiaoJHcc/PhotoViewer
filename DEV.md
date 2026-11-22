@@ -239,6 +239,18 @@ node PhotoViewer.Web/tools/export-geometry.mjs --profile mac --out /tmp/web-geom
 python3 Tools/compare-layout-geometry.py /tmp/web-geometry.json artifacts/acceptance/native-p2-acceptance/native-layout-geometry.txt
 ```
 
+### 语义图标
+
+`Design/icons.json` 是 Apple / Windows / Android 图标语义与固定上游版本的唯一来源；Windows 与 Android 共用同一份 Fluent 归一字体，生成的共享码位表和字体子集不得手改。生成与覆盖检查需要 Python fontTools：
+
+```bash
+python3 Tools/generate-icons.py           # 复用已入库字体，生成码位表与 Apple / Fluent 对比报告
+python3 Tools/generate-icons.py --check   # 校验码位、字体摘要、全目录统一倍率、许可证与生成物一致性
+python3 Tools/generate-icons.py --refresh # macOS：按固定提交重建，以全目录 SF/Fluent 墨迹对角线倍率均值归一
+```
+
+报告写入 `artifacts/acceptance/icon-catalog/index.html`，macOS 上包含 Apple 系统实际渲染。升级图标上游时先修改清单中的固定提交，再刷新并复核全部视觉变化；Windows / Android 发布扫描会检查随包字体与许可证。
+
 ### 在 macOS 类型检查 Windows 壳
 
 WinUI XAML 编译器只能在 Windows 上运行。跨平台修改后可先检查 C# 类型，但不能代替 Windows 本机构建和运行：

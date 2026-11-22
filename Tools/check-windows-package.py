@@ -125,6 +125,11 @@ MODEL_SHA256 = "b1579b92faa070106c613a6a502abe41d507588cab236727396bb2a2505cfc01
 MODEL_ID = "dinov3_vits16_f32_518_v2"
 DINO_LICENSE_NAME = "dinov3-license.md"
 DINO_LICENSE_DISPLAY = "DINOv3-LICENSE.md"
+ICON_ASSETS = (
+    "assets/icons/fluentsystemicons-regular.ttf",
+    "assets/icons/fluentsystemicons-filled.ttf",
+    "assets/icons/fluentsystemicons-license.txt",
+)
 
 ONNX_MANAGED = "Microsoft.ML.OnnxRuntime.dll"
 MATHNET_MANAGED = "MathNet.Numerics.dll"
@@ -1645,6 +1650,11 @@ def check_shared_requirements(entries: list[BundleEntry], expectations: dict,
         if len(matches) > 1:
             findings.append(
                 f"VC++ CRT {name} 出现 {len(matches)} 份：" + "、".join(e.path for e in matches))
+
+    paths = {entry.path.lower() for entry in entries}
+    for icon_asset in ICON_ASSETS:
+        if icon_asset not in paths:
+            findings.append(f"缺少随包图标资产：{icon_asset}")
 
     if not by_name.get(HEIF_NATIVE.lower()):
         findings.append(f"缺少 HEIF 解码原生库 {HEIF_NATIVE}")
@@ -3246,6 +3256,9 @@ def standard_files(assembly_name: str, assembly: bytes) -> list[dict]:
         {"path": "vcruntime140.dll", "type": 2, "data": _NATIVE_STUB, "compress": True},
         {"path": "vcruntime140_1.dll", "type": 2, "data": _NATIVE_STUB, "compress": True},
         {"path": "icon.ico", "type": 2, "data": b"\x00\x00\x01\x00\x01\x00", "compress": False},
+        {"path": "Assets/Icons/FluentSystemIcons-Regular.ttf", "type": 0, "data": b"fluent", "compress": True},
+        {"path": "Assets/Icons/FluentSystemIcons-Filled.ttf", "type": 0, "data": b"fluent", "compress": True},
+        {"path": "Assets/Icons/FluentSystemIcons-LICENSE.txt", "type": 0, "data": b"MIT", "compress": True},
         {"path": "System.Private.CoreLib.dll", "type": 1, "data": _MANAGED_STUB,
          "compress": True},
         {"path": "DirectNStandard.dll", "type": 1, "data": _MANAGED_STUB, "compress": True},
@@ -3348,6 +3361,9 @@ def msix_payload(assembly_name: str, assembly: bytes, edition: str, *,
         "vcruntime140.dll": _NATIVE_STUB,
         "vcruntime140_1.dll": _NATIVE_STUB,
         "icon.ico": b"\x00\x00\x01\x00\x01\x00",
+        "Assets/Icons/FluentSystemIcons-Regular.ttf": b"fluent",
+        "Assets/Icons/FluentSystemIcons-Filled.ttf": b"fluent",
+        "Assets/Icons/FluentSystemIcons-LICENSE.txt": b"MIT",
         "System.Private.CoreLib.dll": _MANAGED_STUB,
         "DirectNStandard.dll": _MANAGED_STUB,
         "Assets/StoreLogo.png": b"\x89PNG\r\n\x1a\nstore",

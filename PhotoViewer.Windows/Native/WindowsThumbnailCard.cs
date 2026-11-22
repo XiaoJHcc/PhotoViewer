@@ -111,8 +111,9 @@ internal sealed class WindowsThumbnailCard : Grid
         };
         _placeholder = new TextBlock
         {
-            Text = "📷",
-            FontSize = 24,
+            Text = WindowsIcons.PhotoPlaceholderGlyph,
+            FontFamily = new FontFamily(WindowsIcons.RegularFontFamily),
+            FontSize = DesignTokens.FilmCardPlaceholderGlyphFontSize,
             Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0x66, 0x66, 0x66)),
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
@@ -235,7 +236,7 @@ internal sealed class WindowsThumbnailCard : Grid
             // 字形每张卡片只建一次;Refresh 只改文本、字号与前景色。
             var glyph = new TextBlock
             {
-                FontFamily = new FontFamily(WindowsIcons.FluentFontFamily),
+                FontFamily = new FontFamily(WindowsIcons.RegularFontFamily),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
             };
@@ -389,7 +390,8 @@ internal sealed class WindowsThumbnailCard : Grid
             var glyph = _starGlyphs[star];
             glyph.Text = star == 0
                 ? hasConflict ? WindowsIcons.WarningGlyph : WindowsIcons.ClearGlyph
-                : on ? WindowsIcons.StarGlyph : "\uE734";
+                : on ? WindowsIcons.StarGlyph : WindowsIcons.StarOutlineGlyph;
+            glyph.FontFamily = new FontFamily(WindowsIcons.FontFamilyForGlyph(glyph.Text));
             glyph.FontSize = star == 0
                 ? hasConflict ? WindowsLayout.CardStarFontSize : DesignTokens.FilmCardClearGlyphSize
                 : WindowsLayout.CardStarFontSize;

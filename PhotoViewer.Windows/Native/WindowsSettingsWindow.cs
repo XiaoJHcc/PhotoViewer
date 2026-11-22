@@ -70,8 +70,8 @@ internal sealed class WindowsSettingsWindow
             IsPaneToggleButtonVisible = false,
             IconSource = new FontIconSource
             {
-                Glyph = "\uE713",
-                FontFamily = new FontFamily(WindowsIcons.FluentFontFamily),
+                Glyph = WindowsIcons.SettingsGlyph,
+                FontFamily = new FontFamily(WindowsIcons.RegularFontFamily),
                 FontSize = 16,
             },
         };
@@ -111,7 +111,11 @@ internal sealed class WindowsSettingsWindow
             _nav.MenuItems.Add(new NavigationViewItem
             {
                 Content = Categories[index].Title,
-                Icon = new FontIcon { Glyph = WindowsIcons.ForCategory(Categories[index].Key) },
+                Icon = new FontIcon
+                {
+                    Glyph = WindowsIcons.ForCategory(Categories[index].Key),
+                    FontFamily = new FontFamily(WindowsIcons.RegularFontFamily),
+                },
                 Tag = index,
             });
         }

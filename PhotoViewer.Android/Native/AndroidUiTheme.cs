@@ -1,5 +1,4 @@
 using System;
-using System.Globalization;
 using Android.Content;
 using Android.Graphics;
 using Android.Util;
@@ -86,16 +85,14 @@ internal static class AndroidUiTheme
     internal static readonly Color ErrorText = FromToken(DesignTokens.ColorSimError);
     internal static readonly Color WarningText = FromToken(DesignTokens.ColorSettingsWarning);
 
-    /// <summary>图标字体（uicons）在 Assets 中的路径。</summary>
-    internal const string IconFontAsset = "Fonts/uicons-regular-rounded.ttf";
+    /// <summary>共享 Fluent Regular 在 Assets 中的路径。</summary>
+    internal const string IconFontAsset = "Icons/FluentSystemIcons-Regular.ttf";
 
-    /// <summary>实心图标字体（uicons solid）在 Assets 中的路径。</summary>
-    internal const string IconSolidFontAsset = "Fonts/uicons-solid-straight.ttf";
+    /// <summary>共享 Fluent Filled 在 Assets 中的路径。</summary>
+    internal const string IconSolidFontAsset = "Icons/FluentSystemIcons-Filled.ttf";
 
     private static Typeface? _iconTypeface;
-    private static bool _iconLoadFailed;
     private static Typeface? _iconSolidTypeface;
-    private static bool _iconSolidLoadFailed;
 
     /// <summary>把设计令牌的 0xAARRGGBB 数值转成 Android 颜色。</summary>
     /// <param name="argb">设计令牌颜色。</param>
@@ -116,18 +113,7 @@ internal static class AndroidUiTheme
         (int)((argb >> 8) & 0xFF),
         (int)(argb & 0xFF))!;
 
-    /// <summary>把设计令牌的图标码位（形如 <c>U+F4F7</c>）转成可绘制的字形文本。</summary>
-    /// <param name="codePoint">图标码位令牌。</param>
-    /// <returns>字形文本；无法解析时为空串。</returns>
-    internal static string IconGlyph(string codePoint)
-    {
-        string hex = codePoint.StartsWith("U+", StringComparison.Ordinal) ? codePoint[2..] : codePoint;
-        return int.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int value)
-            ? char.ConvertFromUtf32(value)
-            : string.Empty;
-    }
-
-    /// <summary>dp → px 转换。</summary>
+    /// <summary>图标 dp → px 转换；图标是固定几何图形，不随系统文字缩放。</summary>
     /// <param name="context">上下文。</param>
     /// <param name="dp">dp 值。</param>
     /// <returns>像素值。</returns>
@@ -148,40 +134,34 @@ internal static class AndroidUiTheme
         return metrics == null ? (float)sp : TypedValue.ApplyDimension(ComplexUnitType.Sp, (float)sp, metrics);
     }
 
-    /// <summary>加载 uicons 图标字体；缺失时回退系统字体并只记录一次。</summary>
-    /// <param name="context">上下文。</param>
-    /// <returns>图标字体或 null。</returns>
+    /// <summary>加载随包 Fluent Regular；资产缺失时显式失败，不回退系统字体。</summary>
     internal static Typeface? IconTypeface(Context context)
     {
-        if (_iconTypeface != null || _iconLoadFailed) return _iconTypeface;
+        if (_iconTypeface != null) return _iconTypeface;
         try
         {
             _iconTypeface = Typeface.CreateFromAsset(context.Assets, IconFontAsset);
+            return _iconTypeface;
         }
         catch (Exception exception)
         {
-            _iconLoadFailed = true;
-            Console.WriteLine($"[Native] 图标字体加载失败，回退系统字体：{exception.Message}");
+            throw new InvalidOperationException($"缺少随包图标字体 {IconFontAsset}", exception);
         }
-        return _iconTypeface;
     }
 
-    /// <summary>加载 uicons 实心字形字体（评分快捷命令的星底）；缺失时回退描边字体并只记录一次。</summary>
-    /// <param name="context">上下文。</param>
-    /// <returns>实心图标字体或描边字体。</returns>
+    /// <summary>加载随包 Fluent Filled；资产缺失时显式失败，不回退 Regular 或系统字体。</summary>
     internal static Typeface? IconSolidTypeface(Context context)
     {
-        if (_iconSolidTypeface != null || _iconSolidLoadFailed) return _iconSolidTypeface ?? IconTypeface(context);
+        if (_iconSolidTypeface != null) return _iconSolidTypeface;
         try
         {
             _iconSolidTypeface = Typeface.CreateFromAsset(context.Assets, IconSolidFontAsset);
+            return _iconSolidTypeface;
         }
         catch (Exception exception)
         {
-            _iconSolidLoadFailed = true;
-            Console.WriteLine($"[Native] 实心图标字体加载失败，回退描边字体：{exception.Message}");
+            throw new InvalidOperationException($"缺少随包图标字体 {IconSolidFontAsset}", exception);
         }
-        return _iconSolidTypeface ?? IconTypeface(context);
     }
 
     /// <summary>创建抗锯齿画笔。</summary>

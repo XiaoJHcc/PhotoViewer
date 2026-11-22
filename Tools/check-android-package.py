@@ -77,6 +77,11 @@ MODEL_SHA256 = "bcba38490ec2eded4a240751bebac198903daba7263871e8fee3aa39b03352e8
 TARGET_ABI = "arm64-v8a"
 FORBIDDEN_ABIS = ("x86_64", "armeabi-v7a", "arm64", "x86")
 DINO_LICENSE_NAME = "dinov3-license.md"
+ICON_ASSETS = (
+    "assets/Icons/FluentSystemIcons-Regular.ttf",
+    "assets/Icons/FluentSystemIcons-Filled.ttf",
+    "assets/Icons/FluentSystemIcons-LICENSE.txt",
+)
 
 # 液态玻璃移植库（PhotoViewer.Android.Backdrop）的上游 Apache-2.0 许可与归属声明：
 # 标准版与 AI 版都必须随 APK 分发，路径取自头工程 AndroidAsset 的 Link。
@@ -578,6 +583,14 @@ def check_abis(abis: list[str], errors: list[str]) -> dict:
     return {"found": abis, "expected": TARGET_ABI, "unexpected": unexpected}
 
 
+def check_icon_assets(records: list[dict], errors: list[str]) -> list[str]:
+    paths = {record["path"] for record in records}
+    missing = [path for path in ICON_ASSETS if path not in paths]
+    for path in missing:
+        errors.append(f"APK 缺少随包图标资产：{path}")
+    return [path for path in ICON_ASSETS if path in paths]
+
+
 def check_component_authorities(identity: dict, expectations: dict, errors: list[str]) -> dict:
     """系统组件 authority 必须落在实际包名命名空间内，否则两版无法同机安装。"""
     package = str(expectations["packageId"])
@@ -737,6 +750,7 @@ def scan(apk: Path, expectations: dict, external_tools: bool = True) -> dict:
     identity: dict = {}
     abis: dict = {}
     components: dict = {"providers": [], "foreignAuthorities": []}
+    icon_assets: list[str] = []
     evidence: dict = {"managedAssemblies": [], "storeBlobs": [], "nativeOnnxRuntime": []}
     model_contract = None
     aapt2: dict = {"available": False}
@@ -767,6 +781,7 @@ def scan(apk: Path, expectations: dict, external_tools: bool = True) -> dict:
                 components = check_component_authorities(identity, expectations, errors)
                 backdrop_licenses = check_backdrop_licenses(records, errors)
                 abis = check_abis(abi_directories(records), errors)
+                icon_assets = check_icon_assets(records, errors)
                 evidence = managed_evidence(archive, records, errors)
                 if expectations["edition"] == "standard":
                     check_standard(records, evidence, errors)
@@ -806,6 +821,7 @@ def scan(apk: Path, expectations: dict, external_tools: bool = True) -> dict:
         "identity": identity,
         "components": components,
         "thirdPartyLicenses": backdrop_licenses,
+        "iconAssets": icon_assets,
         "abis": abis,
         "summary": summary,
         "fileCount": len(records),
@@ -981,7 +997,7 @@ def build_axml(package: str, version_code: int, version_name: str, label: str,
 
 def make_apk(path: Path, package: str, version_code: int, version_name: str, label: str,
              extra: dict[str, bytes] | None = None, abi: str = TARGET_ABI, utf8: bool = True,
-             authorities: list[str] | None = None) -> Path:
+             authorities: list[str] | None = None, include_icons: bool = True) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("AndroidManifest.xml",
@@ -989,6 +1005,9 @@ def make_apk(path: Path, package: str, version_code: int, version_name: str, lab
                                     authorities=authorities))
         archive.writestr("classes.dex", b"dex\n035\0")
         archive.writestr(f"lib/{abi}/libmonodroid.so", b"\x7fELF")
+        if include_icons:
+            for icon_path in ICON_ASSETS:
+                archive.writestr(icon_path, b"icon-asset")
         for name, data in (extra or {}).items():
             archive.writestr(name, data)
     return path
@@ -1046,7 +1065,7 @@ def self_test() -> int:
                 third_party: bool = True,
                 abi: str = TARGET_ABI, version_name: str = version, version_code: int = build,
                 package_id: str | None = None, utf8: bool = True,
-                authorities: list[str] | None = None) -> Path:
+                authorities: list[str] | None = None, include_icons: bool = True) -> Path:
             merged: dict[str, bytes] = (
                 {path: b"license" for path in BACKDROP_LICENSE_PATHS} if third_party else {}
             )
@@ -1054,10 +1073,15 @@ def self_test() -> int:
                 merged.update(extra)
             return make_apk(root / f"{name}/{name}.apk", package_id or PACKAGE_IDS[edition],
                             version_code, version_name, label or PRODUCT_NAMES[edition],
-                            extra=merged, abi=abi, utf8=utf8, authorities=authorities)
+                            extra=merged, abi=abi, utf8=utf8, authorities=authorities,
+                            include_icons=include_icons)
 
         standard_ok = apk("standard-ok", extra={"assemblies/PhotoViewer.dll": b"MZ"})
         cases.append(("标准版合规包通过", standard_ok, "standard", True, None))
+        cases.append((
+            "缺少随包图标资产失败",
+            apk("standard-missing-icons", include_icons=False), "standard", False, "缺少随包图标资产",
+        ))
 
         cases.append((
             "标准版 UTF-16 字符串池通过",

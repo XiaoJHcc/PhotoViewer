@@ -390,14 +390,14 @@ internal sealed class WindowsRatingSourcesFlyout : IDisposable
         {
             int value = rating;
             bool on = rating > 0 && rating <= (rated ?? 0);
-            string glyph = rating == 0 ? WindowsIcons.ClearGlyph : on ? WindowsIcons.StarGlyph : "\uE734";
+            string glyph = rating == 0 ? WindowsIcons.ClearGlyph : on ? WindowsIcons.StarGlyph : WindowsIcons.StarOutlineGlyph;
             double fontSize = rating == 0
                 ? DesignTokens.ToolbarRatingClearGlyphFontSize
                 : DesignTokens.ToolbarRatingGlyphFontSize;
             var text = new TextBlock
             {
                 Text = glyph,
-                FontFamily = new FontFamily(WindowsIcons.FluentFontFamily),
+                FontFamily = new FontFamily(WindowsIcons.FontFamilyForGlyph(glyph)),
                 FontSize = fontSize,
                 Foreground = new SolidColorBrush(WindowsLayout.Token(rating == 0
                     ? DesignTokens.ColorStarClear

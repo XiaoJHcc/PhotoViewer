@@ -40,8 +40,8 @@
 
 - 评分组就是星级控件（RATING-07），不再是一排独立按钮：宽形态控制栏、手机竖屏底部行、手机横屏控制栏（EXIF 块之下的剩余长度）三处用的是同一个控件。桌面端恒为展开态；移动端按可用主轴长度切换展开态 / 紧凑态。
 - 点击第 n 星把**当前照片所属组的全部实际来源**写成 n 星，点击 0 号清零叉写成 0 星；不做第二次点击取消（取消走清零叉）。0 号与 1–5 的顺序随方向：行布局自左向右 0→5，列布局自上而下 5→0（0 号在底端），同一行/列内不得出现两种方向。
-- 星色取代表文件内嵌 Rating：`rating ≥ n` 的星点亮 `color.star.on`（#FFD214），其余为空心 `color.star.off`（#808080）；清零叉用中性 `color.star.clear`（#666666），不随评分点亮。点亮的星取实心 `icon.starFilled`（`icon.fontSolid`），未点亮取描边 `icon.star`，清零叉取 `icon.clear`。已拒绝（-1）不点亮任何星，也不提供 -1 的设置入口。
-- 组级星级冲突时（[RATING-01](rating.md)），0 号槽位换成红色警示三角 `icon.warning` + `color.star.conflict`，槽位几何与命中区不变；点击三角只打开星级弹窗（[RATING-04](rating.md)），由弹窗内的星写入全部来源，三角本身不写值。非冲突时 0 号仍是清零叉。
+- 星色取代表文件内嵌 Rating：`rating ≥ n` 的星点亮 `color.star.on`（#FFD214），其余为空心 `color.star.off`（#808080）；清零叉用中性 `color.star.clear`（#666666），不随评分点亮。点亮的星取实心 `rating.starFilled`，未点亮取描边 `rating.star`，清零叉取 `rating.clear`。已拒绝（-1）不点亮任何星，也不提供 -1 的设置入口。
+- 组级星级冲突时（[RATING-01](rating.md)），0 号槽位换成红色警示三角 `rating.warning` + `color.star.conflict`，槽位几何与命中区不变；点击三角只打开星级弹窗（[RATING-04](rating.md)），由弹窗内的星写入全部来源，三角本身不写值。非冲突时 0 号仍是清零叉。
 - 点星只改评分：不切图、不改变当前照片身份、不抢胶片栏位置（PRIN-02、FILM-06）。评分对象是当前照片，不取鼠标悬停的卡片。
 - 写回失败时星级保持原值，并给出状态提示（停留 `motion.status.toast.duration`，4000；见 [state](state.md)）；冲突指示与星级弹窗按 [RATING-03](rating.md)、[RATING-04](rating.md) 刷新，不得先点亮再静默回滚，也不得显示虚假成功。
 - 无照片时整个控件禁用：保留几何可见，但不可点。禁用按 TOOLBAR-10：自绘控件保持底色、描边与尺寸，只降内容强调；原生控件可用系统禁用外观（系统色），但仍须清楚可辨，不得用 `Opacity≈0.1` 近似隐藏，也不得改变尺寸或布局。
@@ -51,10 +51,10 @@
 
 - 宽形态：内容 = 设置中"在控制栏显示"的命令，按用户排序；壳不写死第二份命令列表，也不因按钮少而补占位按钮。手机形态按 SETTINGS-08 取生效命令，按顺序并列在同一个胶囊内（竖屏从左到右，横屏从上到下）。每段是独立可聚焦、可点按、带读屏名称的动作按钮；不使用表达互斥选择的分段控件。零项移除整组，一项为圆形，两至三项共用胶囊。
 - 宽形态命令圆按钮 `shell.glass.button.size`（44）见方，间距 `toolbar.command.spacing`（8）；手机形态胶囊内段间无额外间距，每段尺寸取 `shell.phone.command.size`。两者图标字号均取 `toolbar.command.glyph.fontSize`（18）；按钮尺寸不随名称或文字长度拉宽。
-- 图标统一取 `icon.font`（uicons Regular Rounded，`PhotoViewer/Assets/Fonts/uicons-regular-rounded.ttf`）的 `icon.command.*` 码位，四端与 Web 同一字形，居中绘制于命令按钮内，颜色取 `color.text.primary`（自绘禁用按 TOOLBAR-10 降内容强调；原生控件按 TOOLBAR-10 使用系统禁用外观）。平台改用系统图标集（SF Symbols、Segoe Fluent Icons 等）须登记为平台差异，且语义须与下条一致。
-- 图标语义固定，不得用容易误读的抽象字形替代：打开文件用**文件夹**；上一张/下一张用单向箭头；交换用双向箭头；缩放适应用**向外双对角箭头**（“回到窗口大小”），不用带方框的适配图标；放大/缩小用**纯加号/减号**，不用放大镜；雾天增强用**对比度半圆**，不用闪电/加速类字形。
+- 图标语义统一取 `Design/icons.json`：Apple 使用 SF Symbols，Windows / Android 使用共享 Fluent 归一字体，Web 使用 `icon.font`（uicons Regular Rounded）与 `icon.*` 码位。图标居中绘制于命令按钮内，颜色取 `color.text.primary`（自绘禁用按 TOOLBAR-10 降内容强调；原生控件按 TOOLBAR-10 使用系统禁用外观），语义、填充状态与光学尺寸遵循 ICON-01–03。
+- 图标语义固定，不得用容易误读的抽象字形替代：打开文件用**文件夹**；上一张/下一张用单向箭头；交换用双向箭头；缩放适应用**向外双对角箭头**（“回到窗口大小”），不用带方框的适配图标；放大/缩小用**纯加号/减号**，不用放大镜；雾天增强用**星芒魔术棒**，不用闪电/加速类字形。
 - 桌面悬停提示包含**命令名 + 实际主/次绑定**，格式 `命令名（主 / 次）`，按键用可读键名（数字键 `2`、符号键 `;` `=` `` ` `` 等），不得出现 `D2`、`Oem3` 这类枚举名；未设置的槽省略，主次相同只显示一次，两个槽都未设置时只显示命令名，不能出现"未设置"字样，不使用点号分隔命令名与绑定。移动端的命令读屏名称使用同一文案。绑定改变后提示立即更新。提示相对指针偏移 `tooltip.offset.x` / `tooltip.offset.y`，超过宿主时向内夹取；等待 `motion.tooltip.delay`，从一个提示连续划到下一个控件时改为 `motion.tooltip.chainDelay`。直接触控没有悬停；连接键鼠外设后可在宽形态的设置页查看与编辑绑定（INPUT-13）。四端都不做长按浮层。
-- 评分快捷命令（`SetRating0`–`SetRating5`）显示在命令组时，1–5 为**星形内叠数字**：实心 `icon.starFilled` 星形按 `toolbar.command.glyph.fontSize` 画在按钮中心，数字 `toolbar.rating.digit.fontSize`（9）半粗、取按钮底色，叠在星形中心；0 为清零叉 `icon.clear`。0 星与 1–5 星必须可辨。图标字体无法叠字的平台可以只画数字（0=叉），须登记为平台差异。
+- 评分快捷命令（`SetRating0`–`SetRating5`）显示在命令组时，1–5 为**星形内叠数字**：实心 `rating.starFilled` 星形按 `toolbar.command.glyph.fontSize` 画在按钮中心，数字 `toolbar.rating.digit.fontSize`（9）半粗、取按钮底色，叠在星形中心；0 为清零叉 `rating.clear`。0 星与 1–5 星必须可辨。图标字体无法叠字的平台可以只画数字（0=叉），须登记为平台差异。
 - 当前壳未实现、或按 SCOPE-01 未开放的命令不生成按钮，也不显示禁用死按钮。
 - 无照片时除"打开文件"外全部禁用。
 - 命令点击与键盘快捷键执行同一条命令（同一命令 ID、同一语义），按钮不复制业务逻辑。
@@ -103,7 +103,7 @@
 
 - 以 iOS 27 系列原生玻璃按钮在栏上的常态底色为颜色参照，在纯黑、50% 灰、纯白衬底上按 SHELL-12 的采样与折中口径比较；iOS 直接使用系统材质，不设叠加 alpha。macOS 的原生玻璃染白；Web 保留背景模糊并叠白，Android 用 Material 按钮底色叠白。先定栏底，再只调平台对应的 `shell.glass.button.tint.opacity`，颜色固定为 `color.toolbar.button.tint`（纯白）：主屏圆按钮、合体胶囊、星级胶囊与相似聚类开关共用这一值。Windows 只替换主屏控件的常态填充，不改变原生亚克力背衬、描边或悬停、按下、禁用、焦点与开关选中样式。
 - 圆按钮与合体按钮按 SHELL-12 用平台原生按钮材质与系统状态外观。Web 的桌面宽形态继续参照 macOS 的按钮形状、材质层次与状态反馈，颜色按本条单独校准。本条的自绘底色、描边与圆角只约束自绘部分。EXIF 块是深色半透明圆角矩形（圆角 `toolbar.exif.cornerRadius`），有平台深色模糊材质时取该材质，没有时取 `color.toolbar.block.background`（#222222）；Android 在 API 31 及以上的照片层模糊上按 `shell.glass.android.exif.tint.opacity@android` 叠该底色，API 24–30 取不透明底色（SHELL-12、TOOLBAR-05）；星级控件的胶囊按 RATING-07 取平台原生按钮材质，自绘平台与命令圆按钮取同一按钮材质；自绘命令圆按钮常态只绘制按钮材质，不画描边；圆角 `toolbar.cornerRadius`（6）只由控件自身一层裁切产生，不叠卡中卡双层圆角，也不把自绘圆角与系统按钮 bezel 或系统描边裁切叠加成二次裁角。
-- 评分星形字号 `toolbar.rating.glyph.fontSize`（16），0 号清零叉 `toolbar.rating.clearGlyph.fontSize`（12），冲突警示三角 `icon.warning` 取 `toolbar.rating.glyph.fontSize`（16）并占同一 0 号槽位（`color.star.conflict`）；星形不因槽位小而缩小到不可辨，换成三角不改变槽位几何与命中区。
+- 评分星形字号 `toolbar.rating.glyph.fontSize`（16），0 号清零叉 `toolbar.rating.clearGlyph.fontSize`（12），冲突警示三角 `rating.warning` 取 `toolbar.rating.glyph.fontSize`（16）并占同一 0 号槽位（`color.star.conflict`）；星形不因槽位小而缩小到不可辨，换成三角不改变槽位几何与命中区。
 - 每个小控件有常态、悬停、按下、禁用、焦点五态。任何状态切换都不得引起布局抖动、残留旧态或裁切内容：不改尺寸与占位、不缩放、不绘制到父容器之外；焦点用可见焦点环或描边表达，本身不被裁切。
 - 自绘控件按令牌绘制状态色，只改底色、描边与前景色，不加过渡动画，避免连续划过按钮时闪烁。原生控件可以使用系统状态色与轻量状态动效（L4），但占位、命中区与令牌几何一致。
 - 常态/悬停/按下：

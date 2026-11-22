@@ -100,7 +100,7 @@ internal static partial class AndroidNativeChecks
         // 分类导航：标准行高（两行文本随系统字体增高），20dp 居中箭头，右留白为卡片内边距。
         var categoryTitle = FindDescendant<TextView>(sheet, view => view.Text == "文件");
         var categoryRow = categoryTitle?.Parent?.Parent as ViewGroup;
-        var chevron = categoryRow == null ? null : FindDescendant<TextView>(categoryRow, view => view.Text == "›");
+        var chevron = categoryRow == null ? null : FindDescendant<TextView>(categoryRow, view => view.Text == AndroidIcons.Forward);
         int categoryContentHeight = Math.Max((categoryTitle?.Parent as View)?.Height ?? 0, chevron?.Height ?? 0);
         int categoryHeight = Math.Max(standardRow, categoryContentHeight
             + (categoryRow?.PaddingTop ?? 0) + (categoryRow?.PaddingBottom ?? 0));
@@ -258,30 +258,30 @@ internal static partial class AndroidNativeChecks
         Check("勾选命中区保持 44dp",
             controlRow is { } row2 && Math.Abs(row2.CheckHitWidth - checkHit) <= 1,
             LayoutText(controlRow, $"{checkHit}px"));
-        Check("命令图标 18sp 且未被二次放大、读屏忽略 PUA 字形",
+        Check("命令图标 18dp 且未被二次放大、读屏忽略 PUA 字形",
             controlRow is { } row3 && row3.IconVisible
-            && Math.Abs(row3.IconFontSizeSp - AndroidCommandIconView.GlyphSizeSp) < .01
-            && Math.Abs(row3.IconTextSizePx - AndroidUiTheme.Sp(activity, AndroidCommandIconView.GlyphSizeSp)) <= 1
+            && Math.Abs(row3.IconFontSizeDp - AndroidCommandIconView.GlyphSizeDp) < .01
+            && Math.Abs(row3.IconTextSizePx - AndroidUiTheme.Dp(activity, AndroidCommandIconView.GlyphSizeDp)) <= 1
             && row3.IconIgnoredForAccessibility,
-            LayoutText(controlRow, $"glyph={AndroidCommandIconView.GlyphSizeSp}sp"
-                + $"={AndroidUiTheme.Sp(activity, AndroidCommandIconView.GlyphSizeSp):0.#}px"));
+            LayoutText(controlRow, $"glyph={AndroidCommandIconView.GlyphSizeDp}dp"
+                + $"={AndroidUiTheme.Dp(activity, AndroidCommandIconView.GlyphSizeDp):0.#}px"));
 
         var hotkeys = sheet.Settings.Hotkeys;
         var rating3 = sheet.HotkeyRowLayoutForChecks(HotkeyIndexOf(hotkeys, "SetRating3"));
         Check("评分图标为实心星叠数字 3",
             rating3 is { } r3 && r3.IconVisible && r3.IconSolid && r3.IconDigit == "3"
-            && r3.IconSymbol == AndroidUiTheme.IconGlyph(DesignTokens.IconStarFilled),
+            && r3.IconSymbol == AndroidIcons.StarFilled,
             LayoutText(rating3, "solid star + 3"));
         var rating0 = sheet.HotkeyRowLayoutForChecks(HotkeyIndexOf(hotkeys, "SetRating0"));
         Check("0 星图标为清零叉",
             rating0 is { } r0 && r0.IconVisible && !r0.IconSolid && r0.IconDigit == null
-            && r0.IconSymbol == AndroidUiTheme.IconGlyph(DesignTokens.IconClear),
+            && r0.IconSymbol == AndroidIcons.Clear,
             LayoutText(rating0, "clear glyph"));
         var enhance = sheet.HotkeyRowLayoutForChecks(HotkeyIndexOf(hotkeys, "ToggleEnhance"));
         Check("雾天增强行显示命令图标",
             enhance is { } en && en.IconVisible
-            && en.IconSymbol == AndroidUiTheme.IconGlyph(DesignTokens.IconCommandToggleEnhance),
-            LayoutText(enhance, DesignTokens.IconCommandToggleEnhance));
+            && en.IconSymbol == AndroidIcons.ForCommand("ToggleEnhance"),
+            LayoutText(enhance, IconCatalog.CommandEnhance));
 
         int realized = 0;
         bool everyIcon = true;

@@ -695,8 +695,8 @@ internal sealed class WindowsFilterBar : Panel
     /// <returns>Fluent 字形。</returns>
     private static string SortModeGlyph(SortMode mode) => mode switch
     {
-        SortMode.Date => WindowsIcons.CalendarGlyph,
-        SortMode.Size => WindowsIcons.PageGlyph,
+        SortMode.Date => WindowsIcons.SortDateGlyph,
+        SortMode.Size => WindowsIcons.SortSizeGlyph,
         _ => WindowsIcons.DocumentGlyph,
     };
 
@@ -706,15 +706,15 @@ internal sealed class WindowsFilterBar : Panel
     private static string SortOrderGlyph(SortOrder order)
         => order == SortOrder.Descending ? WindowsIcons.DownGlyph : WindowsIcons.UpGlyph;
 
-    /// <summary>星级条件的语义前置图标（FILTER-08）；数字档共用星形。</summary>
+    /// <summary>星级条件的语义前置图标（FILTER-08）；数字档使用对应数字圆。</summary>
     /// <param name="key">条件键。</param>
     /// <returns>Fluent 字形。</returns>
     private static string RatingGlyph(string key) => key switch
     {
-        "None" => WindowsIcons.ClearGlyph,
+        "None" => WindowsIcons.UnratedGlyph,
         "Rejected" => WindowsIcons.BlockedGlyph,
-        "Conflict" => WindowsIcons.WarningGlyph,
-        _ when key.StartsWith("Eq", StringComparison.Ordinal) => WindowsIcons.StarGlyph,
+        "Conflict" => IconCatalog.FluentGlyph(IconCatalog.FilterConflict),
+        _ when key.StartsWith("Eq", StringComparison.Ordinal) => WindowsIcons.ForRatingFilter(key),
         _ => WindowsIcons.SelectAllGlyph,
     };
 
@@ -723,9 +723,9 @@ internal sealed class WindowsFilterBar : Panel
     /// <returns>可直接作为 <c>MenuFlyoutItem.Icon</c> 的图标元素。</returns>
     private static FontIcon CreateMenuIcon(string glyph) => new()
     {
-        FontFamily = new FontFamily(WindowsIcons.FluentFontFamily),
+        FontFamily = new FontFamily(WindowsIcons.FontFamilyForGlyph(glyph)),
         Glyph = glyph,
-        FontSize = DesignTokens.MenuIconSize,
+        FontSize = DesignTokens.MenuIconFontSize,
     };
 
     /// <summary>读取 WinUI 主题画刷；缺失时退回透明，避免资源键漂移让控件构造失败。</summary>

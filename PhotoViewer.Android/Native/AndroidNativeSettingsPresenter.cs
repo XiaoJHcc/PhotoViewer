@@ -257,13 +257,13 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         header.Clickable = true;
         header.ImportantForAccessibility = ImportantForAccessibility.No;
         _header = header;
-        _back = Button("‹", 26, () => { if (!GoBack()) Dismiss(); });
-        _back.SetTextSize(global::Android.Util.ComplexUnitType.Sp, 26);
+        _back = IconButton(IconCatalog.NavigationBack, 22, () => { if (!GoBack()) Dismiss(); });
+        _back.SetTextSize(global::Android.Util.ComplexUnitType.Dip, 26);
         _back.SetPadding((int)(8 * density), 0, (int)(8 * density), 0);
         _back.Visibility = ViewStates.Invisible;
         _title = Text("设置", 17, AndroidUiTheme.TextPrimary, bold: true);
         _title.Gravity = GravityFlags.Center;
-        var close = Button("✕", 20, Dismiss);
+        var close = IconButton(IconCatalog.NavigationClose, 18, Dismiss);
         header.AddView(_back, new LinearLayout.LayoutParams((int)(44 * density), (int)(48 * density)));
         header.AddView(_title, new LinearLayout.LayoutParams(0, (int)(48 * density), 1));
         header.AddView(close, new LinearLayout.LayoutParams((int)(44 * density), (int)(48 * density)));
@@ -506,7 +506,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         background.SetCornerRadius((float)AndroidUiTheme.Dp(_activity, 10));
         _scaleCard.Background = background;
         _scaleCard.ClipToOutline = true;
-        _scaleAddRow = TextButtonRow("＋ 添加缩放比例", AddScalePreset);
+        _scaleAddRow = TextButtonRow("添加缩放比例", AddScalePreset);
         RebuildScaleCard();
         Add(_content, SectionView("缩放比例预设", _scaleCard));
     }
@@ -897,7 +897,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         percent.Gravity = GravityFlags.Center;
         percent.SetPadding((int)(4 * density), 0, (int)(4 * density), 0);
 
-        var delete = Button("−", 18, () => DeleteScalePreset(preset));
+        var delete = IconButton(IconCatalog.SettingsRemove, 18, () => DeleteScalePreset(preset));
         delete.ContentDescription = "删除缩放比例";
 
         // SETTINGS-07：输入框与 % 作为一组在整行水平居中；行尾删除按钮不挤偏中心。
@@ -1183,7 +1183,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
                 case TextView text when text.Text == "%":
                     percent++;
                     break;
-                case TextView text when text.Text == "−":
+                case TextView text when text.Text == AndroidIcons.Remove:
                     deletes++;
                     break;
             }
@@ -1212,7 +1212,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         var column = new LinearLayout(_activity) { Orientation = Orientation.Vertical };
         column.AddView(Text(title, 16, AndroidUiTheme.TextPrimary, bold: true));
         column.AddView(Text(subtitle, 12, AndroidUiTheme.TextSecondary));
-        var chevron = Text("›", 22, AndroidUiTheme.TextSecondary);
+        var chevron = IconText(IconCatalog.NavigationForward, 20, AndroidUiTheme.TextSecondary);
         chevron.Gravity = GravityFlags.Center;
         row.AddView(column, new LinearLayout.LayoutParams(0, LayoutParams.WrapContent, 1));
         row.AddView(chevron, new LinearLayout.LayoutParams(ChevronWidth(), LayoutParams.WrapContent));
@@ -1245,7 +1245,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         var valueLabel = Text(formatter?.Invoke(current) ?? current.ToString(CultureInfo.InvariantCulture), 13,
             AndroidUiTheme.TextSecondary);
         valueLabel.Gravity = GravityFlags.Center;
-        var minus = Button("−", 18, () =>
+        var minus = IconButton(IconCatalog.SettingsRemove, 18, () =>
         {
             int next = Math.Clamp(getter() - step, minimum, Math.Max(minimum, maximum()));
             setter(next);
@@ -1253,7 +1253,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
             valueLabel.Text = formatter?.Invoke(next) ?? next.ToString(CultureInfo.InvariantCulture);
             RefreshDynamicTexts();
         });
-        var plus = Button("＋", 18, () =>
+        var plus = IconButton(IconCatalog.SettingsAdd, 18, () =>
         {
             int next = Math.Clamp(getter() + step, minimum, Math.Max(minimum, maximum()));
             setter(next);
@@ -1276,7 +1276,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         var column = TextColumn(title, subtitle);
         var current = Text(value, 13, AndroidUiTheme.TextSecondary);
         current.Gravity = GravityFlags.CenterVertical;
-        var chevron = Text("›", 22, AndroidUiTheme.TextSecondary);
+        var chevron = IconText(IconCatalog.NavigationForward, 20, AndroidUiTheme.TextSecondary);
         chevron.Gravity = GravityFlags.Center;
         row.AddView(column, new LinearLayout.LayoutParams(0, LayoutParams.WrapContent, 1));
         row.AddView(current, new LinearLayout.LayoutParams(LayoutParams.WrapContent, ButtonSize()));
@@ -1285,14 +1285,21 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         return row;
     }
 
-    /// <summary>整行按钮（添加预设等）。</summary>
+    /// <summary>带添加图标的整行按钮。</summary>
     private View TextButtonRow(string title, Action action)
     {
         var row = Row();
         row.Clickable = true;
-        var text = Text(title, 14, AndroidUiTheme.Accent);
-        text.Gravity = GravityFlags.Center;
-        row.AddView(text, new LinearLayout.LayoutParams(LayoutParams.MatchParent, ButtonSize()));
+        var content = new LinearLayout(_activity) { Orientation = Orientation.Horizontal };
+        content.SetGravity(GravityFlags.Center);
+        var icon = IconText(IconCatalog.SettingsAdd, 16, AndroidUiTheme.Accent);
+        var iconParams = new LinearLayout.LayoutParams(LayoutParams.WrapContent, LayoutParams.WrapContent)
+        {
+            RightMargin = (int)AndroidUiTheme.Dp(_activity, 8),
+        };
+        content.AddView(icon, iconParams);
+        content.AddView(Text(title, 14, AndroidUiTheme.Accent));
+        row.AddView(content, new LinearLayout.LayoutParams(LayoutParams.MatchParent, ButtonSize()));
         row.Click += (_, _) => action();
         return row;
     }
@@ -1438,10 +1445,17 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
             Typeface = bold ? Typeface.Create(Typeface.Default, TypefaceStyle.Bold) : Typeface.Default,
         }.WithTextColor(color);
 
-    /// <summary>文本按钮（透明底，点击区域 44dp）。</summary>
-    private TextView Button(string label, double sizeSp, Action action)
+    private TextView IconText(string id, double sizeDp, Color color)
     {
-        var text = Text(label, sizeSp, AndroidUiTheme.TextPrimary);
+        var text = Text(AndroidIcons.Glyph(id), sizeDp, color);
+        text.SetTextSize(global::Android.Util.ComplexUnitType.Dip, (float)sizeDp);
+        text.SetTypeface(AndroidUiTheme.IconTypeface(_activity), TypefaceStyle.Normal);
+        return text;
+    }
+
+    private TextView IconButton(string id, double sizeDp, Action action)
+    {
+        var text = IconText(id, sizeDp, AndroidUiTheme.TextPrimary);
         text.Gravity = GravityFlags.Center;
         text.Clickable = true;
         text.Click += (_, _) => action();

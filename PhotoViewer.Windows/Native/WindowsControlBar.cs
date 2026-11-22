@@ -30,9 +30,6 @@ namespace PhotoViewer.Windows.Native;
 /// </summary>
 internal sealed class WindowsControlBar : Grid
 {
-    /// <summary>未点亮星形的描边字形(<c>icon.star</c>)。</summary>
-    private const string StarOutlineGlyph = "\uE734";
-
     /// <summary>EXIF 块衬底底色(WinUI 卡片材质)。</summary>
     private const string ExifBlockBackgroundKey = "CardBackgroundFillColorDefaultBrush";
 
@@ -910,7 +907,7 @@ internal sealed class WindowsControlBar : Grid
     private static FontIcon CreateCommandGlyph(string glyph) => new()
     {
         Glyph = glyph,
-        FontFamily = new FontFamily(WindowsIcons.FluentFontFamily),
+        FontFamily = new FontFamily(WindowsIcons.FontFamilyForGlyph(glyph)),
         FontSize = DesignTokens.ToolbarCommandGlyphFontSize,
         HorizontalAlignment = HorizontalAlignment.Center,
         VerticalAlignment = VerticalAlignment.Center,
@@ -966,7 +963,7 @@ internal sealed class WindowsControlBar : Grid
         var glyph = new TextBlock
         {
             Text = WindowsIcons.ClearGlyph,
-            FontFamily = new FontFamily(WindowsIcons.FluentFontFamily),
+            FontFamily = new FontFamily(WindowsIcons.RegularFontFamily),
             FontSize = DesignTokens.ToolbarRatingGlyphFontSize,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
@@ -1012,7 +1009,7 @@ internal sealed class WindowsControlBar : Grid
             var on = value > 0 && rating >= value;
             var glyph = value == 0
                 ? hasConflict ? WindowsIcons.WarningGlyph : WindowsIcons.ClearGlyph
-                : on ? WindowsIcons.StarGlyph : StarOutlineGlyph;
+                : on ? WindowsIcons.StarGlyph : WindowsIcons.StarOutlineGlyph;
             var size = value == 0 && !hasConflict
                 ? DesignTokens.ToolbarRatingClearGlyphFontSize
                 : DesignTokens.ToolbarRatingGlyphFontSize;
@@ -1020,6 +1017,7 @@ internal sealed class WindowsControlBar : Grid
                 ? hasConflict ? WindowsLayout.StarConflict : WindowsLayout.StarClear
                 : on ? WindowsLayout.StarOn : WindowsLayout.StarOff;
             slot.Glyph.Text = glyph;
+            slot.Glyph.FontFamily = new FontFamily(WindowsIcons.FontFamilyForGlyph(glyph));
             slot.Glyph.FontSize = size;
             slot.Glyph.Foreground = new SolidColorBrush(tint);
             slot.Glyph.Opacity = hasFile ? 1 : WindowsLayout.DisabledContentAlpha;

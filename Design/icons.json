@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 2,
+  "families": {
+    "fluent": {
+      "name": "Fluent UI System Icons",
+      "revision": "6c2c9075cf8952ef48369b2475233b6e9761efed",
+      "regularMetadata": "https://raw.githubusercontent.com/microsoft/fluentui-system-icons/6c2c9075cf8952ef48369b2475233b6e9761efed/fonts/FluentSystemIcons-Regular.json",
+      "filledMetadata": "https://raw.githubusercontent.com/microsoft/fluentui-system-icons/6c2c9075cf8952ef48369b2475233b6e9761efed/fonts/FluentSystemIcons-Filled.json",
+      "regularFont": "https://raw.githubusercontent.com/microsoft/fluentui-system-icons/6c2c9075cf8952ef48369b2475233b6e9761efed/fonts/FluentSystemIcons-Regular.ttf",
+      "filledFont": "https://raw.githubusercontent.com/microsoft/fluentui-system-icons/6c2c9075cf8952ef48369b2475233b6e9761efed/fonts/FluentSystemIcons-Filled.ttf",
+      "license": "https://raw.githubusercontent.com/microsoft/fluentui-system-icons/6c2c9075cf8952ef48369b2475233b6e9761efed/LICENSE"
+    }
+  },
+  "reference": {
+    "family": "SF Symbols",
+    "system": "macOS 26.7.3",
+    "pointSize": 18,
+    "weight": "regular",
+    "alphaThreshold": 0.5,
+    "rule": "mean-bounding-box-diagonal-ratio"
+  },
+  "icons": [
+    { "id": "command.open", "title": "打开文件", "group": "命令", "apple": "folder", "fluent": "ic_fluent_folder_20_regular" },
+    { "id": "command.previous", "title": "上一张", "group": "命令", "apple": "chevron.left", "fluent": "ic_fluent_chevron_left_20_regular" },
+    { "id": "command.next", "title": "下一张", "group": "命令", "apple": "chevron.right", "fluent": "ic_fluent_chevron_right_20_regular" },
+    { "id": "command.exchange", "title": "切换上一张", "group": "命令", "apple": "arrow.left.arrow.right", "fluent": "ic_fluent_arrow_swap_20_regular" },
+    { "id": "command.fit", "title": "缩放适应", "group": "命令", "apple": "arrow.up.left.and.arrow.down.right", "fluent": "ic_fluent_arrow_maximize_top_left_bottom_right_20_regular" },
+    { "id": "command.zoomIn", "title": "放大", "group": "命令", "apple": "plus", "fluent": "ic_fluent_add_20_regular" },
+    { "id": "command.zoomOut", "title": "缩小", "group": "命令", "apple": "minus", "fluent": "ic_fluent_subtract_20_regular" },
+    { "id": "command.analysis", "title": "分析栏", "group": "命令", "apple": "square.grid.2x2", "fluent": "ic_fluent_grid_20_regular" },
+    { "id": "command.enhance", "title": "雾天增强", "group": "命令", "apple": "wand.and.stars", "fluent": "ic_fluent_wand_20_regular" },
+
+    { "id": "menu.openFile", "title": "打开单个文件", "group": "菜单", "apple": "doc", "fluent": "ic_fluent_document_20_regular" },
+    { "id": "menu.filmstrip", "title": "胶片栏", "group": "菜单", "apple": "rectangle.stack", "fluent": "ic_fluent_stack_20_regular" },
+    { "id": "menu.control", "title": "控制栏", "group": "菜单", "apple": "slider.horizontal.3", "fluent": "ic_fluent_options_20_regular" },
+    { "id": "menu.exif", "title": "EXIF", "group": "菜单", "apple": "text.below.photo", "fluent": "ic_fluent_image_alt_text_20_regular" },
+    { "id": "menu.tools", "title": "工具", "group": "菜单", "apple": "wrench.and.screwdriver", "fluent": "ic_fluent_wrench_screwdriver_20_regular" },
+    { "id": "menu.settings", "title": "设置", "group": "菜单", "apple": "gearshape", "fluent": "ic_fluent_settings_20_regular" },
+    { "id": "menu.quit", "title": "退出", "group": "菜单", "apple": "power", "fluent": "ic_fluent_power_20_regular" },
+
+    { "id": "filter.entry", "title": "筛选", "group": "筛选", "apple": "line.3.horizontal.decrease", "fluent": "ic_fluent_filter_20_regular" },
+    { "id": "filter.more", "title": "更多", "group": "筛选", "apple": "ellipsis", "fluent": "ic_fluent_more_horizontal_20_regular" },
+    { "id": "filter.sortName", "title": "按文件名", "group": "筛选", "apple": "textformat", "fluent": "ic_fluent_text_case_title_20_regular" },
+    { "id": "filter.sortDate", "title": "按拍摄时间", "group": "筛选", "apple": "camera", "fluent": "ic_fluent_camera_20_regular" },
+    { "id": "filter.sortSize", "title": "按文件大小", "group": "筛选", "apple": "internaldrive", "fluent": "ic_fluent_hard_drive_20_regular" },
+    { "id": "filter.ascending", "title": "升序", "group": "筛选", "apple": "arrow.up", "fluent": "ic_fluent_arrow_up_20_regular" },
+    { "id": "filter.descending", "title": "降序", "group": "筛选", "apple": "arrow.down", "fluent": "ic_fluent_arrow_down_20_regular" },
+    { "id": "filter.all", "title": "全部星级", "group": "筛选", "apple": "square.grid.3x3", "fluent": "ic_fluent_table_20_regular" },
+    { "id": "filter.unrated", "title": "无星级", "group": "筛选", "apple": "star.slash", "fluent": "ic_fluent_star_off_20_regular" },
+    { "id": "filter.rating1", "title": "一星筛选", "group": "筛选", "apple": "1.circle", "fluent": "ic_fluent_number_circle_1_20_regular" },
+    { "id": "filter.rating2", "title": "二星筛选", "group": "筛选", "apple": "2.circle", "fluent": "ic_fluent_number_circle_2_20_regular" },
+    { "id": "filter.rating3", "title": "三星筛选", "group": "筛选", "apple": "3.circle", "fluent": "ic_fluent_number_circle_3_20_regular" },
+    { "id": "filter.rating4", "title": "四星筛选", "group": "筛选", "apple": "4.circle", "fluent": "ic_fluent_number_circle_4_20_regular" },
+    { "id": "filter.rating5", "title": "五星筛选", "group": "筛选", "apple": "5.circle", "fluent": "ic_fluent_number_circle_5_20_regular" },
+    { "id": "filter.rejected", "title": "已拒绝", "group": "筛选", "apple": "xmark.circle", "fluent": "ic_fluent_dismiss_circle_20_regular" },
+    { "id": "filter.conflict", "title": "筛选评分冲突", "group": "筛选", "apple": "exclamationmark.triangle", "fluent": "ic_fluent_warning_20_regular" },
+
+    { "id": "rating.clear", "title": "清零评分", "group": "评分", "apple": "xmark", "fluent": "ic_fluent_dismiss_20_regular" },
+    { "id": "rating.star", "title": "描边星", "group": "评分", "apple": "star", "fluent": "ic_fluent_star_20_regular" },
+    { "id": "rating.starFilled", "title": "实心星", "group": "评分", "apple": "star.fill", "fluent": "ic_fluent_star_20_filled" },
+    { "id": "rating.warning", "title": "评分冲突", "group": "评分", "apple": "exclamationmark.triangle.fill", "fluent": "ic_fluent_warning_20_filled" },
+
+    { "id": "common.check", "title": "勾选", "group": "通用", "apple": "checkmark", "fluent": "ic_fluent_checkmark_20_regular" },
+    { "id": "common.chevronDown", "title": "下拉箭头", "group": "通用", "apple": "chevron.down", "fluent": "ic_fluent_chevron_down_20_regular" },
+    { "id": "common.photoPlaceholder", "title": "照片占位", "group": "通用", "apple": "photo", "fluent": "ic_fluent_image_20_regular" },
+
+    { "id": "settings.file", "title": "文件设置", "group": "设置", "apple": "folder", "fluent": "ic_fluent_folder_20_regular" },
+    { "id": "settings.preview", "title": "预览设置", "group": "设置", "apple": "photo", "fluent": "ic_fluent_image_20_regular" },
+    { "id": "settings.control", "title": "控制设置", "group": "设置", "apple": "keyboard", "fluent": "ic_fluent_keyboard_20_regular" },
+    { "id": "settings.exif", "title": "EXIF 设置", "group": "设置", "apple": "text.below.photo", "fluent": "ic_fluent_image_alt_text_20_regular" },
+    { "id": "settings.ai", "title": "AI 设置", "group": "设置", "apple": "sparkles", "fluent": "ic_fluent_sparkle_20_regular" },
+    { "id": "settings.add", "title": "添加", "group": "设置", "apple": "plus", "fluent": "ic_fluent_add_20_regular" },
+    { "id": "settings.remove", "title": "删除", "group": "设置", "apple": "minus", "fluent": "ic_fluent_subtract_20_regular" },
+    { "id": "settings.drag", "title": "排序把手", "group": "设置", "apple": "line.3.horizontal", "fluent": "ic_fluent_line_horizontal_3_20_regular" },
+
+    { "id": "tools.exif", "title": "EXIF 工具", "group": "工具", "apple": "text.below.photo", "fluent": "ic_fluent_image_alt_text_20_regular" },
+    { "id": "tools.stats", "title": "统计工具", "group": "工具", "apple": "chart.bar", "fluent": "ic_fluent_data_bar_vertical_20_regular" },
+    { "id": "tools.dino", "title": "DINO 诊断", "group": "工具", "apple": "brain", "fluent": "ic_fluent_brain_20_regular" },
+    { "id": "tools.cv", "title": "CV 诊断", "group": "工具", "apple": "viewfinder", "fluent": "ic_fluent_scan_20_regular" },
+
+    { "id": "navigation.back", "title": "返回", "group": "导航", "apple": "chevron.left", "fluent": "ic_fluent_chevron_left_20_regular" },
+    { "id": "navigation.forward", "title": "前进", "group": "导航", "apple": "chevron.right", "fluent": "ic_fluent_chevron_right_20_regular" },
+    { "id": "navigation.close", "title": "关闭", "group": "导航", "apple": "xmark", "fluent": "ic_fluent_dismiss_20_regular" }
+  ]
+}

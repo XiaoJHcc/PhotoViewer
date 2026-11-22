@@ -249,7 +249,7 @@ internal sealed partial class WindowsSettingsPages
         grid.Children.Add(editor);
         Grid.SetColumn(percent, 2);
         grid.Children.Add(percent);
-        var delete = WindowsSettingsCard.IconButton("\uE74D", "移除预设", () => _settings.RemoveScalePreset(preset));
+        var delete = WindowsSettingsCard.IconButton(WindowsIcons.RemoveGlyph, "移除预设", () => _settings.RemoveScalePreset(preset));
         delete.IsEnabled = _settings.CanRemoveScalePreset;
         delete.HorizontalAlignment = HorizontalAlignment.Right;
         delete.VerticalAlignment = VerticalAlignment.Center;

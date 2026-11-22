@@ -341,7 +341,7 @@ internal static partial class AndroidNativeChecks
     {
         var activity = _activity!;
         double density = AndroidUiTheme.Density(activity);
-        var combo = new AndroidGlassCombo(activity, DesignTokens.IconFilter, "筛选", DesignTokens.IconMore, "更多");
+        var combo = new AndroidGlassCombo(activity, AndroidIcons.Filter, "筛选", AndroidIcons.More, "更多");
         try
         {
             int width = (int)Math.Round(AndroidGlassCombo.Size * density);

@@ -1,0 +1,1000 @@
+{
+  "schemaVersion": 2,
+  "families": {
+    "fluent": {
+      "name": "Fluent UI System Icons",
+      "revision": "6c2c9075cf8952ef48369b2475233b6e9761efed",
+      "regularMetadata": "https://raw.githubusercontent.com/microsoft/fluentui-system-icons/6c2c9075cf8952ef48369b2475233b6e9761efed/fonts/FluentSystemIcons-Regular.json",
+      "filledMetadata": "https://raw.githubusercontent.com/microsoft/fluentui-system-icons/6c2c9075cf8952ef48369b2475233b6e9761efed/fonts/FluentSystemIcons-Filled.json",
+      "regularFont": "https://raw.githubusercontent.com/microsoft/fluentui-system-icons/6c2c9075cf8952ef48369b2475233b6e9761efed/fonts/FluentSystemIcons-Regular.ttf",
+      "filledFont": "https://raw.githubusercontent.com/microsoft/fluentui-system-icons/6c2c9075cf8952ef48369b2475233b6e9761efed/fonts/FluentSystemIcons-Filled.ttf",
+      "license": "https://raw.githubusercontent.com/microsoft/fluentui-system-icons/6c2c9075cf8952ef48369b2475233b6e9761efed/LICENSE"
+    }
+  },
+  "reference": {
+    "family": "SF Symbols",
+    "system": "macOS 26.7.3",
+    "pointSize": 18,
+    "weight": "regular",
+    "alphaThreshold": 0.5,
+    "rule": "mean-bounding-box-diagonal-ratio"
+  },
+  "icons": [
+    {
+      "id": "command.open",
+      "fluentCodepoint": 62488,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.4,
+        "height": 12.6
+      },
+      "sfInk": {
+        "width": 20,
+        "height": 16
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.039701769986255,
+        "height": 16.659739048737972
+      }
+    },
+    {
+      "id": "command.previous",
+      "fluentCodepoint": 62122,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 5.852571428571427,
+        "height": 10.818
+      },
+      "sfInk": {
+        "width": 8.5,
+        "height": 15
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 7.738278790801555,
+        "height": 14.303575954702174
+      }
+    },
+    {
+      "id": "command.next",
+      "fluentCodepoint": 62128,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 5.852,
+        "height": 10.8
+      },
+      "sfInk": {
+        "width": 8.5,
+        "height": 15
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 7.737523247080526,
+        "height": 14.279776327489692
+      }
+    },
+    {
+      "id": "command.exchange",
+      "fluentCodepoint": 61837,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 10.8,
+        "height": 12.6
+      },
+      "sfInk": {
+        "width": 17,
+        "height": 20.5
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 14.279776327489692,
+        "height": 16.659739048737972
+      }
+    },
+    {
+      "id": "command.fit",
+      "fluentCodepoint": 985748,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 10.8,
+        "height": 10.8
+      },
+      "sfInk": {
+        "width": 17,
+        "height": 17
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 14.279776327489692,
+        "height": 14.279776327489692
+      }
+    },
+    {
+      "id": "command.zoomIn",
+      "fluentCodepoint": 61705,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 13.5,
+        "height": 13.5
+      },
+      "sfInk": {
+        "width": 14.5,
+        "height": 14.5
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 17.849720409362114,
+        "height": 17.849720409362114
+      }
+    },
+    {
+      "id": "command.zoomOut",
+      "fluentCodepoint": 60368,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 12.6,
+        "height": 0.936
+      },
+      "sfInk": {
+        "width": 14.5,
+        "height": 1.5
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 16.659739048737972,
+        "height": 1.2375806150491067
+      }
+    },
+    {
+      "id": "command.analysis",
+      "fluentCodepoint": 62562,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.4,
+        "height": 14.4
+      },
+      "sfInk": {
+        "width": 16,
+        "height": 16
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.039701769986255,
+        "height": 19.039701769986255
+      }
+    },
+    {
+      "id": "command.enhance",
+      "fluentCodepoint": 60983,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.409,
+        "height": 14.409
+      },
+      "sfInk": {
+        "width": 17,
+        "height": 17.5
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.051601583592497,
+        "height": 19.051601583592497
+      }
+    },
+    {
+      "id": "menu.openFile",
+      "fluentCodepoint": 62328,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 10.8,
+        "height": 14.4
+      },
+      "sfInk": {
+        "width": 15,
+        "height": 19
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 14.279776327489692,
+        "height": 19.039701769986255
+      }
+    },
+    {
+      "id": "menu.filmstrip",
+      "fluentCodepoint": 63378,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.4,
+        "height": 12.6
+      },
+      "sfInk": {
+        "width": 18.5,
+        "height": 19.5
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.039701769986255,
+        "height": 16.659739048737972
+      }
+    },
+    {
+      "id": "menu.control",
+      "fluentCodepoint": 62855,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.4,
+        "height": 12.6
+      },
+      "sfInk": {
+        "width": 17.5,
+        "height": 15
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.039701769986255,
+        "height": 16.659739048737972
+      }
+    },
+    {
+      "id": "menu.exif",
+      "fluentCodepoint": 62605,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.4,
+        "height": 14.4
+      },
+      "sfInk": {
+        "width": 18,
+        "height": 22.5
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.039701769986255,
+        "height": 19.039701769986255
+      }
+    },
+    {
+      "id": "menu.tools",
+      "fluentCodepoint": 61063,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 13.054378378378379,
+        "height": 14.4
+      },
+      "sfInk": {
+        "width": 20.5,
+        "height": 20.5
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 17.26051882756119,
+        "height": 19.039701769986255
+      }
+    },
+    {
+      "id": "menu.settings",
+      "fluentCodepoint": 63145,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.608799999999999,
+        "height": 15.3
+      },
+      "sfInk": {
+        "width": 19,
+        "height": 19
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.315777445651054,
+        "height": 20.229683130610397
+      }
+    },
+    {
+      "id": "menu.quit",
+      "fluentCodepoint": 62990,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 13.54609756097561,
+        "height": 14.4
+      },
+      "sfInk": {
+        "width": 18,
+        "height": 18.5
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 17.910670674174572,
+        "height": 19.039701769986255
+      }
+    },
+    {
+      "id": "filter.entry",
+      "fluentCodepoint": 62470,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 12.6,
+        "height": 8.1
+      },
+      "sfInk": {
+        "width": 18,
+        "height": 10.5
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 16.659739048737972,
+        "height": 10.70983224561727
+      }
+    },
+    {
+      "id": "filter.more",
+      "fluentCodepoint": 59428,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 11.232,
+        "height": 2.232
+      },
+      "sfInk": {
+        "width": 16.5,
+        "height": 3.5
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 14.850967380589278,
+        "height": 2.95115377434787
+      }
+    },
+    {
+      "id": "filter.sortName",
+      "fluentCodepoint": 60653,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.4,
+        "height": 10.37025
+      },
+      "sfInk": {
+        "width": 20,
+        "height": 13
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.039701769986255,
+        "height": 13.711560227791665
+      }
+    },
+    {
+      "id": "filter.sortDate",
+      "fluentCodepoint": 62036,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.4,
+        "height": 13.5
+      },
+      "sfInk": {
+        "width": 21.5,
+        "height": 17
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.039701769986255,
+        "height": 17.849720409362114
+      }
+    },
+    {
+      "id": "filter.sortSize",
+      "fluentCodepoint": 59107,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.4,
+        "height": 10.8
+      },
+      "sfInk": {
+        "width": 20.5,
+        "height": 15
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.039701769986255,
+        "height": 14.279776327489692
+      }
+    },
+    {
+      "id": "filter.ascending",
+      "fluentCodepoint": 61851,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 12.612,
+        "height": 14.4045
+      },
+      "sfInk": {
+        "width": 13.5,
+        "height": 16.5
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 16.67560546687963,
+        "height": 19.045651676789376
+      }
+    },
+    {
+      "id": "filter.descending",
+      "fluentCodepoint": 61768,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 12.596571428571428,
+        "height": 14.4
+      },
+      "sfInk": {
+        "width": 13.5,
+        "height": 16.5
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 16.655205786411788,
+        "height": 19.039701769986255
+      }
+    },
+    {
+      "id": "filter.all",
+      "fluentCodepoint": 63325,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 12.6,
+        "height": 12.6
+      },
+      "sfInk": {
+        "width": 17,
+        "height": 17
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 16.659739048737972,
+        "height": 16.659739048737972
+      }
+    },
+    {
+      "id": "filter.unrated",
+      "fluentCodepoint": 63258,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.410285714285715,
+        "height": 14.4
+      },
+      "sfInk": {
+        "width": 19.5,
+        "height": 18.5
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.05330155696482,
+        "height": 19.039701769986255
+      }
+    },
+    {
+      "id": "filter.rating1",
+      "fluentCodepoint": 59525,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.4,
+        "height": 14.4
+      },
+      "sfInk": {
+        "width": 18,
+        "height": 18
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.039701769986255,
+        "height": 19.039701769986255
+      }
+    },
+    {
+      "id": "filter.rating2",
+      "fluentCodepoint": 983631,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.4,
+        "height": 14.4
+      },
+      "sfInk": {
+        "width": 18,
+        "height": 18
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.039701769986255,
+        "height": 19.039701769986255
+      }
+    },
+    {
+      "id": "filter.rating3",
+      "fluentCodepoint": 983637,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.4,
+        "height": 14.4
+      },
+      "sfInk": {
+        "width": 18,
+        "height": 18
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.039701769986255,
+        "height": 19.039701769986255
+      }
+    },
+    {
+      "id": "filter.rating4",
+      "fluentCodepoint": 983643,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.4,
+        "height": 14.4
+      },
+      "sfInk": {
+        "width": 18,
+        "height": 18
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.039701769986255,
+        "height": 19.039701769986255
+      }
+    },
+    {
+      "id": "filter.rating5",
+      "fluentCodepoint": 983649,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.4,
+        "height": 14.4
+      },
+      "sfInk": {
+        "width": 18,
+        "height": 18
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.039701769986255,
+        "height": 19.039701769986255
+      }
+    },
+    {
+      "id": "filter.rejected",
+      "fluentCodepoint": 62317,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.4,
+        "height": 14.4
+      },
+      "sfInk": {
+        "width": 18,
+        "height": 18
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.039701769986255,
+        "height": 19.039701769986255
+      }
+    },
+    {
+      "id": "filter.conflict",
+      "fluentCodepoint": 63593,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 15.292000000000002,
+        "height": 14.409
+      },
+      "sfInk": {
+        "width": 18.5,
+        "height": 16.5
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 20.219105518515963,
+        "height": 19.051601583592497
+      }
+    },
+    {
+      "id": "rating.clear",
+      "fluentCodepoint": 62313,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 10.8,
+        "height": 10.8
+      },
+      "sfInk": {
+        "width": 14,
+        "height": 14
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 14.279776327489692,
+        "height": 14.279776327489692
+      }
+    },
+    {
+      "id": "rating.star",
+      "fluentCodepoint": 63247,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.410285714285715,
+        "height": 13.772571428571428
+      },
+      "sfInk": {
+        "width": 19.5,
+        "height": 18.5
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.05330155696482,
+        "height": 18.210114764293998
+      }
+    },
+    {
+      "id": "rating.starFilled",
+      "fluentCodepoint": 63256,
+      "filled": true,
+      "fluentSourceInk": {
+        "width": 14.410285714285715,
+        "height": 13.772571428571428
+      },
+      "sfInk": {
+        "width": 19.5,
+        "height": 18.5
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.05330155696482,
+        "height": 18.210114764293998
+      }
+    },
+    {
+      "id": "rating.warning",
+      "fluentCodepoint": 63617,
+      "filled": true,
+      "fluentSourceInk": {
+        "width": 15.292000000000002,
+        "height": 14.409
+      },
+      "sfInk": {
+        "width": 18.5,
+        "height": 16.5
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 20.219105518515963,
+        "height": 19.051601583592497
+      }
+    },
+    {
+      "id": "common.check",
+      "fluentCodepoint": 62100,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 13.952,
+        "height": 10.352
+      },
+      "sfInk": {
+        "width": 15,
+        "height": 15
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 18.447355492697795,
+        "height": 13.68743005020123
+      }
+    },
+    {
+      "id": "common.chevronDown",
+      "fluentCodepoint": 62115,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 10.818,
+        "height": 5.852571428571427
+      },
+      "sfInk": {
+        "width": 15,
+        "height": 8.5
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 14.303575954702174,
+        "height": 7.738278790801555
+      }
+    },
+    {
+      "id": "common.photoPlaceholder",
+      "fluentCodepoint": 62600,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 12.6,
+        "height": 12.6
+      },
+      "sfInk": {
+        "width": 20.5,
+        "height": 16
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 16.659739048737972,
+        "height": 16.659739048737972
+      }
+    },
+    {
+      "id": "settings.file",
+      "fluentCodepoint": 62488,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.4,
+        "height": 12.6
+      },
+      "sfInk": {
+        "width": 20,
+        "height": 16
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.039701769986255,
+        "height": 16.659739048737972
+      }
+    },
+    {
+      "id": "settings.preview",
+      "fluentCodepoint": 62600,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 12.6,
+        "height": 12.6
+      },
+      "sfInk": {
+        "width": 20.5,
+        "height": 16
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 16.659739048737972,
+        "height": 16.659739048737972
+      }
+    },
+    {
+      "id": "settings.control",
+      "fluentCodepoint": 62648,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.4,
+        "height": 9.9
+      },
+      "sfInk": {
+        "width": 22,
+        "height": 14
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.039701769986255,
+        "height": 13.08979496686555
+      }
+    },
+    {
+      "id": "settings.exif",
+      "fluentCodepoint": 62605,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.4,
+        "height": 14.4
+      },
+      "sfInk": {
+        "width": 18,
+        "height": 22.5
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.039701769986255,
+        "height": 19.039701769986255
+      }
+    },
+    {
+      "id": "settings.ai",
+      "fluentCodepoint": 60211,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 12.6,
+        "height": 12.6
+      },
+      "sfInk": {
+        "width": 16,
+        "height": 20
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 16.659739048737972,
+        "height": 16.659739048737972
+      }
+    },
+    {
+      "id": "settings.add",
+      "fluentCodepoint": 61705,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 13.5,
+        "height": 13.5
+      },
+      "sfInk": {
+        "width": 14.5,
+        "height": 14.5
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 17.849720409362114,
+        "height": 17.849720409362114
+      }
+    },
+    {
+      "id": "settings.remove",
+      "fluentCodepoint": 60368,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 12.6,
+        "height": 0.936
+      },
+      "sfInk": {
+        "width": 14.5,
+        "height": 1.5
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 16.659739048737972,
+        "height": 1.2375806150491067
+      }
+    },
+    {
+      "id": "settings.drag",
+      "fluentCodepoint": 62689,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.4,
+        "height": 9.9
+      },
+      "sfInk": {
+        "width": 18,
+        "height": 9
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.039701769986255,
+        "height": 13.08979496686555
+      }
+    },
+    {
+      "id": "tools.exif",
+      "fluentCodepoint": 62605,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.4,
+        "height": 14.4
+      },
+      "sfInk": {
+        "width": 18,
+        "height": 22.5
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.039701769986255,
+        "height": 19.039701769986255
+      }
+    },
+    {
+      "id": "tools.stats",
+      "fluentCodepoint": 62271,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 12.6,
+        "height": 12.6
+      },
+      "sfInk": {
+        "width": 22.5,
+        "height": 16.5
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 16.659739048737972,
+        "height": 16.659739048737972
+      }
+    },
+    {
+      "id": "tools.dino",
+      "fluentCodepoint": 984983,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.419125,
+        "height": 14.41434965034965
+      },
+      "sfInk": {
+        "width": 23,
+        "height": 19.5
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.06498887389952,
+        "height": 19.05867489937243
+      }
+    },
+    {
+      "id": "tools.cv",
+      "fluentCodepoint": 59988,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 14.4,
+        "height": 14.4
+      },
+      "sfInk": {
+        "width": 17,
+        "height": 17
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 19.039701769986255,
+        "height": 19.039701769986255
+      }
+    },
+    {
+      "id": "navigation.back",
+      "fluentCodepoint": 62122,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 5.852571428571427,
+        "height": 10.818
+      },
+      "sfInk": {
+        "width": 8.5,
+        "height": 15
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 7.738278790801555,
+        "height": 14.303575954702174
+      }
+    },
+    {
+      "id": "navigation.forward",
+      "fluentCodepoint": 62128,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 5.852,
+        "height": 10.8
+      },
+      "sfInk": {
+        "width": 8.5,
+        "height": 15
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 7.737523247080526,
+        "height": 14.279776327489692
+      }
+    },
+    {
+      "id": "navigation.close",
+      "fluentCodepoint": 62313,
+      "filled": false,
+      "fluentSourceInk": {
+        "width": 10.8,
+        "height": 10.8
+      },
+      "sfInk": {
+        "width": 14,
+        "height": 14
+      },
+      "fluentScale": 1.322201511804601,
+      "fluentInk": {
+        "width": 14.279776327489692,
+        "height": 14.279776327489692
+      }
+    }
+  ],
+  "files": {
+    "FluentSystemIcons-Regular.ttf": "a3843967c21ae0189f302d0911da317f954d0c7e5026e89bb1acaef5ecf95a9a",
+    "FluentSystemIcons-Filled.ttf": "bdca2887213a46ce645fa396c562848c5f92f9f6a7a2a2512c645817734a9683"
+  }
+}

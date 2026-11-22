@@ -165,7 +165,7 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
         string IconSymbol,
         string? IconDigit,
         bool IconSolid,
-        double IconFontSizeSp,
+        double IconFontSizeDp,
         double IconTextSizePx,
         bool IconIgnoredForAccessibility,
         bool SubtitleVisible,
@@ -350,10 +350,11 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
 
             _handle = new TextView(context)
             {
-                Text = "≡",
-                TextSize = 22,
+                Text = AndroidIcons.DragHandle,
                 Gravity = GravityFlags.Center,
             };
+            _handle.SetTextSize(global::Android.Util.ComplexUnitType.Dip, 22);
+            _handle.SetTypeface(AndroidUiTheme.IconTypeface(context), TypefaceStyle.Normal);
             _handle.SetTextColor(AndroidUiTheme.TextSecondary);
             _handle.Clickable = true;
             _handle.Focusable = true;
@@ -409,12 +410,13 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
 
             var clear = new TextView(context)
             {
-                Text = "✕",
-                TextSize = 16,
+                Text = AndroidIcons.Clear,
                 Gravity = GravityFlags.Center,
                 Clickable = true,
                 Focusable = true,
             };
+            clear.SetTextSize(global::Android.Util.ComplexUnitType.Dip, 16);
+            clear.SetTypeface(AndroidUiTheme.IconTypeface(context), TypefaceStyle.Normal);
             clear.SetTextColor(AndroidUiTheme.TextSecondary);
             clear.SetMinimumWidth((int)AndroidUiTheme.Dp(context, 44));
             clear.Click += (_, _) => _item?.ClearBinding?.Invoke(primary);
@@ -478,7 +480,7 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
             // SETTINGS-01：控制栏功能行在勾选与命令名之间显示命令图标；文件格式与 EXIF 行不带图标。
             var hotkey = item.Hotkey;
             if (hotkey == null) _icon.Visibility = ViewStates.Gone;
-            else _icon.Show(hotkey.Command, hotkey.DisplaySymbol);
+            else _icon.Show(hotkey.Command);
             bool hasSubtitle = !string.IsNullOrWhiteSpace(item.Subtitle);
             _subtitle.Text = item.Subtitle ?? "";
             _subtitle.Visibility = hasSubtitle ? ViewStates.Visible : ViewStates.Gone;
@@ -585,7 +587,7 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
             return new RowLayoutSnapshot(Height, MinimumHeight, _check.Width,
                 ((View)_check.Parent!).Left + _check.Left + Math.Max(0, (_check.Width - glyph) / 2),
                 _icon.Visibility == ViewStates.Visible, _icon.Symbol, _icon.RatingDigit, _icon.SolidGlyph,
-                _icon.FontSizeSp, _icon.GlyphTextSizePx, _icon.ImportantForAccessibility == ImportantForAccessibility.No,
+                _icon.FontSizeDp, _icon.GlyphTextSizePx, _icon.ImportantForAccessibility == ImportantForAccessibility.No,
                 _subtitle.Visibility == ViewStates.Visible,
                 _title.Ellipsize != null, _subtitle.Ellipsize != null,
                 _primaryChip.Ellipsize != null, _secondaryChip.Ellipsize != null,

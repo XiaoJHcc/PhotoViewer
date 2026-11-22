@@ -155,21 +155,24 @@ internal sealed class AndroidThumbnailCard : View
         _starFilled = AndroidUiTheme.Paint(AndroidUiTheme.StarActive);
         if (AndroidUiTheme.IconTypeface(context) is { } outlineTypeface) _starOutline.SetTypeface(outlineTypeface);
         if (AndroidUiTheme.IconSolidTypeface(context) is { } solidTypeface) _starFilled.SetTypeface(solidTypeface);
-        _starOutline.TextSize = AndroidUiTheme.Sp(context, DesignTokens.FilmCardStarFontSize);
-        _starFilled.TextSize = AndroidUiTheme.Sp(context, DesignTokens.FilmCardStarFontSize);
+        _starOutline.TextSize = AndroidUiTheme.Dp(context, DesignTokens.FilmCardStarFontSize);
+        _starFilled.TextSize = AndroidUiTheme.Dp(context, DesignTokens.FilmCardStarFontSize);
         _badgePaint = AndroidUiTheme.Paint(AndroidUiTheme.ShakeBadge);
         _badgeTextPaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardBadgeFontSize, Color.White, bold: true);
         // FILM-05：清零叉使用中性图形色，不随评分点亮。
         _clearPaint = AndroidUiTheme.Paint(AndroidUiTheme.StarClear);
         if (AndroidUiTheme.IconTypeface(context) is { } clearTypeface) _clearPaint.SetTypeface(clearTypeface);
-        _clearPaint.TextSize = AndroidUiTheme.Sp(context, DesignTokens.FilmCardStarFontSize);
+        _clearPaint.TextSize = AndroidUiTheme.Dp(context, DesignTokens.FilmCardClearGlyphSize);
         _conflictPaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardStarFontSize, AndroidUiTheme.StarConflict);
+        _conflictPaint.TextSize = AndroidUiTheme.Dp(context, DesignTokens.FilmCardStarFontSize);
         if (AndroidUiTheme.IconTypeface(context) is { } iconTypeface) _conflictPaint.SetTypeface(iconTypeface);
         _smallNamePaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardSmallNameFontSize, AndroidUiTheme.TextPrimary, bold: true);
         _smallBadgePaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardSmallBadgeFontSize, Color.White, bold: true);
         _smallStarPaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardSmallBadgeFontSize, AndroidUiTheme.StarActive);
+        _smallStarPaint.TextSize = AndroidUiTheme.Dp(context, DesignTokens.FilmCardSmallBadgeFontSize);
         if (AndroidUiTheme.IconSolidTypeface(context) is { } smallSolid) _smallStarPaint.SetTypeface(smallSolid);
         _smallConflictPaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardSmallBadgeFontSize, AndroidUiTheme.StarConflict);
+        _smallConflictPaint.TextSize = AndroidUiTheme.Dp(context, DesignTokens.FilmCardSmallBadgeFontSize);
         if (AndroidUiTheme.IconTypeface(context) is { } smallIcon) _smallConflictPaint.SetTypeface(smallIcon);
         var listener = new CardGestureListener(this);
         _gestures = new GestureDetector(context, listener);
@@ -300,10 +303,20 @@ internal sealed class AndroidThumbnailCard : View
         }
         else
         {
-            string state = _file.IsThumbnailLoading ? "…" : "IMG";
-            var placeholderPaint = AndroidUiTheme.TextPaint(Context!, 13, Color.ParseColor("#777777")!, bold: true);
-            AndroidUiTheme.DrawCentered(canvas, state, placeholderPaint, imageRect.CenterX(),
-                imageRect.CenterY() + placeholderPaint.TextSize * .36f, imageRect.Width() - 6 * d);
+            using var placeholderPaint = AndroidUiTheme.TextPaint(Context!, DesignTokens.FilmCardPlaceholderGlyphFontSize,
+                Color.ParseColor("#777777")!);
+            if (_file.IsThumbnailLoading)
+            {
+                AndroidUiTheme.DrawCentered(canvas, "…", placeholderPaint, imageRect.CenterX(),
+                    imageRect.CenterY() + placeholderPaint.TextSize * .36f, imageRect.Width() - 6 * d);
+            }
+            else
+            {
+                placeholderPaint.TextSize = AndroidUiTheme.Dp(Context!, DesignTokens.FilmCardPlaceholderGlyphFontSize);
+                placeholderPaint.SetTypeface(AndroidUiTheme.IconTypeface(Context!));
+                AndroidUiTheme.DrawGlyphCentered(canvas, AndroidIcons.Glyph(IconCatalog.CommonPhotoPlaceholder),
+                    placeholderPaint, imageRect.CenterX(), imageRect.CenterY());
+            }
         }
         canvas.Restore();
         if (_file.IsInCache)
@@ -358,15 +371,15 @@ internal sealed class AndroidThumbnailCard : View
                 {
                     if (conflict)
                     {
-                        AndroidUiTheme.DrawGlyphCentered(canvas, AndroidUiTheme.IconGlyph(DesignTokens.IconWarning), _conflictPaint, cx, cy);
+                        AndroidUiTheme.DrawGlyphCentered(canvas, AndroidIcons.Warning, _conflictPaint, cx, cy);
                         continue;
                     }
-                    AndroidUiTheme.DrawGlyphCentered(canvas, AndroidUiTheme.IconGlyph(DesignTokens.IconClear), _clearPaint, cx, cy);
+                    AndroidUiTheme.DrawGlyphCentered(canvas, AndroidIcons.Clear, _clearPaint, cx, cy);
                     continue;
                 }
                 bool active = rating <= _file.Rating;
                 AndroidUiTheme.DrawGlyphCentered(canvas,
-                    AndroidUiTheme.IconGlyph(active ? DesignTokens.IconStarFilled : DesignTokens.IconStar),
+                    active ? AndroidIcons.StarFilled : AndroidIcons.Star,
                     active ? _starFilled : _starOutline, cx, cy);
             }
         }
@@ -436,9 +449,20 @@ internal sealed class AndroidThumbnailCard : View
         }
         else
         {
-            using var placeholderPaint = AndroidUiTheme.TextPaint(Context!, 11, Color.ParseColor("#777777")!, bold: true);
-            AndroidUiTheme.DrawCentered(canvas, file.IsThumbnailLoading ? "…" : "IMG", placeholderPaint,
-                imageRect.CenterX(), imageRect.CenterY() + placeholderPaint.TextSize * .36f, imageRect.Width() - 4 * d);
+            using var placeholderPaint = AndroidUiTheme.TextPaint(Context!, DesignTokens.FilmCardPlaceholderGlyphFontSize,
+                Color.ParseColor("#777777")!);
+            if (file.IsThumbnailLoading)
+            {
+                AndroidUiTheme.DrawCentered(canvas, "…", placeholderPaint,
+                    imageRect.CenterX(), imageRect.CenterY() + placeholderPaint.TextSize * .36f, imageRect.Width() - 4 * d);
+            }
+            else
+            {
+                placeholderPaint.TextSize = AndroidUiTheme.Dp(Context!, DesignTokens.FilmCardPlaceholderGlyphFontSize);
+                placeholderPaint.SetTypeface(AndroidUiTheme.IconTypeface(Context!));
+                AndroidUiTheme.DrawGlyphCentered(canvas, AndroidIcons.Glyph(IconCatalog.CommonPhotoPlaceholder),
+                    placeholderPaint, imageRect.CenterX(), imageRect.CenterY());
+            }
         }
         canvas.Restore();
         if (file.IsInCache)
@@ -457,14 +481,14 @@ internal sealed class AndroidThumbnailCard : View
             float right = imageRect.Right - (float)(2 * d);
             if (conflict)
             {
-                string glyph = AndroidUiTheme.IconGlyph(DesignTokens.IconWarning);
+                string glyph = AndroidIcons.Warning;
                 AndroidUiTheme.DrawGlyphCentered(canvas, glyph, _smallConflictPaint,
                     right - (float)(8 * d), baseline - (float)(badgeHeight * d) / 2);
                 right -= (float)(10 * d);
             }
             if (file.Rating > 0)
             {
-                AndroidUiTheme.DrawGlyphCentered(canvas, AndroidUiTheme.IconGlyph(DesignTokens.IconStarFilled),
+                AndroidUiTheme.DrawGlyphCentered(canvas, AndroidIcons.StarFilled,
                     _smallStarPaint, right - (float)(10 * d), baseline - (float)(badgeHeight * d) / 2);
                 _smallBadgePaint.TextAlign = Paint.Align.Right;
                 _smallBadgePaint.TextSize = AndroidUiTheme.Sp(Context!, DesignTokens.FilmCardSmallBadgeFontSize);

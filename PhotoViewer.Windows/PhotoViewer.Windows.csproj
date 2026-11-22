@@ -123,6 +123,14 @@
         <Content Include="..\PhotoViewer\Assets\icon.ico" Link="icon.ico"
                  CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"
                  ExcludeFromSingleFile="false" />
+        <Content Include="..\PhotoViewer\Assets\Icons\FluentSystemIcons-*.ttf"
+                 Link="Assets/Icons/%(Filename)%(Extension)" TargetPath="Assets/Icons/%(Filename)%(Extension)"
+                 CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"
+                 ExcludeFromSingleFile="false" />
+        <Content Include="..\PhotoViewer\Assets\Icons\FluentSystemIcons-LICENSE.txt"
+                 Link="Assets/Icons/FluentSystemIcons-LICENSE.txt" TargetPath="Assets/Icons/FluentSystemIcons-LICENSE.txt"
+                 CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"
+                 ExcludeFromSingleFile="false" />
     </ItemGroup>
 
     <!-- MSIX 清单从单一模板按 edition 派生身份写入中间目录；包资源（logo）只进 MSIX 载荷。 -->
