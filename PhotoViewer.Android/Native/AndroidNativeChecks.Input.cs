@@ -525,6 +525,9 @@ internal static partial class AndroidNativeChecks
     {
         var root = _root!;
         var main = _main!;
+        _activity!.RequestedOrientation = global::Android.Content.PM.ScreenOrientation.Portrait;
+        await WaitAsync(() => root.Height > root.Width, "键盘命令用例的竖屏布局", 10000);
+        await Task.Delay(250);
         var files = main.FileVM.ThumbnailList.FilteredFiles;
         if (files.Count >= 2 && ReferenceEquals(main.CurrentFile, files[^1])) await SelectFirstFileAsync();
 

@@ -87,7 +87,7 @@
 |---|---|---|
 | 玻璃按钮 / 合体 / 星级胶囊 | `vibrancy`（饱和度 1.5）→ `blur` 2dp → `lens` 高度 12dp、强度 24dp；形状 G2 `Capsule`；默认高光（白 50%、Plus、45°、衰减 1、线宽 0.5dp）；默认阴影（半径 24dp、下移 4dp、黑 10%）；按压放大交叉轴 4dp、拖动 `minDim × tanh(0.05 × 偏移 / minDim)` 与方向拉伸 4dp；按压高光整面白 8% + 跟手径向白 15%；弹簧阻尼 0.5、刚度 300 | 表面色 = `color.toolbar.button.tint` × `shell.glass.button.tint.opacity@android`，按 TOOLBAR-10 校准 |
 | 玻璃弹出面板 | 深色 Dialog：`colorControls` 饱和度 1.5 → `blur` 8dp → `lens` 高度 24dp、强度 48dp、景深；`Highlight.Plain`；表面 `#121212` 40% | 形状取各弹窗既有圆角令牌（G2 `RoundedRectangle`），不加背景压暗 |
-| 栏底材质 | 以示例底栏 `vibrancy` → `blur` 8dp 为起点，不加折射 | 饱和度 `shell.glass.android.bar.vibrancy.saturation`（1.5）、模糊半径 `shell.bar.blur.radius@android`（8dp）与色层按 SHELL-12 三色衬底向 iOS 校准；带衬底 EXIF 叠 `color.toolbar.block.background` × `shell.glass.android.exif.tint.opacity@android`（0.80 为首版起点） |
+| 栏底材质 | 以示例底栏 `vibrancy` → `blur` 为起点，不加折射 | 饱和度 `shell.glass.android.bar.vibrancy.saturation`（1.5）、模糊半径 `shell.bar.blur.radius@android`（80dp）与色层按 SHELL-12 三色衬底向 iOS 校准；API 33+ 栏底另按 `shell.glass.android.bar.tone.gamma` 统一 sRGB 响应，边界 Clamp 不外扩透明；带衬底 EXIF 不应用栏底 gamma，叠 `color.toolbar.block.background` × `shell.glass.android.exif.tint.opacity@android` |
 
 新增令牌统一放在 `shell.glass.android.*`、`popup.glass.android.*` 两组，`tokens.json` 记录上游出处。
 
@@ -165,6 +165,15 @@ API 31+ 使用真模糊，API 24–30 不取样、保留色层；所有 API 级�
 - **构建与许可**：Backdrop Debug / Release 均 0 警告 0 错误，标准版与 AI 版头工程构建通过；最小 Android 库清单保证 Release AAR 合法。标准版与 AI 版 APK 的身份、arm64、模型/许可与签名扫描通过，扫描器 30 项自检通过。
 - **未覆盖边界**：API 31/32 与 API 24–30 的分级实现已接线，但本轮只有 API 33 真机结果，低版本回退待复验；作者观感与 TalkBack 实际朗读、真机横屏待验。AI Debug 冷启动原生退出与标准版个别 .NET 程序集加载退出单独记录，未合并归因到玻璃断言。
 - 证据：`artifacts/acceptance/android-glass-phase3/`（双版本 `glass` 与回归报告、三色读数、弹窗/产品截图、APK 扫描、60 次翻页记录、启动异常日志）。
+
+#### 一级 UI 正确性收口
+
+- 组合按钮的折射取样恢复上游顺序：只在录制背景时补偿元素变换，效果层与外形、内容同步缩放和位移；效果缓存纳入逐帧变换，未溢出的滚动宿主不再产生方形裁切。手机可选命令与同栏控件统一为 44dp。
+- 栏底在自身边界 Clamp，不再把透明外扩层参与模糊；API 28+ 窗口使用官方 `shortEdges`，栏底延伸到刘海短边，交互内容仍按安全区避让。筛选、更多和星级共用同一弹层焦点策略：触摸时只将输入焦点停在面板内，不切换模式、不在关闭时抢焦点；键盘打开时聚焦首行，关闭后归还真实入口。玻璃入口关闭 Android 默认焦点高亮，由自绘层保留键盘焦点环。胶片当前项的蓝色选中框不变。
+- 模糊与颜色按同图剖面和黑 / 灰 / 白三色重新校准：栏底为 vibrancy 1.5 →（API 33+ gamma 0.642）→ blur 80dp → `#262626` × 0.7922，API 31/32 保持线性回退；按钮白层为 0.132。标准版小米 13 栏底实测 30 / 64.3 / 83，按钮 60 / 89.9 / 105.9；屏幕边缘无透明衰减，按压外扩无方形裁切。
+- 收尾复验：小米 13（API 33）标准版 `glass` 62/62、`layout` 118/118、`input` 29/29、`filter` 35/35、`faults` 46/46（含星级弹窗、紧凑起手、拖动提交与关闭焦点）。同一 APK 在小米 13 与模拟器经系统触摸输入，筛选、更多、星级点外关闭，以及星级直接点星写回关闭，均保持触摸模式，入口截图无残留蓝框；键盘焦点归还由 `filter` 验证；模拟器竖屏 `filter` 35/35、横屏 34/34（含合体「更多」归还焦点；`faults` 未产出报告）。TalkBack 与作者手验未覆盖。
+- 本轮标准版 Debug `input` 首次冷启动在 .NET `EmbeddedAssemblies::open_from_bundles` 原生退出，重启通过；独立于玻璃断言记录。AI 版真机启动原生退出与可调试 Release AAR 构建问题仍待单独复验；API 31/32 和 24–30 的材质回退未实测。
+- 证据：`artifacts/acceptance/android-ui-correctness/`（`popup-final-xiaomi13/` 含装包指纹、回归报告与 `system-touch-comparison.png`；iOS 同图剖面只作校准对照，不作为逐像素门槛）。
 
 估算：截至真模糊（阶段 0 + 阶段 2）8–13 个工作日，含阶段 3 总计 15–24 个工作日，验证后复估。短分支按可发布里程碑合入，不等待完整效果。各阶段行为先审批，再更新该阶段所需的设计规范与令牌，然后实施：阶段 2 是 SHELL-12 的 Android 栏底与带衬底 EXIF，以及 TOOLBAR-05/10 的 Android 相关条款；RATING-07、FILTER-08、MENU-03、FILM-07 的 Android 条目随阶段 3 审批。令牌改动跑生成校验；`platforms.md` 与 `status.md` 只在实际交付时更新，避免在交付前写成现状。
 

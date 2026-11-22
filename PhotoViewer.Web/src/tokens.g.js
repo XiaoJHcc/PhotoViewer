@@ -328,6 +328,7 @@ const tokens = Object.freeze({
     "shell.divider.thickness": 1,
     "shell.filebar.content.width": 116,
     "shell.filter.leadingInset": 42,
+    "shell.glass.android.bar.tone.gamma": 0.642,
     "shell.glass.android.bar.vibrancy.saturation": 1.5,
     "shell.glass.android.button.blur.radius": 2,
     "shell.glass.android.button.drag.stretch": 4,
@@ -432,12 +433,11 @@ const tokens = Object.freeze({
 });
 export const platformTokens = Object.freeze({
     "android": Object.freeze({
-        "color.bar.overlay": "#292929",
+        "color.bar.overlay": "#262626",
         "filter.toggle.width": 76,
-        "shell.bar.blur.radius": 8,
-        "shell.bar.overlay.opacity": 0.8,
-        "shell.glass.button.tint.opacity": 0.135,
-        "shell.phone.command.size": 48,
+        "shell.bar.blur.radius": 80,
+        "shell.bar.overlay.opacity": 0.792156862745098,
+        "shell.glass.button.tint.opacity": 0.132,
     }),
     "macos": Object.freeze({
         "color.bar.overlay": "#2B2B2B",

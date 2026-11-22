@@ -83,14 +83,19 @@ internal static partial class AndroidNativeChecks
     /// （即 <c>color.bar.overlay@android</c> × <c>shell.bar.overlay.opacity@android</c>），色层亮度取它的 RGB。
     /// 黑白衬底的期望亮度与最小变化量全部由这一份推导，不另编一套颜色。
     /// </summary>
-    private readonly record struct GlassTint(double Opacity, double Transmission, double Luma)
+    private readonly record struct GlassTint(
+        double Opacity, double Transmission, double Luma, double Gamma = 1)
     {
         /// <summary>该色层压在给定衬底亮度上的期望亮度（8 位口径）。</summary>
         /// <param name="sourceLuma">衬底亮度（0–255）。</param>
-        internal double Over(double sourceLuma) => Transmission * sourceLuma + Opacity * Luma;
+        internal double Over(double sourceLuma)
+        {
+            double controlled = 255 * Math.Pow(Math.Clamp(sourceLuma, 0, 255) / 255, Gamma);
+            return Transmission * controlled + Opacity * Luma;
+        }
 
         /// <summary>该色层下纯黑→纯白衬底的亮度变化。</summary>
-        internal double SwatchDelta => Transmission * 255;
+        internal double SwatchDelta => Over(255) - Over(0);
 
         /// <summary>报告用描述。</summary>
         internal string Describe() => $"不透明度={Opacity:F3} 透射率={Transmission:F3} 色层亮度={Luma:F1}";
@@ -99,7 +104,7 @@ internal static partial class AndroidNativeChecks
     /// <summary>按令牌颜色与不透明度合成色层，并拆成可推导阈值的形式（与产品实现同源，但独立计算）。</summary>
     /// <param name="argb">令牌颜色。</param>
     /// <param name="opacity">令牌不透明度；null 表示直接用颜色自带 alpha。</param>
-    private static GlassTint GlassTintOf(uint argb, double? opacity = null)
+    private static GlassTint GlassTintOf(uint argb, double? opacity = null, double gamma = 1)
     {
         int alpha = opacity is { } value
             ? Math.Clamp((int)Math.Round(255 * value), 0, 255)
@@ -107,12 +112,15 @@ internal static partial class AndroidNativeChecks
         var color = Color.Argb(alpha, (int)((argb >> 16) & 0xFF), (int)((argb >> 8) & 0xFF),
             (int)(argb & 0xFF))!;
         double opacity01 = color.A / 255.0;
-        return new GlassTint(opacity01, 1 - opacity01, GlassLuma(color.R, color.G, color.B));
+        return new GlassTint(opacity01, 1 - opacity01, GlassLuma(color.R, color.G, color.B), gamma);
     }
 
     /// <summary>栏底色层（<c>color.bar.overlay@android</c> × <c>shell.bar.overlay.opacity@android</c>）。</summary>
-    private static GlassTint GlassBarOverlayTint()
-        => GlassTintOf(DesignTokens.ColorBarOverlayAndroid, DesignTokens.ShellBarOverlayOpacityAndroid);
+    private static GlassTint GlassBarOverlayTint(bool applyToneMapping = false)
+        => GlassTintOf(DesignTokens.ColorBarOverlayAndroid, DesignTokens.ShellBarOverlayOpacityAndroid,
+            applyToneMapping || OperatingSystem.IsAndroidVersionAtLeast(33)
+                ? DesignTokens.ShellGlassAndroidBarToneGamma
+                : 1);
 
     /// <summary>带衬底 EXIF 的色层（<c>color.toolbar.block.background</c> × <c>shell.glass.android.exif.tint.opacity@android</c>）。</summary>
     private static GlassTint GlassExifTint()
@@ -211,7 +219,7 @@ internal static partial class AndroidNativeChecks
                 + $" 白={GlassProductLuma(_glassExifBrightLuma)}；"
                 + $"按钮 黑={GlassProductLuma(_glassButtonDarkLuma)} 灰={GlassProductLuma(_glassButtonGrayLuma)}"
                 + $" 白={GlassProductLuma(_glassButtonBrightLuma)}"
-                + "（令牌推导期望：栏底 32.8/58.4/83.8，EXIF 27.2/52.8/78.2）");
+                + "（令牌推导期望：栏底 30.1/64.0/83.0，EXIF 27.2/52.8/78.2）");
 
             Check("glass 产品 未改写预算读数委托与表面色域（只用现有主图宿主）",
                 ReferenceEquals(AndroidMemoryBudgetProvider.ExternalFootprint, footprintBefore)
@@ -320,19 +328,19 @@ internal static partial class AndroidNativeChecks
         Check("glass 产品 6 个栏底色层取 color.bar.overlay/opacity@android", badColor.Count == 0,
             badColor.Count == 0 ? $"期望={expectedOverlay}" : "不一致：" + string.Join(",", badColor));
 
-        Check("glass 产品 配方取令牌（vibrancy 饱和度 / 模糊半径）",
+        Check("glass 产品 配方取令牌（colorControls / gamma / 模糊半径）",
             Math.Abs(material.VibrancySaturation - DesignTokens.ShellGlassAndroidBarVibrancySaturation) < 1e-6
+                && Math.Abs(material.BarToneGamma - DesignTokens.ShellGlassAndroidBarToneGamma) < 1e-6
                 && Math.Abs(material.BlurRadiusDp - DesignTokens.ShellBarBlurRadiusAndroid) < 1e-6,
-            $"实测 饱和度={material.VibrancySaturation} 半径={material.BlurRadiusDp}dp"
-                + $" 令牌={DesignTokens.ShellGlassAndroidBarVibrancySaturation}/{DesignTokens.ShellBarBlurRadiusAndroid}dp"
-                + $"（顺序：ColorControls → Blur）");
+            $"实测 饱和度={material.VibrancySaturation} gamma={material.BarToneGamma}"
+                + $" 半径={material.BlurRadiusDp}dp（顺序：ColorControls → gamma → Blur）");
 
         CheckGlassExifStructure(root, real);
     }
 
     /// <summary>
     /// 主屏玻璃控件层：三层结构已在 <see cref="CheckGlassProductStructure"/> 核对；这里核对可见锚点与
-    /// 静止呈现矩形、配方令牌、分级、按压形变/回弹、悬停、焦点与禁用，不读取内部绘制像素。
+    /// 静止呈现矩形、配方令牌、分级、按压形变/回弹、悬停、焦点与禁用；另回读按压画面核对折射覆盖。
     /// </summary>
     /// <param name="root">主屏根视图。</param>
     private static async Task CheckGlassControlLayerAsync(AndroidNativeRootView root)
@@ -489,6 +497,30 @@ internal static partial class AndroidNativeChecks
                 && pressState.ScaleX > 1f,
             $"pressed={pressState.Pressed} progress={pressState.PressProgress:0.###} scaleX={pressState.ScaleX:0.###}");
 
+        bool clippedByScroll = false;
+        for (View? parent = selected.Anchor.Parent as View; parent != null; parent = parent.Parent as View)
+        {
+            if (parent is AndroidControlBarScrollHost scroll)
+            {
+                clippedByScroll = scroll.IsScrollable;
+                break;
+            }
+        }
+        if (!clippedByScroll)
+        {
+            float transformedCenterX = pressState.AnchorRect.ExactCenterX();
+            float transformedCenterY = pressState.AnchorRect.ExactCenterY();
+            float halfWidth = pressState.AnchorRect.Width() * pressState.ScaleX / 2f;
+            float halfHeight = pressState.AnchorRect.Height() * pressState.ScaleY / 2f;
+            var transformed = new Rect(
+                (int)Math.Floor(transformedCenterX + pressState.TranslationX - halfWidth),
+                (int)Math.Floor(transformedCenterY + pressState.TranslationY - halfHeight),
+                (int)Math.Ceiling(transformedCenterX + pressState.TranslationX + halfWidth),
+                (int)Math.Ceiling(transformedCenterY + pressState.TranslationY + halfHeight));
+            Check("glass 控件层 按压外扩不被非滚动宿主方形裁切", pressState.ClipRect.Contains(transformed),
+                $"transformed={transformed} clip={pressState.ClipRect}");
+        }
+
         var move = MotionEvent.Obtain(downTime, downTime + 16,
             MotionEventActions.Move, centerX + (int)Math.Round(12 * density), centerY, 0);
         target.DispatchTouchEvent(move);
@@ -500,6 +532,13 @@ internal static partial class AndroidNativeChecks
         Check("glass 控件层 跟手位移与方向拉伸", moved
                 && selected.Kind != GlassControlKind.Rating,
             $"offset={moveState.OffsetX:0.##}/{moveState.OffsetY:0.##} scaleX={moveState.ScaleX:0.###} scaleY={moveState.ScaleY:0.###}");
+        int shotMargin = (int)Math.Ceiling(24 * density);
+        var pressedShotRect = new Rect(
+            Math.Max(0, moveState.AnchorRect.Left - shotMargin),
+            Math.Max(0, moveState.AnchorRect.Top - shotMargin),
+            Math.Min(root.Width, moveState.AnchorRect.Right + shotMargin),
+            Math.Min(root.Height, moveState.AnchorRect.Bottom + shotMargin));
+        await CaptureGlassRectAsync(pressedShotRect, "glass-control-pressed");
 
         var cancel = MotionEvent.Obtain(downTime, downTime + 32, MotionEventActions.Cancel, centerX, centerY, 0);
         target.DispatchTouchEvent(cancel);
@@ -621,9 +660,8 @@ internal static partial class AndroidNativeChecks
         double density = photo.Density;
         int radiusPx = (int)Math.Round(AndroidUiTheme.Dp(_activity!, material.BlurRadiusDp));
         int inset = Math.Max(4, (int)Math.Round(AndroidUiTheme.Dp(_activity!, 2)));
-        // 左右各再避开 2×模糊半径：栏底取样被 Clamp 在照片层（=整窗）边界上，最左/最右 1–2px 是钳制外延，
-        // 同帧 PNG 实测那里出现 49.8/68.0 的假振幅（中央 3.2 才是真实残差）。上下保持原 inset。
-        int edgeInset = 2 * radiusPx;
+        // 栏底在自身边界 Clamp，不再把透明外扩层参与模糊；纯色与高频条纹都保留屏幕边缘采样。
+        int edgeInset = inset;
         var window = new Rect(0, 0, root.Width, root.Height);
         var sample = new Rect(
             Math.Clamp(barRect.Left + edgeInset, 0, window.Right),
@@ -633,14 +671,14 @@ internal static partial class AndroidNativeChecks
         if (sample.Width() < 32 || sample.Height() < 8)
         {
             GlassHostNote($"产品栏底像素证明：{bar.Name} 内区仅 {sample.Width()}x{sample.Height()}px"
-                + $"（左右已各排除 2×半径={edgeInset}px），无可用采样带");
+                + $"（边界 inset={edgeInset}px），无可用采样带");
             Check("glass 产品 栏底像素证明 采样带可用", false,
                 $"{bar.Name} rect={barRect} 内区={sample} 左右排除={edgeInset}px");
             return;
         }
         GlassHostNote($"产品栏底取样：{bar.Name} rect={barRect} 内区={sample}"
             + $" 密度={density:F2} 模糊半径={material.BlurRadiusDp}dp≈{radiusPx}px"
-            + $"（上下 inset={inset}px，左右各排除 2×半径={edgeInset}px：排除照片层 Clamp 边界外延）");
+            + $"（四边 inset={inset}px；栏底在自身边界 Clamp，不再排除外扩层）");
 
         // 同一帧的直通对照：栏外未被任何材质覆盖的照片（其余视图已移出，只剩照片层与被测栏底）。
         // 对照区必须整体绕开材质视图（这里就是被测栏底整块），不能只避开内缩后的采样带。
@@ -700,10 +738,21 @@ internal static partial class AndroidNativeChecks
                 + $" 门槛 暗≤{darkMax:F1} 亮≥{brightMin:F1} Δ≥{deltaMin:F1}"
                 + $"（色层透射率 {tint.Transmission:F2}）");
 
+        int centerTop = sample.CenterY() - inset / 2;
+        using var leftEdge = new Rect(Math.Clamp(barRect.Left, 0, window.Right), centerTop,
+            sample.Left, centerTop + inset);
+        using var rightEdge = new Rect(sample.Right, centerTop,
+            Math.Clamp(barRect.Right, 0, window.Right), centerTop + inset);
+        var leftWhite = await MeasureGlassRectAsync(leftEdge, hidden, bar.Bar);
+        var rightWhite = await MeasureGlassRectAsync(rightEdge, hidden, bar.Bar);
+        Check("glass 产品 栏底白衬底边缘亮度与内部一致",
+            Math.Abs(leftWhite.Mean - bright.Mean) <= 2 && Math.Abs(rightWhite.Mean - bright.Mean) <= 2,
+            $"左缘={leftWhite.Mean:F1} {leftEdge} 右缘={rightWhite.Mean:F1} {rightEdge} 内部={bright.Mean:F1}");
+
         var effect = material.Effect;
-        Check("glass 产品 效果快照含模糊外扩（配方真正生效）",
-            effect.RenderEffect != null && Math.Abs(effect.PaddingPx - radiusPx) <= 1.5,
-            $"RenderEffect={(effect.RenderEffect != null)} padding={effect.PaddingPx:F1}px 期望≈{radiusPx}px（8dp）");
+        Check("glass 产品 栏底在自身边界 Clamp（不把透明外扩层参与模糊）",
+            effect.RenderEffect != null && effect.PaddingPx == 0,
+            $"RenderEffect={(effect.RenderEffect != null)} padding={effect.PaddingPx:F1}px 期望=0；模糊半径={material.BlurRadiusDp}dp");
 
         // 3) 切图：同视口切到纯黑，栏底应回到暗；渲染代际必须继续推进。
         using var black = CreateGlassProductPattern(GlassProductPattern.FlatBlack, imageWidth, imageHeight, target)
@@ -759,7 +808,7 @@ internal static partial class AndroidNativeChecks
             // 第一次回读顺便把**同一张位图**落盘（glass-product-bar-stripes-read1），与读数同源。
             stripeBar = await MeasureGlassProfileAsync(sample, horizontalProfile: true, hidden, bar.Bar,
                 read == 0 ? "glass-product-bar-stripes-read1" : null);
-            stripeAmplitudes.Add(stripeBar.Amplitude);
+            stripeAmplitudes.Add(stripeBar.HighFrequencyAmplitude);
             stripeMeans.Add(stripeBar.Mean);
             if (read + 1 < stripeReads) await Task.Delay(80);
         }
@@ -790,7 +839,7 @@ internal static partial class AndroidNativeChecks
                 + $" 剖面={stripeBar.Length}px 采样带={sample} 对照区={control}"
                 + $" ｜ {GlassProductMaterialDraws(root)}");
 
-        // 5) 阶跃边缘：栏底边缘展开宽度须与 8dp 令牌相容，且明显宽于栏外直通的锐利边缘。
+        // 5) 阶跃边缘：栏底边缘展开宽度须与当前模糊令牌相容，且明显宽于栏外直通的锐利边缘。
         int splitX = offsetX + sample.CenterX();
         int splitY = offsetY + sample.CenterY();
         using var edge = CreateGlassProductPattern(GlassProductPattern.Edge, imageWidth, imageHeight, target,
@@ -809,7 +858,7 @@ internal static partial class AndroidNativeChecks
             await SaveGlassProductShotAsync(control, "glass-product-bar-edge-control", hidden, bar.Bar);
         double minEdge = Math.Max(6, 0.4 * radiusPx);
         double maxEdge = 3.5 * radiusPx;
-        Check("glass 产品 栏底边缘展开与 8dp 模糊相容",
+        Check($"glass 产品 栏底边缘展开与 {material.BlurRadiusDp}dp 模糊相容",
             !double.IsNaN(edgeBar.EdgeWidthPx) && edgeBar.EdgeWidthPx >= minEdge && edgeBar.EdgeWidthPx <= maxEdge,
             $"栏底边缘 10%→90%={edgeBar.EdgeWidthPx:F1}px 容许[{minEdge:F1},{maxEdge:F1}]px（半径 {radiusPx}px）"
                 + $" 剖面={edgeBar.Length}px 幅度={edgeBar.Amplitude:F1} 分界=({splitX},{splitY})"
@@ -986,10 +1035,10 @@ internal static partial class AndroidNativeChecks
             double barLimit = Math.Max(GlassProductStripeAmplitudeFloor,
                 GlassProductStripeAmplitudeRatio * stripePassthrough);
             Check("glass 产品 EXIF 衬底低通（1px 条纹被压掉）",
-                stripeBlock.Amplitude <= barLimit
+                stripeBlock.HighFrequencyAmplitude <= barLimit
                     && (!stripeControl.HasSamples
                         || stripeControl.Amplitude >= 255 * GlassProductSourceAmplitudeRatio),
-                $"块内振幅={stripeBlock.Amplitude:F1}（上限={barLimit:F1}，直通期望={stripePassthrough:F1}）"
+                $"块内高频振幅={stripeBlock.HighFrequencyAmplitude:F1}（上限={barLimit:F1}，直通期望={stripePassthrough:F1}）"
                     + $" 栏外直通振幅={stripeControl.Amplitude:F1}"
                     + $" 块内均值={stripeBlock.Mean:F1} 剖面={stripeBlock.Length}px"
                     + $" ｜ {GlassProductMaterialDraws(root)}");
@@ -1006,7 +1055,7 @@ internal static partial class AndroidNativeChecks
             int radiusPx = (int)Math.Round(AndroidUiTheme.Dp(_activity!, material.BlurRadiusDp));
             double minEdge = Math.Max(6, 0.4 * radiusPx);
             double maxEdge = 3.5 * radiusPx;
-            Check("glass 产品 EXIF 衬底边缘展开与 8dp 模糊相容",
+            Check($"glass 产品 EXIF 衬底边缘展开与 {root.PhotoMaterial.BlurRadiusDp}dp 模糊相容",
                 !double.IsNaN(edgeBlock.EdgeWidthPx) && edgeBlock.EdgeWidthPx >= minEdge && edgeBlock.EdgeWidthPx <= maxEdge,
                 $"块内边缘 10%→90%={edgeBlock.EdgeWidthPx:F1}px 容许[{minEdge:F1},{maxEdge:F1}]px（半径 {radiusPx}px）"
                     + $" 剖面={edgeBlock.Length}px 幅度={edgeBlock.Amplitude:F1}"
@@ -1089,9 +1138,9 @@ internal static partial class AndroidNativeChecks
                 out var control)
                 ? await MeasureGlassProfileAsync(control, horizontalProfile: true, hidden, bar2.Bar)
                 : default;
-            // 直通时栏底振幅 = 透射率 × 栏外振幅（本例 0.20 × 满幅 ≈ 51）；被低通掉会掉到接近 0。
+            // 直通时栏底振幅 = 透射率 × 栏外振幅；被低通掉会掉到接近 0。
             // 上下界同时卡住：低于下限说明高频没了（伪造模糊），高于上限说明色层没铺（或没按令牌合成）。
-            var tint = GlassBarOverlayTint();
+            var tint = GlassBarOverlayTint(applyToneMapping: false);
             double expected = tint.Transmission * (controlProfile.HasSamples ? controlProfile.Amplitude : 255);
             double lower = expected * 0.6;
             double upper = expected * 1.5 + GlassProductLumaTolerance;
@@ -1172,7 +1221,8 @@ internal static partial class AndroidNativeChecks
     }
 
     /// <summary>一条 1D 亮度剖面的统计（含 10%→90% 边缘宽度）。</summary>
-    private readonly record struct GlassProductProfile(double Mean, double Amplitude, double Rms, double EdgeWidthPx, int Length)
+    private readonly record struct GlassProductProfile(
+        double Mean, double Amplitude, double Rms, double EdgeWidthPx, int Length, double HighFrequencyAmplitude)
     {
         /// <summary>是否有可用剖面。</summary>
         internal bool HasSamples => Length > 0;
@@ -1250,7 +1300,7 @@ internal static partial class AndroidNativeChecks
             double squares = 0;
             foreach (double value in samples) squares += (value - mean) * (value - mean);
             return new GlassProductProfile(mean, max - min, Math.Sqrt(squares / samples.Length),
-                GlassProfileEdgeWidth(samples), samples.Length);
+                GlassProfileEdgeWidth(samples), samples.Length, GlassHighFrequencyAmplitude(samples));
         }
         finally
         {
@@ -1289,6 +1339,17 @@ internal static partial class AndroidNativeChecks
             samples[index] = count == 0 ? 0 : sum / count;
         }
         return samples;
+    }
+
+    private static double GlassHighFrequencyAmplitude(double[] samples)
+    {
+        double amplitude = 0;
+        for (int index = 1; index + 1 < samples.Length; index++)
+        {
+            double residual = Math.Abs(samples[index - 1] + samples[index + 1] - 2 * samples[index]) / 2;
+            amplitude = Math.Max(amplitude, residual);
+        }
+        return amplitude;
     }
 
     /// <summary>

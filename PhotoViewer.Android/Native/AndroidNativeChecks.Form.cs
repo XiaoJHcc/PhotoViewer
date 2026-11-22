@@ -66,12 +66,12 @@ internal static partial class AndroidNativeChecks
             var nav = root.PhoneNavigation;
             var commands = root.PhoneCommands;
             double button = DesignTokens.ShellGlassButtonSize * density;
-            double command = DesignTokens.ShellPhoneCommandSizeAndroid * density;
+            double command = DesignTokens.ShellPhoneCommandSize * density;
             var expectedCommands = PhoneControlCommands.Resolve(
                 main.ControlVM.EnabledControls.Select(item => item.Command), main.Settings.ShowNavigationButtons);
             bool commandSizes = commands.SegmentCount == expectedCommands.Length
                 && commands.SegmentsForChecks.All(segment => Near(segment.Width, command) && Near(segment.Height, command));
-            Check("form 手机合体段 44×44、可选命令段 48×48",
+            Check("form 手机合体段 44×44、可选命令段 44×44",
                 Near(nav.First.Width, button) && Near(nav.First.Height, button)
                 && Near(nav.Second.Width, button) && Near(nav.Second.Height, button) && commandSizes,
                 $"nav={nav.Width}x{nav.Height} first={nav.First.Width}x{nav.First.Height} second={nav.Second.Width}x{nav.Second.Height} "
@@ -90,11 +90,20 @@ internal static partial class AndroidNativeChecks
             {
                 main.IsExifViewVisible = false;
                 await Task.Delay(500);
-                Check("form 关闭 EXIF 顶行贴状态栏下缘", root.PhoneExif.Visibility != ViewStates.Visible
-                        && Near(root.PhoneSlots.Filter.Y, root.SafeInsets.Top)
-                        && Near(root.PhoneSlots.More.Y, root.SafeInsets.Top),
-                    $"exif={root.PhoneExif.Visibility} filter={root.PhoneSlots.Filter} more={root.PhoneSlots.More} "
-                    + $"safeTop={root.SafeInsets.Top:0.#}");
+                if (root.Form == ScreenForm.PhonePortrait)
+                {
+                    Check("form 关闭 EXIF 顶行贴状态栏下缘", root.PhoneExif.Visibility != ViewStates.Visible
+                            && Near(root.PhoneSlots.Filter.Y, root.SafeInsets.Top)
+                            && Near(root.PhoneSlots.More.Y, root.SafeInsets.Top),
+                        $"exif={root.PhoneExif.Visibility} filter={root.PhoneSlots.Filter} more={root.PhoneSlots.More} "
+                        + $"safeTop={root.SafeInsets.Top:0.#}");
+                }
+                else
+                {
+                    Check("form 横屏不应用竖屏顶行规则", root.PhoneExif.Visibility != ViewStates.Visible
+                            && Near(root.PhoneSlots.Filter.Y, root.PhoneSlots.More.Y),
+                        $"exif={root.PhoneExif.Visibility} filter={root.PhoneSlots.Filter} more={root.PhoneSlots.More}");
+                }
                 main.Settings.ShowNavigationButtons = false;
                 await Task.Delay(500);
                 Check("form 关闭上下张释放合体", !Has(root.PhoneSlots.Navigation)

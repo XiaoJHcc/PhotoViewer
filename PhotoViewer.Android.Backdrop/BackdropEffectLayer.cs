@@ -13,6 +13,7 @@ namespace PhotoViewer.Android.Backdrop;
 /// <para>
 /// 节点尺寸只取消费者的 <c>context.WidthPx / HeightPx + 2 × padding</c>，与源层大小无关；源层按
 /// 「源层窗口原点 − 消费者画布原点」画进节点，再把节点平移 <c>(−padding, −padding)</c> 上屏。
+/// 元素的缩放/旋转只在录制背景取样时求逆，效果节点上屏仍跟随元素自身的画布变换。
 /// 因此 Lens 的 <c>size</c>（消费者尺寸）与节点内的本地坐标一致，控件不在源层原点也不影响。
 /// </para>
 /// <para>
@@ -35,6 +36,9 @@ internal sealed class BackdropEffectLayer : IDisposable
     private float _padding;
     private float _canvasOriginX;
     private float _canvasOriginY;
+    private float _scaleX;
+    private float _scaleY;
+    private float _rotationZ;
     private Gfx.RenderEffect? _renderEffect;
     private bool _hasRecorded;
     private bool _disposed;
@@ -88,7 +92,6 @@ internal sealed class BackdropEffectLayer : IDisposable
         var save = canvas.Save();
         try
         {
-            context.LayerTransform.ApplyInverse(canvas);
             canvas.Translate(-padding, -padding);
             canvas.DrawRenderNode(node);
         }
@@ -136,6 +139,9 @@ internal sealed class BackdropEffectLayer : IDisposable
             _padding == padding &&
             _canvasOriginX == context.CanvasOriginX &&
             _canvasOriginY == context.CanvasOriginY &&
+            _scaleX == context.LayerTransform.ScaleX &&
+            _scaleY == context.LayerTransform.ScaleY &&
+            _rotationZ == context.LayerTransform.RotationZ &&
             ReferenceEquals(_renderEffect, effect.RenderEffect);
     }
 
@@ -171,9 +177,8 @@ internal sealed class BackdropEffectLayer : IDisposable
                 recording.ClipPath(clipPath);
             }
 
-            // 节点上屏时统一做一次逆变换；录制期间不能再让取样源各自做一次。
-            var sourceContext = context.WithLayerTransform(BackdropLayerTransform.Identity);
-            backdrop.DrawBackdrop(recording, sourceContext);
+            // 与上游一致：逆变换只作用于背景取样录制；效果节点上屏仍跟随元素自身的画布变换。
+            backdrop.DrawBackdrop(recording, context);
         }
         finally
         {
@@ -192,6 +197,9 @@ internal sealed class BackdropEffectLayer : IDisposable
         _padding = padding;
         _canvasOriginX = context.CanvasOriginX;
         _canvasOriginY = context.CanvasOriginY;
+        _scaleX = context.LayerTransform.ScaleX;
+        _scaleY = context.LayerTransform.ScaleY;
+        _rotationZ = context.LayerTransform.RotationZ;
         _renderEffect = effect.RenderEffect;
         RecordCount++;
         // 带裁切的录制只用于本帧，下一帧重录。

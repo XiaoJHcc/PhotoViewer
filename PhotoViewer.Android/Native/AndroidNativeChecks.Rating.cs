@@ -129,7 +129,8 @@ internal static partial class AndroidNativeChecks
             }
             var panel = root.PopupLayer.SessionForChecks?.Panel;
             var focused = panel?.FindFocus();
-            bool focusInPanel = panel != null && focused != null && IsDescendantOf(panel, focused);
+            bool focusInPanel = panel != null && focused != null
+                && (ReferenceEquals(panel, focused) || IsDescendantOf(panel, focused));
             bool inWindow = IsDescendantOf(root, content) && root.PopupLayer.IsOpen
                 && popup.WidthPxForChecks > 0 && popup.WidthPxForChecks <= root.Width
                 && popup.HeightPxForChecks <= root.Height && focusInPanel;
@@ -188,6 +189,7 @@ internal static partial class AndroidNativeChecks
             return;
         }
         var entryRect = ScreenRectOf(control);
+        bool touchModeBefore = control.IsInTouchMode;
         try
         {
             long now = SystemClock.UptimeMillis();
@@ -196,9 +198,18 @@ internal static partial class AndroidNativeChecks
                 control.DispatchTouchEvent(down);
             await WaitAsync(() => popup.IsOpen, "紧凑星级起手打开弹窗", 5000);
             await Task.Delay(200);
+            bool touchModeOpen = control.IsInTouchMode;
             bool opened = popup.IsOpen && popup.ModeForChecks == RatingPopupMode.Single
                 && popup.AnchorKindForChecks == RatingPopupAnchor.Control
                 && SameRect(popup.AnchorRectForChecks, entryRect);
+            var panel = root.PopupLayer.SessionForChecks?.Panel;
+            var focused = panel?.FindFocus();
+            bool focusInPanel = panel != null && focused != null
+                && (ReferenceEquals(panel, focused) || IsDescendantOf(panel, focused));
+            bool focusPolicy = touchModeOpen
+                ? panel != null && ReferenceEquals(panel, focused)
+                : panel != null && focused != null && !ReferenceEquals(panel, focused)
+                    && ReferenceEquals(focused, FirstFocusableIn(panel));
             bool noPreviewYet = file.Rating == 2;
             if (popup.ContentViewForChecks is not { } content)
             {
@@ -221,12 +232,24 @@ internal static partial class AndroidNativeChecks
             using (var up = MotionEvent.Obtain(now, now + 140, MotionEventActions.Up, targetX, targetY, 0))
                 control.DispatchTouchEvent(up);
             await WaitAsync(() => !popup.IsOpen && file.Rating == 4, "紧凑星级抬手提交并收起", 15000);
+            await WaitAsync(() => root.PopupLayer.Visibility == ViewStates.Gone, "星级弹窗淡出完成", 4000);
             bool disk = (await XmpRatingReader.ReadAsync(new AndroidFileRef(path))).ValueOrZero == 4;
-            Check("RATING-07 紧凑星级起手与拖动提交",
-                opened && noPreviewYet && previewOnly && disk && file.Rating == 4,
+            bool touchModeClosed = control.IsInTouchMode;
+            bool focusRestored = touchModeClosed ? !control.IsFocused : control.IsFocused;
+            bool focusRingCorrect = root.GlassControlLayer.TryGetControlForChecks(control, out var glass)
+                && glass.FocusRingVisible == !touchModeClosed;
+            bool defaultHighlightDisabled = !OperatingSystem.IsAndroidVersionAtLeast(26) || !control.DefaultFocusHighlightEnabled;
+            bool touchModePreserved = touchModeBefore == touchModeOpen && touchModeOpen == touchModeClosed;
+            Check("RATING-07 紧凑星级起手与拖动提交（关闭后无系统蓝框）",
+                opened && noPreviewYet && previewOnly && disk && file.Rating == 4
+                    && focusInPanel && focusPolicy && focusRestored && focusRingCorrect
+                    && defaultHighlightDisabled && touchModePreserved,
                 $"open={opened} entry={entryRect} anchor={popup.AnchorRectForChecks} "
                 + $"noPreview={noPreviewYet} previewOnly={previewOnly} disk={disk} rating={file.Rating} "
-                + $"popup={popup.IsOpen}");
+                + $"popup={popup.IsOpen} touchMode={touchModeBefore}→{touchModeOpen}→{touchModeClosed} "
+                + $"focusInPanel={focusInPanel} panelFocus={ReferenceEquals(panel, focused)} "
+                + $"focusBack={control.IsFocused} focusRing={glass.FocusRingVisible} "
+                + $"defaultHighlight={defaultHighlightDisabled}");
         }
         finally
         {

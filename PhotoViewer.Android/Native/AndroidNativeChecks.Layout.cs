@@ -43,6 +43,7 @@ internal static partial class AndroidNativeChecks
             + $"row={main.IsRowLayout} landscape={main.IsScreenLandscape} mode={main.Settings.LayoutMode} "
             + $"safe={root.SafeInsets}");
 
+        CheckDisplayCutoutWindow(activity, "竖屏");
         CheckRootForm(root, "竖屏");
         CheckGeometry(root, main, density, "竖屏");
         CheckSafeInsets(root, landscape: root.Width > root.Height, "竖屏");
@@ -65,6 +66,7 @@ internal static partial class AndroidNativeChecks
             // 只忽略手势导航条占位，不隐藏导航栏。
             Check("layout 横屏不隐藏导航栏", NavigationBarVisible(activity) == navigationBaseline,
                 $"portrait={navigationBaseline} landscape={NavigationBarVisible(activity)} safe={root.SafeInsets}");
+            CheckDisplayCutoutWindow(activity, "横屏");
             CheckRootForm(root, "横屏");
             CheckGeometry(root, main, density, "横屏");
             CheckSafeInsets(root, landscape: true, "横屏");
@@ -178,6 +180,20 @@ internal static partial class AndroidNativeChecks
         LayoutMode.Col => false,
         _ => !landscape,
     };
+
+    private static void CheckDisplayCutoutWindow(global::Android.App.Activity activity, string phase)
+    {
+        if (!OperatingSystem.IsAndroidVersionAtLeast(28)) return;
+        var decor = activity.Window?.DecorView;
+        var location = new int[2];
+        decor?.GetLocationOnScreen(location);
+        bool shortEdges = activity.Window?.Attributes?.LayoutInDisplayCutoutMode
+            == global::Android.Views.LayoutInDisplayCutoutMode.ShortEdges;
+        bool fullWindow = decor != null && location[0] == 0 && location[1] == 0;
+        Check($"{phase} 窗口延伸至刘海短边（内容仍按安全区避让）", shortEdges && fullWindow,
+            $"mode={activity.Window?.Attributes?.LayoutInDisplayCutoutMode} decorOrigin={location[0]},{location[1]} "
+            + $"decor={decor?.Width}x{decor?.Height} root={_root?.Width}x{_root?.Height}");
+    }
 
     /// <summary>
     /// 安全区口径：竖屏保留底部系统栏与刘海；横屏只忽略手势导航条底部，三键导航遮挡与刘海照常扣除。

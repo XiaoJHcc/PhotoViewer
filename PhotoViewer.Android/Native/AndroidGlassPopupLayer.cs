@@ -22,7 +22,7 @@ namespace PhotoViewer.Android.Native;
 /// </para>
 /// <para>
 /// 打开时把根视图其余子视图对读屏隐藏（<c>NoHideDescendants</c>）并阻断其键盘焦点，
-/// 焦点移入面板；关闭时按原样恢复并把焦点还给仍然有效的入口。背景隔离与面板形状都由本宿主承担。
+/// 焦点移入面板；关闭时恢复背景，键盘模式下把焦点还给仍然有效的入口。背景隔离与面板形状都由本宿主承担。
 /// </para>
 /// <para>
 /// 出入场只做淡入淡出，时长取系统 <c>config_shortAnimTime</c>；<c>animator_duration_scale</c> 为 0 时直接到位。
@@ -55,6 +55,7 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
         _panel.Clickable = true;
         _panel.Focusable = true;
         _panel.FocusableInTouchMode = true;
+        if (OperatingSystem.IsAndroidVersionAtLeast(26)) _panel.DefaultFocusHighlightEnabled = false;
         _panel.SetWillNotDraw(false);
         AddView(_panel, new LayoutParams(LayoutParams.WrapContent, LayoutParams.WrapContent));
     }
@@ -345,14 +346,10 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
 
     private void FocusFirst()
     {
-        var first = FirstFocusable(_panel);
-        if (first != null) Focus(first);
-        else Focus(_panel);
-    }
-
-    private static void Focus(View view)
-    {
-        if (!view.RequestFocus()) view.RequestFocusFromTouch();
+        // RequestFocusFromTouch exits touch mode. In touch mode only the panel holds input focus:
+        // making clickable rows focusable in touch mode can consume their first tap to take focus.
+        var first = IsInTouchMode ? null : FirstFocusable(_panel);
+        if (first?.RequestFocus() != true) _panel.RequestFocus();
     }
 
     private static View? FirstFocusable(View view)
@@ -406,8 +403,8 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
 
     private static void RestoreFocus(View? entry)
     {
-        if (entry == null || !entry.IsAttachedToWindow || !entry.IsShown) return;
-        Focus(entry);
+        if (entry == null || !entry.IsAttachedToWindow || !entry.IsShown || entry.IsInTouchMode) return;
+        entry.RequestFocus();
     }
 
     private int ShortAnimTime() => Resources?.GetInteger(global::Android.Resource.Integer.ConfigShortAnimTime) ?? 150;
