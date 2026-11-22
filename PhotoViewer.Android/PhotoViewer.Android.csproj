@@ -62,9 +62,9 @@
     </ItemGroup>
 
     <ItemGroup>
-        <!-- 业务图标统一使用 Design/icons.json 生成的 Material Symbols Rounded 子集。 -->
-        <AndroidAsset Include="..\PhotoViewer\Assets\Icons\MaterialSymbolsRounded-*.ttf" Link="Assets\Icons\%(Filename)%(Extension)" />
-        <AndroidAsset Include="..\PhotoViewer\Assets\Icons\MaterialSymbols-LICENSE.txt" Link="Assets\Icons\MaterialSymbols-LICENSE.txt" />
+        <!-- 业务图标统一使用 Design/icons.json 生成、与 Windows 相同的 Fluent 归一子集。 -->
+        <AndroidAsset Include="..\PhotoViewer\Assets\Icons\FluentSystemIcons-*.ttf" Link="Assets\Icons\%(Filename)%(Extension)" />
+        <AndroidAsset Include="..\PhotoViewer\Assets\Icons\FluentSystemIcons-LICENSE.txt" Link="Assets\Icons\FluentSystemIcons-LICENSE.txt" />
     </ItemGroup>
 
     <ItemGroup>

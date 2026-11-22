@@ -317,7 +317,7 @@ internal sealed class AndroidControlBar : FrameLayout
     /// 其余取共享语义清单；控制栏与手机可选命令组共用同一映射。
     /// </summary>
     /// <param name="hotkey">共享快捷键项。</param>
-    /// <returns>Material Symbols Rounded 字形。</returns>
+    /// <returns>共享 Fluent 字形。</returns>
     internal static string CommandGlyph(SettingsViewModel.HotkeyItem hotkey)
     {
         if (!IsRatingCommand(hotkey.Command)) return AndroidIcons.ForCommand(hotkey.Command);

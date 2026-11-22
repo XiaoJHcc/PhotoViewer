@@ -9,9 +9,8 @@
 <a id="icons"></a>
 
 - **ICON-01@mac / @ios / @win / @android**：`PhotoViewer.Shared/IconCatalog.g.cs` 是由 `Design/icons.json` 生成的唯一运行映射；`PhotoViewer.Apple/AppleSymbolNames.cs`、`PhotoViewer.Windows/Native/WindowsIcons.cs`、`PhotoViewer.Android/Native/AndroidIcons.cs` 只负责命令/菜单等入口到语义 ID 的分流，不另存上游码位表。
-- **ICON-02@win**：`PhotoViewer/Assets/Icons/FluentSystemIcons-{Regular,Filled}.ttf` 作为 `Assets/Icons/` 内容随 MSIX 与便携包分发；`WindowsIcons.RegularFontFamily` / `FilledFontFamily` 创建 WinUI 字体。业务控件不用系统 Segoe 或 MDL2 回退；只有 `WindowsTitleBar` 的自绘窗口按钮保留 `WindowsIcons.FluentFontFamily` 系统链。
-- **ICON-02@android**：`PhotoViewer/Assets/Icons/MaterialSymbolsRounded-{Regular,Filled}.ttf` 作为 `assets/Icons/` 打进 APK，`AndroidUiTheme` 加载。已有 Material 控件、自绘 Drawable 与 Canvas 画笔只更换字体来源，控件几何与状态层不变；资产缺失显式失败，不回退系统字体或 drawable。
-- **ICON-04 / ICON-05**：`Tools/generate-icons.py` 生成共享码位表、字体子集和 `artifacts/acceptance/icon-catalog/index.html` 三端对比；`Tools/check-windows-package.py`、`Tools/check-android-package.py` 对实际分发包增加图标资产门禁。
+- **ICON-02@win / @android**：两端共用 `PhotoViewer/Assets/Icons/FluentSystemIcons-{Regular,Filled}.ttf` 的同一归一字体；Windows 作为 `Assets/Icons/` 内容随 MSIX 与便携包分发，Android 作为 `assets/Icons/` 打进 APK，分别由 `WindowsIcons` 与 `AndroidUiTheme` 加载。控件几何与状态层不变；资产缺失显式失败，不回退系统字体或 drawable。Windows 业务控件不用系统 Segoe 或 MDL2 回退，只有 `WindowsTitleBar` 的自绘窗口按钮保留 `WindowsIcons.FluentFontFamily` 系统链；Android 图标统一按 dp 绘制，菜单 ImageView 不按槽位二次缩放。
+- **ICON-04 / ICON-05**：`Tools/generate-icons.py` 生成共享码位表、归一字体子集和 `artifacts/acceptance/icon-catalog/index.html` Apple / Fluent 对比；`Tools/check-windows-package.py`、`Tools/check-android-package.py` 对实际分发包增加图标资产门禁。
 
 ## 控件选型总览
 
@@ -139,7 +138,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
 - **SHELL-12@mac**：文件栏与连续工具区由 AppKit `NSView.backgroundFilters` 窗口内高斯背景模糊（`shell.bar.blur.radius@macos`）与 `color.bar.overlay@macos` × `shell.bar.overlay.opacity@macos` 的独立深灰色层承载；EXIF 底部横排使用无标题深色 `NSBox` 原生分组，右侧竖排使用透明无衬底容器，块内边距只取共享几何，不复刻 iOS 光学效果。按钮的 `NSGlassEffectView` 按 `shell.glass.button.tint.opacity@macos` 染白；macOS 26 的原生按钮玻璃没有按压交互与融合，悬停描边、按下与焦点由玻璃内容区里的原生 `NSButton` 承担。
 - **SHELL-12@win**：主图视图铺满窗口，文件栏（含分隔线）与连续工具区使用与标题栏同源的 WinUI 应用内亚克力（`AcrylicInAppFillColorDefaultBrush` 的运行时配方），仅把亮度层不透明度限制在 `shell.bar.acrylic.luminosityOpacityMax` 以内。因 `SwapChainPanel` 不能被 XAML 亚克力取样，由主图交换链按区段绘制（`WindowsPhotoView.SetBackdropRegions`），栏位 XAML 只铺透明命中底；工具区只在有分析栏或实际 EXIF 时出背景并在朝主图一侧画一条 `color.divider`，只剩评分与命令时透明，星级胶囊与命令圆按钮各自得到圆角亚克力衬底（WinUI 原生控件放在亚克力上时的材质层次，替代 macOS 玻璃），其上铺 TOOLBAR-10@win 的按钮填充，保留原生状态。不做玻璃融合与按压缩放（无原生对应）。
 - **SHELL-10@android**：系统安全区读取公开 `WindowInsets` 与 `DisplayCutout`；圆角避让读取 `RoundedCorner` 半径，先只按安全区排出贴角元素，再按元素外形（44 高胶囊与圆按钮取半径 22 的半圆端）在其实际位置求端头圆恰好内切屏幕圆弧时的避让线（`AndroidWindowInsets.CornerInset`），横屏刘海侧列取入口合体离刘海侧窗口缘的实际距离、控制列取一份工具区内边距；读不到时为零，不按设备型号拟合。
-- **SHELL-12@android**：Views + Material 3 承载按钮、形状与状态层：圆按钮、合体分段与命令都是 `MaterialButton`，取主题属性 `pvGlassButtonStyle` 指向的图标按钮样式 `Widget.PhotoViewer.GlassButton`（inset、最小尺寸与内边距清零），Material Symbols Rounded 字形是图标槽里的自绘 Drawable、按墨迹居中；合体是胶囊容器内的透明分段、不画分隔线，按钮与星级胶囊同取 TOOLBAR-10 的半透明白色色层（`shell.glass.button.tint.opacity@android`），悬停 / 按下 / 焦点与星级逐格悬停 / 按下（槽内内切正圆的原生 `RippleDrawable`）共用状态层 `pv_glass_state_layer`（主文字色按 Material 3 状态层不透明度）。当前 `SurfaceView` 主图没有公开的应用内背衬模糊方案，栏底只绘制 `color.bar.overlay@android` × `shell.bar.overlay.opacity@android` 的深灰色层，不采用截屏、PixelCopy 或离屏拷贝模拟模糊；竖屏保留系统状态栏，顶行不得覆盖状态栏图标。
+- **SHELL-12@android**：Views + Material 3 承载按钮、形状与状态层：圆按钮、合体分段与命令都是 `MaterialButton`，取主题属性 `pvGlassButtonStyle` 指向的图标按钮样式 `Widget.PhotoViewer.GlassButton`（inset、最小尺寸与内边距清零），Fluent UI System Icons 字形是图标槽里的自绘 Drawable、按墨迹居中；合体是胶囊容器内的透明分段、不画分隔线，按钮与星级胶囊同取 TOOLBAR-10 的半透明白色色层（`shell.glass.button.tint.opacity@android`），悬停 / 按下 / 焦点与星级逐格悬停 / 按下（槽内内切正圆的原生 `RippleDrawable`）共用状态层 `pv_glass_state_layer`（主文字色按 Material 3 状态层不透明度）。当前 `SurfaceView` 主图没有公开的应用内背衬模糊方案，栏底只绘制 `color.bar.overlay@android` × `shell.bar.overlay.opacity@android` 的深灰色层，不采用截屏、PixelCopy 或离屏拷贝模拟模糊；竖屏保留系统状态栏，顶行不得覆盖状态栏图标。
 - **SHELL-12@web**：栏位与按钮分别用 CSS 原生 `backdrop-filter` 与半透明色层（栏底深灰、按钮纯白，取 Web 令牌；mac 配置档仍只切换几何），筛选胶囊、相似聚类开关、评分胶囊与命令圆按钮共用同一按钮材质；浏览器没有原生玻璃共享取样、融合或滚动边缘材质，不模拟这些光学效果。几何、背景出现条件与唯一外边界仍按 SHELL-12。
 
 **SHELL-12 校准锚点**：栏底与栏上按钮的当前参数及观测读数。使用独立色层的平台，参数取 `color.bar.overlay` × `shell.bar.overlay.opacity`（栏底）与 `color.toolbar.button.tint` × `shell.glass.button.tint.opacity`（栏上按钮）；读数按纯黑 `#000000` / 50% 灰 `#808080` / 纯白 `#FFFFFF` 三种满窗衬底的次序，每通道 sRGB 8 位。
@@ -174,7 +173,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
   - **FILTER-08@mac**：使用 AppKit `NSMenu` 和 SF Symbols；原生单胶囊下拉只展示实际选项，不把入口标题列作选项。AppKit 无公开的逐段读屏值接口，完整星级条件由分段控件的读屏值表达。标准菜单的点击会结束原生跟踪会话，AppKit 没有公开的项级保持展开属性；继续点选需重新打开，先前条件保留。
   - **FILTER-08@win**：分段和单胶囊都用 WinUI `MenuFlyout`，通过菜单项的 `Icon` 呈现 Fluent 字形。菜单项点选后由系统收起，没有公开的项级保持展开属性；继续点选需重新打开，先前条件保留。状态变化只更新既有菜单项及入口标签，不重建菜单。
   - **FILTER-08@ios**：系统 `UIButton` 上下文菜单与 `UIMenu`，使用 SF Symbols。中尺寸排序项、星级条件、方向在三个内联分组；`KeepsMenuPresented` 与 `UpdateVisibleMenu` 保持菜单展开并提交当前状态。切换已滚动菜单的星级条件时，系统可能把当前项移到可见区域中央，保留该原生行为。筛选与更多入口互斥。
-  - **FILTER-08@android**：Material 入口、既有 `PopupWindow` 与菜单行；排序、方向与星级全部使用 `Design/icons.json` 的 Material Symbols Rounded 映射，无星级为禁止符号，数字档为对应数字圆。点选即生效并在原弹层更新勾选，入口失效时关闭。更多段弹主图菜单（宽形态不含 EXIF 项）。
+  - **FILTER-08@android**：Material 入口、既有 `PopupWindow` 与菜单行；排序、方向与星级全部使用 `Design/icons.json` 的 Fluent UI System Icons 映射。点选即生效并在原弹层更新勾选，入口失效时关闭。更多段弹主图菜单（宽形态不含 EXIF 项）。
 - **FILTER-07@web / FILTER-08@web**：桌面按三段合体或空间不足时用单胶囊；`platform=mac` 只覆盖列布局 42 点让位与标题栏几何。手机竖屏筛选与更多为两枚 44 点圆钮、横屏为 88 点合体。浏览器无原生菜单弹层，沿用 MENU-03 的 DOM 菜单组件，用 uicons 语义图标（「无星级」以禁止符号表达，其余用对应文件、相机、磁盘、箭头与数字等字形），原位更新筛选菜单项、保留焦点和滚动。
 
 ## image
@@ -234,7 +233,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
   - 原生平台按 `Design/icons.json` 取语义图标；Web 使用 `icon.font` / `icon.fontSolid` 与 `icon.*` 码位，由 `PhotoViewer.Web/tools/subset-icons.py` 生成 woff2 子集。
   - **TOOLBAR-04@mac / @ios**：命令图标与评分星用 SF Symbols（`PhotoViewer.Apple/AppleSymbolNames.cs`），语义同 `icon.command.*`。评分快捷命令为 `star.fill` 内叠数字（`PhotoViewer.Mac/Native/MacControlBar.cs`、`PhotoViewer.iOS/Native/iOSGlassButtonGroup.cs` 的 `iOSRatingDigitLabel`；iOS 宽形态命令为 `GlassButtonConfiguration` 圆按钮，手机可选命令为 44 点原生按钮，共用交互式玻璃胶囊，Mac 命令为 `NSGlassEffectView` 承载的 `NSBezelStyle.Rounded` + `NSControlBorderShape.Circle` 圆钮，`ShowsBorderOnlyWhileMouseInside` 提供系统悬停边框），0 为 `xmark`。
   - **TOOLBAR-04@win**：命令图标用随包 Fluent UI System Icons，评分快捷命令为 `rating.starFilled` 内叠数字（0=`rating.clear`）；`WindowsIcons` 将命令 ID 分流到共享语义 ID。tooltip 绑定经 `WindowsInput.FormatGesture` 显示可读键名（`D2`→`2`、`Oem3`→`` ` ``，并补 Oem1–Oem8 别名），不再出现枚举名。
-  - **TOOLBAR-04@android**：宽形态用 44dp 圆形 `MaterialButton`；手机可选命令在 Material 胶囊内各自使用 48dp 的独立按钮与原生状态层。Material Symbols Rounded 字形放在按钮图标槽，读屏名取 `CommandTooltipText`；不设 `TooltipText`，因为 Android 的 tooltip 在触摸长按时也会弹出浮层。
+  - **TOOLBAR-04@android**：宽形态用 44dp 圆形 `MaterialButton`；手机可选命令在 Material 胶囊内各自使用 48dp 的独立按钮与原生状态层。Fluent UI System Icons 字形放在按钮图标槽，读屏名取 `CommandTooltipText`；不设 `TooltipText`，因为 Android 的 tooltip 在触摸长按时也会弹出浮层。
 - **TOOLBAR-05**：EXIF 摘要。桌面 tooltip `标签 · 值`；触屏完整值由 TOOLBAR-06 的详情页承担。
   - **TOOLBAR-05@ios**：EXIF 块为 `PhotoViewer.iOS/Native/iOSExifBlock.cs`（`UIBlurEffectStyle.SystemThinMaterialDark` 衬底 + 令牌圆角），几何取共享 `PhotoViewer.Shared/ExifBlockGeometry.cs`；上下布局控制栏与手机竖屏顶行用衬底块，iOS 左右布局控制栏（iPad 宽形态与手机横屏）用 `Bare` 无衬底变体（`VisibleCount` 限定显示的整项数），透明容器最大为固有项宽 52 点（不超过按钮与两侧边距之和 64），与星级及按钮同轴，标签和值在容器内截断、不另加边距，四处同一实例类型。
   - **TOOLBAR-05@android**：EXIF 块为自绘定制组件（`AndroidPhoneChrome.cs`、`AndroidControlBar.cs`），没有应用内背衬模糊，衬底取 `color.toolbar.block.background`；标签 / 值按字体度量成对居中，无衬底变体与 iOS 同为 52 点透明容器。
@@ -283,7 +282,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
 - **MENU-06**：主图菜单与 macOS 系统菜单栏均有前置图标。
   - **MENU-06@mac / @ios**：使用 SF Symbols，共用 `PhotoViewer.Apple/AppleSymbolNames.cs` 的 `Menu` 映射；Mac 独有「打开文件…」用 `doc`、应用菜单「退出 PhotoViewer」用 `power`，系统菜单栏与右键菜单一样显示图标。
   - **MENU-06@win**：`WindowsIcons` 提供同语义 Fluent UI System Icons 字形，普通项与勾选项都保留图标和原生勾选态。
-  - **MENU-06@android**：自绘菜单在勾选列后使用 `Design/icons.json` 的 Material Symbols Rounded 字形，几何取 `menu.icon.*`。
+  - **MENU-06@android**：自绘菜单在勾选列后使用 `Design/icons.json` 的 Fluent UI System Icons 字形，几何取 `menu.icon.*`。
   - **MENU-06@web**：自绘菜单在勾选列后使用 `icon.menu.*` 的 uicons 字形，增强复用 `icon.command.toggleEnhance`，几何取 `menu.icon.*`。
 - **MENU-07**：不可用项由 `PhotoMenuCatalog` 按当前照片给出（无照片时「雾天增强」置灰，工具可打开空态）；macOS 关闭 `NSMenu` 自动启用，显示前同步。
 - **MENU-08**：手机形态「更多」按钮的菜单。iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs` 的 `BuildMoreMenu` 用 `UIDeferredMenuElement` 延迟构建，内容直接取共享 `PhotoMenuCatalog`（手机形态 `includeExif: true`，与主图长按菜单同为栏位组末尾的「EXIF」），每次展开重建并按共享状态刷新勾选。Android `AndroidNativeRootView.ShowPhotoMenu` 同样以 `PhotoMenuCatalog(includeExif: true)` 提供内容，更多与主图长按复用同一入口。

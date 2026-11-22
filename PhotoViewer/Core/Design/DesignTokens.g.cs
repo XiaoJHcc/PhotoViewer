@@ -407,7 +407,7 @@ public static class DesignTokens
     public const string IconFilterTwo = "U+F3EB";
     /// <summary>icon.filter.unrated（codepoint） FILTER-08：fi-rr-ban</summary>
     public const string IconFilterUnrated = "U+F205";
-    /// <summary>icon.font TOOLBAR-04：Web 参考壳主屏图标字体：Flaticon UIcons Regular Rounded（描边字形）；实心星取 icon.fontSolid。原生平台按 icons.json 使用各自图标族。</summary>
+    /// <summary>icon.font TOOLBAR-04：Web 参考壳主屏图标字体：Flaticon UIcons Regular Rounded（描边字形）；实心星取 icon.fontSolid。Apple 使用 SF Symbols，Windows / Android 共用 icons.json 的 Fluent 归一字体。</summary>
     public const string IconFont = "uicons-regular-rounded";
     /// <summary>icon.fontSolid TOOLBAR-03：Web 参考壳实心字形字体：Flaticon UIcons Solid Straight（PhotoViewer/Assets/Fonts），只用于点亮的星与评分快捷命令的星底。</summary>
     public const string IconFontSolid = "uicons-solid-straight";

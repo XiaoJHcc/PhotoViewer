@@ -1235,9 +1235,9 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             var mark = new TextView(activity)
             {
                 Text = check == true ? AndroidIcons.Check : "",
-                TextSize = 15,
                 Gravity = GravityFlags.Center,
             };
+            mark.SetTextSize(global::Android.Util.ComplexUnitType.Dip, 15);
             mark.SetTypeface(AndroidUiTheme.IconTypeface(activity), TypefaceStyle.Normal);
             mark.SetTextColor(enabled ? AndroidUiTheme.Accent : AndroidUiTheme.TextSecondary);
             mark.ImportantForAccessibility = ImportantForAccessibility.No;
@@ -1245,9 +1245,9 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             var icon = new TextView(activity)
             {
                 Text = iconGlyph,
-                TextSize = (float)DesignTokens.MenuIconFontSize,
                 Gravity = GravityFlags.Center,
             };
+            icon.SetTextSize(global::Android.Util.ComplexUnitType.Dip, (float)DesignTokens.MenuIconFontSize);
             icon.SetTypeface(AndroidUiTheme.IconTypeface(activity), TypefaceStyle.Normal);
             icon.SetTextColor(enabled ? AndroidUiTheme.TextPrimary : AndroidUiTheme.TextSecondary);
             icon.ImportantForAccessibility = ImportantForAccessibility.No;

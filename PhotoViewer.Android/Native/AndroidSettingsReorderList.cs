@@ -165,7 +165,7 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
         string IconSymbol,
         string? IconDigit,
         bool IconSolid,
-        double IconFontSizeSp,
+        double IconFontSizeDp,
         double IconTextSizePx,
         bool IconIgnoredForAccessibility,
         bool SubtitleVisible,
@@ -351,9 +351,9 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
             _handle = new TextView(context)
             {
                 Text = AndroidIcons.DragHandle,
-                TextSize = 22,
                 Gravity = GravityFlags.Center,
             };
+            _handle.SetTextSize(global::Android.Util.ComplexUnitType.Dip, 22);
             _handle.SetTypeface(AndroidUiTheme.IconTypeface(context), TypefaceStyle.Normal);
             _handle.SetTextColor(AndroidUiTheme.TextSecondary);
             _handle.Clickable = true;
@@ -411,11 +411,11 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
             var clear = new TextView(context)
             {
                 Text = AndroidIcons.Clear,
-                TextSize = 16,
                 Gravity = GravityFlags.Center,
                 Clickable = true,
                 Focusable = true,
             };
+            clear.SetTextSize(global::Android.Util.ComplexUnitType.Dip, 16);
             clear.SetTypeface(AndroidUiTheme.IconTypeface(context), TypefaceStyle.Normal);
             clear.SetTextColor(AndroidUiTheme.TextSecondary);
             clear.SetMinimumWidth((int)AndroidUiTheme.Dp(context, 44));
@@ -587,7 +587,7 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
             return new RowLayoutSnapshot(Height, MinimumHeight, _check.Width,
                 ((View)_check.Parent!).Left + _check.Left + Math.Max(0, (_check.Width - glyph) / 2),
                 _icon.Visibility == ViewStates.Visible, _icon.Symbol, _icon.RatingDigit, _icon.SolidGlyph,
-                _icon.FontSizeSp, _icon.GlyphTextSizePx, _icon.ImportantForAccessibility == ImportantForAccessibility.No,
+                _icon.FontSizeDp, _icon.GlyphTextSizePx, _icon.ImportantForAccessibility == ImportantForAccessibility.No,
                 _subtitle.Visibility == ViewStates.Visible,
                 _title.Ellipsize != null, _subtitle.Ellipsize != null,
                 _primaryChip.Ellipsize != null, _secondaryChip.Ellipsize != null,

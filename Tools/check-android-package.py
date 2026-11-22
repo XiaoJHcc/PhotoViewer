@@ -76,9 +76,9 @@ TARGET_ABI = "arm64-v8a"
 FORBIDDEN_ABIS = ("x86_64", "armeabi-v7a", "arm64", "x86")
 DINO_LICENSE_NAME = "dinov3-license.md"
 ICON_ASSETS = (
-    "assets/Icons/MaterialSymbolsRounded-Regular.ttf",
-    "assets/Icons/MaterialSymbolsRounded-Filled.ttf",
-    "assets/Icons/MaterialSymbols-LICENSE.txt",
+    "assets/Icons/FluentSystemIcons-Regular.ttf",
+    "assets/Icons/FluentSystemIcons-Filled.ttf",
+    "assets/Icons/FluentSystemIcons-LICENSE.txt",
 )
 
 ONNX_MANAGED = "microsoft.ml.onnxruntime.dll"

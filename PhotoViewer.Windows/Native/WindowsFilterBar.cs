@@ -713,7 +713,7 @@ internal sealed class WindowsFilterBar : Panel
     {
         "None" => WindowsIcons.UnratedGlyph,
         "Rejected" => WindowsIcons.BlockedGlyph,
-        "Conflict" => IconCatalog.WindowsGlyph(IconCatalog.FilterConflict),
+        "Conflict" => IconCatalog.FluentGlyph(IconCatalog.FilterConflict),
         _ when key.StartsWith("Eq", StringComparison.Ordinal) => WindowsIcons.ForRatingFilter(key),
         _ => WindowsIcons.SelectAllGlyph,
     };
@@ -725,7 +725,7 @@ internal sealed class WindowsFilterBar : Panel
     {
         FontFamily = new FontFamily(WindowsIcons.FontFamilyForGlyph(glyph)),
         Glyph = glyph,
-        FontSize = DesignTokens.MenuIconSize,
+        FontSize = DesignTokens.MenuIconFontSize,
     };
 
     /// <summary>读取 WinUI 主题画刷；缺失时退回透明，避免资源键漂移让控件构造失败。</summary>

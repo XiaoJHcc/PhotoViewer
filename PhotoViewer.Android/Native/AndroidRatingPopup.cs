@@ -467,7 +467,7 @@ internal sealed class AndroidRatingPopup : IDisposable
                 string id = value == 0 ? IconCatalog.RatingClear : active ? IconCatalog.RatingStarFilled : IconCatalog.RatingStar;
                 double size = value == 0 ? DesignTokens.RatingPopupClearGlyphFontSize : DesignTokens.RatingPopupGlyphFontSize;
                 var color = value == 0 ? AndroidUiTheme.StarClear : active ? AndroidUiTheme.StarActive : AndroidUiTheme.StarInactive;
-                int iconSize = Math.Max(1, Math.Min(Px(Pitch), (int)Math.Ceiling(AndroidUiTheme.Sp(Context!, size))));
+                int iconSize = Math.Max(1, Math.Min(Px(Pitch), (int)Math.Ceiling(AndroidUiTheme.Dp(Context!, size))));
                 button.IconSize = iconSize;
                 button.Icon = new AndroidGlyphDrawable(Context!, AndroidIcons.Glyph(id), AndroidIcons.Filled(id), null, iconSize);
                 button.IconTint = ColorStateList.ValueOf(color);

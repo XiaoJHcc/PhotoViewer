@@ -6,6 +6,17 @@ struct Symbol: Decodable {
     let name: String
 }
 
+struct Metric: Codable {
+    let id: String
+    let pointSize: Double
+    let x: Double
+    let y: Double
+    let width: Double
+    let height: Double
+    let imageWidth: Double
+    let imageHeight: Double
+}
+
 guard CommandLine.arguments.count == 3 else {
     fputs("usage: render-apple-symbols.swift symbols.json output-directory\n", stderr)
     exit(2)
@@ -15,6 +26,7 @@ let input = URL(fileURLWithPath: CommandLine.arguments[1])
 let output = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
 let symbols = try JSONDecoder().decode([Symbol].self, from: Data(contentsOf: input))
 try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+var metrics: [Metric] = []
 
 for symbol in symbols {
     guard let base = NSImage(systemSymbolName: symbol.name, accessibilityDescription: nil) else {
@@ -25,7 +37,7 @@ for symbol in symbols {
         guard let configured = base.withSymbolConfiguration(
             NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular)
         ) else {
-            fputs("cannot configure SF Symbol: \(symbol.id)\n", stderr)
+            fputs("cannot configure SF Symbol: \(symbol.id) = \(symbol.name)\n", stderr)
             exit(1)
         }
         let canvas = 32.0
@@ -42,7 +54,7 @@ for symbol in symbols {
             bytesPerRow: 0,
             bitsPerPixel: 0
         ) else {
-            fputs("cannot create bitmap for: \(symbol.id)\n", stderr)
+            fputs("cannot create bitmap for: \(symbol.id) = \(symbol.name)\n", stderr)
             exit(1)
         }
         NSGraphicsContext.saveGraphicsState()
@@ -62,10 +74,42 @@ for symbol in symbols {
                         respectFlipped: true, hints: [.interpolation: NSImageInterpolation.high])
         NSGraphicsContext.restoreGraphicsState()
         guard let png = bitmap.representation(using: .png, properties: [:]) else {
-            fputs("cannot encode SF Symbol: \(symbol.id)\n", stderr)
+            fputs("cannot encode PNG: \(symbol.id)\n", stderr)
             exit(1)
         }
         let filename = symbol.id.replacingOccurrences(of: ".", with: "_") + "-\(Int(pointSize)).png"
         try png.write(to: output.appendingPathComponent(filename))
+
+        var minX = bitmap.pixelsWide
+        var minY = bitmap.pixelsHigh
+        var maxX = -1
+        var maxY = -1
+        for y in 0..<bitmap.pixelsHigh {
+            for x in 0..<bitmap.pixelsWide {
+                guard let alpha = bitmap.colorAt(x: x, y: y)?.alphaComponent, alpha >= 0.5 else { continue }
+                minX = min(minX, x)
+                minY = min(minY, y)
+                maxX = max(maxX, x)
+                maxY = max(maxY, y)
+            }
+        }
+        guard maxX >= minX, maxY >= minY else {
+            fputs("empty SF Symbol rendering: \(symbol.id) = \(symbol.name)\n", stderr)
+            exit(1)
+        }
+        metrics.append(Metric(
+            id: symbol.id,
+            pointSize: pointSize,
+            x: Double(minX) / scale,
+            y: Double(minY) / scale,
+            width: Double(maxX - minX + 1) / scale,
+            height: Double(maxY - minY + 1) / scale,
+            imageWidth: imageSize.width,
+            imageHeight: imageSize.height
+        ))
     }
 }
+
+let encoder = JSONEncoder()
+encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+try encoder.encode(metrics).write(to: output.appendingPathComponent("metrics.json"))

@@ -79,11 +79,11 @@ internal static class AndroidUiTheme
     internal static readonly Color ErrorText = FromToken(DesignTokens.ColorSimError);
     internal static readonly Color WarningText = FromToken(DesignTokens.ColorSettingsWarning);
 
-    /// <summary>Material Symbols Rounded Regular 在 Assets 中的路径。</summary>
-    internal const string IconFontAsset = "Icons/MaterialSymbolsRounded-Regular.ttf";
+    /// <summary>共享 Fluent Regular 在 Assets 中的路径。</summary>
+    internal const string IconFontAsset = "Icons/FluentSystemIcons-Regular.ttf";
 
-    /// <summary>Material Symbols Rounded Filled 在 Assets 中的路径。</summary>
-    internal const string IconSolidFontAsset = "Icons/MaterialSymbolsRounded-Filled.ttf";
+    /// <summary>共享 Fluent Filled 在 Assets 中的路径。</summary>
+    internal const string IconSolidFontAsset = "Icons/FluentSystemIcons-Filled.ttf";
 
     private static Typeface? _iconTypeface;
     private static Typeface? _iconSolidTypeface;
@@ -107,7 +107,7 @@ internal static class AndroidUiTheme
         (int)((argb >> 8) & 0xFF),
         (int)(argb & 0xFF))!;
 
-    /// <summary>dp → px 转换。</summary>
+    /// <summary>图标 dp → px 转换；图标是固定几何图形，不随系统文字缩放。</summary>
     /// <param name="context">上下文。</param>
     /// <param name="dp">dp 值。</param>
     /// <returns>像素值。</returns>
@@ -128,7 +128,7 @@ internal static class AndroidUiTheme
         return metrics == null ? (float)sp : TypedValue.ApplyDimension(ComplexUnitType.Sp, (float)sp, metrics);
     }
 
-    /// <summary>加载随包 Material Regular；资产缺失时显式失败，不回退系统字体。</summary>
+    /// <summary>加载随包 Fluent Regular；资产缺失时显式失败，不回退系统字体。</summary>
     internal static Typeface? IconTypeface(Context context)
     {
         if (_iconTypeface != null) return _iconTypeface;
@@ -143,7 +143,7 @@ internal static class AndroidUiTheme
         }
     }
 
-    /// <summary>加载随包 Material Filled；资产缺失时显式失败，不回退 Regular 或系统字体。</summary>
+    /// <summary>加载随包 Fluent Filled；资产缺失时显式失败，不回退 Regular 或系统字体。</summary>
     internal static Typeface? IconSolidTypeface(Context context)
     {
         if (_iconSolidTypeface != null) return _iconSolidTypeface;

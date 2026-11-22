@@ -592,7 +592,7 @@ internal sealed class AndroidFilterBar : FrameLayout
         };
     }
 
-    /// <summary>菜单行语义图标统一取 Material Symbols Rounded。</summary>
+    /// <summary>菜单行语义图标统一取共享 Fluent。</summary>
     private static (ImageView Icon, string Description) CreateMenuIcon(Activity activity, FilterMenu kind,
         object value)
     {
@@ -610,14 +610,14 @@ internal sealed class AndroidFilterBar : FrameLayout
 
     private static (ImageView Icon, string Description) GlyphIcon(Activity activity, string id, Color color)
     {
-        int glyphSize = Math.Max(1, (int)Math.Round(AndroidUiTheme.Sp(activity, DesignTokens.MenuIconFontSize)));
+        int glyphSize = Math.Max(1, (int)Math.Round(AndroidUiTheme.Dp(activity, DesignTokens.MenuIconFontSize)));
         var drawable = new AndroidGlyphDrawable(activity, AndroidIcons.Glyph(id), AndroidIcons.Filled(id), null, glyphSize);
         drawable.SetTintList(ColorStateList.ValueOf(color));
         var icon = new ImageView(activity);
         icon.SetImageDrawable(drawable);
-        icon.SetScaleType(ImageView.ScaleType.FitCenter);
+        icon.SetScaleType(ImageView.ScaleType.Center);
         icon.ImportantForAccessibility = ImportantForAccessibility.No;
-        return (icon, $"material {id}");
+        return (icon, $"fluent {id}");
     }
 
     /// <summary>dp → px（布局参数）。</summary>
@@ -660,9 +660,9 @@ internal sealed class AndroidFilterBar : FrameLayout
                 0, global::Android.Views.ViewGroup.LayoutParams.MatchParent) { Weight = 1 });
             _mark = new TextView(activity)
             {
-                TextSize = (float)DesignTokens.MenuIconFontSize,
                 Gravity = GravityFlags.Center,
             };
+            _mark.SetTextSize(global::Android.Util.ComplexUnitType.Dip, (float)DesignTokens.MenuIconFontSize);
             _mark.SetTypeface(AndroidUiTheme.IconTypeface(activity), TypefaceStyle.Normal);
             _mark.SetTextColor(AndroidUiTheme.Accent);
             _mark.ImportantForAccessibility = ImportantForAccessibility.No;

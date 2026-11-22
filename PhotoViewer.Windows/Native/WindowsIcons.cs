@@ -19,10 +19,10 @@ internal static class WindowsIcons
     /// <summary>随包 Fluent Filled 字体。</summary>
     public const string FilledFontFamily = "ms-appx:///Assets/Icons/FluentSystemIcons-Filled.ttf#FluentSystemIcons-Filled";
 
-    public static string StarGlyph => IconCatalog.WindowsGlyph(IconCatalog.RatingStarFilled);
-    public static string StarOutlineGlyph => IconCatalog.WindowsGlyph(IconCatalog.RatingStar);
-    public static string ClearGlyph => IconCatalog.WindowsGlyph(IconCatalog.RatingClear);
-    public static string WarningGlyph => IconCatalog.WindowsGlyph(IconCatalog.RatingWarning);
+    public static string StarGlyph => IconCatalog.FluentGlyph(IconCatalog.RatingStarFilled);
+    public static string StarOutlineGlyph => IconCatalog.FluentGlyph(IconCatalog.RatingStar);
+    public static string ClearGlyph => IconCatalog.FluentGlyph(IconCatalog.RatingClear);
+    public static string WarningGlyph => IconCatalog.FluentGlyph(IconCatalog.RatingWarning);
 
     // SHELL-02：自绘窗口按钮保留系统字形。
     public const string FullScreenGlyph = "\uE740";
@@ -32,25 +32,25 @@ internal static class WindowsIcons
     public const string RestoreGlyph = "\uE923";
     public const string CloseGlyph = "\uE8BB";
 
-    public static string DocumentGlyph => IconCatalog.WindowsGlyph(IconCatalog.MenuOpenFile);
-    public static string FolderGlyph => IconCatalog.WindowsGlyph(IconCatalog.CommandOpen);
-    public static string PhotosGlyph => IconCatalog.WindowsGlyph(IconCatalog.MenuFilmstrip);
-    public static string AnalysisGridGlyph => IconCatalog.WindowsGlyph(IconCatalog.CommandAnalysis);
-    public static string SliderGlyph => IconCatalog.WindowsGlyph(IconCatalog.MenuControl);
-    public static string ExifGlyph => IconCatalog.WindowsGlyph(IconCatalog.MenuExif);
-    public static string ContrastGlyph => IconCatalog.WindowsGlyph(IconCatalog.CommandEnhance);
-    public static string ToolsGlyph => IconCatalog.WindowsGlyph(IconCatalog.MenuTools);
-    public static string SettingsGlyph => IconCatalog.WindowsGlyph(IconCatalog.MenuSettings);
-    public static string SortDateGlyph => IconCatalog.WindowsGlyph(IconCatalog.FilterSortDate);
-    public static string SortSizeGlyph => IconCatalog.WindowsGlyph(IconCatalog.FilterSortSize);
-    public static string UpGlyph => IconCatalog.WindowsGlyph(IconCatalog.FilterAscending);
-    public static string DownGlyph => IconCatalog.WindowsGlyph(IconCatalog.FilterDescending);
-    public static string SelectAllGlyph => IconCatalog.WindowsGlyph(IconCatalog.FilterAll);
-    public static string UnratedGlyph => IconCatalog.WindowsGlyph(IconCatalog.FilterUnrated);
-    public static string BlockedGlyph => IconCatalog.WindowsGlyph(IconCatalog.FilterRejected);
-    public static string RemoveGlyph => IconCatalog.WindowsGlyph(IconCatalog.SettingsRemove);
-    public static string DragHandleGlyph => IconCatalog.WindowsGlyph(IconCatalog.SettingsDrag);
-    public static string PhotoPlaceholderGlyph => IconCatalog.WindowsGlyph(IconCatalog.CommonPhotoPlaceholder);
+    public static string DocumentGlyph => IconCatalog.FluentGlyph(IconCatalog.MenuOpenFile);
+    public static string FolderGlyph => IconCatalog.FluentGlyph(IconCatalog.CommandOpen);
+    public static string PhotosGlyph => IconCatalog.FluentGlyph(IconCatalog.MenuFilmstrip);
+    public static string AnalysisGridGlyph => IconCatalog.FluentGlyph(IconCatalog.CommandAnalysis);
+    public static string SliderGlyph => IconCatalog.FluentGlyph(IconCatalog.MenuControl);
+    public static string ExifGlyph => IconCatalog.FluentGlyph(IconCatalog.MenuExif);
+    public static string EnhanceGlyph => IconCatalog.FluentGlyph(IconCatalog.CommandEnhance);
+    public static string ToolsGlyph => IconCatalog.FluentGlyph(IconCatalog.MenuTools);
+    public static string SettingsGlyph => IconCatalog.FluentGlyph(IconCatalog.MenuSettings);
+    public static string SortDateGlyph => IconCatalog.FluentGlyph(IconCatalog.FilterSortDate);
+    public static string SortSizeGlyph => IconCatalog.FluentGlyph(IconCatalog.FilterSortSize);
+    public static string UpGlyph => IconCatalog.FluentGlyph(IconCatalog.FilterAscending);
+    public static string DownGlyph => IconCatalog.FluentGlyph(IconCatalog.FilterDescending);
+    public static string SelectAllGlyph => IconCatalog.FluentGlyph(IconCatalog.FilterAll);
+    public static string UnratedGlyph => IconCatalog.FluentGlyph(IconCatalog.FilterUnrated);
+    public static string BlockedGlyph => IconCatalog.FluentGlyph(IconCatalog.FilterRejected);
+    public static string RemoveGlyph => IconCatalog.FluentGlyph(IconCatalog.SettingsRemove);
+    public static string DragHandleGlyph => IconCatalog.FluentGlyph(IconCatalog.SettingsDrag);
+    public static string PhotoPlaceholderGlyph => IconCatalog.FluentGlyph(IconCatalog.CommonPhotoPlaceholder);
 
     private static readonly Dictionary<string, string> CommandIds = new(StringComparer.Ordinal)
     {
@@ -82,11 +82,11 @@ internal static class WindowsIcons
     /// <summary>筛选的 1–5 星使用对应数字圆。</summary>
     public static string ForRatingFilter(string key) => key switch
     {
-        "Eq1" => IconCatalog.WindowsGlyph(IconCatalog.FilterRating1),
-        "Eq2" => IconCatalog.WindowsGlyph(IconCatalog.FilterRating2),
-        "Eq3" => IconCatalog.WindowsGlyph(IconCatalog.FilterRating3),
-        "Eq4" => IconCatalog.WindowsGlyph(IconCatalog.FilterRating4),
-        "Eq5" => IconCatalog.WindowsGlyph(IconCatalog.FilterRating5),
+        "Eq1" => IconCatalog.FluentGlyph(IconCatalog.FilterRating1),
+        "Eq2" => IconCatalog.FluentGlyph(IconCatalog.FilterRating2),
+        "Eq3" => IconCatalog.FluentGlyph(IconCatalog.FilterRating3),
+        "Eq4" => IconCatalog.FluentGlyph(IconCatalog.FilterRating4),
+        "Eq5" => IconCatalog.FluentGlyph(IconCatalog.FilterRating5),
         _ => throw new ArgumentException($"未定义星级筛选图标：{key}", nameof(key)),
     };
 
@@ -95,7 +95,7 @@ internal static class WindowsIcons
     {
         if (CommandIds.TryGetValue(command, out string? id))
         {
-            return IconCatalog.WindowsGlyph(id);
+            return IconCatalog.FluentGlyph(id);
         }
         if (WarnedMissing.Add(command))
         {
@@ -109,20 +109,20 @@ internal static class WindowsIcons
 
     public static string ForCategory(string category) => category switch
     {
-        "File" => IconCatalog.WindowsGlyph(IconCatalog.SettingsFile),
-        "Preview" => IconCatalog.WindowsGlyph(IconCatalog.SettingsPreview),
-        "Control" => IconCatalog.WindowsGlyph(IconCatalog.SettingsControl),
-        "Exif" => IconCatalog.WindowsGlyph(IconCatalog.SettingsExif),
-        "Ai" => IconCatalog.WindowsGlyph(IconCatalog.SettingsAi),
+        "File" => IconCatalog.FluentGlyph(IconCatalog.SettingsFile),
+        "Preview" => IconCatalog.FluentGlyph(IconCatalog.SettingsPreview),
+        "Control" => IconCatalog.FluentGlyph(IconCatalog.SettingsControl),
+        "Exif" => IconCatalog.FluentGlyph(IconCatalog.SettingsExif),
+        "Ai" => IconCatalog.FluentGlyph(IconCatalog.SettingsAi),
         _ => throw new ArgumentException($"未定义设置分类图标：{category}", nameof(category)),
     };
 
     public static string ForToolCategory(string category) => category switch
     {
-        "Exif" => IconCatalog.WindowsGlyph(IconCatalog.ToolsExif),
-        "Stats" => IconCatalog.WindowsGlyph(IconCatalog.ToolsStats),
-        "Dino" => IconCatalog.WindowsGlyph(IconCatalog.ToolsDino),
-        "Cv" => IconCatalog.WindowsGlyph(IconCatalog.ToolsCv),
+        "Exif" => IconCatalog.FluentGlyph(IconCatalog.ToolsExif),
+        "Stats" => IconCatalog.FluentGlyph(IconCatalog.ToolsStats),
+        "Dino" => IconCatalog.FluentGlyph(IconCatalog.ToolsDino),
+        "Cv" => IconCatalog.FluentGlyph(IconCatalog.ToolsCv),
         _ => throw new ArgumentException($"未定义工具分类图标：{category}", nameof(category)),
     };
 

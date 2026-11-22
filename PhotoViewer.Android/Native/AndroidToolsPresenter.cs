@@ -483,16 +483,17 @@ internal sealed class AndroidToolsSheetView : FrameLayout
         return view;
     }
 
-    private TextView IconText(string id, double sizeSp, Color color)
+    private TextView IconText(string id, double sizeDp, Color color)
     {
-        var text = Text(AndroidIcons.Glyph(id), sizeSp, color);
+        var text = Text(AndroidIcons.Glyph(id), sizeDp, color);
+        text.SetTextSize(global::Android.Util.ComplexUnitType.Dip, (float)sizeDp);
         text.SetTypeface(AndroidUiTheme.IconTypeface(_activity), TypefaceStyle.Normal);
         return text;
     }
 
-    private TextView IconButton(string id, double sizeSp, Action action)
+    private TextView IconButton(string id, double sizeDp, Action action)
     {
-        var text = IconText(id, sizeSp, AndroidUiTheme.TextPrimary);
+        var text = IconText(id, sizeDp, AndroidUiTheme.TextPrimary);
         text.Gravity = GravityFlags.Center;
         text.Clickable = true;
         text.Click += (_, _) => action();

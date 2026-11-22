@@ -78,7 +78,7 @@
 
 令牌：`filter.margin`（10）、`shell.filter.leadingInset`（42，仅 macOS 列布局）。
 
-- 移动端宽形态的筛选/更多合体与大档卡片外框同宽（96），两段各 48，行、列布局共用这一宽度；两段以筛选图标 `icon.filter` 与更多图标 `icon.more` 表达（平台系统图标集按 platforms.md 登记）。
+- 移动端宽形态的筛选/更多合体与大档卡片外框同宽（96），两段各 48，行、列布局共用这一宽度；两段以筛选图标 `filter.entry` 与更多图标 `filter.more` 表达（平台系统图标集按 platforms.md 登记）。
 - 列布局：移动端的合体与胶片卡片外框落在同一条内容末端锚点（SHELL-01、FILM-07）；AI 版相似聚类开关独立、同宽，以同一末端对齐、在合体下方隔 `shell.glass.group.gap`。无遮挡时列宽仍为 116。桌面宽形态的筛选控件总宽等于胶片栏卡片列宽并整组水平居中，三段放不下时改用单一胶囊；AI 版开关在其下方隔同一间距、同宽。首控件顶部让位只有 macOS 取 `shell.filter.leadingInset`（42 = 标题栏高 32 + `filter.margin` 10），避开盖住文件栏的标题栏与交通灯；移动端列布局取该列自身位置的顶部遮挡（iPad 窗口控件带、Android 系统栏）加一份 `filter.margin`。
 - 行布局：移动端合体与 AI 版开关按自然宽紧随（开关隔 `shell.glass.group.gap`），整组在安全内容区内居中；桌面宽形态三段合体按内容自然宽度排布，不按胶片栏宽度拉伸，交叉轴居中，AI 版开关隔同一间距紧随，整组超出安全内容区时改用单一胶囊。
 - 宽形态筛选控件与相似聚类开关高 `shell.glass.button.size`；行布局筛选条主轴 = 控件高 + 2 × `filter.margin`。
@@ -89,7 +89,7 @@
 
 ## FILTER-08 菜单交互 · 应当
 
-- 自绘筛选控件：圆角 `dropdown.cornerRadius`、底 `color.dropdown.background`（悬停 `.hover`、按下 `.pressed`）、1 点描边 `color.dropdown.border`（悬停 `.hover`）、文字 `dropdown.fontSize` 左内边距 `dropdown.paddingLeft`、右侧 `icon.chevronDown` 边长 `dropdown.chevron.size`、距右 `dropdown.chevron.rightInset`、色 `color.dropdown.chevron`。弹层贴在入口正下方并以入口水平居中（最小宽 = 入口宽，越界向内夹取，下方不足翻到上方），外观同 MENU-03 自绘弹层；项左右内边距 `dropdown.item.paddingX`；当前项在左侧勾选列画 `icon.check`，悬停 / 按下整行用 `color.menu.item.hover/pressed`，不用强调色整行铺底。
+- 自绘筛选控件：圆角 `dropdown.cornerRadius`、底 `color.dropdown.background`（悬停 `.hover`、按下 `.pressed`）、1 点描边 `color.dropdown.border`（悬停 `.hover`）、文字 `dropdown.fontSize` 左内边距 `dropdown.paddingLeft`、右侧 `common.chevronDown` 边长 `dropdown.chevron.size`、距右 `dropdown.chevron.rightInset`、色 `color.dropdown.chevron`。弹层贴在入口正下方并以入口水平居中（最小宽 = 入口宽，越界向内夹取，下方不足翻到上方），外观同 MENU-03 自绘弹层；项左右内边距 `dropdown.item.paddingX`；当前项在左侧勾选列画 `common.check`，悬停 / 按下整行用 `color.menu.item.hover/pressed`，不用强调色整行铺底。
 - 三段合体各开一组菜单；单一入口打开三个内联分组。排序键与方向单选、星级多选；移动端更多段另开主图菜单（MENU-08）。不隐藏当前不可能命中的选项；勾选只表示真实选择，入口标题不参与勾选。
 - 点选立即应用；应当就地更新勾选、保持展开及菜单内滚动和焦点。若现用原生菜单没有公开的保留能力，允许系统在点选后收起或重定位，并登记差异，不拦截系统派发、不重新弹出、不为此更换控件。无关变更不主动关闭；入口移动、隐藏或移除时可关闭或按平台能力重定位。
 - 菜单项应当用既有控件的公开图标能力配语义图标；允许已登记的原生字形差异。图标不替代文案或勾选。

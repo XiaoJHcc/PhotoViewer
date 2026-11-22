@@ -258,7 +258,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         header.ImportantForAccessibility = ImportantForAccessibility.No;
         _header = header;
         _back = IconButton(IconCatalog.NavigationBack, 22, () => { if (!GoBack()) Dismiss(); });
-        _back.SetTextSize(global::Android.Util.ComplexUnitType.Sp, 26);
+        _back.SetTextSize(global::Android.Util.ComplexUnitType.Dip, 26);
         _back.SetPadding((int)(8 * density), 0, (int)(8 * density), 0);
         _back.Visibility = ViewStates.Invisible;
         _title = Text("设置", 17, AndroidUiTheme.TextPrimary, bold: true);
@@ -1445,16 +1445,17 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
             Typeface = bold ? Typeface.Create(Typeface.Default, TypefaceStyle.Bold) : Typeface.Default,
         }.WithTextColor(color);
 
-    private TextView IconText(string id, double sizeSp, Color color)
+    private TextView IconText(string id, double sizeDp, Color color)
     {
-        var text = Text(AndroidIcons.Glyph(id), sizeSp, color);
+        var text = Text(AndroidIcons.Glyph(id), sizeDp, color);
+        text.SetTextSize(global::Android.Util.ComplexUnitType.Dip, (float)sizeDp);
         text.SetTypeface(AndroidUiTheme.IconTypeface(_activity), TypefaceStyle.Normal);
         return text;
     }
 
-    private TextView IconButton(string id, double sizeSp, Action action)
+    private TextView IconButton(string id, double sizeDp, Action action)
     {
-        var text = IconText(id, sizeSp, AndroidUiTheme.TextPrimary);
+        var text = IconText(id, sizeDp, AndroidUiTheme.TextPrimary);
         text.Gravity = GravityFlags.Center;
         text.Clickable = true;
         text.Click += (_, _) => action();

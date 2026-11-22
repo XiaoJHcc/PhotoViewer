@@ -127,7 +127,7 @@ internal static partial class AndroidNativeChecks
         Check("控制栏命令含 Next/Fit", root.Form != ScreenForm.Wide
                 || (root.ControlBar.Commands.Contains("Next") && root.ControlBar.Commands.Contains("Fit")),
             string.Join(",", root.ControlBar.Commands));
-        Check("控制栏雾天增强显示对比度半圆", root.Form != ScreenForm.Wide
+        Check("控制栏雾天增强显示魔法棒", root.Form != ScreenForm.Wide
                 || root.ControlBar.CommandIconForChecks("ToggleEnhance") == AndroidIcons.ForCommand("ToggleEnhance"),
             $"form={root.Form} icon={DescribeGlyph(root.ControlBar.CommandIconForChecks("ToggleEnhance") ?? string.Empty)}");
 

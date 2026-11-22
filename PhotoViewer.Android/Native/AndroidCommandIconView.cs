@@ -8,13 +8,13 @@ namespace PhotoViewer.Android.Native;
 
 /// <summary>
 /// 设置页控制栏功能行的命令图标（SETTINGS-01 / TOOLBAR-04）：与控制栏同一命令语义与字号。
-/// 评分快捷命令 1–5 画实心星并在星内叠数字（数字取按钮底色），0 画清零叉；其余命令画 Material 描边字形。
+/// 评分快捷命令 1–5 画实心星并在星内叠数字（数字取按钮底色），0 画清零叉；其余命令画 Fluent 描边字形。
 /// 字形是 PUA 码位，只用于绘制，不进入读屏。
 /// </summary>
 internal sealed class AndroidCommandIconView : View
 {
-    /// <summary>图标字号（sp），与控制栏命令字形同源。</summary>
-    internal const double GlyphSizeSp = DesignTokens.ToolbarCommandGlyphFontSize;
+    /// <summary>图标尺寸（dp），与控制栏命令字形同源，不随系统文字缩放。</summary>
+    internal const double GlyphSizeDp = DesignTokens.ToolbarCommandGlyphFontSize;
 
     private readonly Paint _glyph;
     private readonly Paint _solid;
@@ -28,13 +28,14 @@ internal sealed class AndroidCommandIconView : View
     internal AndroidCommandIconView(Context context) : base(context)
     {
         _glyph = AndroidUiTheme.Paint(AndroidUiTheme.TextPrimary);
-        _glyph.TextSize = AndroidUiTheme.Sp(context, GlyphSizeSp);
+        _glyph.TextSize = AndroidUiTheme.Dp(context, GlyphSizeDp);
         _glyph.TextAlign = Paint.Align.Center;
         _solid = AndroidUiTheme.Paint(AndroidUiTheme.TextPrimary);
-        _solid.TextSize = AndroidUiTheme.Sp(context, GlyphSizeSp);
+        _solid.TextSize = AndroidUiTheme.Dp(context, GlyphSizeDp);
         _solid.TextAlign = Paint.Align.Center;
         _digit = AndroidUiTheme.TextPaint(context, DesignTokens.ToolbarRatingDigitFontSize,
             AndroidUiTheme.FromToken(DesignTokens.ColorToolbarCommandBackground), bold: true);
+        _digit.TextSize = AndroidUiTheme.Dp(context, DesignTokens.ToolbarRatingDigitFontSize);
         if (AndroidUiTheme.IconTypeface(context) is { } regular) _glyph.SetTypeface(regular);
         if (AndroidUiTheme.IconSolidTypeface(context) is { } solid) _solid.SetTypeface(solid);
         // 图标只是命令名的附属符号：读屏只念整行名称，不朗读 PUA 字形。
@@ -48,9 +49,9 @@ internal sealed class AndroidCommandIconView : View
     internal string? RatingDigit => _number;
     /// <summary>是否使用实心星字形。</summary>
     internal bool SolidGlyph => _solidGlyph;
-    /// <summary>字形字号（sp）。</summary>
-    internal double FontSizeSp => GlyphSizeSp;
-    /// <summary>字形实际像素字号（验收：应等于 18sp 的像素值，不被二次缩放）。</summary>
+    /// <summary>字形尺寸（dp）。</summary>
+    internal double FontSizeDp => GlyphSizeDp;
+    /// <summary>字形实际像素尺寸（验收：应等于 18dp 的像素值，不被二次缩放）。</summary>
     internal float GlyphTextSizePx => (_solidGlyph ? _solid : _glyph).TextSize;
 
     /// <summary>
@@ -89,14 +90,14 @@ internal sealed class AndroidCommandIconView : View
         Invalidate();
     }
 
-    /// <summary>按字形实际尺寸测量，容器随系统大字体增高，不裁切字形。</summary>
+    /// <summary>按字形实际尺寸测量，容器不裁切字形。</summary>
     /// <param name="widthMeasureSpec">宽约束。</param>
     /// <param name="heightMeasureSpec">高约束。</param>
     protected override void OnMeasure(int widthMeasureSpec, int heightMeasureSpec)
     {
         var paint = _solidGlyph ? _solid : _glyph;
         var metrics = paint.GetFontMetrics()!;
-        int minimum = (int)AndroidUiTheme.Dp(Context!, DesignTokens.ToolbarCommandGlyphFontSize);
+        int minimum = (int)AndroidUiTheme.Dp(Context!, GlyphSizeDp);
         int width = Math.Max(minimum, (int)Math.Ceiling(paint.MeasureText(_text)) + 2);
         int height = Math.Max(minimum, (int)Math.Ceiling(metrics.Descent - metrics.Ascent) + 2);
         SetMeasuredDimension(ResolveSize(width, widthMeasureSpec), ResolveSize(height, heightMeasureSpec));

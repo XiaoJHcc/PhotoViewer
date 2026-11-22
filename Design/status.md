@@ -13,10 +13,10 @@
 | ID | macOS | iOS·iPadOS | Windows | Android |
 |---|---|---|---|---|
 | ICON-01 | 代码核对；AppleSymbolNames 已接入共享语义清单 | 代码核对；AppleSymbolNames 已接入共享语义清单 | 代码核对；业务入口已接入共享语义清单 | 程序化通过；命令、菜单、筛选与设置入口同语义映射 |
-| ICON-02 | 不适用；系统 SF Symbols | 不适用；系统 SF Symbols | 代码核对；随包 Fluent Regular / Filled，真屏待验 | 程序化通过；随包 Material Rounded Regular / Filled 与 APK 资产门禁 |
-| ICON-03 | 代码核对；语义保持既有映射 | 代码核对；语义保持既有映射 | 代码核对；EXIF、数字筛选与同族星级已整理，真屏待验 | 程序化通过；EXIF 独立、数字筛选与同族星级，真视图无旧族混用 |
+| ICON-02 | 不适用；系统 SF Symbols | 不适用；系统 SF Symbols | 代码核对；随包 Fluent Regular / Filled，真屏待验 | 程序化通过；与 Windows 共用 Fluent Regular / Filled 归一资产与 APK 资产门禁 |
+| ICON-03 | 代码核对；语义保持既有映射 | 代码核对；语义保持既有映射 | 代码核对；共享 Fluent 映射与全目录平均倍率，真屏待验 | 程序化通过；共享 Fluent 映射、全目录平均倍率与 dp 标称尺寸经真视图检查 |
 | ICON-04 | 程序化通过；共享生成检查 | 程序化通过；共享生成检查 | 程序化通过；生成检查与发布扫描自检 | 程序化通过；生成检查、构建与发布扫描自检 |
-| ICON-05 | 程序化通过；Apple 系统实际渲染对比 | 不适用；对比以 macOS 系统渲染代表同一符号清单 | 代码核对；资产对比已生成，WinUI 真屏待验 | 程序化通过；资产对比、主屏/筛选/设置检查与设备截图 |
+| ICON-05 | 程序化通过；Apple 系统实际渲染对比 | 不适用；对比以 macOS 系统渲染代表同一符号清单 | 代码核对；资产对比已生成，WinUI 真屏待验 | 程序化通过；资产对比、主屏/筛选/设置/布局检查、两档 fontScale 与设备截图 |
 
 ## film
 

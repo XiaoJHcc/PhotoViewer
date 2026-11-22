@@ -917,7 +917,7 @@ internal sealed partial class WindowsMainWindow
             ("胶片栏", WindowsIcons.PhotosGlyph),
             ("分析栏", WindowsIcons.AnalysisGridGlyph),
             ("控制栏", WindowsIcons.SliderGlyph),
-            ("雾天增强", WindowsIcons.ContrastGlyph),
+            ("雾天增强", WindowsIcons.EnhanceGlyph),
             ("工具…", WindowsIcons.ToolsGlyph),
             ("设置…", WindowsIcons.SettingsGlyph),
         };

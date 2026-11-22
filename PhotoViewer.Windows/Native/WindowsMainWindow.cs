@@ -714,7 +714,7 @@ internal sealed partial class WindowsMainWindow : Window
                     menu.Items.Add(_controlMenuToggle);
                     break;
                 case PhotoMenuItemId.Enhance:
-                    _enhanceMenuToggle = ToggleItem(entry, WindowsIcons.ContrastGlyph);
+                    _enhanceMenuToggle = ToggleItem(entry, WindowsIcons.EnhanceGlyph);
                     _enhanceMenuToggle.Click += (_, _) => ToggleEnhance();
                     menu.Items.Add(_enhanceMenuToggle);
                     break;
@@ -760,7 +760,7 @@ internal sealed partial class WindowsMainWindow : Window
     {
         FontFamily = new FontFamily(WindowsIcons.RegularFontFamily),
         Glyph = glyph,
-        FontSize = DesignTokens.MenuIconSize,
+        FontSize = DesignTokens.MenuIconFontSize,
     };
 
     /// <summary>

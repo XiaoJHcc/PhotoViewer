@@ -155,21 +155,24 @@ internal sealed class AndroidThumbnailCard : View
         _starFilled = AndroidUiTheme.Paint(AndroidUiTheme.StarActive);
         if (AndroidUiTheme.IconTypeface(context) is { } outlineTypeface) _starOutline.SetTypeface(outlineTypeface);
         if (AndroidUiTheme.IconSolidTypeface(context) is { } solidTypeface) _starFilled.SetTypeface(solidTypeface);
-        _starOutline.TextSize = AndroidUiTheme.Sp(context, DesignTokens.FilmCardStarFontSize);
-        _starFilled.TextSize = AndroidUiTheme.Sp(context, DesignTokens.FilmCardStarFontSize);
+        _starOutline.TextSize = AndroidUiTheme.Dp(context, DesignTokens.FilmCardStarFontSize);
+        _starFilled.TextSize = AndroidUiTheme.Dp(context, DesignTokens.FilmCardStarFontSize);
         _badgePaint = AndroidUiTheme.Paint(AndroidUiTheme.ShakeBadge);
         _badgeTextPaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardBadgeFontSize, Color.White, bold: true);
         // FILM-05：清零叉使用中性图形色，不随评分点亮。
         _clearPaint = AndroidUiTheme.Paint(AndroidUiTheme.StarClear);
         if (AndroidUiTheme.IconTypeface(context) is { } clearTypeface) _clearPaint.SetTypeface(clearTypeface);
-        _clearPaint.TextSize = AndroidUiTheme.Sp(context, DesignTokens.FilmCardStarFontSize);
+        _clearPaint.TextSize = AndroidUiTheme.Dp(context, DesignTokens.FilmCardClearGlyphSize);
         _conflictPaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardStarFontSize, AndroidUiTheme.StarConflict);
+        _conflictPaint.TextSize = AndroidUiTheme.Dp(context, DesignTokens.FilmCardStarFontSize);
         if (AndroidUiTheme.IconTypeface(context) is { } iconTypeface) _conflictPaint.SetTypeface(iconTypeface);
         _smallNamePaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardSmallNameFontSize, AndroidUiTheme.TextPrimary, bold: true);
         _smallBadgePaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardSmallBadgeFontSize, Color.White, bold: true);
         _smallStarPaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardSmallBadgeFontSize, AndroidUiTheme.StarActive);
+        _smallStarPaint.TextSize = AndroidUiTheme.Dp(context, DesignTokens.FilmCardSmallBadgeFontSize);
         if (AndroidUiTheme.IconSolidTypeface(context) is { } smallSolid) _smallStarPaint.SetTypeface(smallSolid);
         _smallConflictPaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardSmallBadgeFontSize, AndroidUiTheme.StarConflict);
+        _smallConflictPaint.TextSize = AndroidUiTheme.Dp(context, DesignTokens.FilmCardSmallBadgeFontSize);
         if (AndroidUiTheme.IconTypeface(context) is { } smallIcon) _smallConflictPaint.SetTypeface(smallIcon);
         var listener = new CardGestureListener(this);
         _gestures = new GestureDetector(context, listener);
@@ -309,6 +312,7 @@ internal sealed class AndroidThumbnailCard : View
             }
             else
             {
+                placeholderPaint.TextSize = AndroidUiTheme.Dp(Context!, DesignTokens.FilmCardPlaceholderGlyphFontSize);
                 placeholderPaint.SetTypeface(AndroidUiTheme.IconTypeface(Context!));
                 AndroidUiTheme.DrawGlyphCentered(canvas, AndroidIcons.Glyph(IconCatalog.CommonPhotoPlaceholder),
                     placeholderPaint, imageRect.CenterX(), imageRect.CenterY());
@@ -454,6 +458,7 @@ internal sealed class AndroidThumbnailCard : View
             }
             else
             {
+                placeholderPaint.TextSize = AndroidUiTheme.Dp(Context!, DesignTokens.FilmCardPlaceholderGlyphFontSize);
                 placeholderPaint.SetTypeface(AndroidUiTheme.IconTypeface(Context!));
                 AndroidUiTheme.DrawGlyphCentered(canvas, AndroidIcons.Glyph(IconCatalog.CommonPhotoPlaceholder),
                     placeholderPaint, imageRect.CenterX(), imageRect.CenterY());

@@ -258,13 +258,13 @@ internal static partial class AndroidNativeChecks
         Check("勾选命中区保持 44dp",
             controlRow is { } row2 && Math.Abs(row2.CheckHitWidth - checkHit) <= 1,
             LayoutText(controlRow, $"{checkHit}px"));
-        Check("命令图标 18sp 且未被二次放大、读屏忽略 PUA 字形",
+        Check("命令图标 18dp 且未被二次放大、读屏忽略 PUA 字形",
             controlRow is { } row3 && row3.IconVisible
-            && Math.Abs(row3.IconFontSizeSp - AndroidCommandIconView.GlyphSizeSp) < .01
-            && Math.Abs(row3.IconTextSizePx - AndroidUiTheme.Sp(activity, AndroidCommandIconView.GlyphSizeSp)) <= 1
+            && Math.Abs(row3.IconFontSizeDp - AndroidCommandIconView.GlyphSizeDp) < .01
+            && Math.Abs(row3.IconTextSizePx - AndroidUiTheme.Dp(activity, AndroidCommandIconView.GlyphSizeDp)) <= 1
             && row3.IconIgnoredForAccessibility,
-            LayoutText(controlRow, $"glyph={AndroidCommandIconView.GlyphSizeSp}sp"
-                + $"={AndroidUiTheme.Sp(activity, AndroidCommandIconView.GlyphSizeSp):0.#}px"));
+            LayoutText(controlRow, $"glyph={AndroidCommandIconView.GlyphSizeDp}dp"
+                + $"={AndroidUiTheme.Dp(activity, AndroidCommandIconView.GlyphSizeDp):0.#}px"));
 
         var hotkeys = sheet.Settings.Hotkeys;
         var rating3 = sheet.HotkeyRowLayoutForChecks(HotkeyIndexOf(hotkeys, "SetRating3"));
