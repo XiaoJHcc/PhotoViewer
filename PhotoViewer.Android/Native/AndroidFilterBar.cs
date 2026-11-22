@@ -4,7 +4,6 @@ using Android.App;
 using Android.Content;
 using Android.Content.Res;
 using Android.Graphics;
-using Android.Graphics.Drawables;
 using Android.Views;
 using Android.Widget;
 using AndroidX.Core.View;
@@ -22,7 +21,8 @@ namespace PhotoViewer.Android.Native;
 /// 「筛选 / 更多」96 合体（行布局整组含 AI 开关自然宽居中、列布局按卡片内容末端对齐），
 /// 手机形态取共享 <see cref="PhoneScreenLayout"/> 的竖屏 44 圆按钮或横屏 88 合体。
 /// 全部入口都是 Material 按钮：圆按钮与合体共用同一套材质与状态层，合体是一个原生胶囊容器内的两段透明按钮；
-/// 筛选段弹出与手机形态相同的三分组菜单，更多段交给宿主弹主图菜单。菜单沿用既有 <see cref="PopupWindow"/> 与共享筛选业务。
+/// 筛选段弹出与手机形态相同的三分组菜单，更多段交给宿主弹主图菜单。菜单承载在主窗口内的
+/// <see cref="AndroidGlassPopupLayer"/> 上，沿用共享筛选业务。
 /// </summary>
 internal sealed class AndroidFilterBar : FrameLayout
 {
@@ -43,7 +43,8 @@ internal sealed class AndroidFilterBar : FrameLayout
     private LayoutRect _control;
     private LayoutRect _filterSegment;
     private LayoutRect _moreSegment;
-    private PopupWindow? _dropdown;
+    private AndroidGlassPopupLayer? _popupLayer;
+    private AndroidGlassPopupSession? _dropdown;
     private FilterMenu? _dropdownKind;
     private int _dropdownItemCount;
     private int _dropdownX;
@@ -88,22 +89,29 @@ internal sealed class AndroidFilterBar : FrameLayout
     /// <summary>行布局下整组的自然宽度（dp）；超出时由滚动宿主承载。</summary>
     internal double RequiredWidthDp => !_horizontal || IsPhone ? _contentWidth : NaturalRowWidth();
 
+    /// <summary>窗口内弹层宿主（由根视图注入；为空时不会打开下拉）。</summary>
+    internal AndroidGlassPopupLayer? PopupLayer
+    {
+        get => _popupLayer;
+        set => _popupLayer = value;
+    }
+
     /// <summary>当前是否有下拉在显示（验收读取，浮层锚点协调也用它）。</summary>
-    internal bool IsDropdownOpen => _dropdown?.IsShowing == true;
-    /// <summary>当前下拉的 <see cref="PopupWindow"/> 实例（验收比对跨周期是不是同一个）。</summary>
-    internal PopupWindow? DropdownInstanceForChecks => _dropdown;
+    internal bool IsDropdownOpen => _dropdown is { IsOpen: true };
+    /// <summary>当前下拉的面板实例（验收比对跨周期是不是同一个）。</summary>
+    internal AndroidGlassPopupSession? DropdownInstanceForChecks => _dropdown;
     /// <summary>当前下拉类型（验收读取）。</summary>
     internal string? DropdownKindForChecks => _dropdownKind?.ToString();
     /// <summary>当前下拉的屏幕定位与尺寸（px，验收读取）。</summary>
     internal (int X, int Y, int Width, int Height) DropdownAnchorForChecks => (_dropdownX, _dropdownY, _dropdownWidth, _dropdownHeight);
     /// <summary>当前下拉的内容视图（验收用真实行视图点选用）。</summary>
-    internal View? DropdownContentViewForChecks => _dropdown?.ContentView;
+    internal View? DropdownContentViewForChecks => _dropdown?.Content;
     /// <summary>当前下拉的行状态（验收读取；关闭时为空）。</summary>
     internal IReadOnlyList<FilterMenuRowForChecks> DropdownRowsForChecks
     {
         get
         {
-            if (_dropdown?.IsShowing != true) return Array.Empty<FilterMenuRowForChecks>();
+            if (_dropdown is not { IsOpen: true }) return Array.Empty<FilterMenuRowForChecks>();
             var rows = new List<FilterMenuRowForChecks>(_dropdownRows.Count);
             foreach (var row in _dropdownRows)
                 rows.Add(new FilterMenuRowForChecks(row.Label, row.Kind.ToString(), row.IsSelected(),
@@ -230,10 +238,10 @@ internal sealed class AndroidFilterBar : FrameLayout
         Invalidate();
     }
 
-    /// <summary>外部状态变化就地更新已打开菜单的勾选与读屏勾选态，不重建浮窗、不重置滚动或焦点。</summary>
+    /// <summary>外部状态变化就地更新已打开菜单的勾选与读屏勾选态，不重建面板、不重置滚动或焦点。</summary>
     private void RefreshDropdownSelection()
     {
-        if (_dropdown?.IsShowing != true) return;
+        if (_dropdown is not { IsOpen: true }) return;
         foreach (var row in _dropdownRows) row.SyncSelection();
     }
 
@@ -363,8 +371,7 @@ internal sealed class AndroidFilterBar : FrameLayout
     /// </summary>
     internal void CommitLayout()
     {
-        if (_dropdown is not { } popup || _dropdownKind is not { } kind) return;
-        if (!popup.IsShowing) return;
+        if (_dropdown is not { IsOpen: true } session || _dropdownKind is not { } kind) return;
         if (!IsAttachedToWindow || Visibility != ViewStates.Visible || !IsShown)
         {
             DismissDropdown();
@@ -384,8 +391,9 @@ internal sealed class AndroidFilterBar : FrameLayout
         _dropdownY = geometry.Y;
         _dropdownWidth = geometry.Width;
         _dropdownHeight = geometry.Height;
-        if (popup.ContentView?.IsAttachedToWindow != true) return;
-        popup.Update(geometry.X, geometry.Y, geometry.Width, geometry.Height);
+        if (_popupLayer == null) return;
+        var screen = new Rect(geometry.X, geometry.Y, geometry.X + geometry.Width, geometry.Y + geometry.Height);
+        _popupLayer.Update(session, _popupLayer.ToWindow(screen));
     }
 
     /// <summary>控件当前是否还能作为锚点：中心点落在本视图（含父级裁剪）的可见区域内。</summary>
@@ -428,11 +436,6 @@ internal sealed class AndroidFilterBar : FrameLayout
         int padding = (int)Math.Round(4 * density);
         int dividerHeight = Math.Max(1, (int)Math.Round(density));
         var content = new LinearLayout(activity) { Orientation = global::Android.Widget.Orientation.Vertical };
-        var background = new GradientDrawable();
-        background.SetColor(AndroidUiTheme.ControlFill);
-        background.SetCornerRadius((float)(8 * density));
-        background.SetStroke(Math.Max(1, (int)Math.Round(density)), AndroidUiTheme.ControlBorder);
-        content.Background = background;
         content.SetPadding(padding, padding, padding, padding);
         _dropdownRows.Clear();
 
@@ -463,32 +466,34 @@ internal sealed class AndroidFilterBar : FrameLayout
             scroll.AddView(content);
             popupContent = scroll;
         }
-        var popup = new PopupWindow(popupContent, geometry.Width, geometry.Height, true)
-        {
-            OutsideTouchable = true,
-            Focusable = true,
-            Elevation = (float)(8 * density),
-        };
-        popup.SetBackgroundDrawable(new ColorDrawable(Color.Transparent));
-        popup.DismissEvent += (_, _) =>
-        {
-            if (ReferenceEquals(_dropdown, popup))
-            {
-                _dropdown = null;
-                _dropdownKind = null;
-                _dropdownRows.Clear();
-            }
-            Refresh();
-        };
-        _dropdown = popup;
+        if (_popupLayer == null) return;
+        var screen = new Rect(geometry.X, geometry.Y, geometry.X + geometry.Width, geometry.Y + geometry.Height);
+        AndroidGlassPopupSession? opened = null;
+        opened = _popupLayer.Show(new AndroidGlassPopupRequest(popupContent,
+            _popupLayer.ToWindow(screen), 8, AndroidUiTheme.ControlFill, AndroidUiTheme.ControlBorder, 1,
+            "筛选", MenuEntryView(), () => OnDropdownClosed(opened)));
+        if (opened == null) return;
+        _dropdown = opened;
         _dropdownKind = FilterMenu.Grouped;
         _dropdownItemCount = labels.Count;
         _dropdownX = geometry.X;
         _dropdownY = geometry.Y;
         _dropdownWidth = geometry.Width;
         _dropdownHeight = geometry.Height;
-        popup.ShowAtLocation(this, GravityFlags.Top | GravityFlags.Start, geometry.X, geometry.Y);
     }
+
+    /// <summary>下拉关闭后清空本控件持有的面板状态（含被其它弹层替换的情况）。</summary>
+    private void OnDropdownClosed(AndroidGlassPopupSession? session)
+    {
+        if (session != null && !ReferenceEquals(session, _dropdown)) return;
+        _dropdown = null;
+        _dropdownKind = null;
+        _dropdownRows.Clear();
+        Refresh();
+    }
+
+    /// <summary>下拉关闭后要归还焦点的入口：竖屏圆按钮，其余形态为合体的筛选段。</summary>
+    private View MenuEntryView() => _phonePortrait ? _filterButton : _combo.First;
 
     /// <summary>手机入口的屏幕矩形算菜单位置；按钮下方不足时翻到上方。</summary>
     private (int X, int Y, int Width, int Height) PopupGeometryForScreen(Rect anchor, int itemCount)
@@ -545,16 +550,15 @@ internal sealed class AndroidFilterBar : FrameLayout
     }
 
     /// <summary>关闭筛选下拉（返回键优先消费）。</summary>
-    /// <returns>关闭了返回 true。</returns>
+    /// <returns>关闭了返回 true；淡出中的旧面板不算打开。</returns>
     internal bool DismissDropdown()
     {
-        var popup = _dropdown;
+        var session = _dropdown;
+        if (session == null) return false;
         _dropdown = null;
         _dropdownKind = null;
         _dropdownRows.Clear();
-        if (popup?.IsShowing != true) return false;
-        popup.Dismiss();
-        return true;
+        return _popupLayer?.Dismiss(session) == true;
     }
 
     /// <summary>应用菜单行的选择；星级行按 FILTER-03 切换并联合集，排序/方向行单选。</summary>

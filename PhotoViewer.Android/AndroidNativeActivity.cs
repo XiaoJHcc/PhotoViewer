@@ -29,6 +29,9 @@ public sealed class AndroidNativeActivity : AppCompatActivity
     /// <summary>诊断开关的 Intent extra 名：请求 F16 窗口像素格式（只在 <c>pv-check=glass</c> 时生效）。</summary>
     private const string GlassF16Extra = "pv-glass-f16";
 
+    /// <summary>本次 Activity 承载的原生根视图（按键派发前核对窗口内弹层是否打开）。</summary>
+    private Native.AndroidNativeRootView? _root;
+
     /// <summary>
     /// 创建原生壳根视图。
     /// </summary>
@@ -43,6 +46,7 @@ public sealed class AndroidNativeActivity : AppCompatActivity
         // 诊断用的 F16 请求必须早于根视图与窗口表面建立：窗口格式一旦有内容再改会重建表面。
         MaybeRequestGlassF16Window(Intent);
         var root = Native.AndroidNativeShell.CreateRootView(this, Intent);
+        _root = root as Native.AndroidNativeRootView;
         SetContentView(root);
         ApplySystemBarVisibility();
         OnBackPressedDispatcher.AddCallback(this, new NativeBackCallback(this));
@@ -149,6 +153,8 @@ public sealed class AndroidNativeActivity : AppCompatActivity
     /// <returns>是否消费。</returns>
     public override bool DispatchKeyEvent(KeyEvent? e)
     {
+        // 主窗口内弹层打开期间暂停照片全局快捷键：方向键/回车/Esc 由面板内容消费（INPUT-01、MENU-03）。
+        if (e != null && _root?.IsGlassPopupOpen == true) return base.DispatchKeyEvent(e);
         if (e != null && e.Action == KeyEventActions.Down)
         {
             var keyCode = e.KeyCode;

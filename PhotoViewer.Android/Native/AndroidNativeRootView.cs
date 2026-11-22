@@ -62,6 +62,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     private readonly AndroidSimilarityPanel _similarityPane;
 #endif
     private readonly AndroidRatingPopup _ratingPopup;
+    private readonly AndroidGlassPopupLayer _popupLayer;
     private readonly DetailFrameView _detailHighlight;
     private LayoutRect _detailRect;
     private bool _detailVisible;
@@ -86,7 +87,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     private readonly AndroidGlassCombo _phoneCommands;
     private readonly AndroidRatingControl _phoneRating;
     private readonly AndroidExifBlock _phoneExif;
-    private PopupWindow? _photoMenu;
+    private AndroidGlassPopupSession? _photoMenu;
     private readonly List<(string Text, bool Checked, bool Enabled, string Icon)> _photoMenuItems = [];
     private AndroidWindowInsets _windowInsets;
     private AndroidInsets _insets;
@@ -108,6 +109,8 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     private bool _photoReady;
     private bool _startPending;
     private bool _layingOut;
+    private int _layoutWidth = -1;
+    private int _layoutHeight = -1;
     private bool _disposed;
 
     /// <summary>主图宿主（验收读取视口/手势状态）。</summary>
@@ -170,6 +173,10 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
 #endif
     /// <summary>星级弹窗（验收读取方向/锚点/条目）。</summary>
     internal AndroidRatingPopup RatingPopup => _ratingPopup;
+    /// <summary>窗口内弹层宿主（验收读取面板实例、模态与出入场；产品路径只经入口使用）。</summary>
+    internal AndroidGlassPopupLayer PopupLayer => _popupLayer;
+    /// <summary>当前是否有窗口内弹层（菜单、筛选下拉或星级弹窗）打开。</summary>
+    internal bool IsGlassPopupOpen => _popupLayer.IsOpen;
     /// <summary>活动细节绿框视图。</summary>
     internal View DetailHighlightView => _detailHighlight;
     /// <summary>主图细节绿框当前是否可见（验收读取活动目标联动）。</summary>
@@ -261,7 +268,9 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         _controlDivider.SetBackgroundColor(AndroidUiTheme.Divider);
         AddView(_controlDivider);
 
+        _popupLayer = new AndroidGlassPopupLayer(activity);
         _filterBar = new AndroidFilterBar(activity, main);
+        _filterBar.PopupLayer = _popupLayer;
         _filterScrollHost = new AndroidControlBarScrollHost(activity, _filterBar);
         // 筛选条滚动时锚点跟着移走，已打开的下拉不能停在旧位置。
         _filterScrollHost.ScrollChanged += OnFilterScrollChanged;
@@ -275,7 +284,8 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             ShowExifTools, OpenRatingPopupFromControlBar);
         _controlScrollHost = new AndroidControlBarScrollHost(activity, _controlBar);
         AddView(_controlScrollHost);
-        _ratingPopup = new AndroidRatingPopup(this, main, () => _windowInsets.DeriveSafe(_main.IsScreenLandscape));
+        _ratingPopup = new AndroidRatingPopup(this, main, _popupLayer,
+            () => _windowInsets.DeriveSafe(_main.IsScreenLandscape));
         _controlBar.RatingControl.Popup = _ratingPopup;
         _filterBar.DropdownOpening += CloseRatingPopup;
 
@@ -451,6 +461,8 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         _navigation.Wire((u, v) => _photo.CenterOnNormalizedPoint(u, v));
         _navigation.Visibility = ViewStates.Gone;
         AddView(_navigation);
+        // MENU-03 / FILTER-08 / RATING-04：三处弹层共用主窗口内最上层宿主，最后加入以保证压在全部内容之上。
+        AddView(_popupLayer);
 
         _photo.PresentationFailed += reason => ShowStatus(
             StatusMessages.PresentationFailed(_main.CurrentFile?.Name, reason), DesignTokens.MotionStatusToastDuration);
@@ -570,6 +582,17 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         RequestApplyInsets();
     }
 
+    /// <summary>窗口失活（系统弹窗、模态页、切后台）时收起三处弹层，不在恢复前台后残留（MENU-07、RATING-04）。</summary>
+    /// <param name="hasFocus">窗口是否获得焦点。</param>
+    public override void OnWindowFocusChanged(bool hasFocus)
+    {
+        base.OnWindowFocusChanged(hasFocus);
+        if (hasFocus) return;
+        DismissPhotoMenu();
+        _filterBar.DismissDropdown();
+        CloseRatingPopup();
+    }
+
     /// <summary>根 ViewGroup 只在布局阶段给子视图精确尺寸，Measure 直接吃满全屏。</summary>
     /// <param name="widthMeasureSpec">宽约束。</param>
     /// <param name="heightMeasureSpec">高约束。</param>
@@ -594,6 +617,15 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             var activity = Context as Activity;
             double density = AndroidUiTheme.Density(Context!);
             double widthDp = Width / density, heightDp = Height / density;
+            // 窗口尺寸变化（旋转、分屏、折叠）后旧锚点已失效：三处弹层一并收起，不在新窗口里残留。
+            if (Width != _layoutWidth || Height != _layoutHeight)
+            {
+                _layoutWidth = Width;
+                _layoutHeight = Height;
+                DismissPhotoMenu();
+                _filterBar.DismissDropdown();
+                CloseRatingPopup();
+            }
             _main.UpdateScreenOrientation(widthDp, heightDp);
             // 旋转/分屏后按真实窗口方向重新派生安全区，不沿用上一方向的底部读数。
             DeriveSafeInsets(widthDp > heightDp);
@@ -621,6 +653,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             if (_form != previous)
             {
                 // 形态切换只重排：收起临时浮层，主图/列表/缩放保持。
+                DismissPhotoMenu();
                 _filterBar.DismissDropdown();
                 CloseRatingPopup();
                 _phoneMoreButton.Visibility = ViewStates.Gone;
@@ -633,6 +666,11 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             LayoutOverlays(density);
             UpdateDetailHighlight();
             UpdateNavigationIndicator();
+            // 弹层宿主始终铺满窗口，面板在其中按自身窗口矩形落位（与主屏布局解耦）。
+            LayoutChild(_popupLayer, new LayoutRect(0, 0, widthDp, heightDp), density);
+            // 筛选条滚动宿主的 BringToFront 会把它移到弹层之上；弹层仍须是最后一个子视图（绘制与命中最上层）。
+            if (ChildCount > 0 && !ReferenceEquals(GetChildAt(ChildCount - 1), _popupLayer))
+                _popupLayer.BringToFront();
         }
         finally
         {
@@ -1219,17 +1257,19 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         var photoLocation = new int[2];
         _photo.GetLocationOnScreen(photoLocation);
         ShowPhotoMenu(location[0] - photoLocation[0] + anchor.Width / 2f,
-            location[1] - photoLocation[1] + anchor.Height);
+            location[1] - photoLocation[1] + anchor.Height, anchor);
     }
 
     /// <summary>主图长按菜单：在手指处弹出自绘面板；面板整体夹在屏幕内，超出高度时可滚动。</summary>
     /// <param name="localX">触点在本视图内的像素横坐标。</param>
     /// <param name="localY">触点在本视图内的像素纵坐标。</param>
-    internal void ShowPhotoMenu(float localX, float localY)
+    /// <param name="entry">关闭后归还焦点的入口（手机「更多」按钮；长按为空则回到主图）。</param>
+    internal void ShowPhotoMenu(float localX, float localY, View? entry = null)
     {
         if (Context is not Activity activity) return;
         DismissPhotoMenu();
         CloseRatingPopup();
+        _filterBar.DismissDropdown();
         _photoMenuItems.Clear();
         var photoLocation = new int[2];
         _photo.GetLocationOnScreen(photoLocation);
@@ -1256,13 +1296,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         int menuHeight = Math.Min(contentHeight, maxHeight);
 
         var content = new LinearLayout(activity) { Orientation = Orientation.Vertical };
-        var background = new GradientDrawable();
-        background.SetColor(AndroidUiTheme.ControlFill);
-        background.SetCornerRadius((float)(8 * density));
-        background.SetStroke(Math.Max(1, (int)Math.Round(density)), AndroidUiTheme.ControlBorder);
-        content.Background = background;
         content.SetPadding(padding, padding, padding, padding);
-        content.Elevation = (float)(12 * density);
 
         void AddDivider()
         {
@@ -1351,11 +1385,10 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             AddItem(item.Text, item.IsCheck ? item.Checked : null, item.Id, action, item.Enabled);
         }
 
-        ScrollView? scroll = null;
         View popupContent = content;
         if (contentHeight > maxHeight)
         {
-            scroll = new ScrollView(activity) { VerticalScrollBarEnabled = true };
+            var scroll = new ScrollView(activity) { VerticalScrollBarEnabled = true };
             scroll.AddView(content);
             popupContent = scroll;
         }
@@ -1363,19 +1396,12 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         int margin = (int)Math.Round(8 * density);
         int x = Math.Clamp(touchX, margin, Math.Max(margin, screenWidth - menuWidth - margin));
         int y = Math.Clamp(touchY, margin, Math.Max(margin, screenHeight - menuHeight - margin));
-        var popup = new PopupWindow(popupContent, menuWidth, menuHeight, true)
-        {
-            OutsideTouchable = true,
-            Focusable = true,
-            Elevation = (float)(12 * density),
-        };
-        popup.SetBackgroundDrawable(new ColorDrawable(Color.Transparent));
-        popup.DismissEvent += (_, _) =>
-        {
-            if (ReferenceEquals(_photoMenu, popup)) _photoMenu = null;
-        };
-        _photoMenu = popup;
-        popup.ShowAtLocation(_photo, GravityFlags.Top | GravityFlags.Start, x, y);
+        var screen = new Rect(x, y, x + menuWidth, y + menuHeight);
+        AndroidGlassPopupSession? opened = null;
+        opened = _popupLayer.Show(new AndroidGlassPopupRequest(popupContent, _popupLayer.ToWindow(screen),
+            8, AndroidUiTheme.ControlFill, AndroidUiTheme.ControlBorder, 1, "菜单", entry ?? _photo,
+            () => { if (ReferenceEquals(_photoMenu, opened)) _photoMenu = null; }));
+        _photoMenu = opened;
     }
 
     /// <summary>Activity 恢复（SAF 返回）后恢复栏位内容与主图：选择器期间可能丢失一帧/一次重建。</summary>
@@ -1471,13 +1497,13 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     }
 
     /// <summary>关闭主图长按菜单（返回键优先消费）。</summary>
-    /// <returns>关闭了菜单返回 true。</returns>
+    /// <returns>关闭了菜单返回 true；淡出中的旧面板不算打开。</returns>
     internal bool DismissPhotoMenu()
     {
-        if (_photoMenu?.IsShowing != true) return false;
-        _photoMenu.Dismiss();
+        var session = _photoMenu;
+        if (session == null) return false;
         _photoMenu = null;
-        return true;
+        return _popupLayer.Dismiss(session);
     }
 
     /// <summary>打开/前置原生工具页（RATING-04：先收起星级弹窗）。</summary>
@@ -2177,6 +2203,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             _similarityPane.PopupHost = null;
 #endif
             _ratingPopup.Dispose();
+            _popupLayer.Dispose();
             _analysisPane.TileCountChanged -= RequestLayout;
             _analysisPane.DetailChanged -= UpdateDetailHighlight;
             _analysisPresenter.Dispose();

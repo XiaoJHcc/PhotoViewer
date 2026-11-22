@@ -122,7 +122,21 @@ internal static partial class AndroidNativeChecks
                 + $"direction={popup.DirectionForChecks}/{DirectionText(expected)} pitch={popup.PitchDpForChecks:0.#} "
                 + $"keptAfterTap={kept} current={main.CurrentFile?.Name} other={other.Rating}");
 
-            if (popup.ContentViewForChecks is not { } content) return;
+            if (popup.ContentViewForChecks is not { } content)
+            {
+                Check("RATING-07 星级弹窗在主窗口内", false, "内容视图不可用");
+                return;
+            }
+            var panel = root.PopupLayer.SessionForChecks?.Panel;
+            var focused = panel?.FindFocus();
+            bool focusInPanel = panel != null && focused != null && IsDescendantOf(panel, focused);
+            bool inWindow = IsDescendantOf(root, content) && root.PopupLayer.IsOpen
+                && popup.WidthPxForChecks > 0 && popup.WidthPxForChecks <= root.Width
+                && popup.HeightPxForChecks <= root.Height && focusInPanel;
+            Check("RATING-07 星级弹窗在主窗口内", inWindow,
+                $"open={root.PopupLayer.IsOpen} size={popup.WidthPxForChecks}x{popup.HeightPxForChecks} "
+                + $"root={root.Width}x{root.Height} content={content.GetType().Name} focus={focusInPanel}");
+
             var labels = PopupTextLabels(content).ToArray();
             var expectedTime = other.PhotoDate?.ToString("MM-dd HH:mm", CultureInfo.InvariantCulture);
             Check("RATING-04 拍摄时间固定为月日时分",

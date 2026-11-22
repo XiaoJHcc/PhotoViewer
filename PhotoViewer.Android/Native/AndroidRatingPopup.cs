@@ -24,16 +24,20 @@ namespace PhotoViewer.Android.Native;
 
 internal enum RatingPopupMode { Single, Sources }
 
-/// <summary>RATING-04/07：同一个模态 PopupWindow 承载普通评分和冲突来源。布局取共享几何，控件与反馈由 Android 承载。</summary>
+/// <summary>
+/// RATING-04/07：同一个窗口内玻璃面板承载普通评分和冲突来源。布局取共享几何，控件与反馈由 Android 承载；
+/// 面板宿主是根视图最上层的 <see cref="AndroidGlassPopupLayer"/>，与菜单、筛选下拉共用同一宿主。
+/// </summary>
 internal sealed class AndroidRatingPopup : IDisposable
 {
     private const int StarCount = RatingControlGeometry.SlotCount;
     private const double TouchTarget = 48; // Android 推荐的触摸目标；不改变已冻结的主屏胶囊。
     private readonly View _host;
     private readonly MainViewModel _main;
+    private readonly AndroidGlassPopupLayer _popupLayer;
     private readonly Func<AndroidInsets> _safeInsets;
     private readonly Java.Lang.Runnable _poll;
-    private PopupWindow? _window;
+    private AndroidGlassPopupSession? _session;
     private RatingPanel? _panel;
     private View? _entry;
     private Func<bool>? _entryValid;
@@ -43,7 +47,6 @@ internal sealed class AndroidRatingPopup : IDisposable
     private RatingPopupDirection _direction;
     private RatingPopupAnchor _kind;
     private bool _horizontal;
-    private bool _restoreFocus;
     private bool _disposed;
     private ImageFile? _target;
     private Entry[] _entries = [];
@@ -53,20 +56,22 @@ internal sealed class AndroidRatingPopup : IDisposable
     private bool _busy;
     private double Density => AndroidUiTheme.Density(_host.Context!);
 
-    internal AndroidRatingPopup(View host, MainViewModel main, Func<AndroidInsets>? safeInsets = null)
+    internal AndroidRatingPopup(View host, MainViewModel main, AndroidGlassPopupLayer popupLayer,
+        Func<AndroidInsets>? safeInsets = null)
     {
         _host = host;
         _main = main;
+        _popupLayer = popupLayer;
         _safeInsets = safeInsets ?? (() => default);
         _poll = new Java.Lang.Runnable(Poll);
         _main.RatingSources.PropertyChanged += OnSourcesChanged;
     }
 
-    internal bool IsOpen => _window?.IsShowing == true;
+    internal bool IsOpen => _session is { IsOpen: true };
     internal string DirectionForChecks => _direction.ToString().ToLowerInvariant();
     internal Rect AnchorRectForChecks => _anchor == null ? new Rect() : new Rect(_anchor);
-    internal int WidthPxForChecks => _window?.Width ?? 0;
-    internal int HeightPxForChecks => _window?.Height ?? 0;
+    internal int WidthPxForChecks => _session?.Frame.Width() ?? 0;
+    internal int HeightPxForChecks => _session?.Frame.Height() ?? 0;
     internal View? ContentViewForChecks => _panel;
     internal double PitchDpForChecks => _panel?.Pitch ?? 0;
     internal RatingPopupMode ModeForChecks => _target?.HasRatingConflict == true ? RatingPopupMode.Sources : RatingPopupMode.Single;
@@ -90,36 +95,43 @@ internal sealed class AndroidRatingPopup : IDisposable
         _kind = kind;
         _direction = direction;
         _horizontal = horizontal;
-        _restoreFocus = entry.IsFocused;
         _main.ShowRatingSources(target);
         var panel = new RatingPanel(_host.Context!, Choose, Close);
         _panel = panel;
-        var window = new PopupWindow(panel, 1, 1, true) { OutsideTouchable = true };
-        // 非空原生形状同时提供窗口外点击与阴影轮廓；只保留设计令牌的边界和底色。
-        window.SetBackgroundDrawable(Surface(_host.Context!, DesignTokens.RatingPopupCornerRadius, DesignTokens.ColorPopupBackground));
-        window.Elevation = AndroidUiTheme.Dp(_host.Context!, 6); // Material 3 elevation level 3
-        window.InputMethodMode = InputMethod.NotNeeded;
-        if (OperatingSystem.IsAndroidVersionAtLeast(29)) window.IsLaidOutInScreen = true;
-        _window = window;
-        window.DismissEvent += (_, _) => OnDismiss(window);
         var frame = BuildPanel();
-        window.Width = frame.Width();
-        window.Height = frame.Height();
-        window.ShowAtLocation(_host, GravityFlags.Top | GravityFlags.Left, frame.Left, frame.Top);
+        AndroidGlassPopupSession? opened = null;
+        opened = _popupLayer.Show(new AndroidGlassPopupRequest(panel, frame,
+            DesignTokens.RatingPopupCornerRadius, AndroidUiTheme.FromToken(DesignTokens.ColorPopupBackground),
+            Color.Transparent!, 0, "星级", entry, () => OnClosed(opened)));
+        if (opened == null)
+        {
+            _panel = null;
+            _target = null;
+            _entry = null;
+            _entryValid = null;
+            _anchor = null;
+            _root = null;
+            _entries = [];
+            if (_main.RatingSources.IsOpen) _main.RatingSources.Close();
+            return false;
+        }
+        _session = opened;
         panel.FocusFirst();
         _host.PostOnAnimation(_poll);
-        return window.IsShowing;
+        return true;
     }
 
-    internal void Close() => _window?.Dismiss();
-
-    private void OnDismiss(PopupWindow window)
+    internal void Close()
     {
-        if (!ReferenceEquals(window, _window)) return;
-        var entry = _entry;
-        bool restore = _restoreFocus && _entryValid?.Invoke() == true;
+        var session = _session;
+        if (session != null) _popupLayer.Dismiss(session);
+    }
+
+    private void OnClosed(AndroidGlassPopupSession? closed)
+    {
+        if (closed == null || !ReferenceEquals(closed, _session)) return;
         _host.RemoveCallbacks(_poll);
-        _window = null;
+        _session = null;
         _panel = null;
         _entry = _gestureOwner = null;
         _entryValid = null;
@@ -128,7 +140,6 @@ internal sealed class AndroidRatingPopup : IDisposable
         _entries = [];
         _busy = false;
         if (_main.RatingSources.IsOpen) _main.RatingSources.Close();
-        if (restore && entry != null && VisibleScreenRect(entry) != null) entry.RequestFocus();
     }
 
     private void Poll()
@@ -148,9 +159,10 @@ internal sealed class AndroidRatingPopup : IDisposable
     private void OnSourcesChanged(object? sender, PropertyChangedEventArgs args)
     {
         if (args.PropertyName != nameof(RatingSourcesViewModel.IsOpen) || _main.RatingSources.IsOpen) return;
-        var window = _window;
-        if (UiDispatcher.CheckAccess()) window?.Dismiss();
-        else _host.Post(() => { if (ReferenceEquals(_window, window)) window?.Dismiss(); });
+        var session = _session;
+        if (session == null) return;
+        if (UiDispatcher.CheckAccess()) _popupLayer.Dismiss(session);
+        else _host.Post(() => { if (ReferenceEquals(_session, session)) _popupLayer.Dismiss(session); });
     }
 
     private Entry[] ReadEntries()
@@ -165,11 +177,11 @@ internal sealed class AndroidRatingPopup : IDisposable
 
     private void Refresh()
     {
-        if (_target == null || _window == null || _gesture != null) return;
+        if (_target == null || _session == null || _gesture != null) return;
         var entries = ReadEntries();
         if (_entries.SequenceEqual(entries)) return;
         var frame = BuildPanel(entries);
-        _window.Update(frame.Left, frame.Top, frame.Width(), frame.Height());
+        _popupLayer.Update(_session, frame);
     }
 
     private Rect BuildPanel(Entry[]? entries = null)
@@ -182,16 +194,9 @@ internal sealed class AndroidRatingPopup : IDisposable
         var frame = RatingControlGeometry.PlacePopup(ToDp(entry), _bounds, size.Width, size.Height,
             _direction, DesignTokens.RatingPopupGap);
         int x = Px(frame.X), y = Px(frame.Y);
-        if (!OperatingSystem.IsAndroidVersionAtLeast(29))
-        {
-            var screen = new int[2];
-            var window = new int[2];
-            _host.GetLocationOnScreen(screen);
-            _host.GetLocationInWindow(window);
-            x -= screen[0] - window[0];
-            y -= screen[1] - window[1];
-        }
-        return new Rect(x, y, x + Px(frame.Width), y + Px(frame.Height));
+        // 面板在主窗口内呈现：屏幕定位统一换成窗口坐标（低版本同样入窗）。
+        var screen = new Rect(x, y, x + Px(frame.Width), y + Px(frame.Height));
+        return _popupLayer.ToWindow(screen);
     }
 
     private async void Choose(int rating)

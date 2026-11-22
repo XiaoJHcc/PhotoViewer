@@ -1,6 +1,8 @@
 using System;
 using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
+using Android.Graphics;
 using Android.OS;
 using Android.Views;
 using Android.Widget;
@@ -13,9 +15,9 @@ namespace PhotoViewer.Android.Native;
 
 /// <summary>
 /// <c>--es pv-check filter</c>（验收专用）：筛选入口的存活与锚点语义。
-/// 入口全部是真实 Material 按钮——点按经控件自身的派发链落到按钮点击，选项经弹出窗里真实行视图的
-/// 回调写回共享筛选 VM；覆盖跨内存探测周期存活、重复布局、无关设置、星级设置、行选择、锚点隐藏、
-/// 旋转与窄屏滚动。
+/// 入口全部是真实 Material 按钮——点按经控件自身的派发链落到按钮点击，选项经主窗口内弹层的真实行视图
+/// 写回共享筛选 VM；覆盖跨内存探测周期存活、重复布局、无关设置、星级设置、行选择、锚点隐藏、
+/// 旋转与窄屏滚动，以及入窗呈现、点外不穿透、模态与焦点归还、键盘导航和屏内夹取。
 /// </summary>
 internal static partial class AndroidNativeChecks
 {
@@ -37,6 +39,11 @@ internal static partial class AndroidNativeChecks
 
         await RunStepAsync("filter 默认排序", CheckFilterDefaultsAsync);
         await RunStepAsync("filter 分组菜单", CheckGroupedMenuAsync);
+        await RunStepAsync("filter 入窗弹层", CheckInWindowPopupAsync);
+        await RunStepAsync("filter 点外不穿透", CheckOutsideTapAsync);
+        await RunStepAsync("filter 模态与焦点归还", CheckModalFocusAsync);
+        await RunStepAsync("filter 键盘导航", CheckKeyboardNavigationAsync);
+        await RunStepAsync("filter 弹层屏内夹取", CheckPopupClampAsync);
         await RunStepAsync("filter 星级多选", CheckGroupedRatingMultiSelectAsync);
         await RunStepAsync("filter 无关设置", CheckGroupedUnrelatedSettingAsync);
         await RunStepAsync("filter 星级设置", CheckGroupedSettingImpactAsync);
@@ -66,7 +73,7 @@ internal static partial class AndroidNativeChecks
 
     /// <summary>
     /// FILTER-03/FILTER-08：真实行连续多选、外部状态就地更新、全部重置与取消最后条件回到全部；
-    /// 全程同一个 PopupWindow，不重开也不重建行。同时核对每行语义图标与分组。
+    /// 全程同一个窗口内面板实例，不重开也不重建行。同时核对每行语义图标与分组。
     /// </summary>
     private static async Task CheckGroupedRatingMultiSelectAsync()
     {
@@ -169,6 +176,287 @@ internal static partial class AndroidNativeChecks
         => row.HasValue
             ? $"{row.Value.Label}:selected={row.Value.Selected},marked={row.Value.Marked},icon={row.Value.IconDescription}"
             : "缺失";
+
+    /// <summary>
+    /// 三处弹层都在主窗口内呈现：下拉面板与内容挂在根视图的弹层宿主上，产品代码不使用
+    /// <see cref="PopupWindow"/> 字段（MENU-03@android / FILTER-08@android / RATING-04@android）。
+    /// </summary>
+    private static async Task CheckInWindowPopupAsync()
+    {
+        var root = _root!;
+        var filter = root.FilterBar;
+        root.DismissFilterDropdown();
+        await Task.Delay(180);
+        if (!await OpenGroupedMenuAsync(root))
+        {
+            Check("filter 下拉在主窗口内呈现", false, "下拉未打开");
+            return;
+        }
+        var session = filter.DropdownInstanceForChecks;
+        var content = filter.DropdownContentViewForChecks;
+        bool inRoot = session != null && content != null
+            && IsDescendantOf(root, session.Panel) && IsDescendantOf(session.Panel, content)
+            && ReferenceEquals(root.PopupLayer.SessionForChecks, session)
+            && root.PopupLayer.Visibility == ViewStates.Visible;
+        Check("filter 下拉在主窗口内呈现", inRoot,
+            $"session={session != null} panel={session?.Panel.GetType().Name ?? "无"} "
+            + $"content={content?.GetType().Name ?? "无"} layer={root.PopupLayer.Visibility} "
+            + $"open={filter.IsDropdownOpen}");
+
+        string fields = DescribePopupWindowFields();
+        Check("filter 弹层不使用 PopupWindow", fields == "无", $"fields={fields}");
+
+        int shortAnim = root.Resources?.GetInteger(global::Android.Resource.Integer.ConfigShortAnimTime) ?? 0;
+        bool reduceMotion = root.PopupLayer.ReduceMotionForChecks;
+        bool immediate = !reduceMotion || root.PopupLayer.Alpha >= 0.99f;
+        Check("filter 弹层淡入时长取系统短动画",
+            shortAnim > 0 && root.PopupLayer.ShortAnimTimeForChecks == shortAnim && immediate,
+            $"duration={root.PopupLayer.ShortAnimTimeForChecks}ms config={shortAnim}ms reduceMotion={reduceMotion} "
+            + $"alpha={root.PopupLayer.Alpha:0.00}");
+        root.DismissFilterDropdown();
+        await Task.Delay(400);
+    }
+
+    /// <summary>
+    /// 点面板外只关闭弹层，该次触摸不穿透：落点取筛选入口本身——若事件穿透，入口会再次打开下拉。
+    /// </summary>
+    private static async Task CheckOutsideTapAsync()
+    {
+        var root = _root!;
+        var main = _main!;
+        var filter = root.FilterBar;
+        root.DismissFilterDropdown();
+        await Task.Delay(180);
+        if (!await OpenGroupedMenuAsync(root))
+        {
+            Check("filter 点面板外只关闭", false, "下拉未打开");
+            return;
+        }
+        var session = filter.DropdownInstanceForChecks;
+        var entry = FilterEntryView(filter);
+        if (session == null || entry == null)
+        {
+            Check("filter 点面板外只关闭", false, $"session={session != null} entry={entry != null}");
+            root.DismissFilterDropdown();
+            return;
+        }
+        var entryRect = ScreenRectOf(entry);
+        var origin = new int[2];
+        root.PopupLayer.GetLocationOnScreen(origin);
+        var panel = new Rect(session.Frame);
+        panel.Offset(origin[0], origin[1]);
+        bool outside = entryRect.Width() > 0 && !panel.Contains(entryRect.CenterX(), entryRect.CenterY());
+        var before = main.CurrentFile;
+        long now = SystemClock.UptimeMillis();
+        bool downHandled = DispatchRootTouch(root, MotionEventActions.Down, entryRect.CenterX(), entryRect.CenterY(), now);
+        bool upHandled = DispatchRootTouch(root, MotionEventActions.Up, entryRect.CenterX(), entryRect.CenterY(), now + 60);
+        await Task.Delay(350);
+        bool closed = !filter.IsDropdownOpen && !root.PopupLayer.IsOpen;
+        // 穿透会在同一位置再次点开入口；再等一个淡出周期确认没有被重新打开。
+        await Task.Delay(500);
+        bool stayedClosed = !filter.IsDropdownOpen && !root.PopupLayer.IsOpen;
+        bool sameFile = ReferenceEquals(main.CurrentFile, before);
+        Check("filter 点面板外只关闭且不穿透",
+            outside && downHandled && upHandled && closed && stayedClosed && sameFile,
+            $"outside={outside} entry={entryRect} panel={panel} down={downHandled} up={upHandled} "
+            + $"closed={closed} stayed={stayedClosed} file={before?.Name}→{main.CurrentFile?.Name}");
+    }
+
+    /// <summary>
+    /// 模态：打开后背景对读屏隐藏、焦点进入面板、照片全局快捷键暂停；关闭后焦点回到入口、背景恢复。
+    /// </summary>
+    private static async Task CheckModalFocusAsync()
+    {
+        var root = _root!;
+        var main = _main!;
+        var filter = root.FilterBar;
+        root.DismissFilterDropdown();
+        await Task.Delay(180);
+        var entry = FilterEntryView(filter);
+        if (entry == null)
+        {
+            Check("filter 模态隔离与焦点归还", false, "入口视图不可用");
+            return;
+        }
+        entry.RequestFocusFromTouch();
+        await Task.Delay(150);
+        bool entryFocused = entry.IsFocused;
+        var backgroundA11y = root.PhotoLayer.ImportantForAccessibility;
+        if (!await OpenGroupedMenuAsync(root))
+        {
+            Check("filter 模态隔离与焦点归还", false, "下拉未打开");
+            return;
+        }
+        var session = filter.DropdownInstanceForChecks;
+        var focus = session?.Panel.FindFocus();
+        bool focusInPanel = session != null && focus != null && IsDescendantOf(session.Panel, focus);
+        bool backgroundHidden = root.PhotoLayer.ImportantForAccessibility == ImportantForAccessibility.NoHideDescendants;
+        var before = main.CurrentFile;
+        _activity!.DispatchKeyEvent(new KeyEvent(KeyEventActions.Down, Keycode.DpadRight));
+        await Task.Delay(300);
+        bool shortcutsPaused = ReferenceEquals(main.CurrentFile, before) && filter.IsDropdownOpen;
+        bool dismissed = root.DismissFilterDropdown();
+        await WaitAsync(() => root.PopupLayer.Visibility == ViewStates.Gone, "弹层淡出完成", 4000);
+        await Task.Delay(250);
+        bool restored = root.PhotoLayer.ImportantForAccessibility == backgroundA11y;
+        bool focusReturned = entry.IsFocused;
+        Check("filter 模态隔离与焦点归还",
+            entryFocused && focusInPanel && backgroundHidden && shortcutsPaused && dismissed && restored && focusReturned,
+            $"entryFocused={entryFocused} focusInPanel={focusInPanel} hidden={backgroundHidden} "
+            + $"shortcuts={shortcutsPaused} dismissed={dismissed} restored={restored} "
+            + $"a11y={backgroundA11y}→{root.PhotoLayer.ImportantForAccessibility} focusBack={focusReturned} "
+            + $"focus={focus?.GetType().Name ?? "无"}");
+    }
+
+    /// <summary>
+    /// 键盘导航：菜单行可聚焦、焦点搜索停在面板内；回车执行当前行且保持展开，Esc 关闭。
+    /// </summary>
+    private static async Task CheckKeyboardNavigationAsync()
+    {
+        var root = _root!;
+        var filter = root.FilterBar;
+        var bar = _main!.FileVM.FilterBar;
+        root.DismissFilterDropdown();
+        await Task.Delay(180);
+        if (!await OpenGroupedMenuAsync(root))
+        {
+            Check("filter 键盘导航与激活", false, "下拉未打开");
+            return;
+        }
+        var session = filter.DropdownInstanceForChecks;
+        var content = filter.DropdownContentViewForChecks;
+        var row = FindMenuRowView(content, "文件名");
+        var previousSort = bar.SortMode;
+        if (session == null || content == null || row == null)
+        {
+            Check("filter 键盘导航与激活", false, $"session={session != null} content={content != null} row={row != null}");
+            root.DismissFilterDropdown();
+            return;
+        }
+        row.RequestFocusFromTouch();
+        await Task.Delay(120);
+        bool rowFocused = row.IsFocused;
+        using var down = new KeyEvent(KeyEventActions.Down, Keycode.Enter);
+        using var up = new KeyEvent(KeyEventActions.Up, Keycode.Enter);
+        bool downHandled = root.PopupLayer.DispatchKeyEvent(down);
+        bool upHandled = root.PopupLayer.DispatchKeyEvent(up);
+        await Task.Delay(350);
+        bool applied = bar.SortMode == SortMode.Name && filter.IsDropdownOpen
+            && ReferenceEquals(filter.DropdownInstanceForChecks, session);
+        var nameRow = FindFilterRow(filter, "文件名");
+        bool marked = nameRow.HasValue && nameRow.Value.Selected && nameRow.Value.Marked;
+        var next = content is ViewGroup group
+            ? group.FocusSearch(row, FocusSearchDirection.Down)
+            : content.FocusSearch(FocusSearchDirection.Down);
+        bool moves = next != null && !ReferenceEquals(next, row) && IsDescendantOf(content, next);
+        if (moves) next!.RequestFocusFromTouch();
+        await Task.Delay(120);
+        bool focusedNext = moves && next!.IsFocused;
+        bool escDown = root.PopupLayer.DispatchKeyEvent(new KeyEvent(KeyEventActions.Down, Keycode.Escape));
+        bool escUp = root.PopupLayer.DispatchKeyEvent(new KeyEvent(KeyEventActions.Up, Keycode.Escape));
+        await Task.Delay(300);
+        bool closed = !filter.IsDropdownOpen && !root.PopupLayer.IsOpen;
+        bar.SortMode = previousSort;
+        Check("filter 键盘导航与激活",
+            rowFocused && downHandled && upHandled && applied && marked && moves && focusedNext
+            && escDown && escUp && closed,
+            $"rowFocused={rowFocused} enter={downHandled}/{upHandled} applied={applied} marked={marked} "
+            + $"next={next?.GetType().Name ?? "无"} moves={moves} focusedNext={focusedNext} "
+            + $"esc={escDown}/{escUp} closed={closed} sort={bar.SortMode}");
+    }
+
+    /// <summary>
+    /// 屏内夹取：主图菜单在右下角打开仍整体落在窗口内；筛选下拉的锚点几何也夹在屏幕内。
+    /// </summary>
+    private static async Task CheckPopupClampAsync()
+    {
+        var root = _root!;
+        var filter = root.FilterBar;
+        var metrics = root.Resources?.DisplayMetrics;
+        root.DismissPhotoMenu();
+        root.DismissFilterDropdown();
+        await Task.Delay(200);
+        root.ShowPhotoMenu(root.Width - 2, root.Height - 2);
+        await Task.Delay(120);
+        var session = root.PopupLayer.SessionForChecks;
+        var frame = session?.Frame ?? new Rect();
+        var origin = new int[2];
+        root.PopupLayer.GetLocationOnScreen(origin);
+        var focused = session?.Panel.FindFocus();
+        bool focusInPanel = session != null && focused != null && IsDescendantOf(session.Panel, focused);
+        bool inWindow = session != null && IsDescendantOf(root, session.Panel)
+            && frame.Width() > 0 && frame.Height() > 0
+            && frame.Left >= 0 && frame.Top >= 0 && frame.Right <= root.Width && frame.Bottom <= root.Height;
+        bool inScreen = metrics == null
+            || (frame.Left + origin[0] >= 0 && frame.Top + origin[1] >= 0
+                && frame.Right + origin[0] <= metrics.WidthPixels && frame.Bottom + origin[1] <= metrics.HeightPixels);
+        Check("filter 主图菜单屏内夹取", inWindow && inScreen && focusInPanel,
+            $"frame={frame} window={root.Width}x{root.Height} origin={origin[0]},{origin[1]} "
+            + $"display={metrics?.WidthPixels}x{metrics?.HeightPixels} focus={focusInPanel}");
+        root.DismissPhotoMenu();
+        await Task.Delay(250);
+
+        if (!await OpenGroupedMenuAsync(root))
+        {
+            Check("filter 下拉屏内夹取", false, "下拉未打开");
+            return;
+        }
+        var anchor = filter.DropdownAnchorForChecks;
+        bool clamped = metrics == null || (anchor.X >= 0 && anchor.Y >= 0
+            && anchor.X + anchor.Width <= metrics.WidthPixels && anchor.Y + anchor.Height <= metrics.HeightPixels);
+        Check("filter 下拉屏内夹取", clamped,
+            $"anchor={anchor} display={metrics?.WidthPixels}x{metrics?.HeightPixels}");
+        root.DismissFilterDropdown();
+        await Task.Delay(300);
+    }
+
+    /// <summary>筛选入口的真实视图（合体可见时取筛选段，竖屏取圆按钮）。</summary>
+    private static View? FilterEntryView(AndroidFilterBar filter)
+        => filter.ComboForChecks.Visibility == ViewStates.Visible
+            ? filter.ComboForChecks.First
+            : filter.FilterButtonForChecks;
+
+    /// <summary>递归查找菜单行的真实视图（标签文本所在行的父视图）。</summary>
+    private static View? FindMenuRowView(View? view, string text)
+    {
+        if (view is TextView label && string.Equals(label.Text, text, StringComparison.Ordinal))
+            return label.Parent as View;
+        if (view is not ViewGroup group) return null;
+        for (int index = 0; index < group.ChildCount; index++)
+            if (group.GetChildAt(index) is { } child && FindMenuRowView(child, text) is { } row) return row;
+        return null;
+    }
+
+    /// <summary>弹层宿主相关类型里是否还有 <see cref="PopupWindow"/> 字段（应为空）。</summary>
+    private static string DescribePopupWindowFields()
+    {
+        var found = new System.Collections.Generic.List<string>();
+        foreach (var type in new[] { typeof(AndroidFilterBar), typeof(AndroidRatingPopup), typeof(AndroidNativeRootView) })
+        {
+            foreach (var field in type.GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public))
+                if (typeof(PopupWindow).IsAssignableFrom(field.FieldType)) found.Add($"{type.Name}.{field.Name}");
+        }
+        return found.Count == 0 ? "无" : string.Join(",", found);
+    }
+
+    /// <summary>某视图是否在祖先的子树内。</summary>
+    private static bool IsDescendantOf(View ancestor, View? view)
+    {
+        for (var parent = view?.Parent; parent != null; parent = parent.Parent)
+            if (ReferenceEquals(parent, ancestor)) return true;
+        return false;
+    }
+
+    /// <summary>向根视图派发一次屏幕坐标触摸（走真实命中与分发）。</summary>
+    private static bool DispatchRootTouch(AndroidNativeRootView root, MotionEventActions action,
+        float screenX, float screenY, long downTime)
+    {
+        var location = new int[2];
+        root.GetLocationOnScreen(location);
+        using var e = MotionEvent.Obtain(downTime, SystemClock.UptimeMillis(), action,
+            screenX - location[0], screenY - location[1], 0);
+        return root.DispatchTouchEvent(e);
+    }
 
     /// <summary>真实入口点按打开 → 同一实例跨周期存活 → 重排/同几何 Arrange 不收起 → 行选择保持展开 → 返回键收起。</summary>
     private static async Task CheckGroupedMenuAsync()
