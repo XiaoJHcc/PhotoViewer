@@ -88,8 +88,10 @@ internal sealed class AndroidBarScrim : View
 }
 
 /// <summary>
-/// Fluent UI System Icons 字形图标：按字形墨迹在自身边界内居中，可作为 <see cref="MaterialButton"/> 的图标槽（评分快捷命令另叠 1–5 数字）。
-/// 着色取 Material 的 <c>iconTint</c>（含禁用态），绘制时按当前状态解析到画笔。
+/// Fluent UI System Icons 字形图标：按字体单元中心（原生 advance/基线）在自身布局边界内居中，可作为
+/// <see cref="MaterialButton"/> 的图标槽（评分快捷命令另叠 1–5 数字，数字仍按墨迹居中）。
+/// 布局边界与字号解耦：字号永远取令牌的精确浮点像素，边界只决定占位与绘制中心，绝不反向缩放字形；
+/// 字形超出边界时由宿主按钮/分段的完整矩形裁切。着色取 Material 的 <c>iconTint</c>（含禁用态）。
 /// </summary>
 internal sealed class AndroidGlyphDrawable : Drawable
 {
@@ -97,7 +99,9 @@ internal sealed class AndroidGlyphDrawable : Drawable
     private readonly string? _digit;
     private readonly Paint _glyphPaint;
     private readonly Paint? _digitPaint;
-    private readonly int _size;
+    private readonly int _slot;
+    private readonly bool _solid;
+    private readonly View? _clipTo;
     private ColorStateList? _tint;
     private int _alpha = 255;
 
@@ -106,13 +110,22 @@ internal sealed class AndroidGlyphDrawable : Drawable
     /// <param name="glyph">Fluent UI System Icons 字形。</param>
     /// <param name="solid">是否取实心图标字体（评分快捷命令的星底）。</param>
     /// <param name="digit">叠在字形中心的数字（评分快捷命令 1–5；null 表示不叠）。</param>
-    public AndroidGlyphDrawable(Context context, string glyph, bool solid, string? digit, int? sizePx = null)
+    /// <param name="sizeDp">字形字号（dp 令牌），画笔字号取它的精确浮点像素值，不随槽位变化。</param>
+    /// <param name="slotDp">
+    /// 布局槽边长（dp 令牌）：<see langword="null"/> 时取字号对应的 1.2em 排版框加光栅余量，
+    /// 保证字形完整落在槽内；有专用槽位令牌（如菜单图标、设置命令图标）时传该令牌。
+    /// </param>
+    /// <param name="clipTo">绘制时的裁切上下文（宿主按钮或分段），字形溢出图标槽时仍被控件矩形裁切。</param>
+    public AndroidGlyphDrawable(Context context, string glyph, bool solid, string? digit,
+        double sizeDp = DesignTokens.ToolbarCommandGlyphFontSize, double? slotDp = null, View? clipTo = null)
     {
         _glyph = glyph;
         _digit = string.IsNullOrEmpty(digit) ? null : digit;
-        _size = sizePx ?? Math.Max(1, (int)Math.Ceiling(AndroidUiTheme.Dp(context, DesignTokens.ToolbarCommandGlyphFontSize)));
+        _solid = solid;
+        _clipTo = clipTo;
+        _slot = slotDp is { } slot ? AndroidUiTheme.IconSlotPx(context, slot) : AndroidUiTheme.GlyphSlotPx(context, sizeDp);
         _glyphPaint = AndroidUiTheme.Paint(Color.White);
-        _glyphPaint.TextSize = _size;
+        _glyphPaint.TextSize = AndroidUiTheme.Dp(context, sizeDp);
         var typeface = solid ? AndroidUiTheme.IconSolidTypeface(context) : AndroidUiTheme.IconTypeface(context);
         if (typeface != null) _glyphPaint.SetTypeface(typeface);
         if (_digit == null) return;
@@ -127,11 +140,23 @@ internal sealed class AndroidGlyphDrawable : Drawable
     /// <summary>叠在字形中心的数字（null 表示没有）。</summary>
     internal string? Digit => _digit;
 
-    /// <summary>固有边长（px）：与标称字号一致，图标槽按它定尺寸并在按钮内居中。</summary>
-    public override int IntrinsicWidth => _size;
+    /// <summary>是否使用实心图标字体（验收读取）。</summary>
+    internal bool SolidGlyph => _solid;
+
+    /// <summary>字形字号（px，验收读取）：恒为令牌 dp 的精确浮点像素，不因槽位变小而缩小。</summary>
+    internal float FontSizePx => _glyphPaint.TextSize;
+
+    /// <summary>叠字字号（px，验收读取）；不叠数字时为 0。</summary>
+    internal float DigitFontSizePx => _digitPaint?.TextSize ?? 0;
+
+    /// <summary>布局槽边长（px）：图标占位与绘制中心由它给出，与字号无关。</summary>
+    internal int SlotPx => _slot;
+
+    /// <summary>固有边长（px）：等于布局槽，按钮按它占位。</summary>
+    public override int IntrinsicWidth => _slot;
 
     /// <summary>固有边长（px）。</summary>
-    public override int IntrinsicHeight => _size;
+    public override int IntrinsicHeight => _slot;
 
     /// <summary>图标是否随状态变色（禁用只降内容强调）。</summary>
     public override bool IsStateful => _tint?.IsStateful == true;
@@ -170,7 +195,10 @@ internal sealed class AndroidGlyphDrawable : Drawable
         return true;
     }
 
-    /// <summary>在自身边界中心按墨迹绘制字形，再叠数字。</summary>
+    /// <summary>
+    /// 在自身布局边界中心按字体单元中心绘制字形，再按墨迹中心叠数字。
+    /// 裁切上下文取宿主按钮/分段的完整矩形：字形比图标槽宽时仍完整落在控件内，不会被槽位边界截断。
+    /// </summary>
     /// <param name="canvas">画布。</param>
     public override void Draw(Canvas canvas)
     {
@@ -180,10 +208,19 @@ internal sealed class AndroidGlyphDrawable : Drawable
         int alpha = Color.GetAlphaComponent(color) * _alpha / 255;
         _glyphPaint.Color = new Color(color);
         _glyphPaint.Alpha = alpha;
+        int save = -1;
+        if (_clipTo is { Width: > 0, Height: > 0 } clip)
+        {
+            save = canvas.Save();
+            canvas.ClipRect(0, 0, clip.Width, clip.Height);
+        }
         AndroidUiTheme.DrawGlyphCentered(canvas, _glyph, _glyphPaint, bounds.ExactCenterX(), bounds.ExactCenterY());
-        if (_digitPaint == null || _digit == null) return;
-        _digitPaint.Alpha = alpha;
-        AndroidUiTheme.DrawGlyphCentered(canvas, _digit, _digitPaint, bounds.ExactCenterX(), bounds.ExactCenterY());
+        if (_digitPaint != null && _digit != null)
+        {
+            _digitPaint.Alpha = alpha;
+            AndroidUiTheme.DrawTextInkCentered(canvas, _digit, _digitPaint, bounds.ExactCenterX(), bounds.ExactCenterY());
+        }
+        if (save >= 0) canvas.RestoreToCount(save);
     }
 
 }
@@ -232,7 +269,8 @@ internal sealed class AndroidGlassButton : MaterialButton, IGlassAnchorContent
         Clickable = true;
         if (iconFont)
         {
-            var icon = new AndroidGlyphDrawable(context, _glyph, solid, number == "0" ? null : number);
+            var icon = new AndroidGlyphDrawable(context, _glyph, solid, number == "0" ? null : number,
+                DesignTokens.ToolbarCommandGlyphFontSize, clipTo: this);
             Icon = icon;
             IconSize = icon.IntrinsicWidth;
             IconTint = ContentColors(context);
@@ -380,36 +418,25 @@ internal sealed class AndroidGlassButton : MaterialButton, IGlassAnchorContent
     }
 
     /// <summary>
-    /// 图标槽字形在按钮内的墨迹中心与边界（验收用）：把按钮实际绘制到离屏位图，取字形色（高亮且近不透明）像素的外接矩形，
-    /// 图标槽的横向落位（Material 图标位置）与纵向落位（TextView 复合图标居中）都以真实绘制结果为准。
+    /// 验收用：按产品真实绘制路径把按钮内容画到调用方画布（玻璃锚点为控件层内容，其余为按钮自绘），
+    /// 供墨迹探针与无界参照字形逐像素比较。
     /// </summary>
-    /// <returns>中心坐标（px）与墨迹矩形（px）。</returns>
-    internal (float CenterX, float CenterY, Rect Bounds) GlyphCenterForChecks()
+    /// <param name="canvas">画布（按钮本地坐标）。</param>
+    internal void DrawContentForChecks(Canvas canvas) => DrawGlassContent(canvas);
+
+    /// <summary>验收用：按钮局部坐标中的预期图标槽。Drawable.Bounds 未包含 TextView 绘制复合图标时的画布平移。</summary>
+    internal Rect IconSlotForChecks
     {
-        int width = Width, height = Height;
-        if (width <= 0 || height <= 0) return (width / 2f, height / 2f, new Rect());
-        using var bitmap = Bitmap.CreateBitmap(width, height, Bitmap.Config.Argb8888!)!;
-        using (var canvas = new Canvas(bitmap))
+        get
         {
-            if (_glassAnchored) DrawGlassContent(canvas);
-            else Draw(canvas);
+            int size = IconForChecks?.SlotPx ?? 0;
+            int left = (Width - size) / 2, top = (Height - size) / 2;
+            return new Rect(left, top, left + size, top + size);
         }
-        var pixels = new int[width * height];
-        bitmap.GetPixels(pixels, 0, width, 0, 0, width, height);
-        int left = width, top = height, right = -1, bottom = -1;
-        for (int y = 0; y < height; y++)
-        for (int x = 0; x < width; x++)
-        {
-            int pixel = pixels[y * width + x];
-            if (Color.GetAlphaComponent(pixel) < 128 || Color.GetRedComponent(pixel) < 0x99) continue;
-            left = Math.Min(left, x);
-            top = Math.Min(top, y);
-            right = Math.Max(right, x + 1);
-            bottom = Math.Max(bottom, y + 1);
-        }
-        if (right < 0) return (width / 2f, height / 2f, new Rect());
-        return ((left + right) / 2f, (top + bottom) / 2f, new Rect(left, top, right, bottom));
     }
+
+    /// <summary>验收用：图标字形（普通文字入口为 null）。</summary>
+    internal AndroidGlyphDrawable? IconForChecks => Icon as AndroidGlyphDrawable;
 
     /// <summary>合体分段用透明底：状态层与涟漪仍由 Material 背景绘制，胶囊外形只由容器一层承担。</summary>
     internal void UseTransparentFill()

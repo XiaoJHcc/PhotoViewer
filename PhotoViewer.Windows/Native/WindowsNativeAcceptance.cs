@@ -100,6 +100,7 @@ internal sealed partial class WindowsMainWindow
 
             await CheckDispatchAsync();
             checks.Add("PASS dispatcher: Normal precedes queued Background; worker returns to UI thread");
+            await CheckIconInkAlignmentAsync(checks);
 
             // WinRT 的 NumberPad* 与共享 GestureKey.NumPad* 名称不同;默认次级评分热键依赖这张显式映射。
             var numpadGesture = WindowsInput.FromKey(VirtualKey.NumberPad3);
@@ -907,8 +908,9 @@ internal sealed partial class WindowsMainWindow
     }
 
     /// <summary>主图菜单的语义前置图标:八项各有字形,四个勾选项同样带图标,且在真实弹层里渲染出来。</summary>
+    /// <param name="checks">报告行收集器(ICON-05 像素核对;为 null 时只做结构核对)。</param>
     /// <returns>检查完成后的任务</returns>
-    private async Task CheckContextMenuIconsAsync()
+    private async Task CheckContextMenuIconsAsync(List<string>? checks = null)
     {
         var expected = new (string Text, string Glyph)[]
         {
@@ -953,11 +955,16 @@ internal sealed partial class WindowsMainWindow
         _contextMenu.ShowAt(_root);
         try
         {
-            await Task.Delay(250);
+            // 弹层首帧与随包字体的就绪时间不固定：等到所有语义字形都实际渲染出来，不靠一次固定延时。
             var rendered = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(_root.XamlRoot))
+            for (var attempt = 0; attempt < 40 && rendered.Count < expected.Length; attempt++)
             {
-                CollectRenderedGlyphs(popup.Child, rendered);
+                await Task.Delay(50);
+                rendered.Clear();
+                foreach (var popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(_root.XamlRoot))
+                {
+                    CollectRenderedGlyphs(popup.Child, rendered);
+                }
             }
 
             RequireSmoke(rendered.Count > 0, "右键菜单弹层里没有任何可见图标");
@@ -965,11 +972,74 @@ internal sealed partial class WindowsMainWindow
             {
                 RequireSmoke(rendered.Contains(glyph), $"菜单项「{text}」的图标没有渲染出来: 字形 {glyph}");
             }
+
+            if (checks != null)
+            {
+                // ICON-05：原生菜单的图标槽是模板的 16 点 IconRoot(Viewbox)，字号仍是标称 13；
+                // 回读真实弹层里这些图标的墨迹边界，确认系统模板没有静默缩图或裁掉边缘。
+                await CheckNativeMenuIconHostsAsync(checks);
+            }
         }
         finally
         {
             _contextMenu.Hide();
         }
+    }
+
+    /// <summary>
+    /// 原生菜单图标像素核对：菜单项由系统模板承载（<c>MenuFlyoutItem</c> / <c>ToggleMenuFlyoutItem</c> 的
+    /// 16 点 IconRoot），这里按 <c>menu.icon.fontSize</c> 的标称 13 核对槽、墨迹与设计锚点；
+    /// 筛选菜单沿用同一模板与同一标称字号，另行核对字号没有漂移。
+    /// </summary>
+    /// <param name="checks">报告行收集器。</param>
+    /// <returns>任务。</returns>
+    private async Task CheckNativeMenuIconHostsAsync(List<string> checks)
+    {
+        var items = new (string Text, string Label, string Glyph)[]
+        {
+            ("打开文件…", "菜单 " + IconCatalog.MenuOpenFile, WindowsIcons.DocumentGlyph),
+            ("胶片栏", "菜单 " + IconCatalog.MenuFilmstrip, WindowsIcons.PhotosGlyph),
+            ("设置…", "菜单 " + IconCatalog.MenuSettings, WindowsIcons.SettingsGlyph),
+        };
+
+        foreach (var (text, label, glyph) in items)
+        {
+            var item = _contextMenu.Items.OfType<MenuFlyoutItem>().First(entry => entry.Text == text);
+            RequireSmoke(item.Icon is FontIcon { ActualWidth: > 0 },
+                $"菜单项「{text}」的图标在真实弹层里没有实现出来");
+            var icon = (FontIcon)item.Icon;
+            RequireSmoke(Math.Abs(icon.FontSize - DesignTokens.MenuIconFontSize) < 0.01,
+                $"菜单项「{text}」字号不是标称 {DesignTokens.MenuIconFontSize:0.#}: {icon.FontSize:0.##}");
+            await WindowsIconMetrics.CheckAsync(
+                _root,
+                new WindowsIconMetrics.IconSample(
+                    label,
+                    glyph,
+                    DesignTokens.MenuIconFontSize,
+                    DesignTokens.MenuIconSize,
+                    false,
+                    $"MenuFlyoutItem「{text}」IconRoot(Viewbox)",
+                    icon),
+                RequireSmoke,
+                checks);
+        }
+
+        // 筛选菜单是同一套 MenuFlyoutItem 模板与同一标称字号，只核对字号没有漂移（原生菜单不被替换成自绘）。
+        var filterIcons = new[] { _filterBar.SortMenu, _filterBar.RatingMenu }
+            .SelectMany(menu => menu.Items.OfType<MenuFlyoutItem>())
+            .Select(item => (Item: item, Icon: item.Icon as FontIcon))
+            .ToArray();
+        RequireSmoke(filterIcons.Length > 0 && filterIcons.All(entry => entry.Icon != null),
+            "筛选菜单有分类项没有 Fluent 前置图标");
+        foreach (var (item, icon) in filterIcons)
+        {
+            RequireSmoke(Math.Abs(icon!.FontSize - DesignTokens.MenuIconFontSize) < 0.01,
+                $"筛选菜单项「{item.Text}」字号不是标称 {DesignTokens.MenuIconFontSize:0.#}: {icon.FontSize:0.##}");
+        }
+
+        checks.Add(
+            $"PASS ICON-05 筛选菜单 {filterIcons.Length} 项沿用原生 MenuFlyoutItem 模板（16 点 IconRoot），"
+            + $"图标字号统一 {DesignTokens.MenuIconFontSize:0.#} 点");
     }
 
     /// <summary>收集已渲染成可见字形的 FontIcon 码位。</summary>

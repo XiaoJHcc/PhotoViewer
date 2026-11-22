@@ -8,6 +8,14 @@
 
 证据文档：[macOS P3](../Plans/native-rebuild-phase-3.md) · [iPad](../Plans/native-rebuild-phase-ipad.md) · [Windows P2](../Plans/native-rebuild-windows-p2.md) · [Windows 主屏控件](../Plans/windows-main-screen-controls.md) · [Android](../Plans/native-rebuild-phase-android.md) · [共享 Core 重建](../Plans/core-legacy-rebuild-plan-1.md) · [评分存储纠正](../Plans/rating-storage-correction-plan-1.md) · [原生输入与设置/工具界面收口](../Plans/native-input-ui-refinement.md) · [双版本分发与包体](../Plans/distribution-package-size-optimization-plan.md) · [跨平台静态首屏](../Plans/new-ui-plan-3.md#9-实施与验收结果) · [Windows 主屏静态对标](../Plans/new-ui-plan-5.md#4-验收结果) · [Web 参考壳差分台账](../Plans/web-shell-gaps.md)（Web 只作规范检验，不设状态列）。
 
+## icons
+
+| ID | macOS | iOS·iPadOS | Windows | Android |
+|---|---|---|---|---|
+| ICON-03 | 代码核对；保留系统符号与原生模板，统一卡片占位字号 | 代码核对；命令与卡片图标按原尺寸承载，待真屏 | 程序化通过；代表图标保留设计锚点，尚未逐项与 macOS 对拍 | 程序化通过；手机真机布局及独立 dp 图标槽，待与 iOS 对拍 |
+| ICON-04 | 程序化通过；已入库 SF 量测作为字体重建参照 | 不适用；不打包 Fluent 字体 | 程序化通过；码位、归一倍率、上游 SVG 锚点与轮廓边界 | 程序化通过；同一字体资产 |
+| ICON-05 | 待核验；原生控件与 Windows 对拍 | 待核验；原生控件与 Android 对拍 | 程序化通过；主图菜单、代表控件及设置／工具原生模板像素对照，未覆盖所有缩放档 | 程序化通过；手机真机设置与主屏像素对照、两档字体缩放及筛选；其他密度与 iOS 对拍未验 |
+
 ## film
 
 | ID | macOS | iOS·iPadOS | Windows | Android |

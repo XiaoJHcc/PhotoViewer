@@ -129,6 +129,13 @@ public partial class App : Application
                 return;
             }
 
+            if (LaunchArgs.Contains("--pv-native-icons"))
+            {
+                await _window.RunIconChecksAsync(_settingsPresenter!, _toolsPresenter!);
+                _window.Close();
+                return;
+            }
+
             if (LaunchArgs.Contains("--pv-native-upload"))
             {
                 await _window.RunUploadAcceptanceAsync();

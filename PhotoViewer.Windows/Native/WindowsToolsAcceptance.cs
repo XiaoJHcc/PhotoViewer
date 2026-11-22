@@ -72,6 +72,23 @@ internal static class WindowsToolsAcceptance
             Require(window.SelectedPage == ToolsPage.Exif, "默认页不是 EXIF 详情");
             checks.Add($"PASS window: dark, Mica, NavigationView + TitleBar, 3 categories (EXIF/{WindowsProductInfo.DiagnosticName}/Stats), taskbar + maximizable, window={windowWidth:0} DIP");
 
+            // ICON-05：标题栏与分类图标的显式尺寸，以及真实像素里的墨迹边界、锚点与槽余量。
+            await WindowsIconMetrics.CheckWindowChromeAsync(
+                window.Root,
+                window.TitleBarControl,
+                window.Navigation,
+                new WindowsIconMetrics.ChromeExpectations(
+                    "工具窗口",
+                    WindowsIcons.ToolsGlyph,
+                    WindowsLayout.WindowTitleIconFontSize,
+                    WindowsLayout.WindowNavIconFontSize,
+                    WindowsLayout.WindowNavIconSlot),
+                WindowsToolsWindow.NavigationCategories
+                    .Select(entry => (entry.Title, WindowsIcons.ForToolCategory(entry.Key)))
+                    .ToArray(),
+                Require,
+                checks);
+
             Require(window.ExifPage.FileNameText == Path.GetFileNameWithoutExtension(fixture),
                 "EXIF 页文件名不含后缀");
             Require(window.ExifPage.GroupCount > 0 && window.ExifPage.TagCount > 0,

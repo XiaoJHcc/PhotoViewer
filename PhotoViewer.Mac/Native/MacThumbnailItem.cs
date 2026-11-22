@@ -76,7 +76,18 @@ public sealed class MacThumbnailItem : NSCollectionViewItem
         _thumbnail.Layer.MasksToBounds = true;
         _thumbnail.Layer.BackgroundColor = MacDesignColors.Argb(DesignTokens.ColorFilmThumbnailWell).CGColor;
         _thumbnail.Layer.BorderWidth = 1;
-        _placeholder = new NSImageView(new CGRect(33, 33, 24, 24)) { Image = MacSymbols.Get("photo"), ContentTintColor = NSColor.TertiaryLabel };
+        // FILM-05：占位字形取 film.card.placeholderGlyph.fontSize（与 Windows/Android 同值），并按字形自身
+        // 尺寸居中落在 80 方形照片区——等比缩放不拉伸变形，照片区与卡片外框都不变。
+        var placeholder = MacSymbols.Get("photo", DesignTokens.FilmCardPlaceholderGlyphFontSize);
+        _placeholder = new NSImageView(new CGRect(
+            5 + (80 - (double)placeholder.Size.Width) / 2,
+            5 + (80 - (double)placeholder.Size.Height) / 2,
+            placeholder.Size.Width, placeholder.Size.Height))
+        {
+            Image = placeholder,
+            ImageScaling = NSImageScale.ProportionallyUpOrDown,
+            ContentTintColor = NSColor.TertiaryLabel,
+        };
         _progress = new NSProgressIndicator(new CGRect(37, 37, 16, 16)) { Style = NSProgressIndicatorStyle.Spinning, Indeterminate = true };
         _name = Label(new CGRect(2, 89, 86, 12), 10);
         _date = Label(new CGRect(5, 103, 80, 11), 9);

@@ -16,6 +16,9 @@ internal sealed class AndroidCommandIconView : View
     /// <summary>图标尺寸（dp），与控制栏命令字形同源，不随系统文字缩放。</summary>
     internal const double GlyphSizeDp = DesignTokens.ToolbarCommandGlyphFontSize;
 
+    /// <summary>图标槽边长（dp）：独立于字号的布局令牌，容纳 1.2em 排版框内的全部墨迹。</summary>
+    internal const double SlotSizeDp = DesignTokens.SettingsMobileCommandIconSlotSize;
+
     private readonly Paint _glyph;
     private readonly Paint _solid;
     private readonly Paint _digit;
@@ -53,6 +56,10 @@ internal sealed class AndroidCommandIconView : View
     internal double FontSizeDp => GlyphSizeDp;
     /// <summary>字形实际像素尺寸（验收：应等于 18dp 的像素值，不被二次缩放）。</summary>
     internal float GlyphTextSizePx => (_solidGlyph ? _solid : _glyph).TextSize;
+    /// <summary>图标槽边长（px，验收读取）：取槽位令牌而非字形尺寸。</summary>
+    internal int SlotPx => AndroidUiTheme.IconSlotPx(Context!, SlotSizeDp);
+    /// <summary>叠字字号（px，验收读取）；非评分命令为 0。</summary>
+    internal float DigitTextSizePx => _number == null ? 0 : _digit.TextSize;
 
     /// <summary>
     /// 绑定命令图标：评分命令按控制栏语义绘制（0 为清零叉，1–5 为实心星叠数字），
@@ -90,31 +97,36 @@ internal sealed class AndroidCommandIconView : View
         Invalidate();
     }
 
-    /// <summary>按字形实际尺寸测量，容器不裁切字形。</summary>
+    /// <summary>
+    /// 图标槽取共享的独立槽位令牌（24dp），不按字体 advance 量测：随包 Fluent 的 advance 是 1.2em 方形单元
+    /// （字形居中、留白对称），按 advance 量测会把槽位与「勾选 → 图标 → 命令名」的视觉间距一起推宽；
+    /// 槽位令牌大于字形墨迹（18dp 字号下最大约 20.2dp），字形按排版框中心落在槽内、不被裁切也不缩放。
+    /// </summary>
     /// <param name="widthMeasureSpec">宽约束。</param>
     /// <param name="heightMeasureSpec">高约束。</param>
     protected override void OnMeasure(int widthMeasureSpec, int heightMeasureSpec)
     {
-        var paint = _solidGlyph ? _solid : _glyph;
-        var metrics = paint.GetFontMetrics()!;
-        int minimum = (int)AndroidUiTheme.Dp(Context!, GlyphSizeDp);
-        int width = Math.Max(minimum, (int)Math.Ceiling(paint.MeasureText(_text)) + 2);
-        int height = Math.Max(minimum, (int)Math.Ceiling(metrics.Descent - metrics.Ascent) + 2);
-        SetMeasuredDimension(ResolveSize(width, widthMeasureSpec), ResolveSize(height, heightMeasureSpec));
+        int slot = AndroidUiTheme.IconSlotPx(Context!, SlotSizeDp);
+        SetMeasuredDimension(ResolveSize(slot, widthMeasureSpec), ResolveSize(slot, heightMeasureSpec));
     }
 
-    /// <summary>居中绘制字形；评分命令再叠数字。</summary>
+    /// <summary>按字体单元中心绘制字形；评分命令再按墨迹中心叠数字。</summary>
     /// <param name="canvas">画布。</param>
     protected override void OnDraw(Canvas canvas)
     {
         base.OnDraw(canvas);
         if (string.IsNullOrEmpty(_text)) return;
-        DrawCentered(canvas, _solidGlyph ? _solid : _glyph, _text);
-        if (_number != null) DrawCentered(canvas, _digit, _number);
+        DrawGlyph(canvas, _solidGlyph ? _solid : _glyph, _text);
+        if (_number != null) DrawDigit(canvas, _digit, _number);
     }
 
-    private void DrawCentered(Canvas canvas, Paint paint, string text)
+    private void DrawGlyph(Canvas canvas, Paint paint, string glyph)
     {
-        AndroidUiTheme.DrawGlyphCentered(canvas, text, paint, Width / 2f, Height / 2f);
+        AndroidUiTheme.DrawGlyphCentered(canvas, glyph, paint, Width / 2f, Height / 2f);
+    }
+
+    private void DrawDigit(Canvas canvas, Paint paint, string digit)
+    {
+        AndroidUiTheme.DrawTextInkCentered(canvas, digit, paint, Width / 2f, Height / 2f);
     }
 }

@@ -472,9 +472,11 @@ internal sealed class AndroidRatingPopup : IDisposable
                 string id = value == 0 ? IconCatalog.RatingClear : active ? IconCatalog.RatingStarFilled : IconCatalog.RatingStar;
                 double size = value == 0 ? DesignTokens.RatingPopupClearGlyphFontSize : DesignTokens.RatingPopupGlyphFontSize;
                 var color = value == 0 ? AndroidUiTheme.StarClear : active ? AndroidUiTheme.StarActive : AndroidUiTheme.StarInactive;
-                int iconSize = Math.Max(1, Math.Min(Px(Pitch), (int)Math.Ceiling(AndroidUiTheme.Dp(Context!, size))));
-                button.IconSize = iconSize;
-                button.Icon = new AndroidGlyphDrawable(Context!, AndroidIcons.Glyph(id), AndroidIcons.Filled(id), null, iconSize);
+                var icon = new AndroidGlyphDrawable(Context!, AndroidIcons.Glyph(id), AndroidIcons.Filled(id), null,
+                    size, clipTo: button);
+                // 图标槽只决定占位与绘制中心：字号的精确像素不因槽位收窄而缩小，字形超出槽位时由按钮矩形裁切。
+                button.IconSize = Math.Min(icon.IntrinsicWidth, Math.Max(1, Px(Pitch)));
+                button.Icon = icon;
                 button.IconTint = ColorStateList.ValueOf(color);
                 button.Selected = value == _entries[row].Rating;
             }

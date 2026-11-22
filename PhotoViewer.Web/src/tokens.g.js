@@ -323,6 +323,7 @@ const tokens = Object.freeze({
     "settings.android.row.paddingY": 12,
     "settings.android.sheet.heightRatio": 0.85,
     "settings.android.sheet.peekRatio": 0.5,
+    "settings.mobile.commandIcon.slotSize": 24,
     "settings.phone.inactiveCheck.opacity": 0.2,
     "shell.analysis.divider.thickness": 1,
     "shell.bar.acrylic.luminosityOpacityMax": 0.8,

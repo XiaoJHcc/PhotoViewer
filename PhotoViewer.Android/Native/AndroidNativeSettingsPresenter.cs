@@ -1292,8 +1292,11 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         row.Clickable = true;
         var content = new LinearLayout(_activity) { Orientation = Orientation.Horizontal };
         content.SetGravity(GravityFlags.Center);
-        var icon = IconText(IconCatalog.SettingsAdd, 16, AndroidUiTheme.Accent);
-        var iconParams = new LinearLayout.LayoutParams(LayoutParams.WrapContent, LayoutParams.WrapContent)
+        // 图标走字形绘制路径：槽位取 1.2em 排版框（含光栅余量），字号仍按令牌 dp，不按字体 advance 撑宽行盒，
+        // 也不会被固定宽度裁掉；与标题的间距仍为 8dp。
+        var icon = GlyphIcon(IconCatalog.SettingsAdd, 16, AndroidUiTheme.Accent);
+        int iconSlot = icon.SlotPx;
+        var iconParams = new LinearLayout.LayoutParams(iconSlot, iconSlot)
         {
             RightMargin = (int)AndroidUiTheme.Dp(_activity, 8),
         };
@@ -1452,6 +1455,13 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         text.SetTypeface(AndroidUiTheme.IconTypeface(_activity), TypefaceStyle.Normal);
         return text;
     }
+
+    /// <summary>
+    /// 纯绘制图标槽：字号按 dp 令牌、槽位取 1.2em 排版框；需要按图标独立占位（文字按钮行）时用它，
+    /// 避免 TextView 的字体 advance 撑宽行盒或裁掉字形。
+    /// </summary>
+    private AndroidGlyphView GlyphIcon(string id, double sizeDp, Color color)
+        => new(_activity, AndroidIcons.Glyph(id), sizeDp, color);
 
     private TextView IconButton(string id, double sizeDp, Action action)
     {

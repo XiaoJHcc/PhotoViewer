@@ -245,8 +245,9 @@ python3 Tools/compare-layout-geometry.py /tmp/web-geometry.json artifacts/accept
 
 ```bash
 python3 Tools/generate-icons.py           # 复用已入库字体，生成码位表与 Apple / Fluent 对比报告
-python3 Tools/generate-icons.py --check   # 校验码位、字体摘要、全目录统一倍率、许可证与生成物一致性
-python3 Tools/generate-icons.py --refresh # macOS：按固定提交重建，以全目录 SF/Fluent 墨迹对角线倍率均值归一
+python3 Tools/generate-icons.py --check   # 校验码位、字体摘要、统一倍率、原始设计锚点、许可证与生成物
+python3 Tools/generate-icons.py --refresh # 指定 macOS：重新量测 SF 并重建 Fluent
+python3 Tools/generate-icons.py --rebuild-fluent --no-apple # 映射不变时用已入库的 SF 量测重建 Fluent
 ```
 
 报告写入 `artifacts/acceptance/icon-catalog/index.html`，macOS 上包含 Apple 系统实际渲染。升级图标上游时先修改清单中的固定提交，再刷新并复核全部视觉变化；Windows / Android 发布扫描会检查随包字体与许可证。

@@ -283,6 +283,14 @@ internal static partial class AndroidNativeChecks
             && en.IconSymbol == AndroidIcons.ForCommand("ToggleEnhance"),
             LayoutText(enhance, IconCatalog.CommandEnhance));
 
+        // SETTINGS-01：图标槽取独立槽位令牌（不改命中区、不放大字号），字形按排版框中心落在槽内。
+        Check("命令图标槽取独立槽位令牌且字号仍为 18dp",
+            controlRow is { } slotRow
+            && Math.Abs(slotRow.IconFontSizeDp - DesignTokens.ToolbarCommandGlyphFontSize) < .01
+            && Math.Abs(slotRow.IconSlotDp - DesignTokens.SettingsMobileCommandIconSlotSize) < .01
+            && Math.Abs(slotRow.IconSlotPx - AndroidUiTheme.IconSlotPx(activity, DesignTokens.SettingsMobileCommandIconSlotSize)) <= 1,
+            LayoutText(controlRow, $"slot={AndroidCommandIconView.SlotSizeDp}dp"));
+
         int realized = 0;
         bool everyIcon = true;
         for (int index = 0; index < hotkeys.Count; index++)
@@ -303,6 +311,21 @@ internal static partial class AndroidNativeChecks
             LayoutText(boundRow, $">{standardRow}px"));
         AndroidInputDevices.SetChecksOverride(null, null);
         await Task.Delay(250);
+        }
+
+        // SETTINGS-01：命令图标的墨迹证明（两种形态都跑）——把真实视图绘制结果与同一字号、无边界约束的参照字形
+        // 按设计锚点（排版框中心）对齐比较；字形若被槽位裁切（含对称裁切）或按槽位缩小，四边余量、面积与
+        // 逐像素覆盖都会与参照不一致。期望值全部按运行时 density 推导，因此同一口径可在不同密度档复核。
+        foreach (var (label, glyph, digit) in new[]
+                 {
+                     ("雾天增强", AndroidIcons.ForCommand("ToggleEnhance"), (string?)null),
+                     ("评分 3 星", AndroidIcons.StarFilled, (string?)"3"),
+                 })
+        {
+            var (inkOk, inkDetail) = CommandIconInkForChecks(
+                FindDescendant<AndroidCommandIconView>(sheet, view => view.Symbol == glyph && view.RatingDigit == digit),
+                activity);
+            Check($"命令图标墨迹完整未被裁切（{label}）", inkOk, inkDetail);
         }
 
         // 文件格式行：副标题（扩展名）完整显示，行高随多行内容增高。
@@ -767,10 +790,37 @@ internal static partial class AndroidNativeChecks
             ? $"h={value.Height} min={value.MinHeight} checkGlyphLeft={value.CheckGlyphLeft}"
                 + $" checkHit={value.CheckHitWidth} icon={DescribeGlyph(value.IconSymbol)}"
                 + $" digit={value.IconDigit ?? "-"} solid={value.IconSolid} font={value.IconTextSizePx:0.#}px"
+                + $" slot={value.IconSlotPx:0}px/{value.IconSlotDp:0.#}dp"
                 + $" axIgnored={value.IconIgnoredForAccessibility} subtitle={value.SubtitleVisible}"
                 + $" ellipsize(t/s/c)={value.TitleEllipsized}/{value.SubtitleEllipsized}"
                 + $"/{value.PrimaryChipEllipsized}/{value.SecondaryChipEllipsized} expected={expected}"
             : "row=null";
+
+    /// <summary>
+    /// 设置页命令图标的墨迹证明（SETTINGS-01）：把真实视图绘制结果与同一字号、无边界约束的参照字形
+    /// 按设计锚点（排版框中心）比较，并核对字号是令牌 dp 的精确像素、槽位取独立槽位令牌。
+    /// 期望值全部按运行时密度推导，不写死像素，因此在不同 density/fontScale 的设备上结论口径一致。
+    /// </summary>
+    /// <param name="icon">命令图标视图（未实现时为 null）。</param>
+    /// <param name="activity">宿主 Activity。</param>
+    /// <returns>是否一致与明细。</returns>
+    private static (bool Ok, string Detail) CommandIconInkForChecks(AndroidCommandIconView? icon, Activity activity)
+    {
+        if (icon == null) return (false, "icon=null");
+        if (icon.Width <= 0 || icon.Height <= 0) return (false, $"未布局 {icon.Width}x{icon.Height}");
+        double density = AndroidUiTheme.Density(activity);
+        float fontPx = AndroidUiTheme.Dp(activity, AndroidCommandIconView.GlyphSizeDp);
+        int slotPx = AndroidUiTheme.IconSlotPx(activity, AndroidCommandIconView.SlotSizeDp);
+        var product = AndroidGlyphProbe.Capture(icon.Width, icon.Height, icon.Draw);
+        var reference = AndroidGlyphProbe.Reference(activity, icon.Symbol, icon.SolidGlyph, icon.RatingDigit,
+            icon.GlyphTextSizePx, icon.DigitTextSizePx);
+        var (ok, note) = AndroidGlyphProbe.Compare(product, reference, icon.Width / 2f, icon.Height / 2f,
+            new Rect(0, 0, icon.Width, icon.Height), icon.Width, icon.Height, density);
+        bool metrics = Math.Abs(icon.GlyphTextSizePx - fontPx) <= .01
+            && Math.Abs(icon.Width - slotPx) <= 1 && Math.Abs(icon.Height - slotPx) <= 1;
+        return (metrics && ok, $"density={density:0.##} font={icon.GlyphTextSizePx:0.#}px expected={fontPx:0.#}px "
+            + $"slot={icon.Width}x{icon.Height} expected={slotPx}px {note}");
+    }
 
     /// <summary>向视图派发一段单指竖直拖动（DOWN → MOVE×steps → UP），走完整拦截链。</summary>
     private static void DispatchDrag(View target, float x, float y, float deltaX, float deltaY, int steps = 10)

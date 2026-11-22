@@ -216,7 +216,11 @@ internal sealed class MacControlBar : NSView
             // RATING-04 冲突时的警示三角取 color.star.conflict，几何与命中区不变。
             var color = MacDesignColors.Argb(rating == 0 ? (conflict ? DesignTokens.ColorStarConflict : DesignTokens.ColorStarClear)
                 : active ? DesignTokens.ColorStarOn : DesignTokens.ColorStarOff);
-            ((ToolbarButton)button).ApplySymbol(symbol, color);
+            // 0 号槽位的清零叉取清零字形字号（12），冲突三角与 1–5 号星仍取星级字形字号（16）——
+            // 字形字号挂在 SymbolConfiguration 上，不随 ApplySymbol 换图自动跟随，必须显式给出。
+            ((ToolbarButton)button).ApplySymbol(symbol, color, rating == 0
+                ? conflict ? DesignTokens.ToolbarRatingGlyphFontSize : DesignTokens.ToolbarRatingClearGlyphFontSize
+                : null);
             button.ToolTip = tooltip;
             ((NSView)button).AccessibilityLabel = tooltip;
             button.Enabled = enabled;
@@ -459,11 +463,14 @@ internal sealed class MacControlBar : NSView
     internal sealed class ToolbarButton : NSButton
     {
         private string? _symbol;
+        private double _glyphSize;
 
         internal static ToolbarButton Create(string symbol, string tooltip, Action action, double size = 40,
             bool command = true, double? width = null, double? height = null)
         {
             double frameWidth = width ?? size, frameHeight = height ?? size;
+            double glyphSize = command ? DesignTokens.ToolbarCommandGlyphFontSize
+                : symbol == "xmark" ? DesignTokens.ToolbarRatingClearGlyphFontSize : DesignTokens.ToolbarRatingGlyphFontSize;
             var button = new ToolbarButton
             {
                 Frame = new CGRect(0, 0, frameWidth, frameHeight),
@@ -473,25 +480,34 @@ internal sealed class MacControlBar : NSView
                 BorderShape = NSControlBorderShape.Circle,
                 ToolTip = tooltip,
                 SymbolConfiguration = NSImageSymbolConfiguration.Create(
-                    (nfloat)(command ? DesignTokens.ToolbarCommandGlyphFontSize
-                        : symbol == "xmark" ? DesignTokens.ToolbarRatingClearGlyphFontSize : DesignTokens.ToolbarRatingGlyphFontSize),
-                    (double)NSFontWeight.Regular),
+                    (nfloat)glyphSize, (double)NSFontWeight.Regular),
             };
+            button._glyphSize = glyphSize;
             button.SetButtonType(command ? NSButtonType.MomentaryPushIn : NSButtonType.MomentaryChange);
             ((NSView)button).AccessibilityLabel = tooltip;
             button.Activated += (_, _) => action();
             return button;
         }
 
-        /// <summary>按符号与设计色着色；同一符号只生成一次着色副本，符号不变时只更新色调。</summary>
+        /// <summary>
+        /// 按符号与设计色着色；同一符号只生成一次着色副本，符号不变时只更新色调。
+        /// 字形字号仍由 <see cref="NSButton.SymbolConfiguration"/> 决定，因此换字形时可以同时换字号
+        /// （RATING-04：0 号槽位的清零叉取清零字形字号，冲突三角维持星级字形字号）。
+        /// </summary>
         /// <param name="symbol">SF Symbol 名称。</param>
         /// <param name="color">内容色。</param>
-        internal void ApplySymbol(string symbol, NSColor color)
+        /// <param name="glyphSize">字形点数；null 保持当前字号。</param>
+        internal void ApplySymbol(string symbol, NSColor color, double? glyphSize = null)
         {
             if (_symbol != symbol)
             {
                 _symbol = symbol;
                 Image = MacSymbols.Get(symbol, color);
+            }
+            if (glyphSize is { } size && Math.Abs(_glyphSize - size) > double.Epsilon)
+            {
+                _glyphSize = size;
+                SymbolConfiguration = NSImageSymbolConfiguration.Create((nfloat)size, (double)NSFontWeight.Regular);
             }
             ContentTintColor = color;
         }

@@ -76,6 +76,23 @@ internal static class WindowsSettingsAcceptance
                 $"窗口宽度不是 960 DIP: {windowWidth:0.0}");
             checks.Add($"PASS window: dark, Mica, NavigationView + TitleBar + NumberBox, 5 categories, window={windowWidth:0} DIP, content={window.Root.ActualWidth:0} DIP");
 
+            // ICON-05：标题栏与分类图标的显式尺寸，以及真实像素里的墨迹边界、锚点与槽余量。
+            await WindowsIconMetrics.CheckWindowChromeAsync(
+                window.Root,
+                window.TitleBarControl,
+                window.Navigation,
+                new WindowsIconMetrics.ChromeExpectations(
+                    "设置窗口",
+                    WindowsIcons.SettingsGlyph,
+                    WindowsLayout.WindowTitleIconFontSize,
+                    WindowsLayout.WindowNavIconFontSize,
+                    WindowsLayout.WindowNavIconSlot),
+                WindowsSettingsWindow.NavigationCategories
+                    .Select(entry => (entry.Title, WindowsIcons.ForCategory(entry.Key)))
+                    .ToArray(),
+                Require,
+                checks);
+
             Require(window.Settings.PerformanceBudgetInfo.Contains("系统内存")
                 && window.Settings.PerformanceBudgetInfo.Contains("可用"), "设备提示缺少系统总内存或可用内存");
             Require(window.Settings.BitmapCacheCountInfo.StartsWith("可缓存 ")

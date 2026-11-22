@@ -856,14 +856,19 @@ internal static class iOSNativeSettingsCheck
     private static void VerifyCommandIcon(iOSNativeEmbeddedCheckableReorderCell cell, SettingsViewModel.HotkeyItem item)
     {
         var icon = cell.LeadingIconView;
-        if (icon.Hidden || icon.Image == null)
+        if (icon.Hidden || icon.Image is not { } image)
             throw new InvalidOperationException($"命令表行缺少命令图标：{item.Command}");
         icon.LayoutIfNeeded();
         var frame = icon.ConvertRectToView(icon.Bounds, cell);
         var title = cell.TitleLabel.ConvertRectToView(cell.TitleLabel.Bounds, cell);
         var checkmark = cell.CheckmarkView.ConvertRectToView(cell.CheckmarkView.Bounds, cell);
-        if (Math.Abs((double)icon.Bounds.Width - 20) > .5 || (double)icon.Bounds.Height < 16 || (double)icon.Bounds.Height > 20.5)
-            throw new InvalidOperationException($"命令图标尺寸异常：bounds={icon.Bounds} cellFrame={frame}");
+        if (Math.Abs((double)icon.Bounds.Width - PhotoViewer.Core.Design.DesignTokens.SettingsMobileCommandIconSlotSize) > .5
+            || Math.Abs((double)icon.Bounds.Height - PhotoViewer.Core.Design.DesignTokens.SettingsMobileCommandIconSlotSize) > .5)
+            throw new InvalidOperationException($"命令图标槽位尺寸异常：bounds={icon.Bounds} cellFrame={frame}");
+        if (icon.ContentMode != UIViewContentMode.Center
+            || (double)image.Size.Width > (double)icon.Bounds.Width
+            || (double)image.Size.Height > (double)icon.Bounds.Height)
+            throw new InvalidOperationException($"命令图标未按原尺寸在槽内居中：{item.Command} image={image.Size} bounds={icon.Bounds}");
         if (Math.Abs((double)frame.GetMidY() - (double)cell.Bounds.Height / 2) > .5)
             throw new InvalidOperationException($"命令图标未在行内垂直居中：{frame} 行高 {cell.Bounds.Height}");
         if (frame.IntersectsWith(title) || frame.IntersectsWith(checkmark) || frame.GetMaxX() > title.X + .5)

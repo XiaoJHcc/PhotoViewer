@@ -27,8 +27,13 @@ internal sealed class iOSThumbnailCard : UICollectionViewCell
     private const double Inset = 3, SurfaceWidth = 90, SurfaceHeight = 138, ImageSize = 80, StarSize = 14;
     /// <summary>大档第二行柱状条宽度（与第二行文字同宽）。</summary>
     private const double SecondLineWidth = 80;
-    /// <summary>小档角标与抖动点的内容留白与字形间距。</summary>
+    /// <summary>
+    /// 小档角标与抖动点的内容留白与字形间距；<see cref="BadgeGlyph"/> 是角标字形的设计槽位，
+    /// 与角标字号同为 8 点——字形按自身点数居中放进槽位，不因方框小而缩图。
+    /// </summary>
     private const double BadgePadding = 2, BadgeGlyph = 8, BadgeGap = 1;
+    /// <summary>占位字形取不到图像时的兜底边长（与占位方框原口径一致）。</summary>
+    private const double PlaceholderGlyphFallback = 24;
     /// <summary>大档与小档文件名、角标数字字体（系统字体不可用时直接报错）。</summary>
     private static readonly UIFont LargeNameFont =
         UIFont.SystemFontOfSize((nfloat)DesignTokens.FilmCardNameFontSize, UIFontWeight.Semibold)
@@ -144,9 +149,13 @@ internal sealed class iOSThumbnailCard : UICollectionViewCell
         _thumbnail.Layer.CornerRadius = 4;
         _thumbnail.Layer.BorderWidth = 1;
         _thumbnail.Layer.MasksToBounds = true;
-        _placeholder = new UIImageView(new CGRect((SurfaceWidth - 24) / 2, (SurfaceHeight - 72) / 2, 24, 24))
+        // FILM-05：占位字形取桌面同一字号（film.card.placeholderGlyph.fontSize），并按字形自身尺寸居中落在
+        // 照片区：ScaleToFill 会把非方形字形拉伸变形，AspectFit 会因方框比字形窄而缩小；
+        // 取原尺寸后照片区与卡片外框都不变。
+        _placeholder = new UIImageView(CGRect.Empty)
         {
-            Image = iOSSymbols.Symbol("photo"),
+            Image = iOSSymbols.Symbol("photo", DesignTokens.FilmCardPlaceholderGlyphFontSize),
+            ContentMode = UIViewContentMode.Center,
             TintColor = UIColor.TertiaryLabel,
         };
         _progress = new UIActivityIndicatorView(new CGRect(SurfaceWidth / 2 - 8, 37, 16, 16)) { HidesWhenStopped = true };
@@ -186,15 +195,15 @@ internal sealed class iOSThumbnailCard : UICollectionViewCell
             UserInteractionEnabled = false,
         };
         _smallBadge.Layer.CornerRadius = (nfloat)(DesignTokens.FilmCardSmallBadgeHeight / 2);
-        _smallBadgeTriangle = new UIImageView(new CGRect(0, 0, BadgeGlyph, BadgeGlyph))
+        _smallBadgeTriangle = new UIImageView(CGRect.Empty)
         {
-            ContentMode = UIViewContentMode.ScaleAspectFit,
+            ContentMode = UIViewContentMode.Center,
             UserInteractionEnabled = false,
             BackgroundColor = UIColor.Clear,
         };
-        _smallBadgeStar = new UIImageView(new CGRect(0, 0, BadgeGlyph, BadgeGlyph))
+        _smallBadgeStar = new UIImageView(CGRect.Empty)
         {
-            ContentMode = UIViewContentMode.ScaleAspectFit,
+            ContentMode = UIViewContentMode.Center,
             UserInteractionEnabled = false,
             BackgroundColor = UIColor.Clear,
             Image = iOSSymbols.Symbol("star.fill", DesignTokens.FilmCardSmallBadgeFontSize),
@@ -381,7 +390,13 @@ internal sealed class iOSThumbnailCard : UICollectionViewCell
         double thumbInset = small ? DesignTokens.FilmCardSmallThumbInset : 5;
         double thumbSize = small ? DesignTokens.FilmCardSmallThumbSize : ImageSize;
         _thumbnail.Frame = new CGRect(thumbInset, thumbInset, thumbSize, thumbSize);
-        _placeholder.Frame = new CGRect(thumbInset + (thumbSize - 24) / 2, thumbInset + (thumbSize - 24) / 2, 24, 24);
+        // 占位字形按自身实测尺寸居中落在照片区，不做任何缩放（照片区 80/54 方形不变）。
+        var placeholder = _placeholder.Image?.Size
+            ?? new CGSize(PlaceholderGlyphFallback, PlaceholderGlyphFallback);
+        _placeholder.Frame = new CGRect(
+            thumbInset + (thumbSize - (double)placeholder.Width) / 2,
+            thumbInset + (thumbSize - (double)placeholder.Height) / 2,
+            placeholder.Width, placeholder.Height);
         _progress.Frame = new CGRect(thumbInset + thumbSize / 2 - 8, thumbInset + thumbSize / 2 - 8, 16, 16);
         if (small)
         {
@@ -423,12 +438,29 @@ internal sealed class iOSThumbnailCard : UICollectionViewCell
         double y = (height - BadgeGlyph) / 2;
         if (!_smallBadgeTriangle.Hidden)
         {
-            _smallBadgeTriangle.Frame = new CGRect(x, y, BadgeGlyph, BadgeGlyph);
+            _smallBadgeTriangle.Frame = BadgeGlyphRect(x, y, _smallBadgeTriangle.Image?.Size);
             x += BadgeGlyph + BadgeGap;
         }
-        _smallBadgeStar.Frame = new CGRect(x, y, BadgeGlyph, BadgeGlyph);
+        _smallBadgeStar.Frame = BadgeGlyphRect(x, y, _smallBadgeStar.Image?.Size);
         x += BadgeGlyph + BadgeGap;
         _smallBadgeDigit.Frame = new CGRect(x, 0, digitWidth, height);
+    }
+
+    /// <summary>
+    /// 角标字形按自身点数居中放进 8 点设计槽位：8 点方框小于字形自然外框时，
+    /// AspectFit 会把字形静默缩小，这里改用原尺寸并居中，保住 SF 点数与实际字形比例。
+    /// 溢出量受角标内留白容纳（两侧 <see cref="BadgePadding"/>、行间 <see cref="BadgeGap"/>），仍在角标内。
+    /// </summary>
+    /// <param name="x">槽位左缘（角标坐标）。</param>
+    /// <param name="y">槽位顶缘（角标坐标）。</param>
+    /// <param name="size">字形实测尺寸；null 或空时退回槽位本身。</param>
+    /// <returns>字形视图矩形。</returns>
+    private static CGRect BadgeGlyphRect(double x, double y, CGSize? size)
+    {
+        var glyph = size ?? new CGSize(BadgeGlyph, BadgeGlyph);
+        double width = (double)glyph.Width > 0 ? (double)glyph.Width : BadgeGlyph;
+        double height = (double)glyph.Height > 0 ? (double)glyph.Height : BadgeGlyph;
+        return new CGRect(x + (BadgeGlyph - width) / 2, y + (BadgeGlyph - height) / 2, width, height);
     }
 
     /// <summary>

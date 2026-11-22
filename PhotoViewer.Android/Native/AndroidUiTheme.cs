@@ -119,6 +119,31 @@ internal static class AndroidUiTheme
     /// <returns>像素值。</returns>
     internal static float Dp(Context context, double dp) => (float)(dp * (context.Resources?.DisplayMetrics?.Density ?? 1));
 
+    /// <summary>
+    /// 归一字体排版框与字号之比：1.2em 方形单元，全部缩放后的墨迹都落在框内。
+    /// 与随包字体由同一生成器产出。
+    /// </summary>
+    internal const double IconCellEm = IconCatalog.FluentCellEm;
+
+    /// <summary>
+    /// 图标槽边长（px）：同一份 dp 令牌向上取整到整数像素，只用于布局尺寸。
+    /// 字形画笔的字号必须直接用 <see cref="Dp"/>（精确浮点像素），不拿这个取整值当字号。
+    /// </summary>
+    /// <param name="context">上下文。</param>
+    /// <param name="dp">dp 值（图标尺寸令牌）。</param>
+    /// <returns>槽位像素边长。</returns>
+    internal static int IconSlotPx(Context context, double dp) => Math.Max(1, (int)Math.Ceiling(Dp(context, dp)));
+
+    /// <summary>
+    /// 没有专用槽位令牌时的图标槽边长（px）：字号对应的 <see cref="IconCellEm"/> 排版框向上取整，
+    /// 另加每侧 1px 光栅化与像素取整余量，因此任何字形墨迹都完整落在槽内，不需要也不允许按槽位缩小字号。
+    /// </summary>
+    /// <param name="context">上下文。</param>
+    /// <param name="sizeDp">字号（dp 令牌）。</param>
+    /// <returns>槽位像素边长。</returns>
+    internal static int GlyphSlotPx(Context context, double sizeDp)
+        => Math.Max(1, (int)Math.Ceiling(Dp(context, sizeDp) * IconCellEm) + 2);
+
     /// <summary>dp 密度。</summary>
     /// <param name="context">上下文。</param>
     /// <returns>密度。</returns>
@@ -229,15 +254,36 @@ internal static class AndroidUiTheme
         canvas.DrawText(clipped, centerX, baseline, paint);
     }
 
-    /// <summary>按字形实际墨迹边界居中，避免字体上下留白把图标视觉中心推离按钮中心。</summary>
+    /// <summary>
+    /// 按字体单元中心绘制 Fluent UI System Icons 字形：随包字体把每个缩放后的字形放在 1.2em 方形单元中心，
+    /// ascent/descent 对称、无行距、advance 一致，所以横向居中 advance（<see cref="global::Android.Graphics.Paint.Align.Center"/>）、
+    /// 纵向取字体度量的上下中线作基线即可，不必逐帧测量墨迹边界。
+    /// </summary>
     internal static void DrawGlyphCentered(Canvas canvas, string glyph, Paint paint, float centerX, float centerY)
     {
         if (string.IsNullOrEmpty(glyph)) return;
+        var alignment = paint.TextAlign;
+        paint.TextAlign = global::Android.Graphics.Paint.Align.Center;
+        canvas.DrawText(glyph, centerX, GlyphBaseline(paint, centerY), paint);
+        paint.TextAlign = alignment;
+    }
+
+    /// <summary>字形单元上下中线对应的基线：字体对称时即中心线，留白不对称时也不会把字形推离中心。</summary>
+    /// <param name="paint">已设好字体与字号的画笔。</param>
+    /// <param name="centerY">单元中心纵坐标。</param>
+    /// <returns>基线纵坐标。</returns>
+    internal static float GlyphBaseline(Paint paint, float centerY)
+        => paint.GetFontMetrics() is { } metrics ? centerY - (metrics.Ascent + metrics.Descent) / 2 : centerY;
+
+    /// <summary>按墨迹边界居中绘制文本：叠在图标上的数字等系统字体内容走这里，字形单元本身不保证居中。</summary>
+    internal static void DrawTextInkCentered(Canvas canvas, string text, Paint paint, float centerX, float centerY)
+    {
+        if (string.IsNullOrEmpty(text)) return;
         using var bounds = new Rect();
         var alignment = paint.TextAlign;
         paint.TextAlign = global::Android.Graphics.Paint.Align.Left;
-        paint.GetTextBounds(glyph, 0, glyph.Length, bounds);
-        canvas.DrawText(glyph, centerX - bounds.ExactCenterX(), centerY - bounds.ExactCenterY(), paint);
+        paint.GetTextBounds(text, 0, text.Length, bounds);
+        canvas.DrawText(text, centerX - bounds.ExactCenterX(), centerY - bounds.ExactCenterY(), paint);
         paint.TextAlign = alignment;
     }
 

@@ -18,7 +18,8 @@ namespace PhotoViewer.Windows.Native;
 /// </summary>
 internal sealed class WindowsToolsWindow
 {
-    private static readonly (string Title, string Key, ToolsPage Page)[] Categories =
+    /// <summary>左侧分类：标题、图标键与分类页（按导航顺序）。</summary>
+    internal static readonly (string Title, string Key, ToolsPage Page)[] NavigationCategories =
     [
         ("EXIF 详情", "Exif", ToolsPage.Exif),
         (WindowsProductInfo.DiagnosticName, WindowsProductInfo.DiagnosticCategoryKey, ToolsPage.Diagnostic),
@@ -76,7 +77,7 @@ internal sealed class WindowsToolsWindow
             {
                 Glyph = WindowsIcons.ToolsGlyph,
                 FontFamily = new FontFamily(WindowsIcons.RegularFontFamily),
-                FontSize = 16,
+                FontSize = WindowsLayout.WindowTitleIconFontSize,
             },
         };
         _root.Children.Add(_titleBar);
@@ -116,18 +117,24 @@ internal sealed class WindowsToolsWindow
         _nav.Resources["NavigationViewContentGridBorderThickness"] = new Thickness(0);
         _nav.Resources["NavigationViewContentGridCornerRadius"] = new CornerRadius(0);
         _nav.Resources["NavigationViewContentBackground"] = transparent;
+        // 模板的图标槽高与字形元素的显式尺寸取同一个值：Viewbox 的等比缩放正好是 1，不再按槽高静默缩放。
+        _nav.Resources["NavigationViewItemOnLeftIconBoxHeight"] = WindowsLayout.WindowNavIconSlot;
 
-        for (var index = 0; index < Categories.Length; index++)
+        for (var index = 0; index < NavigationCategories.Length; index++)
         {
+            // 分类图标显式尺寸：字号取菜单同一标称值，宽高取图标槽，模板 Viewbox 不再缩放字形。
             var item = new NavigationViewItem
             {
-                Content = Categories[index].Title,
+                Content = NavigationCategories[index].Title,
                 Icon = new FontIcon
                 {
-                    Glyph = WindowsIcons.ForToolCategory(Categories[index].Key),
+                    Glyph = WindowsIcons.ForToolCategory(NavigationCategories[index].Key),
                     FontFamily = new FontFamily(WindowsIcons.RegularFontFamily),
+                    FontSize = WindowsLayout.WindowNavIconFontSize,
+                    Width = WindowsLayout.WindowNavIconSlot,
+                    Height = WindowsLayout.WindowNavIconSlot,
                 },
-                Tag = Categories[index].Page,
+                Tag = NavigationCategories[index].Page,
             };
             _navItems.Add(item);
             _nav.MenuItems.Add(item);

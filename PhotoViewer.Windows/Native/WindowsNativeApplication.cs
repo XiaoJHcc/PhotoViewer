@@ -130,7 +130,7 @@ internal static class WindowsNativeApplication
             || StressRequested || PerfProbeFolder != null || thumbProbe || ActivationCheckRequested
             || EditionCheckRequested || EditionRoundtripStage != null
             || args.Contains("--pv-native-color") || args.Contains("--pv-native-upload")
-            || args.Contains("--pv-native-rating");
+            || args.Contains("--pv-native-rating") || args.Contains("--pv-native-icons");
 
         // 验收素材只认显式 --pv-acceptance-fixtures=<Fixtures 绝对路径>:参数与本轮必需素材都在创建
         // 任何窗口、视图模型或设置库之前定下来,缺件不跳过、也不从祖先目录或工作目录兜底。

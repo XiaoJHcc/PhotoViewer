@@ -15,7 +15,8 @@ namespace PhotoViewer.Windows.Native;
 /// </summary>
 internal sealed class WindowsSettingsWindow
 {
-    private static readonly (string Title, string Key)[] Categories =
+    /// <summary>左侧分类：标题与图标键（按导航顺序）。</summary>
+    internal static readonly (string Title, string Key)[] NavigationCategories =
     [
         ("文件", "File"),
         ("预览", "Preview"),
@@ -72,7 +73,7 @@ internal sealed class WindowsSettingsWindow
             {
                 Glyph = WindowsIcons.SettingsGlyph,
                 FontFamily = new FontFamily(WindowsIcons.RegularFontFamily),
-                FontSize = 16,
+                FontSize = WindowsLayout.WindowTitleIconFontSize,
             },
         };
         _root.Children.Add(_titleBar);
@@ -105,16 +106,23 @@ internal sealed class WindowsSettingsWindow
         _nav.Resources["NavigationViewContentGridBorderThickness"] = new Thickness(0);
         _nav.Resources["NavigationViewContentGridCornerRadius"] = new CornerRadius(0);
         _nav.Resources["NavigationViewContentBackground"] = transparent;
+        // 模板的图标槽高与字形元素的显式尺寸取同一个值：Viewbox 的等比缩放正好是 1，不再按槽高静默缩放。
+        _nav.Resources["NavigationViewItemOnLeftIconBoxHeight"] = WindowsLayout.WindowNavIconSlot;
 
-        for (var index = 0; index < Categories.Length; index++)
+        for (var index = 0; index < NavigationCategories.Length; index++)
         {
+            // 分类图标显式尺寸：NavigationViewItem 模板把图标放进 IconBox(Viewbox) 等比缩放，
+            // 只设字号会让模板按排版框静默缩图；字号取菜单同一标称值，宽高取图标槽，缩放正好是 1。
             _nav.MenuItems.Add(new NavigationViewItem
             {
-                Content = Categories[index].Title,
+                Content = NavigationCategories[index].Title,
                 Icon = new FontIcon
                 {
-                    Glyph = WindowsIcons.ForCategory(Categories[index].Key),
+                    Glyph = WindowsIcons.ForCategory(NavigationCategories[index].Key),
                     FontFamily = new FontFamily(WindowsIcons.RegularFontFamily),
+                    FontSize = WindowsLayout.WindowNavIconFontSize,
+                    Width = WindowsLayout.WindowNavIconSlot,
+                    Height = WindowsLayout.WindowNavIconSlot,
                 },
                 Tag = index,
             });

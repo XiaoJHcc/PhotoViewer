@@ -25,6 +25,21 @@ public static class MacSymbols
         => Get(name).GetImage(NSImageSymbolConfiguration.Create(color))
             ?? throw new InvalidOperationException($"系统符号着色失败：{name}");
 
+    /// <summary>
+    /// 取得按设计点数配置的系统符号：字号由令牌给出，图像视图只按原尺寸承载，
+    /// 不再由等比缩放改写字形点数（例如照片占位字形 film.card.placeholderGlyph.fontSize）。
+    /// </summary>
+    /// <param name="name">SF Symbol 名称。</param>
+    /// <param name="pointSize">字形点数（设计令牌）。</param>
+    public static NSImage Get(string name, double pointSize)
+    {
+        var image = Get(name).GetImage(
+                NSImageSymbolConfiguration.Create((nfloat)pointSize, (double)NSFontWeight.Regular))
+            ?? throw new InvalidOperationException($"系统符号配置失败：{name}");
+        image.Template = true;
+        return image;
+    }
+
     /// <summary>创建原生方形图标按钮，尺寸与符号字号由调用点按用途传入设计令牌。</summary>
     /// <param name="symbol">SF Symbol 名称。</param>
     /// <param name="tooltip">悬停提示与读屏名称来源。</param>

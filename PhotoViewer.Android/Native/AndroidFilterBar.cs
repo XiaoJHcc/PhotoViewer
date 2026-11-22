@@ -620,8 +620,9 @@ internal sealed class AndroidFilterBar : FrameLayout
 
     private static (ImageView Icon, string Description) GlyphIcon(Activity activity, string id, Color color)
     {
-        int glyphSize = Math.Max(1, (int)Math.Round(AndroidUiTheme.Dp(activity, DesignTokens.MenuIconFontSize)));
-        var drawable = new AndroidGlyphDrawable(activity, AndroidIcons.Glyph(id), AndroidIcons.Filled(id), null, glyphSize);
+        // 图标槽取菜单图标槽位令牌，字号取菜单图标字号：字形按排版框中心落在槽内，不按字体 advance 参与文本排版。
+        var drawable = new AndroidGlyphDrawable(activity, AndroidIcons.Glyph(id), AndroidIcons.Filled(id), null,
+            DesignTokens.MenuIconFontSize, DesignTokens.MenuIconSize);
         drawable.SetTintList(ColorStateList.ValueOf(color));
         var icon = new ImageView(activity);
         icon.SetImageDrawable(drawable);

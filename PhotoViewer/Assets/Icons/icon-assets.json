@@ -24,6 +24,12 @@
       "id": "command.open",
       "fluentCodepoint": 62488,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.4,
+        "top": -0.35,
+        "right": 0.4,
+        "bottom": 0.35
+      },
       "fluentSourceInk": {
         "width": 14.4,
         "height": 12.6
@@ -32,16 +38,22 @@
         "width": 20,
         "height": 16
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.039701769986255,
-        "height": 16.659739048737972
+        "width": 19.039701769986248,
+        "height": 16.659739048737965
       }
     },
     {
       "id": "command.previous",
       "fluentCodepoint": 62122,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.2,
+        "top": -0.301,
+        "right": 0.1251428571428571,
+        "bottom": 0.3
+      },
       "fluentSourceInk": {
         "width": 5.852571428571427,
         "height": 10.818
@@ -50,16 +62,22 @@
         "width": 8.5,
         "height": 15
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 7.738278790801555,
-        "height": 14.303575954702174
+        "width": 7.738278790801552,
+        "height": 14.303575954702167
       }
     },
     {
       "id": "command.next",
       "fluentCodepoint": 62128,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.1251111111111111,
+        "top": -0.3,
+        "right": 0.2,
+        "bottom": 0.3
+      },
       "fluentSourceInk": {
         "width": 5.852,
         "height": 10.8
@@ -68,16 +86,22 @@
         "width": 8.5,
         "height": 15
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 7.737523247080526,
-        "height": 14.279776327489692
+        "width": 7.737523247080522,
+        "height": 14.279776327489685
       }
     },
     {
       "id": "command.exchange",
       "fluentCodepoint": 61837,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.3,
+        "top": -0.35,
+        "right": 0.3,
+        "bottom": 0.35
+      },
       "fluentSourceInk": {
         "width": 10.8,
         "height": 12.6
@@ -86,16 +110,22 @@
         "width": 17,
         "height": 20.5
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 14.279776327489692,
-        "height": 16.659739048737972
+        "width": 14.279776327489685,
+        "height": 16.659739048737965
       }
     },
     {
       "id": "command.fit",
       "fluentCodepoint": 985748,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.3,
+        "top": -0.3,
+        "right": 0.3,
+        "bottom": 0.3
+      },
       "fluentSourceInk": {
         "width": 10.8,
         "height": 10.8
@@ -104,16 +134,22 @@
         "width": 17,
         "height": 17
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 14.279776327489692,
-        "height": 14.279776327489692
+        "width": 14.279776327489685,
+        "height": 14.279776327489685
       }
     },
     {
       "id": "command.zoomIn",
       "fluentCodepoint": 61705,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.374,
+        "top": -0.376,
+        "right": 0.376,
+        "bottom": 0.374
+      },
       "fluentSourceInk": {
         "width": 13.5,
         "height": 13.5
@@ -122,16 +158,22 @@
         "width": 14.5,
         "height": 14.5
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 17.849720409362114,
-        "height": 17.849720409362114
+        "width": 17.849720409362106,
+        "height": 17.849720409362106
       }
     },
     {
       "id": "command.zoomOut",
       "fluentCodepoint": 60368,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.35,
+        "top": -0.026,
+        "right": 0.35,
+        "bottom": 0.026
+      },
       "fluentSourceInk": {
         "width": 12.6,
         "height": 0.936
@@ -140,16 +182,22 @@
         "width": 14.5,
         "height": 1.5
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 16.659739048737972,
-        "height": 1.2375806150491067
+        "width": 16.659739048737965,
+        "height": 1.237580615049106
       }
     },
     {
       "id": "command.analysis",
       "fluentCodepoint": 62562,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.4,
+        "top": -0.4,
+        "right": 0.4,
+        "bottom": 0.4
+      },
       "fluentSourceInk": {
         "width": 14.4,
         "height": 14.4
@@ -158,16 +206,22 @@
         "width": 16,
         "height": 16
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.039701769986255,
-        "height": 19.039701769986255
+        "width": 19.039701769986248,
+        "height": 19.039701769986248
       }
     },
     {
       "id": "command.enhance",
       "fluentCodepoint": 60983,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.4005,
+        "top": -0.4,
+        "right": 0.4,
+        "bottom": 0.4005
+      },
       "fluentSourceInk": {
         "width": 14.409,
         "height": 14.409
@@ -176,16 +230,22 @@
         "width": 17,
         "height": 17.5
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.051601583592497,
-        "height": 19.051601583592497
+        "width": 19.05160158359249,
+        "height": 19.05160158359249
       }
     },
     {
       "id": "menu.openFile",
       "fluentCodepoint": 62328,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.3,
+        "top": -0.4,
+        "right": 0.3,
+        "bottom": 0.4
+      },
       "fluentSourceInk": {
         "width": 10.8,
         "height": 14.4
@@ -194,16 +254,22 @@
         "width": 15,
         "height": 19
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 14.279776327489692,
-        "height": 19.039701769986255
+        "width": 14.279776327489685,
+        "height": 19.039701769986248
       }
     },
     {
       "id": "menu.filmstrip",
       "fluentCodepoint": 63378,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.4,
+        "top": -0.35,
+        "right": 0.4,
+        "bottom": 0.35
+      },
       "fluentSourceInk": {
         "width": 14.4,
         "height": 12.6
@@ -212,16 +278,22 @@
         "width": 18.5,
         "height": 19.5
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.039701769986255,
-        "height": 16.659739048737972
+        "width": 19.039701769986248,
+        "height": 16.659739048737965
       }
     },
     {
       "id": "menu.control",
       "fluentCodepoint": 62855,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.4,
+        "top": -0.35,
+        "right": 0.4,
+        "bottom": 0.35
+      },
       "fluentSourceInk": {
         "width": 14.4,
         "height": 12.6
@@ -230,16 +302,22 @@
         "width": 17.5,
         "height": 15
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.039701769986255,
-        "height": 16.659739048737972
+        "width": 19.039701769986248,
+        "height": 16.659739048737965
       }
     },
     {
       "id": "menu.exif",
       "fluentCodepoint": 62605,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.45,
+        "top": -0.45,
+        "right": 0.35,
+        "bottom": 0.35
+      },
       "fluentSourceInk": {
         "width": 14.4,
         "height": 14.4
@@ -248,16 +326,22 @@
         "width": 18,
         "height": 22.5
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.039701769986255,
-        "height": 19.039701769986255
+        "width": 19.039701769986248,
+        "height": 19.039701769986248
       }
     },
     {
       "id": "menu.tools",
       "fluentCodepoint": 61063,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.3752432432432432,
+        "top": -0.4,
+        "right": 0.35,
+        "bottom": 0.4
+      },
       "fluentSourceInk": {
         "width": 13.054378378378379,
         "height": 14.4
@@ -266,16 +350,22 @@
         "width": 20.5,
         "height": 20.5
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 17.26051882756119,
-        "height": 19.039701769986255
+        "width": 17.26051882756118,
+        "height": 19.039701769986248
       }
     },
     {
       "id": "menu.settings",
       "fluentCodepoint": 63145,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.4058,
+        "top": -0.425,
+        "right": 0.40579999999999994,
+        "bottom": 0.425
+      },
       "fluentSourceInk": {
         "width": 14.608799999999999,
         "height": 15.3
@@ -284,16 +374,22 @@
         "width": 19,
         "height": 19
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.315777445651054,
-        "height": 20.229683130610397
+        "width": 19.315777445651044,
+        "height": 20.229683130610386
       }
     },
     {
       "id": "menu.quit",
       "fluentCodepoint": 62990,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.376280487804878,
+        "top": -0.4,
+        "right": 0.376280487804878,
+        "bottom": 0.4
+      },
       "fluentSourceInk": {
         "width": 13.54609756097561,
         "height": 14.4
@@ -302,16 +398,22 @@
         "width": 18,
         "height": 18.5
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 17.910670674174572,
-        "height": 19.039701769986255
+        "width": 17.91067067417456,
+        "height": 19.039701769986248
       }
     },
     {
       "id": "filter.entry",
       "fluentCodepoint": 62470,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.35,
+        "top": -0.25,
+        "right": 0.35,
+        "bottom": 0.2
+      },
       "fluentSourceInk": {
         "width": 12.6,
         "height": 8.1
@@ -320,16 +422,22 @@
         "width": 18,
         "height": 10.5
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 16.659739048737972,
-        "height": 10.70983224561727
+        "width": 16.659739048737965,
+        "height": 10.709832245617264
       }
     },
     {
       "id": "filter.more",
       "fluentCodepoint": 59428,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.312,
+        "top": -0.062,
+        "right": 0.312,
+        "bottom": 0.062
+      },
       "fluentSourceInk": {
         "width": 11.232,
         "height": 2.232
@@ -338,16 +446,22 @@
         "width": 16.5,
         "height": 3.5
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 14.850967380589278,
-        "height": 2.95115377434787
+        "width": 14.850967380589271,
+        "height": 2.9511537743478686
       }
     },
     {
       "id": "filter.sortName",
       "fluentCodepoint": 60653,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.4,
+        "top": -0.326,
+        "right": 0.4,
+        "bottom": 0.250125
+      },
       "fluentSourceInk": {
         "width": 14.4,
         "height": 10.37025
@@ -356,16 +470,22 @@
         "width": 20,
         "height": 13
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.039701769986255,
-        "height": 13.711560227791665
+        "width": 19.039701769986248,
+        "height": 13.711560227791658
       }
     },
     {
       "id": "filter.sortDate",
       "fluentCodepoint": 62036,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.4,
+        "top": -0.4,
+        "right": 0.4,
+        "bottom": 0.35
+      },
       "fluentSourceInk": {
         "width": 14.4,
         "height": 13.5
@@ -374,16 +494,22 @@
         "width": 21.5,
         "height": 17
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.039701769986255,
-        "height": 17.849720409362114
+        "width": 19.039701769986248,
+        "height": 17.849720409362106
       }
     },
     {
       "id": "filter.sortSize",
       "fluentCodepoint": 59107,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.4,
+        "top": -0.3,
+        "right": 0.4,
+        "bottom": 0.3
+      },
       "fluentSourceInk": {
         "width": 14.4,
         "height": 10.8
@@ -392,16 +518,22 @@
         "width": 20.5,
         "height": 15
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.039701769986255,
-        "height": 14.279776327489692
+        "width": 19.039701769986248,
+        "height": 14.279776327489685
       }
     },
     {
       "id": "filter.ascending",
       "fluentCodepoint": 61851,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.3506666666666666,
+        "top": -0.40025,
+        "right": 0.35,
+        "bottom": 0.4
+      },
       "fluentSourceInk": {
         "width": 12.612,
         "height": 14.4045
@@ -410,16 +542,22 @@
         "width": 13.5,
         "height": 16.5
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 16.67560546687963,
-        "height": 19.045651676789376
+        "width": 16.67560546687962,
+        "height": 19.04565167678937
       }
     },
     {
       "id": "filter.descending",
       "fluentCodepoint": 61768,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.3491428571428571,
+        "top": -0.4,
+        "right": 0.3506666666666666,
+        "bottom": 0.4
+      },
       "fluentSourceInk": {
         "width": 12.596571428571428,
         "height": 14.4
@@ -428,16 +566,22 @@
         "width": 13.5,
         "height": 16.5
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 16.655205786411788,
-        "height": 19.039701769986255
+        "width": 16.655205786411777,
+        "height": 19.039701769986248
       }
     },
     {
       "id": "filter.all",
       "fluentCodepoint": 63325,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.35,
+        "top": -0.35,
+        "right": 0.35,
+        "bottom": 0.35
+      },
       "fluentSourceInk": {
         "width": 12.6,
         "height": 12.6
@@ -446,16 +590,22 @@
         "width": 17,
         "height": 17
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 16.659739048737972,
-        "height": 16.659739048737972
+        "width": 16.659739048737965,
+        "height": 16.659739048737965
       }
     },
     {
       "id": "filter.unrated",
       "fluentCodepoint": 63258,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.4002857142857143,
+        "top": -0.4,
+        "right": 0.40028571428571436,
+        "bottom": 0.4
+      },
       "fluentSourceInk": {
         "width": 14.410285714285715,
         "height": 14.4
@@ -464,16 +614,22 @@
         "width": 19.5,
         "height": 18.5
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.05330155696482,
-        "height": 19.039701769986255
+        "width": 19.053301556964808,
+        "height": 19.039701769986248
       }
     },
     {
       "id": "filter.rating1",
       "fluentCodepoint": 59525,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.4,
+        "top": -0.4,
+        "right": 0.4,
+        "bottom": 0.4
+      },
       "fluentSourceInk": {
         "width": 14.4,
         "height": 14.4
@@ -482,16 +638,22 @@
         "width": 18,
         "height": 18
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.039701769986255,
-        "height": 19.039701769986255
+        "width": 19.039701769986248,
+        "height": 19.039701769986248
       }
     },
     {
       "id": "filter.rating2",
       "fluentCodepoint": 983631,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.4,
+        "top": -0.4,
+        "right": 0.4,
+        "bottom": 0.4
+      },
       "fluentSourceInk": {
         "width": 14.4,
         "height": 14.4
@@ -500,16 +662,22 @@
         "width": 18,
         "height": 18
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.039701769986255,
-        "height": 19.039701769986255
+        "width": 19.039701769986248,
+        "height": 19.039701769986248
       }
     },
     {
       "id": "filter.rating3",
       "fluentCodepoint": 983637,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.4,
+        "top": -0.4,
+        "right": 0.4,
+        "bottom": 0.4
+      },
       "fluentSourceInk": {
         "width": 14.4,
         "height": 14.4
@@ -518,16 +686,22 @@
         "width": 18,
         "height": 18
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.039701769986255,
-        "height": 19.039701769986255
+        "width": 19.039701769986248,
+        "height": 19.039701769986248
       }
     },
     {
       "id": "filter.rating4",
       "fluentCodepoint": 983643,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.4,
+        "top": -0.4,
+        "right": 0.4,
+        "bottom": 0.4
+      },
       "fluentSourceInk": {
         "width": 14.4,
         "height": 14.4
@@ -536,16 +710,22 @@
         "width": 18,
         "height": 18
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.039701769986255,
-        "height": 19.039701769986255
+        "width": 19.039701769986248,
+        "height": 19.039701769986248
       }
     },
     {
       "id": "filter.rating5",
       "fluentCodepoint": 983649,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.4,
+        "top": -0.4,
+        "right": 0.4,
+        "bottom": 0.4
+      },
       "fluentSourceInk": {
         "width": 14.4,
         "height": 14.4
@@ -554,16 +734,22 @@
         "width": 18,
         "height": 18
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.039701769986255,
-        "height": 19.039701769986255
+        "width": 19.039701769986248,
+        "height": 19.039701769986248
       }
     },
     {
       "id": "filter.rejected",
       "fluentCodepoint": 62317,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.4,
+        "top": -0.4,
+        "right": 0.4,
+        "bottom": 0.4
+      },
       "fluentSourceInk": {
         "width": 14.4,
         "height": 14.4
@@ -572,16 +758,22 @@
         "width": 18,
         "height": 18
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.039701769986255,
-        "height": 19.039701769986255
+        "width": 19.039701769986248,
+        "height": 19.039701769986248
       }
     },
     {
       "id": "filter.conflict",
       "fluentCodepoint": 63593,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.42477777777777775,
+        "top": -0.4005,
+        "right": 0.4247777777777778,
+        "bottom": 0.4
+      },
       "fluentSourceInk": {
         "width": 15.292000000000002,
         "height": 14.409
@@ -590,16 +782,22 @@
         "width": 18.5,
         "height": 16.5
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 20.219105518515963,
-        "height": 19.051601583592497
+        "width": 20.219105518515953,
+        "height": 19.05160158359249
       }
     },
     {
       "id": "rating.clear",
       "fluentCodepoint": 62313,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.3,
+        "top": -0.3,
+        "right": 0.3,
+        "bottom": 0.3
+      },
       "fluentSourceInk": {
         "width": 10.8,
         "height": 10.8
@@ -608,16 +806,22 @@
         "width": 14,
         "height": 14
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 14.279776327489692,
-        "height": 14.279776327489692
+        "width": 14.279776327489685,
+        "height": 14.279776327489685
       }
     },
     {
       "id": "rating.star",
       "fluentCodepoint": 63247,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.4002857142857143,
+        "top": -0.382,
+        "right": 0.40028571428571436,
+        "bottom": 0.3831428571428571
+      },
       "fluentSourceInk": {
         "width": 14.410285714285715,
         "height": 13.772571428571428
@@ -626,16 +830,22 @@
         "width": 19.5,
         "height": 18.5
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.05330155696482,
-        "height": 18.210114764293998
+        "width": 19.053301556964808,
+        "height": 18.210114764293987
       }
     },
     {
       "id": "rating.starFilled",
       "fluentCodepoint": 63256,
       "filled": true,
+      "fluentSourceBoundsEm": {
+        "left": -0.4002857142857143,
+        "top": -0.382,
+        "right": 0.40028571428571436,
+        "bottom": 0.3831428571428571
+      },
       "fluentSourceInk": {
         "width": 14.410285714285715,
         "height": 13.772571428571428
@@ -644,16 +854,22 @@
         "width": 19.5,
         "height": 18.5
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.05330155696482,
-        "height": 18.210114764293998
+        "width": 19.053301556964808,
+        "height": 18.210114764293987
       }
     },
     {
       "id": "rating.warning",
       "fluentCodepoint": 63617,
       "filled": true,
+      "fluentSourceBoundsEm": {
+        "left": -0.42477777777777775,
+        "top": -0.4005,
+        "right": 0.4247777777777778,
+        "bottom": 0.4
+      },
       "fluentSourceInk": {
         "width": 15.292000000000002,
         "height": 14.409
@@ -662,16 +878,22 @@
         "width": 18.5,
         "height": 16.5
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 20.219105518515963,
-        "height": 19.051601583592497
+        "width": 20.219105518515953,
+        "height": 19.05160158359249
       }
     },
     {
       "id": "common.check",
       "fluentCodepoint": 62100,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.37511111111111106,
+        "top": -0.3,
+        "right": 0.4,
+        "bottom": 0.2751111111111111
+      },
       "fluentSourceInk": {
         "width": 13.952,
         "height": 10.352
@@ -680,16 +902,22 @@
         "width": 15,
         "height": 15
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 18.447355492697795,
-        "height": 13.68743005020123
+        "width": 18.447355492697785,
+        "height": 13.687430050201224
       }
     },
     {
       "id": "common.chevronDown",
       "fluentCodepoint": 62115,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.301,
+        "top": -0.1251428571428571,
+        "right": 0.3,
+        "bottom": 0.2
+      },
       "fluentSourceInk": {
         "width": 10.818,
         "height": 5.852571428571427
@@ -698,16 +926,22 @@
         "width": 15,
         "height": 8.5
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 14.303575954702174,
-        "height": 7.738278790801555
+        "width": 14.303575954702167,
+        "height": 7.738278790801552
       }
     },
     {
       "id": "common.photoPlaceholder",
       "fluentCodepoint": 62600,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.35,
+        "top": -0.35,
+        "right": 0.35,
+        "bottom": 0.35
+      },
       "fluentSourceInk": {
         "width": 12.6,
         "height": 12.6
@@ -716,16 +950,22 @@
         "width": 20.5,
         "height": 16
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 16.659739048737972,
-        "height": 16.659739048737972
+        "width": 16.659739048737965,
+        "height": 16.659739048737965
       }
     },
     {
       "id": "settings.file",
       "fluentCodepoint": 62488,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.4,
+        "top": -0.35,
+        "right": 0.4,
+        "bottom": 0.35
+      },
       "fluentSourceInk": {
         "width": 14.4,
         "height": 12.6
@@ -734,16 +974,22 @@
         "width": 20,
         "height": 16
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.039701769986255,
-        "height": 16.659739048737972
+        "width": 19.039701769986248,
+        "height": 16.659739048737965
       }
     },
     {
       "id": "settings.preview",
       "fluentCodepoint": 62600,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.35,
+        "top": -0.35,
+        "right": 0.35,
+        "bottom": 0.35
+      },
       "fluentSourceInk": {
         "width": 12.6,
         "height": 12.6
@@ -752,16 +998,22 @@
         "width": 20.5,
         "height": 16
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 16.659739048737972,
-        "height": 16.659739048737972
+        "width": 16.659739048737965,
+        "height": 16.659739048737965
       }
     },
     {
       "id": "settings.control",
       "fluentCodepoint": 62648,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.4,
+        "top": -0.3,
+        "right": 0.4,
+        "bottom": 0.25
+      },
       "fluentSourceInk": {
         "width": 14.4,
         "height": 9.9
@@ -770,16 +1022,22 @@
         "width": 22,
         "height": 14
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.039701769986255,
-        "height": 13.08979496686555
+        "width": 19.039701769986248,
+        "height": 13.089794966865545
       }
     },
     {
       "id": "settings.exif",
       "fluentCodepoint": 62605,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.45,
+        "top": -0.45,
+        "right": 0.35,
+        "bottom": 0.35
+      },
       "fluentSourceInk": {
         "width": 14.4,
         "height": 14.4
@@ -788,16 +1046,22 @@
         "width": 18,
         "height": 22.5
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.039701769986255,
-        "height": 19.039701769986255
+        "width": 19.039701769986248,
+        "height": 19.039701769986248
       }
     },
     {
       "id": "settings.ai",
       "fluentCodepoint": 60211,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.35,
+        "top": -0.35,
+        "right": 0.35,
+        "bottom": 0.35
+      },
       "fluentSourceInk": {
         "width": 12.6,
         "height": 12.6
@@ -806,16 +1070,22 @@
         "width": 16,
         "height": 20
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 16.659739048737972,
-        "height": 16.659739048737972
+        "width": 16.659739048737965,
+        "height": 16.659739048737965
       }
     },
     {
       "id": "settings.add",
       "fluentCodepoint": 61705,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.374,
+        "top": -0.376,
+        "right": 0.376,
+        "bottom": 0.374
+      },
       "fluentSourceInk": {
         "width": 13.5,
         "height": 13.5
@@ -824,16 +1094,22 @@
         "width": 14.5,
         "height": 14.5
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 17.849720409362114,
-        "height": 17.849720409362114
+        "width": 17.849720409362106,
+        "height": 17.849720409362106
       }
     },
     {
       "id": "settings.remove",
       "fluentCodepoint": 60368,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.35,
+        "top": -0.026,
+        "right": 0.35,
+        "bottom": 0.026
+      },
       "fluentSourceInk": {
         "width": 12.6,
         "height": 0.936
@@ -842,16 +1118,22 @@
         "width": 14.5,
         "height": 1.5
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 16.659739048737972,
-        "height": 1.2375806150491067
+        "width": 16.659739048737965,
+        "height": 1.237580615049106
       }
     },
     {
       "id": "settings.drag",
       "fluentCodepoint": 62689,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.4,
+        "top": -0.3,
+        "right": 0.4,
+        "bottom": 0.25
+      },
       "fluentSourceInk": {
         "width": 14.4,
         "height": 9.9
@@ -860,16 +1142,22 @@
         "width": 18,
         "height": 9
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.039701769986255,
-        "height": 13.08979496686555
+        "width": 19.039701769986248,
+        "height": 13.089794966865545
       }
     },
     {
       "id": "tools.exif",
       "fluentCodepoint": 62605,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.45,
+        "top": -0.45,
+        "right": 0.35,
+        "bottom": 0.35
+      },
       "fluentSourceInk": {
         "width": 14.4,
         "height": 14.4
@@ -878,16 +1166,22 @@
         "width": 18,
         "height": 22.5
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.039701769986255,
-        "height": 19.039701769986255
+        "width": 19.039701769986248,
+        "height": 19.039701769986248
       }
     },
     {
       "id": "tools.stats",
       "fluentCodepoint": 62271,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.35,
+        "top": -0.35,
+        "right": 0.35,
+        "bottom": 0.35
+      },
       "fluentSourceInk": {
         "width": 12.6,
         "height": 12.6
@@ -896,16 +1190,22 @@
         "width": 22.5,
         "height": 16.5
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 16.659739048737972,
-        "height": 16.659739048737972
+        "width": 16.659739048737965,
+        "height": 16.659739048737965
       }
     },
     {
       "id": "tools.dino",
       "fluentCodepoint": 984983,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.40053125,
+        "top": -0.40068181818181814,
+        "right": 0.40053125,
+        "bottom": 0.40011538461538465
+      },
       "fluentSourceInk": {
         "width": 14.419125,
         "height": 14.41434965034965
@@ -914,16 +1214,22 @@
         "width": 23,
         "height": 19.5
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.06498887389952,
-        "height": 19.05867489937243
+        "width": 19.06498887389951,
+        "height": 19.05867489937242
       }
     },
     {
       "id": "tools.cv",
       "fluentCodepoint": 59988,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.4,
+        "top": -0.4,
+        "right": 0.4,
+        "bottom": 0.4
+      },
       "fluentSourceInk": {
         "width": 14.4,
         "height": 14.4
@@ -932,16 +1238,22 @@
         "width": 17,
         "height": 17
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 19.039701769986255,
-        "height": 19.039701769986255
+        "width": 19.039701769986248,
+        "height": 19.039701769986248
       }
     },
     {
       "id": "navigation.back",
       "fluentCodepoint": 62122,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.2,
+        "top": -0.301,
+        "right": 0.1251428571428571,
+        "bottom": 0.3
+      },
       "fluentSourceInk": {
         "width": 5.852571428571427,
         "height": 10.818
@@ -950,16 +1262,22 @@
         "width": 8.5,
         "height": 15
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 7.738278790801555,
-        "height": 14.303575954702174
+        "width": 7.738278790801552,
+        "height": 14.303575954702167
       }
     },
     {
       "id": "navigation.forward",
       "fluentCodepoint": 62128,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.1251111111111111,
+        "top": -0.3,
+        "right": 0.2,
+        "bottom": 0.3
+      },
       "fluentSourceInk": {
         "width": 5.852,
         "height": 10.8
@@ -968,16 +1286,22 @@
         "width": 8.5,
         "height": 15
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 7.737523247080526,
-        "height": 14.279776327489692
+        "width": 7.737523247080522,
+        "height": 14.279776327489685
       }
     },
     {
       "id": "navigation.close",
       "fluentCodepoint": 62313,
       "filled": false,
+      "fluentSourceBoundsEm": {
+        "left": -0.3,
+        "top": -0.3,
+        "right": 0.3,
+        "bottom": 0.3
+      },
       "fluentSourceInk": {
         "width": 10.8,
         "height": 10.8
@@ -986,15 +1310,15 @@
         "width": 14,
         "height": 14
       },
-      "fluentScale": 1.322201511804601,
+      "fluentScale": 1.3222015118046004,
       "fluentInk": {
-        "width": 14.279776327489692,
-        "height": 14.279776327489692
+        "width": 14.279776327489685,
+        "height": 14.279776327489685
       }
     }
   ],
   "files": {
-    "FluentSystemIcons-Regular.ttf": "a3843967c21ae0189f302d0911da317f954d0c7e5026e89bb1acaef5ecf95a9a",
-    "FluentSystemIcons-Filled.ttf": "bdca2887213a46ce645fa396c562848c5f92f9f6a7a2a2512c645817734a9683"
+    "FluentSystemIcons-Regular.ttf": "d6126378bd260e4608c39f8eb6cb5e61b67cf10d4af4508f8f8426a9940e9be1",
+    "FluentSystemIcons-Filled.ttf": "f0877f18039ac9690c7642ace4fd3deb40c6e026a113a669d3839b03bd57fe2d"
   }
 }

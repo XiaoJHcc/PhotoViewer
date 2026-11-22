@@ -657,6 +657,8 @@ public static class DesignTokens
     public const double SettingsAndroidSheetHeightRatio = 0.85;
     /// <summary>settings.android.sheet.peekRatio（ratio） SETTINGS-04：Android 设置与工具半屏浮层默认收起后的可见高度占屏高比例；初始状态为收起，标题上拖扩大到 settings.android.sheet.heightRatio，下滑关闭。</summary>
     public const double SettingsAndroidSheetPeekRatio = 0.5;
+    /// <summary>settings.mobile.commandIcon.slotSize（pt） SETTINGS-01：移动端设置命令行的独立图标槽边长；图标沿用命令字号，不按槽位缩放。</summary>
+    public const double SettingsMobileCommandIconSlotSize = 24.0;
     /// <summary>settings.phone.inactiveCheck.opacity（ratio） SETTINGS-08：手机形态未在控制栏生效的勾选标记不透明度。</summary>
     public const double SettingsPhoneInactiveCheckOpacity = 0.2;
     /// <summary>shell.analysis.divider.thickness（pt） ANALYSIS-01：分析栏朝主图一侧的分隔线厚度。</summary>

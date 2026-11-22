@@ -34,6 +34,7 @@ FONT_FILES = {
     "filled": "FluentSystemIcons-Filled.ttf",
 }
 REFERENCE_POINT_SIZE = 18
+FLUENT_CELL_EM = 1.2
 
 
 def read_json(path: Path):
@@ -110,6 +111,23 @@ def ink_dimensions(bounds: tuple[float, float, float, float], units_per_em: int)
     }
 
 
+def design_anchor(font, glyph_name: str) -> tuple[float, float]:
+    # 固定版 Fluent TTF 的 1em 方框对应上游 SVG viewBox；不要从轮廓反推锚点。
+    em = font["head"].unitsPerEm
+    advance, _ = font["hmtx"].metrics[glyph_name]
+    ascent, descent = font["hhea"].ascent, font["hhea"].descent
+    if advance != em or ascent - descent != em:
+        raise ValueError(f"{glyph_name} 的上游设计框已变更，需重新核对 SVG 锚点")
+    return advance / 2, (ascent + descent) / 2
+
+
+def relative_ink(bounds, anchor, em) -> dict:
+    x0, y0, x1, y1 = bounds
+    x, y = anchor
+    return dict(left=(x0 - x) / em, top=(y - y1) / em,
+                right=(x1 - x) / em, bottom=(y - y0) / em)
+
+
 def measure_entries(entries: list[dict], font_paths: dict[str, Path], apple_metrics: dict) -> float:
     from fontTools.ttLib import TTFont
 
@@ -120,7 +138,10 @@ def measure_entries(entries: list[dict], font_paths: dict[str, Path], apple_metr
         style = "filled" if entry["filled"] else "regular"
         font = fonts[style]
         glyph_name = font.getBestCmap()[entry["fluentCodepoint"]]
-        source_ink = ink_dimensions(glyph_bounds(font, glyph_name), font["head"].unitsPerEm)
+        em = font["head"].unitsPerEm
+        bounds = glyph_bounds(font, glyph_name)
+        source_ink = ink_dimensions(bounds, em)
+        entry["fluentSourceBoundsEm"] = relative_ink(bounds, design_anchor(font, glyph_name), em)
         reference = apple_metrics[(entry["id"], REFERENCE_POINT_SIZE)]
         source_diagonal = math.hypot(source_ink["width"], source_ink["height"])
         reference_diagonal = math.hypot(reference["width"], reference["height"])
@@ -140,14 +161,29 @@ def measure_entries(entries: list[dict], font_paths: dict[str, Path], apple_metr
     return sum(ratios) / len(ratios)
 
 
-def normalize_font(input_path: Path, output_path: Path, entries: list[dict], scale: float) -> None:
+def normalize_font(input_path: Path, subset_path: Path, output_path: Path, entries: list[dict], scale: float) -> None:
     from fontTools.misc.transform import Transform
+    from fontTools.pens.recordingPen import DecomposingRecordingPen
     from fontTools.pens.transformPen import TransformPen
     from fontTools.pens.ttGlyphPen import TTGlyphPen
     from fontTools.ttLib import TTFont
 
-    font = TTFont(input_path, recalcBBoxes=True, recalcTimestamp=False)
+    # 读取原始轮廓：子集保存时 glyf 边界可能被重算，而上游 LSB 仍是原值。
+    source_font = TTFont(input_path, recalcTimestamp=False)
+    source_cmap = source_font.getBestCmap()
+    source_glyphs = source_font.getGlyphSet()
+    font = TTFont(subset_path, recalcBBoxes=True, recalcTimestamp=False)
     cmap = font.getBestCmap()
+    cell = round(font["head"].unitsPerEm * FLUENT_CELL_EM)
+    half_cell = cell // 2
+    hhea, os2 = font["hhea"], font["OS/2"]
+    hhea.ascent = os2.sTypoAscender = os2.usWinAscent = half_cell
+    hhea.descent = os2.sTypoDescender = -half_cell
+    os2.usWinDescent = half_cell
+    hhea.lineGap = os2.sTypoLineGap = 0
+    os2.fsSelection |= 1 << 7  # USE_TYPO_METRICS
+    metrics = font["hmtx"].metrics
+    glyphs = font["glyf"]
     transformed = set()
     for entry in entries:
         codepoint = entry["fluentCodepoint"]
@@ -160,26 +196,45 @@ def normalize_font(input_path: Path, output_path: Path, entries: list[dict], sca
             continue
         transformed.add(codepoint)
         glyph_name = cmap[codepoint]
-        transform = Transform(scale, 0, 0, scale, 0, 0)
-        glyph_set = font.getGlyphSet()
-        pen = TTGlyphPen(glyph_set)
-        glyph_set[glyph_name].draw(TransformPen(pen, transform))
-        font["glyf"][glyph_name] = pen.glyph()
+        source_name = source_cmap[codepoint]
+        anchor_x, anchor_y = design_anchor(source_font, source_name)
+        transform = Transform(scale, 0, 0, scale,
+                              half_cell - anchor_x * scale, -anchor_y * scale)
+        outline = DecomposingRecordingPen(source_glyphs)
+        source_glyphs[source_name].draw(outline)
+        pen = TTGlyphPen(None)
+        outline.replay(TransformPen(pen, transform))
+        glyph = pen.glyph()
+        glyph.recalcBounds(glyphs)
+        if not (0 <= glyph.xMin <= glyph.xMax <= cell and -half_cell <= glyph.yMin <= glyph.yMax <= half_cell):
+            raise ValueError(f"{entry['id']} 的归一字形超出排版框")
+        glyphs[glyph_name] = glyph
+        metrics[glyph_name] = (cell, glyph.xMin)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     font.save(output_path)
 
 
-def refresh(source: dict, apple_dir: Path) -> dict:
+def recorded_apple_metrics(source: dict, manifest: dict) -> dict:
+    if (manifest["reference"] != source["reference"] or manifest["families"] != source["families"]
+            or {entry["id"] for entry in manifest["icons"]} != {icon["id"] for icon in source["icons"]}
+            or catalog_sections(render_csharp(source, manifest, include_geometry=False))
+            != catalog_sections(CSHARP.read_text(encoding="utf-8"))):
+        raise ValueError("SF 参照、映射或上游已变更，请在指定 macOS 版本使用 --refresh")
+    return {(entry["id"], REFERENCE_POINT_SIZE): entry["sfInk"] for entry in manifest["icons"]}
+
+
+def refresh(source: dict, apple_dir: Path, recorded: dict | None = None) -> dict:
     from fontTools import subset
     from fontTools.ttLib import TTFont
 
-    if platform.system() != "Darwin":
-        raise RuntimeError("归一字体刷新需要 macOS 上的实际 SF Symbols 渲染")
-    current_system = f"macOS {platform.mac_ver()[0]}"
-    if current_system != source["reference"]["system"]:
-        raise RuntimeError(f"SF 参照系统不符：需要 {source['reference']['system']}，当前 {current_system}")
-    _, apple_metrics = render_apple(source, apple_dir)
+    if recorded is None:
+        current_system = f"macOS {platform.mac_ver()[0]}"
+        if platform.system() != "Darwin" or current_system != source["reference"]["system"]:
+            raise RuntimeError(f"刷新 SF 参照需要 {source['reference']['system']}")
+        _, apple_metrics = render_apple(source, apple_dir)
+    else:
+        apple_metrics = recorded_apple_metrics(source, recorded)
     ASSETS.mkdir(parents=True, exist_ok=True)
     fluent = source["families"]["fluent"]
     metadata = {
@@ -204,6 +259,9 @@ def refresh(source: dict, apple_dir: Path) -> dict:
             "fluentCodepoint": codepoint,
             "filled": style == "filled",
         })
+    if recorded is not None and (catalog_sections(render_csharp(source, {"icons": entries}, include_geometry=False))
+                                 != catalog_sections(CSHARP.read_text(encoding="utf-8"))):
+        raise ValueError("Fluent 码位已改变，请在指定 macOS 版本使用 --refresh")
 
     with tempfile.TemporaryDirectory(prefix="pv-icon-fonts-") as temporary:
         temp = Path(temporary)
@@ -225,9 +283,11 @@ def refresh(source: dict, apple_dir: Path) -> dict:
             subsetter.subset(font)
             font.save(subset_path)
             style_entries = [entry for entry in entries if entry["filled"] == (style == "filled")]
-            normalize_font(subset_path, ASSETS / FONT_FILES[style], style_entries, scale)
+            normalize_font(source_path, subset_path, ASSETS / FONT_FILES[style], style_entries, scale)
 
-    (ASSETS / "FluentSystemIcons-LICENSE.txt").write_bytes(download(fluent["license"]))
+    license_path = ASSETS / "FluentSystemIcons-LICENSE.txt"
+    if recorded is None or not license_path.exists():
+        license_path.write_bytes(download(fluent["license"]))
     manifest = {
         "schemaVersion": 2,
         "families": source["families"],
@@ -241,7 +301,11 @@ def refresh(source: dict, apple_dir: Path) -> dict:
     return manifest
 
 
-def render_csharp(source: dict, manifest: dict) -> str:
+def catalog_sections(text: str) -> str:
+    return text.split("    public const double FluentCellEm", 1)[0].rstrip().removesuffix("}").rstrip()
+
+
+def render_csharp(source: dict, manifest: dict, *, include_geometry: bool = True) -> str:
     by_id = {entry["id"]: entry for entry in manifest["icons"]}
     lines = [
         "// <auto-generated>",
@@ -286,9 +350,28 @@ def render_csharp(source: dict, manifest: dict) -> str:
     lines.extend([
         "        _ => throw new ArgumentException($\"未定义 Fluent 图标语义：{id}\", nameof(id)),",
         "    };",
-        "}",
-        "",
     ])
+    if include_geometry:
+        lines.extend([
+            "",
+            f"    public const double FluentCellEm = {FLUENT_CELL_EM};",
+            "",
+            "    /// <summary>缩放后的墨迹边界，相对设计锚点（em，Y 向下）。</summary>",
+            "    public static (double Left, double Top, double Right, double Bottom) FluentInk(string glyph)",
+            "        => char.ConvertToUtf32(glyph, 0) switch",
+            "        {",
+        ])
+        by_code = {e["fluentCodepoint"]: e for e in by_id.values()}
+        for code, entry in sorted(by_code.items()):
+            bounds = entry["fluentSourceBoundsEm"]
+            scale = entry["fluentScale"]
+            coords = ", ".join(f"{bounds[k] * scale:.6f}" for k in ("left", "top", "right", "bottom"))
+            lines.append(f"            0x{code:X} => ({coords}),")
+        lines.extend([
+            "            _ => throw new ArgumentException(\"未定义 Fluent 字形\", nameof(glyph)),",
+            "        };",
+        ])
+    lines.extend(["}", ""])
     return "\n".join(lines)
 
 
@@ -321,6 +404,15 @@ def check(source: dict, manifest: dict) -> list[str]:
             errors.append(f"字体摘要不符：{filename}")
         font = TTFont(path)
         cmap = font.getBestCmap()
+        em = font["head"].unitsPerEm
+        cell = round(em * FLUENT_CELL_EM)
+        half = cell // 2
+        hhea, os2 = font["hhea"], font["OS/2"]
+        if ((hhea.ascent, hhea.descent, hhea.lineGap) != (half, -half, 0)
+                or (os2.sTypoAscender, os2.sTypoDescender, os2.sTypoLineGap) != (half, -half, 0)
+                or (os2.usWinAscent, os2.usWinDescent) != (half, half)
+                or not os2.fsSelection & (1 << 7)):
+            errors.append(f"{filename} 的基线度量未居中")
         for icon_id, entry in manifest_icons.items():
             expected_style = "filled" if entry["filled"] else "regular"
             if style != expected_style:
@@ -331,6 +423,16 @@ def check(source: dict, manifest: dict) -> list[str]:
                 continue
             glyph_name = cmap[codepoint]
             bounds = glyph_bounds(font, glyph_name)
+            x0, y0, x1, y1 = bounds
+            glyph = font["glyf"][glyph_name]
+            if (font["hmtx"].metrics[glyph_name] != (cell, glyph.xMin)
+                    or not (0 <= x0 <= x1 <= cell and -half <= y0 <= y1 <= half)):
+                errors.append(f"{filename} 的 {icon_id} 墨迹或字宽超出设计排版框")
+            actual_bounds = relative_ink(bounds, (half, 0), em)
+            source_bounds = entry["fluentSourceBoundsEm"]
+            if any(abs(value - source_bounds[key] * expected_scale) > 1 / em
+                   for key, value in actual_bounds.items()):
+                errors.append(f"{filename} 的 {icon_id} 未保留上游相对设计锚点的轮廓位置")
             if abs(entry["fluentScale"] - expected_scale) > 1e-9:
                 errors.append(f"{icon_id} 使用了单项缩放而非全目录平均倍率")
             actual = ink_dimensions(bounds, font["head"].unitsPerEm)
@@ -374,7 +476,7 @@ def render_apple(source: dict, output: Path) -> tuple[dict[tuple[str, int], str]
 def render_report(source: dict, manifest: dict, output: Path, include_apple: bool) -> None:
     by_id = {entry["id"]: entry for entry in manifest["icons"]}
     apple_dir = output.parent / "apple"
-    apple_images, _ = render_apple(source, apple_dir) if include_apple else ({}, {})
+    apple_images, apple_metrics = render_apple(source, apple_dir) if include_apple else ({}, {})
     font_css = []
     for family, style in (("pv-fluent-regular", "regular"), ("pv-fluent-filled", "filled")):
         data = base64.b64encode((ASSETS / FONT_FILES[style]).read_bytes()).decode("ascii")
@@ -400,11 +502,15 @@ def render_report(source: dict, manifest: dict, output: Path, include_apple: boo
         sf = entry["sfInk"]
         raw = entry["fluentSourceInk"]
         normalized = entry["fluentInk"]
+        bounds = entry["fluentSourceBoundsEm"]
+        dx = (bounds["left"] + bounds["right"]) / 2 * REFERENCE_POINT_SIZE * entry["fluentScale"]
+        dy = (bounds["top"] + bounds["bottom"]) / 2 * REFERENCE_POINT_SIZE * entry["fluentScale"]
         names = (
             f"<div class='names'><span>Apple · {html.escape(icon['apple'])}</span>"
             f"<span>Fluent · {html.escape(icon['fluent'])}</span>"
             f"<span>18 点墨迹 · SF {sf['width']:.2f}×{sf['height']:.2f} · Fluent {raw['width']:.2f}×{raw['height']:.2f}"
-            f" → {normalized['width']:.2f}×{normalized['height']:.2f} · ×{entry['fluentScale']:.4f}</span></div>"
+            f" → {normalized['width']:.2f}×{normalized['height']:.2f} · ×{entry['fluentScale']:.4f}</span>"
+            f"<span>Fluent 墨迹中心相对原锚点：({dx:+.2f}, {dy:+.2f}) 点</span></div>"
         )
         rows.append(
             f"<tr data-search='{html.escape(icon['id'] + ' ' + icon['title'])}'><td class='semantic'><b>{html.escape(icon['title'])}</b><code>{icon['id']}</code>{names}</td>"
@@ -421,6 +527,7 @@ __FONTS__
     output.write_text(document.replace("__FONTS__", "\n".join(font_css)).replace("__ROWS__", "\n".join(rows)), encoding="utf-8")
     metrics = {
         "reference": manifest["reference"],
+        "fluentCellEm": FLUENT_CELL_EM,
         "icons": [
             {
                 "id": entry["id"],
@@ -428,6 +535,10 @@ __FONTS__
                 "sfInk": entry["sfInk"],
                 "fluentSourceInk": entry["fluentSourceInk"],
                 "fluentInk": entry["fluentInk"],
+                "fluentSourceBoundsEm": entry["fluentSourceBoundsEm"],
+                "fluentBoundsEm": {key: value * entry["fluentScale"]
+                                   for key, value in entry["fluentSourceBoundsEm"].items()},
+                "appleRenders": [apple_metrics[(entry["id"], size)] for size in (18, 24)] if apple_metrics else [],
             }
             for entry in manifest["icons"]
         ],
@@ -437,7 +548,9 @@ __FONTS__
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--refresh", action="store_true", help="重新下载固定上游、渲染 SF 并重建归一字体")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--refresh", action="store_true", help="重新下载固定上游、渲染 SF 并重建归一字体")
+    mode.add_argument("--rebuild-fluent", action="store_true", help="使用已入库 SF 墨迹尺寸，从固定上游重建 Fluent 字体")
     parser.add_argument("--check", action="store_true", help="只检查生成物，不写文件")
     parser.add_argument("--no-apple", action="store_true", help="非 macOS 环境只生成 Fluent 对比")
     parser.add_argument("--report", type=Path, default=REPORT)
@@ -452,11 +565,16 @@ def main() -> int:
         for error in errors:
             print(f"FAIL {error}", file=sys.stderr)
         if not errors:
-            print(f"PASS {len(source['icons'])} 个语义图标；码位、字体摘要、归一指标与生成码位表一致")
+            print(f"PASS {len(source['icons'])} 个语义图标；码位、字体摘要、归一尺寸与上游设计锚点一致")
         return 1 if errors else 0
     if args.refresh and args.no_apple:
         parser.error("--refresh 需要 Apple 实际渲染，不能与 --no-apple 合用")
-    manifest = refresh(source, args.report.parent / "apple") if args.refresh or not MANIFEST.exists() else read_json(MANIFEST)
+    if args.refresh or not MANIFEST.exists():
+        manifest = refresh(source, args.report.parent / "apple")
+    elif args.rebuild_fluent:
+        manifest = refresh(source, args.report.parent / "apple", read_json(MANIFEST))
+    else:
+        manifest = read_json(MANIFEST)
     write_if_changed(CSHARP, render_csharp(source, manifest))
     errors = check(source, manifest)
     if errors:

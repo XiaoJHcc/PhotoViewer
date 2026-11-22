@@ -556,17 +556,17 @@ internal static partial class AndroidNativeChecks
                 $"stateLayer={pressedLayer} ratingHighlight={ratingView.HighlightColorForChecks} circles={rippleDetail}");
         }
 
-        // TOOLBAR-10：合体与命令按钮的字形墨迹中心必须落在各自分段中心，且完整在分段内。
-        Check($"{phase} 筛选/更多合体字形居中", ComboGlyphsCentered(root.FilterBar.ComboForChecks, density, out var comboDetail), comboDetail);
+        // TOOLBAR-10：合体与命令按钮的字形必须与同一字号的无界参照一致（字号不被槽位缩放、墨迹不被裁切）。
+        Check($"{phase} 筛选/更多合体字形与参照一致（未裁切）", ComboGlyphsMatch(root.FilterBar.ComboForChecks, density, out var comboDetail), comboDetail);
         bool commandGlyphs = true;
         var commandGlyphDetail = new StringBuilder();
         foreach (var (command, view) in root.ControlBar.CommandViewsForChecks)
         {
-            bool ok = ButtonGlyphCentered(view, density, out var glyphDetail);
+            bool ok = ButtonGlyphMatches(view, density, out var glyphDetail);
             if (!ok) commandGlyphs = false;
             commandGlyphDetail.Append(command).Append(':').Append(glyphDetail).Append(" | ");
         }
-        Check($"{phase} 命令按钮字形居中", commandGlyphs, commandGlyphDetail.ToString());
+        Check($"{phase} 命令按钮字形与参照一致（未裁切）", commandGlyphs, commandGlyphDetail.ToString());
 
         // TOOLBAR-05 / TOOLBAR-10：EXIF 块底色取 color.toolbar.block.background，竖排无衬底、横排带衬底。
         var exifBlock = root.ControlBar.ExifBlock;
@@ -679,18 +679,18 @@ internal static partial class AndroidNativeChecks
 
         if (portrait)
         {
-            Check($"{phase} 筛选圆按钮字形居中",
-                ButtonGlyphCentered(root.FilterBar.FilterButtonForChecks, density, out var buttonDetail), buttonDetail);
+            Check($"{phase} 筛选圆按钮字形与参照一致（未裁切）",
+                ButtonGlyphMatches(root.FilterBar.FilterButtonForChecks, density, out var buttonDetail), buttonDetail);
         }
         else
         {
-            Check($"{phase} 筛选/更多合体字形居中",
-                ComboGlyphsCentered(root.FilterBar.ComboForChecks, density, out var comboDetail), comboDetail);
+            Check($"{phase} 筛选/更多合体字形与参照一致（未裁切）",
+                ComboGlyphsMatch(root.FilterBar.ComboForChecks, density, out var comboDetail), comboDetail);
         }
-        Check($"{phase} 上下张合体字形居中",
-            ComboGlyphsCentered(root.PhoneNavigation, density, out var navDetail), navDetail);
-        Check($"{phase} 可选命令组字形居中",
-            ComboGlyphsCentered(root.PhoneCommands, density, out var commandDetail), commandDetail);
+        Check($"{phase} 上下张合体字形与参照一致（未裁切）",
+            ComboGlyphsMatch(root.PhoneNavigation, density, out var navDetail), navDetail);
+        Check($"{phase} 可选命令组字形与参照一致（未裁切）",
+            ComboGlyphsMatch(root.PhoneCommands, density, out var commandDetail), commandDetail);
 
         Check($"{phase} 胶片条贯穿主轴", SameFrame(FrameOf(root.Filmstrip, root, density), slots.Filmstrip),
             $"actual={FrameOf(root.Filmstrip, root, density)} expected={slots.Filmstrip} tier={root.Filmstrip.Tier}");
@@ -773,33 +773,50 @@ internal static partial class AndroidNativeChecks
 
     private static bool Has(LayoutRect rect) => rect.Width > 0 && rect.Height > 0;
 
-    /// <summary>胶囊内每段字形墨迹中心与分段中心偏差 ≤0.5dp，且墨迹完整落在分段内。</summary>
-    private static bool ComboGlyphsCentered(AndroidGlassCombo combo, double density, out string detail)
+    /// <summary>胶囊内每段字形与同一字号的无界参照字形一致，且墨迹完整落在分段内。</summary>
+    private static bool ComboGlyphsMatch(AndroidGlassCombo combo, double density, out string detail)
     {
         bool ok = combo.SegmentsForChecks.Count > 0;
         var details = new List<string>(combo.SegmentsForChecks.Count);
         foreach (var button in combo.SegmentsForChecks)
         {
-            if (!ButtonGlyphCentered(button, density, out var segment)) ok = false;
+            if (!ButtonGlyphMatches(button, density, out var segment)) ok = false;
             details.Add(segment);
         }
         detail = $"segments={string.Join(" | ", details)} mirrored={combo.Mirrored}";
         return ok;
     }
 
-    /// <summary>单个圆按钮的字形墨迹中心与按钮中心偏差 ≤0.5dp，且完整落在按钮内。</summary>
-    private static bool ButtonGlyphCentered(AndroidGlassButton button, double density, out string detail)
+    /// <summary>
+    /// 单个按钮的字形：把按钮真实绘制结果与同一字号、无边界约束的参照字形按设计锚点（排版框中心）对齐比较。
+    /// 不要求墨迹中心等于按钮中心（字形本身可以不对称），但字号、墨迹四边余量、面积与逐像素覆盖必须与参照一致，
+    /// 且墨迹完整落在图标槽与按钮内，因此对称裁切或按槽位缩放都会失败。
+    /// </summary>
+    private static bool ButtonGlyphMatches(AndroidGlassButton button, double density, out string detail)
     {
-        var (centerX, centerY, bounds) = button.GlyphCenterForChecks();
-        double dx = Math.Abs(centerX - button.Width / 2f) / density;
-        double dy = Math.Abs(centerY - button.Height / 2f) / density;
-        bool inside = bounds.Left >= 0 && bounds.Top >= 0
-            && bounds.Right <= button.Width && bounds.Bottom <= button.Height
-            && bounds.Width() > 0 && bounds.Height() > 0;
-        detail = $"{button.Width}x{button.Height} center=({centerX:0.#},{centerY:0.#}) "
-            + $"target=({button.Width / 2f:0.#},{button.Height / 2f:0.#}) d=({dx:0.##},{dy:0.##}) "
-            + $"bounds={bounds} inside={inside}";
-        return dx <= .5 && dy <= .5 && inside;
+        if (button.IconForChecks is not { } icon)
+        {
+            detail = $"{button.Width}x{button.Height} 非字形图标";
+            return true;
+        }
+        if (button.Width <= 0 || button.Height <= 0)
+        {
+            detail = "按钮未布局";
+            return false;
+        }
+        var product = AndroidGlyphProbe.Capture(button.Width, button.Height, button.DrawContentForChecks);
+        var slot = button.IconSlotForChecks;
+        var reference = AndroidGlyphProbe.Reference(button.Context!, icon.Glyph, icon.SolidGlyph, icon.Digit,
+            icon.FontSizePx, icon.DigitFontSizePx);
+        var (ok, note) = AndroidGlyphProbe.Compare(product, reference,
+            (slot.Left + slot.Right) / 2f, (slot.Top + slot.Bottom) / 2f, slot,
+            button.Width, button.Height, density);
+        // 字号必须是命令字形令牌的精确 dp 像素：槽位收窄时不得靠缩字适配。
+        float expectedFont = AndroidUiTheme.Dp(button.Context!, DesignTokens.ToolbarCommandGlyphFontSize);
+        bool font = Math.Abs(icon.FontSizePx - expectedFont) <= .01;
+        detail = $"{button.Width}x{button.Height} font={icon.FontSizePx:0.#}px expected={expectedFont:0.#}px "
+            + $"slot={icon.SlotPx}px {note}";
+        return ok && font;
     }
 
     /// <summary>真实视图在根视图坐标中的 dp 矩形。</summary>

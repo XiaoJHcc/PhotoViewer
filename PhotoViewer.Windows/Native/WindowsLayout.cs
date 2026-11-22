@@ -481,6 +481,22 @@ internal static class WindowsLayout
     /// <summary>设置窗口标题栏高度。</summary>
     public const double SettingsTitleBarHeight = 48;
 
+    /// <summary>
+    /// 设置/工具窗口标题栏图标的标称字号：WinUI <c>TitleBar</c> 模板的图标槽是 16 点 <c>Viewbox(PART_Icon)</c>，
+    /// 字号必须让 1.2 em 排版框（15.6 DIP）落在槽内，否则模板按槽等比缩放（16 点字形会被静默缩到 0.83）。
+    /// 取与主图菜单、分类图标同一标称值；槽放不下才是模板缩放的原因，不是把字号调大能解决的。
+    /// </summary>
+    public const double WindowTitleIconFontSize = DesignTokens.MenuIconFontSize;
+
+    /// <summary>设置/工具窗口分类图标的标称字号：与主图菜单同一名义字号，排版框 15.6 DIP 落在 16 DIP 图标槽内。</summary>
+    public const double WindowNavIconFontSize = DesignTokens.MenuIconFontSize;
+
+    /// <summary>
+    /// 设置/工具窗口分类图标槽边长：<c>NavigationViewItem</c> 模板的 IconBox（Viewbox）高度，同时作为字形元素的
+    /// 显式宽高，模板不会再把字形缩到槽高。
+    /// </summary>
+    public const double WindowNavIconSlot = DesignTokens.MenuIconSize;
+
     /// <summary>设置页内容最大宽(窗口变宽时不铺满)。</summary>
     public const double SettingsPageMaxWidth = 800;
 

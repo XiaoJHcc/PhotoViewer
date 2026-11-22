@@ -1495,6 +1495,10 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
     private static UIImage? CommandIcon(string command)
         => SymbolIcon(PhotoViewer.Apple.AppleSymbolNames.ForCommand(command));
 
+    /// <summary>
+    /// 命令图标：取命令目录登记的同一条 SF Symbols，并按命令字形字号（toolbar.command.glyph.fontSize）配置。
+    /// 字形点数由这里给定，单元格只提供居中的图标槽位，不再缩放图像。
+    /// </summary>
     private static UIImage? SymbolIcon(string? symbol)
         => symbol == null
             ? null
@@ -2148,7 +2152,9 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
         {
             TranslatesAutoresizingMaskIntoConstraints = false,
             TintColor = UIColor.Label,
-            ContentMode = UIViewContentMode.ScaleAspectFit,
+            // 字形按命令字号（toolbar.command.glyph.fontSize）原尺寸居中落进槽位：
+            // AspectFit 在槽位比字形窄时会静默缩小 18 点字形，缩小后与控制栏按钮不再同口径。
+            ContentMode = UIViewContentMode.Center,
             Hidden = true,
         };
 
@@ -2174,14 +2180,16 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
         var leadingInset = 16f;
         var checkmarkWidth = 22f;
         var spacing = 12f;
-        var iconWidth = 20f;
+        // 图标槽位与字形分开：槽位取共享手机命令图标槽位令牌（24 点，Android 同值），
+        // 字形按自身 18 点原尺寸居中，槽位不再参与缩放。
+        var iconSlot = (nfloat)DesignTokens.SettingsMobileCommandIconSlotSize;
 
         _checkmarkView.WidthAnchor.ConstraintEqualTo(checkmarkWidth).Active = true;
         _checkmarkView.HeightAnchor.ConstraintEqualTo(22).Active = true;
         _checkmarkView.LeadingAnchor.ConstraintEqualTo(ContentView.LeadingAnchor, leadingInset).Active = true;
         _checkmarkView.CenterYAnchor.ConstraintEqualTo(ContentView.CenterYAnchor).Active = true;
-        _iconView.WidthAnchor.ConstraintEqualTo(iconWidth).Active = true;
-        _iconView.HeightAnchor.ConstraintEqualTo(iconWidth).Active = true;
+        _iconView.WidthAnchor.ConstraintEqualTo(iconSlot).Active = true;
+        _iconView.HeightAnchor.ConstraintEqualTo(iconSlot).Active = true;
         // SETTINGS-01：勾选 → 命令图标与图标 → 命令名的视觉间距同为 8。
         _iconView.LeadingAnchor.ConstraintEqualTo(_checkmarkView.TrailingAnchor, (nfloat)CheckToIconGap).Active = true;
         _iconView.CenterYAnchor.ConstraintEqualTo(ContentView.CenterYAnchor).Active = true;

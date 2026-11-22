@@ -1377,15 +1377,12 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             mark.SetTextColor(enabled ? AndroidUiTheme.Accent : AndroidUiTheme.TextSecondary);
             mark.ImportantForAccessibility = ImportantForAccessibility.No;
             row.AddView(mark, new LinearLayout.LayoutParams((int)Math.Round(24 * density), LayoutParams.MatchParent));
-            var icon = new TextView(activity)
-            {
-                Text = iconGlyph,
-                Gravity = GravityFlags.Center,
-            };
-            icon.SetTextSize(global::Android.Util.ComplexUnitType.Dip, (float)DesignTokens.MenuIconFontSize);
-            icon.SetTypeface(AndroidUiTheme.IconTypeface(activity), TypefaceStyle.Normal);
-            icon.SetTextColor(enabled ? AndroidUiTheme.TextPrimary : AndroidUiTheme.TextSecondary);
-            icon.ImportantForAccessibility = ImportantForAccessibility.No;
+            // MENU-03/MENU-06：命令图标走纯绘制图标槽，按排版框中心落在图标槽令牌内，不参与文本排版，
+            // 因此不会被字体 advance 推宽、换行或静默缩小；槽位与间距仍是行几何令牌。
+            var icon = new AndroidGlyphView(activity, iconGlyph,
+                DesignTokens.MenuIconFontSize,
+                enabled ? AndroidUiTheme.TextPrimary : AndroidUiTheme.TextSecondary,
+                DesignTokens.MenuIconSize);
             icon.Enabled = enabled;
             var iconParams = new LinearLayout.LayoutParams(
                 (int)Math.Round(DesignTokens.MenuIconSize * density), LayoutParams.MatchParent)
