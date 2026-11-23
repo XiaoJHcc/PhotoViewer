@@ -212,6 +212,7 @@ internal static partial class AndroidNativeChecks
 
             await CheckGlassExifProductAsync(root);
             await CheckGlassButtonSwatchesAsync(root);
+            await CheckGlassPopupReopenAsync(root);
 
             GlassHostNote("三色衬底实测（sRGB 8 位亮度均值，供 platforms.md SHELL-12@android 校准；不改令牌）："
                 + $"栏底 黑={GlassProductLuma(_glassBarDarkLuma)} 灰={GlassProductLuma(_glassBarGrayLuma)}"
@@ -717,6 +718,51 @@ internal static partial class AndroidNativeChecks
             Math.Clamp(frame.Top - margin, 0, root.Height),
             Math.Clamp(frame.Right + margin, 0, root.Width),
             Math.Clamp(frame.Bottom + margin, 0, root.Height));
+    }
+
+    /// <summary>用同一张阶跃图和同一位置连续打开面板，回读每次实际显示的模糊边缘。</summary>
+    private static async Task CheckGlassPopupReopenAsync(AndroidNativeRootView root)
+    {
+        var popup = root.PopupLayer;
+        int centerX = root.Width / 2;
+        int centerY = root.Height / 2;
+        int halfSize = Math.Min(root.Width, root.Height) / 4;
+        using var frame = new Rect(centerX - halfSize, centerY - halfSize, centerX + halfSize, centerY + halfSize);
+        using var sample = new Rect(centerX - halfSize / 2, centerY - 2, centerX + halfSize / 2, centerY + 3);
+        using var edge = CreateGlassProductPattern(GlassProductPattern.Edge,
+            root.Width + GlassProductPatternMargin, root.Height + GlassProductPatternMargin, SurfaceImageColorSpace(),
+            edgeX: centerX + GlassProductPatternMargin / 2)
+            ?? throw new InvalidOperationException("弹层边缘图案创建失败");
+        await ShowGlassPatternAtPhysicalAsync(root, edge, root.Photo);
+
+        using var content = new View(root.Context!);
+        var request = new AndroidGlassPopupRequest(content, frame, DesignTokens.MenuAndroidCornerRadius,
+            Color.Transparent, Color.Transparent, 0, "玻璃验收", null, null, GlassPopupAppearance.Menu);
+        var widths = new List<double>();
+        for (int opening = 1; opening <= 2; opening++)
+        {
+            var session = popup.Show(request) ?? throw new InvalidOperationException("验收弹层未打开");
+            try
+            {
+                await WaitAsync(() => popup.Alpha == 1f, "验收弹层淡入完成", 3000);
+                await Task.Delay(GlassProductSettleMs);
+                var capture = await CaptureGlassRectAsync(sample);
+                using var pixels = capture.Pixels;
+                using var captured = capture.Capture;
+                if (pixels == null || captured == null) throw new InvalidOperationException($"回读失败：{capture.Detail}");
+                using var local = GlassProductLocalRect(sample, captured);
+                widths.Add(GlassProfileEdgeWidth(GlassProfileSamples(pixels, local, horizontalProfile: true)));
+            }
+            finally
+            {
+                popup.Dismiss(session);
+                await WaitAsync(() => popup.Visibility == ViewStates.Gone, "验收弹层淡出完成", 3000);
+            }
+        }
+
+        Check("glass 弹层 同位置连续打开均保留模糊",
+            widths.TrueForAll(width => width >= GlassProductMinEdgeGainPx),
+            $"边缘 10%→90%（首次/重开）={widths[0]:F1}/{widths[1]:F1}px 下限={GlassProductMinEdgeGainPx:F1}px");
     }
 
     /// <summary>两个 EXIF 块的变体、衬底色层与 tint 令牌断言（像素证明另在 <see cref="CheckGlassExifProductAsync"/>）。</summary>

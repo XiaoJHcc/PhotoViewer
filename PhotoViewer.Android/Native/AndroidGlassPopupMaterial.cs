@@ -121,6 +121,13 @@ internal sealed class AndroidGlassPopupMaterial : IGlassPopupSurface, IDisposabl
         _pressTracker.OnTouchEvent(e);
     }
 
+    public void OnHidden()
+    {
+        // SHELL-12：面板离开渲染树后，HWUI 可能回收离屏合成层。
+        // 即使取样源与面板尺寸不变，下次打开也要用新节点重新录制。
+        _scope.DiscardLayer();
+    }
+
     /// <inheritdoc />
     public void Draw(in GlassPopupSurfaceContext context)
     {

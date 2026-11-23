@@ -286,6 +286,9 @@ public sealed class BackdropEffectScope : IDisposable
         return new BackdropEffect(RenderEffect, paddingOverridePx ?? PaddingPx, _effectLayer);
     }
 
+    /// <summary>丢弃当前离屏节点，已生成的效果快照可在下次绘制时重新录制。</summary>
+    public void DiscardLayer() => _effectLayer.Discard();
+
     /// <summary>释放本消费者的离屏效果层与着色器缓存；调用后本 scope 不再可绘制。</summary>
     public void Dispose()
     {

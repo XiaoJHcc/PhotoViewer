@@ -198,6 +198,7 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
         _closing = null;
         Visibility = ViewStates.Gone;
         Alpha = 1f;
+        _surface?.OnHidden();
     }
 
     /// <summary>面板外点按在抬起时关闭；整个手势都由本层消费，不穿透。</summary>
@@ -631,6 +632,9 @@ internal interface IGlassPopupSurface
 
     /// <summary>接收面板及其子项的触摸事件；实现可据此驱动整块表面的交互玻璃反馈。</summary>
     void OnTouchEvent(MotionEvent? e);
+
+    /// <summary>面板结束淡出并隐藏，释放本次呈现的效果层。</summary>
+    void OnHidden();
 }
 
 internal enum GlassPopupAppearance { Default, Menu }

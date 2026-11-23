@@ -101,12 +101,9 @@ internal sealed class BackdropEffectLayer : IDisposable
         }
     }
 
-    /// <summary>释放离屏节点的显示列表。</summary>
-    public void Dispose()
+    /// <summary>丢弃离屏节点，下次绘制时重新分配并录制。</summary>
+    internal void Discard()
     {
-        if (_disposed) return;
-        _disposed = true;
-
         if (OperatingSystem.IsAndroidVersionAtLeast(29))
         {
             _node?.DiscardDisplayList();
@@ -116,6 +113,14 @@ internal sealed class BackdropEffectLayer : IDisposable
         _backdrop = null;
         _renderEffect = null;
         _hasRecorded = false;
+    }
+
+    /// <summary>释放离屏节点的显示列表。</summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        Discard();
     }
 
     private bool CanReuse(
