@@ -489,6 +489,13 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
             InvalidateOutline();
         }
 
+        public override bool DispatchTouchEvent(MotionEvent? e)
+        {
+            if (_appearance == GlassPopupAppearance.Menu)
+                Layer?.Surface?.OnTouchEvent(e);
+            return base.DispatchTouchEvent(e);
+        }
+
         protected override void OnDraw(Canvas canvas)
         {
             base.OnDraw(canvas);
@@ -616,6 +623,9 @@ internal interface IGlassPopupSurface
     /// </summary>
     /// <param name="context">面板、取样源与几何。</param>
     void Draw(in GlassPopupSurfaceContext context);
+
+    /// <summary>接收面板及其子项的触摸事件；实现可据此驱动整块表面的交互玻璃反馈。</summary>
+    void OnTouchEvent(MotionEvent? e);
 }
 
 internal enum GlassPopupAppearance { Default, Menu }

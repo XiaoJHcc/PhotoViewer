@@ -1,15 +1,12 @@
 using System;
 using System.Collections.Generic;
-using Android.Animation;
 using Android.Content;
 using Android.Graphics;
 using Android.Graphics.Drawables;
-using Android.OS;
 using Android.Views;
 using Android.Widget;
 using AndroidX.Core.View;
 using AndroidX.Core.View.Accessibility;
-using PhotoViewer.Android.Backdrop;
 using PhotoViewer.Core.Design;
 using static Android.Views.ViewGroup.LayoutParams;
 
@@ -128,12 +125,6 @@ internal sealed class AndroidGlassMenu : LinearLayout
         private bool _compact;
         private bool? _checked;
         private float _cornerRadius = -1f;
-        private BackdropInteractiveHighlight? _pressGlow;
-        private BackdropPressTracker? _pressTracker;
-        private Path? _pressClip;
-        private long _lastGlowFrame;
-        private long _glowVisibleUntil;
-        private bool _releasePending;
 
         internal Row(Context context, string label, string glyph, bool? check, Action activate,
             bool enabled = true) : base(context)
@@ -155,7 +146,6 @@ internal sealed class AndroidGlassMenu : LinearLayout
         }
 
         internal bool Marked => _compact ? Selected : _mark?.Visibility == ViewStates.Visible;
-        internal float PressGlowForChecks => _pressGlow?.PressProgress ?? 0f;
 
         internal bool FitsCompact(int width)
         {
@@ -196,91 +186,12 @@ internal sealed class AndroidGlassMenu : LinearLayout
                 AddView(icon, new LayoutParams(iconSize, iconSize) { MarginEnd = Px(DesignTokens.MenuIconGap) });
                 AddView(_label, new LayoutParams(0, WrapContent, 1));
             }
-            SetWillNotDraw(false);
             ApplyCheck();
-        }
-
-        public override bool OnTouchEvent(MotionEvent? e)
-        {
-            if (e is not null && Enabled && Clickable && IsAttachedToWindow && OperatingSystem.IsAndroidVersionAtLeast(33))
-            {
-                if (e.ActionMasked == MotionEventActions.Down)
-                {
-                    if (ValueAnimator.AreAnimatorsEnabled()) EnsurePressGlow();
-                    else ReleasePressGlow();
-                }
-                _pressTracker?.OnTouchEvent(e);
-            }
-            return base.OnTouchEvent(e);
-        }
-
-        private void EnsurePressGlow()
-        {
-            if (_pressTracker != null) return;
-            _pressGlow = new BackdropInteractiveHighlight(surfaceColor: Color.Transparent,
-                radialColor: AndroidUiTheme.FromToken(DesignTokens.ShellGlassAndroidButtonPressRadialColor),
-                radialRadiusFactor: (float)DesignTokens.ShellGlassAndroidButtonPressRadialRadius);
-            _pressTracker = new BackdropPressTracker();
-            _pressTracker.PressStarted += (x, y) =>
-            {
-                _lastGlowFrame = SystemClock.UptimeMillis();
-                _glowVisibleUntil = 0;
-                _releasePending = false;
-                _pressGlow.Begin(x, y, (float)DesignTokens.MenuAndroidPressInitialProgress);
-                Invalidate();
-            };
-            _pressTracker.Moved += (x, y) =>
-            {
-                _pressGlow.Move(x, y);
-                Invalidate();
-            };
-            _pressTracker.PressEnded += () =>
-            {
-                _releasePending = true;
-                Invalidate();
-            };
-            _pressTracker.PressCancelled += () =>
-            {
-                _releasePending = false;
-                _pressGlow.Cancel();
-                Invalidate();
-            };
-        }
-
-        protected override void OnDraw(Canvas canvas)
-        {
-            base.OnDraw(canvas);
-            if (!canvas.IsHardwareAccelerated || !Enabled || _pressGlow is not { } glow) return;
-            if (!glow.IsAnimating && glow.PressProgress <= 0 && !_releasePending) return;
-            long now = SystemClock.UptimeMillis();
-            glow.Advance((now - _lastGlowFrame) / 1000f);
-            _lastGlowFrame = now;
-            // 快点只延长视觉反馈；原生点击和菜单淡出按原时序执行。
-            if (_glowVisibleUntil == 0) _glowVisibleUntil = now + ViewConfiguration.PressedStateDuration;
-            if (_releasePending && now >= _glowVisibleUntil)
-            {
-                _releasePending = false;
-                glow.End();
-            }
-            if (glow.PressProgress > 0)
-            {
-                if (_pressClip == null)
-                {
-                    _pressClip = new Path();
-                    _pressClip.AddRoundRect(0, 0, Width, Height, _cornerRadius, _cornerRadius, Path.Direction.Cw!);
-                }
-                int save = canvas.Save();
-                canvas.ClipPath(_pressClip);
-                glow.Draw(canvas, Width, Height);
-                canvas.RestoreToCount(save);
-            }
-            if (glow.IsAnimating || _releasePending) PostInvalidateOnAnimation();
         }
 
         protected override void OnSizeChanged(int w, int h, int oldw, int oldh)
         {
             base.OnSizeChanged(w, h, oldw, oldh);
-            ReleasePressClip();
             float maxRadius = Math.Min(w, h) * 0.5f;
             float radius = _compact
                 ? Math.Min(maxRadius, AndroidUiTheme.Dp(Context!, DesignTokens.MenuAndroidSortCornerRadius))
@@ -288,33 +199,6 @@ internal sealed class AndroidGlassMenu : LinearLayout
             if (_cornerRadius == radius) return;
             _cornerRadius = radius;
             Background = MakeBackground(_compact);
-        }
-
-        protected override void OnDetachedFromWindow()
-        {
-            ReleasePressGlow();
-            base.OnDetachedFromWindow();
-        }
-
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing) ReleasePressGlow();
-            base.Dispose(disposing);
-        }
-
-        private void ReleasePressGlow()
-        {
-            _pressTracker = null;
-            _pressGlow?.Dispose();
-            _pressGlow = null;
-            _releasePending = false;
-            ReleasePressClip();
-        }
-
-        private void ReleasePressClip()
-        {
-            _pressClip?.Dispose();
-            _pressClip = null;
         }
 
         internal void SetChecked(bool value)

@@ -508,7 +508,13 @@ public static class DesignTokens
     /// <summary>menu.android.padding（pt） MENU-03：菜单内容的四周留白。</summary>
     public const double MenuAndroidPadding = 10.0;
     /// <summary>menu.android.press.initialProgress（ratio） MENU-03：菜单触点泛光的最低起始亮度，点选关闭时首帧仍可见。</summary>
-    public const double MenuAndroidPressInitialProgress = 0.65;
+    public const double MenuAndroidPressInitialProgress = 0.35;
+    /// <summary>menu.android.press.radial.color（color） MENU-03：菜单按压时触点径向高光色，低于主屏玻璃按钮的径向高光。</summary>
+    public const uint MenuAndroidPressRadialColor = 0x14FFFFFFu;
+    /// <summary>menu.android.press.radial.radius（ratio） MENU-03：菜单触点径向高光半径与面板短边之比，保持局部跟手而不覆盖整张面板。</summary>
+    public const double MenuAndroidPressRadialRadius = 0.6;
+    /// <summary>menu.android.press.surface.color（color） MENU-03：菜单按压时整块玻璃的轻微提亮色，保持整面响应但不改变菜单底色。</summary>
+    public const uint MenuAndroidPressSurfaceColor = 0x08FFFFFFu;
     /// <summary>menu.android.row.fontSize（pt） MENU-03：普通菜单行文字，Android 按 sp 使用。</summary>
     public const double MenuAndroidRowFontSize = 16.0;
     /// <summary>menu.android.row.height（pt） MENU-03：菜单行最小高度，文字放大时按内容增高。</summary>

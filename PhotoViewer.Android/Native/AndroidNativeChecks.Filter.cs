@@ -447,6 +447,8 @@ internal static partial class AndroidNativeChecks
         {
             if (!await OpenGroupedMenuAsync(root)) throw new InvalidOperationException("筛选未打开");
             var session = filter.DropdownInstanceForChecks;
+            var material = root.PopupLayer.Surface as AndroidGlassPopupMaterial
+                ?? throw new InvalidOperationException("菜单玻璃材质不可用");
             var row = FindMenuRowView(session?.Content, otherOrder == SortOrder.Ascending ? "升序" : "降序")
                 as AndroidGlassMenu.Row ?? throw new InvalidOperationException("方向行不可用");
             using (var bounds = new Rect(0, 0, row.Width, row.Height))
@@ -458,13 +460,16 @@ internal static partial class AndroidNativeChecks
 
             long down = SystemClock.UptimeMillis();
             bool handled = Touch(MotionEventActions.Down, down);
-            await WaitAsync(() => row.Pressed && (!animate || row.PressGlowForChecks > .05f), "行按压反馈", 1800);
+            await WaitAsync(() => row.Pressed, "行按压状态", 1800);
             var (edge, end) = PressedRowCoverage(row);
-            Check("MENU-03 普通行按压圆角与泛光",
-                handled && edge > 0 && end == 0 && (animate || row.PressGlowForChecks == 0),
-                $"edge={edge} end={end} animate={animate} glow={row.PressGlowForChecks:0.00}");
+            Check("MENU-03 普通行按压圆角", handled && edge > 0 && end == 0, $"edge={edge} end={end}");
+            Check("MENU-03 整块菜单玻璃按系统动画设置响应",
+                animate ? material.PressedForChecks && material.PressProgressForChecks > .05f
+                    : !material.PressedForChecks && material.PressProgressForChecks == 0f,
+                $"animate={animate} pressed={material.PressedForChecks} progress={material.PressProgressForChecks:0.00}");
             Touch(MotionEventActions.Cancel, down);
-            await WaitAsync(() => !row.Pressed && row.PressGlowForChecks <= .001f, "取消后泛光消退", 2000);
+            await WaitAsync(() => !row.Pressed && !material.PressedForChecks
+                && Math.Abs(material.PressProgressForChecks) <= .001f, "取消后泛光消退", 2000);
             Check("MENU-03 取消手势不点选", bar.SortOrder == order && filter.IsDropdownOpen,
                 $"order={bar.SortOrder} open={filter.IsDropdownOpen}");
 
@@ -473,10 +478,12 @@ internal static partial class AndroidNativeChecks
             Touch(MotionEventActions.Up, down);
             await WaitAsync(() => bar.SortOrder == otherOrder, "快速点选立即写回", 1500);
             if (animate)
-                await WaitAsync(() => row.PressGlowForChecks > .01f, "快速点选仍有泛光", 1500);
-            await WaitAsync(() => row.PressGlowForChecks <= .001f, "松手后泛光消退", 2000);
+                await WaitAsync(() => material.PressProgressForChecks > .01f,
+                    "快速点选仍有整块泛光", 1500);
+            await WaitAsync(() => Math.Abs(material.PressProgressForChecks) <= .001f,
+                "松手后泛光消退", 2000);
             Check("MENU-03 快速点选保留反馈与同一菜单", ReferenceEquals(session, filter.DropdownInstanceForChecks),
-                $"order={bar.SortOrder} open={filter.IsDropdownOpen}");
+                $"order={bar.SortOrder} open={filter.IsDropdownOpen} panelGlow={material.PressProgressForChecks:0.00}");
         }
         finally
         {
