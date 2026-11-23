@@ -683,9 +683,7 @@ public static class DesignTokens
     public const double RatingGestureTapSlop = 8.0;
     /// <summary>rating.popup.clearGlyph.fontSize（pt） RATING-07：弹窗清零叉字号。</summary>
     public const double RatingPopupClearGlyphFontSize = 18.0;
-    /// <summary>rating.popup.columnWidth（pt） RATING-07：竖排弹窗（竖排控件）宽度。</summary>
-    public const double RatingPopupColumnWidth = 120.0;
-    /// <summary>rating.popup.cornerRadius（pt） RATING-07：弹窗玻璃面板圆角。</summary>
+    /// <summary>rating.popup.cornerRadius（pt） RATING-07：带文件信息的横排星级浮窗圆角。</summary>
     public const double RatingPopupCornerRadius = 24.0;
     /// <summary>rating.popup.gap（pt） RATING-07：弹窗与入口的间距。</summary>
     public const double RatingPopupGap = 8.0;

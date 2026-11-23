@@ -1920,8 +1920,10 @@ internal static class iOSNativeLayoutCheck
             var origin = new CGPoint((nfloat)((double)card.Bounds.Width / 2), (nfloat)((double)card.Bounds.Height / 2));
             await UiDispatcher.InvokeAsync(() => card.HandleLongPress(UIGestureRecognizerState.Began, origin));
             await WaitAsync(() => popup.IsOpen && popup.TrackingRow != null, "长按打开星级弹窗");
-            if (popup.Mode != iOSRatingPopup.RatingPopupMode.Single)
-                throw new InvalidOperationException($"{scope} 长按弹窗内容形态 {popup.Mode}（非冲突应为 Single）");
+            if (popup.Mode != RatingPopupMode.Card)
+                throw new InvalidOperationException($"{scope} 长按弹窗内容形态 {popup.Mode}（非冲突应为 Card）");
+            if (popup.TrackingRow?.Horizontal != true || popup.NameLabels is not [{ Text: var name }] || name != file.DisplayName)
+                throw new InvalidOperationException($"{scope} 卡片弹窗应保留文件名和横排星级");
             if (popup.AnchorKind != RatingPopupAnchor.Card || !ReferenceEquals(popup.AnchorView, card))
                 throw new InvalidOperationException($"{scope} 长按弹窗锚点不是发起卡片：{popup.AnchorKind}");
             if (popup.Direction != expectedDirection)

@@ -159,11 +159,13 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
     /// <summary>更新已打开面板的位置或尺寸（行状态与实例保持不变）。</summary>
     /// <param name="session">仍打开的弹层实例。</param>
     /// <param name="frame">新的窗口像素矩形。</param>
+    /// <param name="cornerRadiusDp">面板形状变化时的新圆角（dp）。</param>
     /// <returns>更新生效返回 true。</returns>
-    internal bool Update(AndroidGlassPopupSession session, Rect frame)
+    internal bool Update(AndroidGlassPopupSession session, Rect frame, double? cornerRadiusDp = null)
     {
         if (!ReferenceEquals(session, _session) || !session.IsOpen) return false;
         session.Frame = new Rect(frame);
+        if (cornerRadiusDp is { } radius) _panel.SetCornerRadius((float)radius);
         LayoutPanel(frame);
         return true;
     }
@@ -467,7 +469,12 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
             _border = request.Border;
             _density = Resources?.DisplayMetrics?.Density ?? 1f;
             _borderWidth = (float)(request.BorderWidthDp * _density);
-            float cornerRadiusDp = (float)request.CornerRadiusDp;
+            SetCornerRadius((float)request.CornerRadiusDp);
+            Visibility = ViewStates.Visible;
+        }
+
+        internal void SetCornerRadius(float cornerRadiusDp)
+        {
             RadiusPx = cornerRadiusDp * _density;
             if (float.IsNaN(_cornerRadiusDp) || MathF.Abs(cornerRadiusDp - _cornerRadiusDp) > 0.001f)
             {
@@ -477,7 +484,6 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
                 _outlineProvider.Shape = _shape;
             }
             _outline.Invalidate();
-            Visibility = ViewStates.Visible;
             InvalidateOutline();
             Invalidate();
         }

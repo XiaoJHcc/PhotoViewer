@@ -394,14 +394,12 @@ internal static class RatingControlChecks
     private static void RunPopupLayout(Checks c)
     {
         c.Section("星级弹窗条目排版");
-        c.Equal("横排弹窗星排外占用 24", 24d, RatingPopupLayout.HorizontalChrome);
-        c.Equal("竖排弹窗（含时间）星排外占用 66", 66d, RatingPopupLayout.ColumnChrome(true));
-        c.Equal("竖排弹窗（无时间）星排外占用 46", 46d, RatingPopupLayout.ColumnChrome(false));
+        c.Equal("横排弹窗星排外占用 24", 24d, RatingPopupLayout.MainAxisInsets);
         c.Equal("步长 44 时条目宽 280", 280d, RatingPopupLayout.EntryWidth(44));
 
-        c.Equal("空间充裕时步长取上限 44", 44d, RatingPopupLayout.Pitch(1000, RatingPopupLayout.HorizontalChrome));
-        c.Equal("空间不足时步长取下限 28", 28d, RatingPopupLayout.Pitch(24, RatingPopupLayout.HorizontalChrome));
-        c.Equal("中间空间向下取整", 36d, RatingPopupLayout.Pitch(240, RatingPopupLayout.HorizontalChrome));
+        c.Equal("空间充裕时步长取上限 44", 44d, RatingPopupLayout.Pitch(1000, RatingPopupLayout.MainAxisInsets));
+        c.Equal("空间不足时步长取下限 28", 28d, RatingPopupLayout.Pitch(24, RatingPopupLayout.MainAxisInsets));
+        c.Equal("中间空间向下取整", 36d, RatingPopupLayout.Pitch(240, RatingPopupLayout.MainAxisInsets));
 
         var row = RatingPopupLayout.SingleRow(80, 60, 44);
         c.True("单行条目放得下时间时显示时间", !row.TwoLines && row.Time.Width > 0);
@@ -417,19 +415,26 @@ internal static class RatingControlChecks
         c.True("文件名放不下时不显示时间", noTime.Time.Width == 0 && noTime.Name.Width == 264,
             $"时间宽 {noTime.Time.Width}，文件名宽 {noTime.Name.Width}");
 
-        var column = RatingPopupLayout.SingleColumn(80, 80, 44);
-        c.Equal("竖排条目宽 112", 112d, column.Width);
-        c.True("竖排条目显示时间时独占一行", column.TwoLines && column.Time.Width > 0);
-        c.Equal("竖排条目（含时间）高 322", 322d, column.Height);
-        c.Equal("竖排星列在条目宽内居中", 34d, column.Stars.X);
-        c.Equal("竖排星列在时间行下方", 50d, column.Stars.Y);
-        c.Equal("竖排星列长 264", 264d, column.Stars.Height);
-        c.True("竖排条目星列竖排", !column.StarsHorizontal);
+        c.Equal("无冲突卡片显示横排卡片条目", RatingPopupMode.Card,
+            RatingPopupLayout.ResolveMode(RatingPopupAnchor.Card, false));
+        c.Equal("无冲突控件显示星级胶囊", RatingPopupMode.Selector,
+            RatingPopupLayout.ResolveMode(RatingPopupAnchor.Control, false));
+        c.Equal("冲突卡片显示来源条目", RatingPopupMode.Sources,
+            RatingPopupLayout.ResolveMode(RatingPopupAnchor.Card, true));
+        c.Equal("冲突控件显示来源条目", RatingPopupMode.Sources,
+            RatingPopupLayout.ResolveMode(RatingPopupAnchor.Control, true));
 
-        var columnNoTime = RatingPopupLayout.SingleColumn(80, 0, 44);
-        c.True("竖排条目无时间时只有一行", !columnNoTime.TwoLines && columnNoTime.Time.Width == 0);
-        c.Equal("竖排条目（无时间）高 302", 302d, columnNoTime.Height);
-        c.Equal("竖排条目无时间时星列上移", 30d, columnNoTime.Stars.Y);
+        var selectorRow = RatingPopupLayout.Selector(44, true);
+        var selectorColumn = RatingPopupLayout.Selector(44, false);
+        c.Equal("横排选择器面板 288×68", (288d, 68d), RatingPopupLayout.PanelSize([selectorRow]));
+        c.Equal("竖排选择器面板 68×288", (68d, 288d), RatingPopupLayout.PanelSize([selectorColumn]));
+        c.True("选择器的六个方格沿入口主轴等距排列",
+            selectorRow.StarsHorizontal && !selectorColumn.StarsHorizontal
+            && selectorRow.Stars == new LayoutRect(8, 8, 264, 44)
+            && selectorColumn.Stars == new LayoutRect(8, 8, 44, 264));
+        c.True("选择器无文件信息",
+            selectorRow.Name == default && selectorRow.Time == default
+            && selectorColumn.Name == default && selectorColumn.Time == default);
 
         var source = RatingPopupLayout.Source(100, 40, 50, 44);
         c.True("来源条目短文件名保持单行", !source.TwoLines);

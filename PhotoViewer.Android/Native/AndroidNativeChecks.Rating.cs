@@ -106,7 +106,7 @@ internal static partial class AndroidNativeChecks
             var expected = RatingControlGeometry.PopupDirection(root.Form, main.IsRowLayout, root.NotchOnLeft,
                 RatingPopupAnchor.Card);
             bool opened = popup.IsOpen && main.RatingSources.IsOpen
-                && popup.ModeForChecks == RatingPopupMode.Single
+                && popup.ModeForChecks == RatingPopupMode.Card
                 && popup.AnchorKindForChecks == RatingPopupAnchor.Card
                 && SameRect(popup.AnchorRectForChecks, cardRect)
                 && popup.DirectionForChecks == DirectionText(expected)
@@ -199,7 +199,7 @@ internal static partial class AndroidNativeChecks
             await WaitAsync(() => popup.IsOpen, "紧凑星级起手打开弹窗", 5000);
             await Task.Delay(200);
             bool touchModeOpen = control.IsInTouchMode;
-            bool opened = popup.IsOpen && popup.ModeForChecks == RatingPopupMode.Single
+            bool opened = popup.IsOpen && popup.ModeForChecks == RatingPopupMode.Selector
                 && popup.AnchorKindForChecks == RatingPopupAnchor.Control
                 && SameRect(popup.AnchorRectForChecks, entryRect);
             var panel = root.PopupLayer.SessionForChecks?.Panel;
@@ -216,6 +216,13 @@ internal static partial class AndroidNativeChecks
                 Check("RATING-07 紧凑星级起手与拖动提交", false, $"open={popup.IsOpen} 内容视图不可用");
                 return;
             }
+            var zero = popup.SlotRectPx(0, 0);
+            var five = popup.SlotRectPx(0, 5);
+            bool axisMatches = control.Horizontal
+                ? zero.Top == five.Top && zero.Left < five.Left
+                : zero.Left == five.Left && zero.Top > five.Top;
+            Check("RATING-07 紧凑星级打开纯星级胶囊", axisMatches && !PopupTextLabels(content).Any(),
+                $"horizontal={control.Horizontal} zero={zero} five={five}");
             var slot = popup.SlotRectPx(0, 4);
             if (slot.Width() <= 0)
             {

@@ -17,7 +17,7 @@ namespace PhotoViewer.iOS.Native;
 /// <summary>
 /// 验收专用（非产品行为，测试钩子）：<c>--pv-native-rating-control-check &lt;目录&gt;</c> 程序化核对星级控件与星级弹窗——
 /// [RATING-07] 展开/紧凑两态的形态阈值、点按与滑动预览（触感计数与每行生成器实例复用）、取消带与取消、紧凑态弹窗落位与同手势续接、
-/// 弹窗标签实测宽度排版（时间/来源信息按 UILabel 实测宽 + 明确内边距）、弹窗外点/ Esc / 切图 / 入口移动四种收起路径、减少动态效果、竖排紧凑弹窗、读屏增减与禁用态；
+/// 星级胶囊尺寸与来源条目标签实测宽度排版、弹窗外点/ Esc / 切图 / 入口移动四种收起路径、减少动态效果、竖排紧凑弹窗、读屏增减与禁用态；
 /// [RATING-04] 冲突三角打开来源弹窗、整组写回与冲突消解、卡片三角入口；iPhone 竖屏紧凑/展开、横屏两种刘海方向
 /// （真实 <c>RequestGeometryUpdate</c> 旋转、控制列竖排次序与方向表、旋转收起弹窗）；iPad 宽形态行/列控制栏的
 /// 星级分组、胶囊尺寸、命令圆按钮、[TOOLBAR-03]「显示评分」显隐（无需保留空槽），以及 [SHELL-12] 共同玻璃容器内容区里的平级效果元素、
@@ -223,14 +223,14 @@ internal static class iOSNativeRatingControlCheck
             await VerifyPopupClosingAsync();
             await VerifyReduceMotionAsync();
             await VerifyPopupMaterialAsync();
-            await VerifyPopupInputIsolationAsync();
             await VerifyConflictAsync();
-            await VerifyCardTriangleAsync();
             await VerifyVerticalCompactAsync();
             await VerifyAccessibilityAsync();
             await VerifyDisabledAsync();
             if (PhoneDevice) await VerifyPhoneAsync();
             else await VerifyPadAsync();
+            await VerifyCardTriangleAsync();
+            await VerifyPopupInputIsolationAsync();
         }
 
         /// <summary>收尾还原（幂等）：弹窗、临时视图、减少动态效果、设置、方向、栏位、筛选、当前照片与工作副本。</summary>
@@ -850,7 +850,7 @@ internal static class iOSNativeRatingControlCheck
 
         #region 断言 5–9：紧凑态与弹窗
 
-        /// <summary>RATING-07 紧凑态点按：打开单条目弹窗、微小位移保持弹窗、点弹窗星排一次写回。</summary>
+        /// <summary>RATING-07 紧凑态点按：打开星级胶囊、微小位移保持弹窗、点弹窗星排一次写回。</summary>
         /// <returns>任务。</returns>
         private async Task VerifyCompactTapAsync()
         {
@@ -868,7 +868,7 @@ internal static class iOSNativeRatingControlCheck
                 control.TrackBegan(capsule);
                 if (!popup.IsOpen)
                     throw new InvalidOperationException("紧凑态起手没有打开星级弹窗");
-                if (popup.Mode != iOSRatingPopup.RatingPopupMode.Single)
+                if (popup.Mode != RatingPopupMode.Selector)
                     throw new InvalidOperationException($"非冲突弹窗形态为 {popup.Mode}");
                 if (popup.Direction != RatingPopupDirection.Up)
                     throw new InvalidOperationException($"竖屏/行布局弹窗方向为 {popup.Direction} ≠ Up");
@@ -884,23 +884,10 @@ internal static class iOSNativeRatingControlCheck
                 if (!popup.IsOpen)
                     throw new InvalidOperationException("小于点按阈值的移动关闭了弹窗");
                 if (popup.TrackingRow is not { } tracking)
-                    throw new InvalidOperationException("单条目弹窗没有可续接的星排");
+                    throw new InvalidOperationException("星级胶囊没有可续接的星排");
                 if (tracking.Preview != null)
                     throw new InvalidOperationException($"小于点按阈值的移动出现了预览 {tracking.Preview}");
-                // 时间行按 UILabel 实测宽度（向上取整）排版，不再补虚构的控件内边距。
-                var metaFont = UIFont.SystemFontOfSize((nfloat)DesignTokens.PopupRatingSourcesMetaFontSize)
-                    ?? throw new InvalidOperationException("系统字体不可用");
-                if (popup.TimeLabels.Count != 1)
-                    throw new InvalidOperationException($"单条目弹窗没有时间行（{popup.TimeLabels.Count}）");
-                var timeLabel = popup.TimeLabels[0];
-                double measuredTime = Math.Ceiling(new NSString(timeLabel.Text ?? string.Empty)
-                    .GetSizeUsingAttributes(new UIStringAttributes { Font = metaFont }).Width);
-                if (Math.Abs((double)timeLabel.Frame.Width - measuredTime) > Tolerance)
-                    throw new InvalidOperationException(
-                        $"单条目时间框宽 {timeLabel.Frame.Width:0.#} ≠ 实测 {measuredTime:0.#}");
-                if ((double)popup.NameLabels[0].Frame.GetMaxX() + RatingPopupLayout.LabelGap
-                    > (double)timeLabel.Frame.X + Tolerance)
-                    throw new InvalidOperationException("单条目文件名与时间行没有按实测宽度留出间距");
+                RequireSelectorGeometry(popup, tracking, horizontal: true);
                 control.TrackEnded(nudged);
                 if (!popup.IsOpen)
                     throw new InvalidOperationException("点按抬手关闭了弹窗");
@@ -918,9 +905,8 @@ internal static class iOSNativeRatingControlCheck
                 RefreshControl(control);
                 if (control.Value != 2)
                     throw new InvalidOperationException($"写回后控件显示 {control.Value} ≠ 2");
-                _lines.Add($"PASS RATING-07 紧凑态点按：起手打开单条目弹窗（方向 Up，底边在胶囊顶上方 ≥{gap:0.#} 点、面板在安全区内），" +
-                    $"小于点按阈值的移动不预览、抬手 0 次写回并保持弹窗；点弹窗 2 号星写回 1 次（值 2）后弹窗收起、控件显示 2；" +
-                    "时间标签宽 = UILabel 实测宽（向上取整），文件名与时间按实测宽度留出间距");
+                _lines.Add($"PASS RATING-07 紧凑态点按：起手打开星级胶囊（方向 Up，底边在胶囊顶上方 ≥{gap:0.#} 点、面板在安全区内），" +
+                    $"小于点按阈值的移动不预览、抬手 0 次写回并保持弹窗；点弹窗 2 号星写回 1 次（值 2）后弹窗收起、控件显示 2");
             }
             finally
             {
@@ -1044,9 +1030,9 @@ internal static class iOSNativeRatingControlCheck
                 var content = effectPanel.ContentView;
                 effectPanel.Transform = CGAffineTransform.MakeTranslation((nfloat)7, (nfloat)3);
                 content.Alpha = .7f;
-                var oldName = popup.NameLabels[0];
+                var oldRow = popup.Rows[0];
                 await SetRatingAsync(file, 5);
-                await WaitAsync(() => popup.NameLabels.Count == 1 && !ReferenceEquals(popup.NameLabels[0], oldName),
+                await WaitAsync(() => popup.Rows.Count == 1 && !ReferenceEquals(popup.Rows[0], oldRow) && popup.Rows[0].Value == 5,
                     "星级真值变化触发弹窗内容重建");
                 if (Math.Abs((double)effectPanel.Transform.Tx - 7) > .01
                     || Math.Abs((double)effectPanel.Transform.Ty - 3) > .01
@@ -1404,7 +1390,7 @@ internal static class iOSNativeRatingControlCheck
                     throw new InvalidOperationException("落在冲突三角上不应写回星级");
                 var popup = _root.RatingPopup;
                 if (!popup.IsOpen) throw new InvalidOperationException("冲突三角没有打开来源弹窗");
-                if (popup.Mode != iOSRatingPopup.RatingPopupMode.Sources)
+                if (popup.Mode != RatingPopupMode.Sources)
                     throw new InvalidOperationException($"冲突弹窗形态为 {popup.Mode} ≠ Sources");
                 int sourceCount = fixture.Group.RatingSources.Count;
                 if (popup.Rows.Count != sourceCount)
@@ -1478,7 +1464,7 @@ internal static class iOSNativeRatingControlCheck
                 var capsule = CapsuleCenter(compact);
                 compact.TrackBegan(capsule);
                 if (!popup.IsOpen) throw new InvalidOperationException("紧凑冲突点按没有打开来源弹窗");
-                if (popup.Mode != iOSRatingPopup.RatingPopupMode.Sources)
+                if (popup.Mode != RatingPopupMode.Sources)
                     throw new InvalidOperationException($"紧凑冲突弹窗形态为 {popup.Mode} ≠ Sources");
                 var moved = new CGPoint(capsule.X + 60, capsule.Y);
                 compact.TrackMoved(moved);
@@ -1507,9 +1493,9 @@ internal static class iOSNativeRatingControlCheck
         {
             var popup = _root.RatingPopup;
             await EnsurePopupClosedAsync();
-            var file = _main.CurrentFile ?? throw new InvalidOperationException("卡片冲突三角检查没有当前照片");
-            if (!file.HasRatingConflict)
-                throw new InvalidOperationException("卡片冲突三角检查需要当前照片仍处于冲突态");
+            var fixture = _conflict ?? throw new InvalidOperationException("缺少冲突夹具");
+            await RebuildConflictAsync(fixture);
+            var file = fixture.Photo;
             if (!_main.IsThumbnailViewVisible)
                 await UiDispatcher.InvokeAsync(() => _main.IsThumbnailViewVisible = true);
             var files = _main.FileVM.ThumbnailList.FilteredFiles;
@@ -1524,7 +1510,7 @@ internal static class iOSNativeRatingControlCheck
                 throw new InvalidOperationException($"卡片三角入口类型为 {popup.AnchorKind} ≠ Card");
             if (!ReferenceEquals(popup.AnchorView, card))
                 throw new InvalidOperationException("卡片三角弹窗没有锚定整张卡片");
-            if (popup.Mode != iOSRatingPopup.RatingPopupMode.Sources)
+            if (popup.Mode != RatingPopupMode.Sources)
                 throw new InvalidOperationException($"卡片冲突弹窗形态为 {popup.Mode} ≠ Sources");
             var focus = popup.FocusTargetForEntry
                 ?? throw new InvalidOperationException("卡片入口没有可访问的焦点目标");
@@ -1561,7 +1547,7 @@ internal static class iOSNativeRatingControlCheck
                 "面板落在该侧，放不下时贴住放置边界），滚动胶片条后自动收起");
         }
 
-        /// <summary>RATING-07 竖排紧凑弹窗：列宽、竖排星列次序、左侧展开与竖排滑动写回。</summary>
+        /// <summary>RATING-07 竖排紧凑弹窗：胶囊尺寸、竖排星列次序、左侧展开与竖排滑动写回。</summary>
         /// <returns>任务。</returns>
         private async Task VerifyVerticalCompactAsync()
         {
@@ -1585,16 +1571,14 @@ internal static class iOSNativeRatingControlCheck
                 if (popup.Direction != RatingPopupDirection.Left)
                     throw new InvalidOperationException($"竖排弹窗方向为 {popup.Direction} ≠ Left");
                 if (popup.TrackingRow is not { } tracking)
-                    throw new InvalidOperationException("竖排单条目弹窗没有可续接的星排");
+                    throw new InvalidOperationException("竖排星级胶囊没有可续接的星排");
                 tracking.SetNeedsLayout();
                 tracking.LayoutIfNeeded();
                 if (tracking.Horizontal)
                     throw new InvalidOperationException("竖排控件的弹窗星排是横排");
                 if (tracking.SlotViews[5].Frame.Y >= tracking.SlotViews[0].Frame.Y)
                     throw new InvalidOperationException("竖排星列 5 号未排在 0 号上方");
-                if (Math.Abs(popup.PanelFrame.Width - RatingPopupLayout.ColumnWidth) > Tolerance)
-                    throw new InvalidOperationException(
-                        $"竖排弹窗宽 {popup.PanelFrame.Width:0.#} ≠ 列宽 {RatingPopupLayout.ColumnWidth:0.#}");
+                RequireSelectorGeometry(popup, tracking, horizontal: false);
                 var capsuleHost = FrameInHost(control.Capsule);
                 if (popup.PanelFrame.MaxX > (double)capsuleHost.X - DesignTokens.RatingPopupGap + Tolerance)
                     throw new InvalidOperationException(
@@ -1612,13 +1596,24 @@ internal static class iOSNativeRatingControlCheck
                 await WaitForFileRatingAsync(file, 1, "竖排滑动");
                 await WaitAsync(() => !popup.IsOpen, "竖排滑动写回后弹窗收起");
                 _lines.Add($"PASS RATING-07 竖排紧凑弹窗：44×150 竖排控件为紧凑态、弹窗星排竖排（5 号在 0 号上方）、" +
-                    $"面板宽 = 列宽 {RatingPopupLayout.ColumnWidth:0.#}、右缘停在胶囊左侧；竖排滑到 1 号预览 1、抬手 1 次写回（值 1）");
+                    "面板右缘停在胶囊左侧，竖排滑到 1 号预览 1，抬手 1 次写回（值 1）");
             }
             finally
             {
                 RemoveView(control);
                 await EnsurePopupClosedAsync();
             }
+        }
+
+        private static void RequireSelectorGeometry(iOSRatingPopup popup, iOSRatingRow row, bool horizontal)
+        {
+            double inset = RatingPopupLayout.MainAxisInsets;
+            if (popup.Mode != RatingPopupMode.Selector || popup.Rows.Count != 1 || row.Horizontal != horizontal
+                || popup.NameLabels.Count != 0 || popup.TimeLabels.Count != 0
+                || popup.BadgeViews.Count != 0 || popup.StatusLabels.Count != 0 || popup.DividerViews.Count != 0
+                || Math.Abs(popup.PanelFrame.Width - ((double)row.Bounds.Width + inset)) > Tolerance
+                || Math.Abs(popup.PanelFrame.Height - ((double)row.Bounds.Height + inset)) > Tolerance)
+                throw new InvalidOperationException("星级胶囊应只包含沿入口主轴排列的六格及四周等量内边距");
         }
 
         /// <summary>RATING-07 读屏：可调节语义，增减各写回一次，读屏值与星级一致。</summary>
@@ -1785,8 +1780,8 @@ internal static class iOSNativeRatingControlCheck
             var capsule = CapsuleCenter(phone);
             phone.TrackBegan(capsule);
             if (!popup.IsOpen) throw new InvalidOperationException("手机竖屏紧凑控件没有打开弹窗");
-            if (popup.Mode != iOSRatingPopup.RatingPopupMode.Single)
-                throw new InvalidOperationException($"手机竖屏紧凑弹窗形态为 {popup.Mode} ≠ Single");
+            if (popup.Mode != RatingPopupMode.Selector)
+                throw new InvalidOperationException($"手机竖屏紧凑弹窗形态为 {popup.Mode} ≠ Selector");
             if (popup.Direction != RatingPopupDirection.Up)
                 throw new InvalidOperationException($"手机竖屏弹窗方向为 {popup.Direction} ≠ Up");
             var capsuleHost = FrameInHost(phone.Capsule);
@@ -1840,7 +1835,7 @@ internal static class iOSNativeRatingControlCheck
             phone.TrackEnded(below);
             if (_commits.Count != cancel) throw new InvalidOperationException("手机竖屏取消带外抬手写回了星级");
             await WaitAsync(() => !popup.IsOpen, "手机竖屏紧凑取消后弹窗收起");
-            _lines.Add($"PASS RATING-07 手机竖屏紧凑：上下张开启时槽位 {slot.Width:0.#} → 紧凑态；起手打开单条目弹窗（Up、" +
+            _lines.Add($"PASS RATING-07 手机竖屏紧凑：上下张开启时槽位 {slot.Width:0.#} → 紧凑态；起手打开星级胶囊（Up、" +
                 "面板在胶囊上方且安全区内），点弹窗 2 号星写回 2、滑动到 5 号写回 5、越出取消带 0 次写回并收起弹窗");
 
             // 竖屏 · 上下张关闭：默认勾选命令多于三项时，独立上一张/下一张补位进入可选命令组，
@@ -1939,7 +1934,7 @@ internal static class iOSNativeRatingControlCheck
             var zero = SlotCenter(row, 0);
             row.TrackBegan(zero);
             row.TrackEnded(zero);
-            if (!popup.IsOpen || popup.Mode != iOSRatingPopup.RatingPopupMode.Sources)
+            if (!popup.IsOpen || popup.Mode != RatingPopupMode.Sources)
                 throw new InvalidOperationException("手机竖屏冲突三角没有打开来源弹窗");
             if (_commits.Count != conflictCommits)
                 throw new InvalidOperationException("手机竖屏冲突三角写回了星级");
@@ -1996,7 +1991,7 @@ internal static class iOSNativeRatingControlCheck
 
         /// <summary>
         /// 手机横屏一个刘海方向：控制栏先保住星级紧凑长度、剩下才给 EXIF 列（EXIF 开 → 紧凑竖排胶囊），
-        /// 起手打开单条目弹窗（方向朝主图内侧）、点弹窗星排写回、冲突三角弹窗；EXIF 关闭后星级槽位取剩余长度
+        /// 起手打开星级胶囊（方向朝主图内侧）、点弹窗星排写回、冲突三角弹窗；EXIF 关闭后星级槽位取剩余长度
         /// 并封顶展开态固有长度、整组在可用纵向区间居中 → 展开竖排（5 号在 0 号上方）并沿星列滑动 5→2。
         /// </summary>
         /// <param name="fixture">冲突夹具。</param>
@@ -2042,8 +2037,8 @@ internal static class iOSNativeRatingControlCheck
             var popup = _root.RatingPopup;
             phone.TrackBegan(capsule);
             if (!popup.IsOpen) throw new InvalidOperationException($"{suite} 横屏紧凑控件没有打开弹窗");
-            if (popup.Mode != iOSRatingPopup.RatingPopupMode.Single)
-                throw new InvalidOperationException($"{suite} 紧凑弹窗形态为 {popup.Mode} ≠ Single");
+            if (popup.Mode != RatingPopupMode.Selector)
+                throw new InvalidOperationException($"{suite} 紧凑弹窗形态为 {popup.Mode} ≠ Selector");
             if (popup.Direction != expected)
                 throw new InvalidOperationException($"{suite} 控件弹窗方向 {popup.Direction} ≠ 期望 {expected}");
             var capsuleHost = FrameInHost(phone.Capsule);
@@ -2068,7 +2063,7 @@ internal static class iOSNativeRatingControlCheck
             int conflict = _commits.Count;
             phone.TrackBegan(capsule);
             if (!popup.IsOpen) throw new InvalidOperationException($"{suite} 冲突三角没有打开弹窗");
-            if (popup.Mode != iOSRatingPopup.RatingPopupMode.Sources)
+            if (popup.Mode != RatingPopupMode.Sources)
                 throw new InvalidOperationException($"{suite} 冲突弹窗形态为 {popup.Mode} ≠ Sources");
             if (popup.Direction != expected)
                 throw new InvalidOperationException($"{suite} 冲突弹窗方向 {popup.Direction} ≠ 期望 {expected}");
@@ -2079,7 +2074,7 @@ internal static class iOSNativeRatingControlCheck
             popup.Close();
             await WaitAsync(() => !popup.IsOpen, $"{suite} 冲突弹窗收起");
             _lines.Add($"PASS RATING-07/04 {suite}：EXIF 列在控制栏顶端，星级槽位高 {slot.Height:0.#} → 紧凑竖排胶囊（宽 44、铺满槽位）；" +
-                $"起手打开单条目弹窗（方向 {expected}、面板落在该侧），点弹窗 2 号星写回 2，冲突三角打开来源弹窗且 0 次写回");
+                $"起手打开星级胶囊（方向 {expected}、面板落在该侧），点弹窗 2 号星写回 2，冲突三角打开来源弹窗且 0 次写回");
 
             // SHELL-09「显示评分」关闭：评分槽与一道组间距移出测量，EXIF 列直接接命令组并重新居中。
             int baselineExifItems = _root.PhoneSlots.ExifItems;
@@ -2228,7 +2223,7 @@ internal static class iOSNativeRatingControlCheck
             row.TrackBegan(zero);
             row.TrackEnded(zero);
             if (!popup.IsOpen) throw new InvalidOperationException("行布局冲突三角没有打开弹窗");
-            if (popup.Mode != iOSRatingPopup.RatingPopupMode.Sources)
+            if (popup.Mode != RatingPopupMode.Sources)
                 throw new InvalidOperationException($"行布局冲突弹窗形态为 {popup.Mode} ≠ Sources");
             if (popup.Direction != RatingPopupDirection.Up)
                 throw new InvalidOperationException($"行布局控件弹窗方向 {popup.Direction} ≠ Up");

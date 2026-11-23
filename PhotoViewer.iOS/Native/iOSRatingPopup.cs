@@ -13,24 +13,14 @@ namespace PhotoViewer.iOS.Native;
 
 /// <summary>
 /// 星级弹窗（RATING-07）：窗口内的玻璃面板，不用系统浮窗——紧凑态与卡片入口要把同一次触摸
-/// 从入口延续到面板星排上。非冲突显示单条目（文件名 + 可选拍摄时间 + 星排），冲突按来源逐条纵排
-/// 并用分隔线分开（RATING-04）；所有排版取共享 <see cref="RatingPopupLayout"/>，落位取
+/// 从入口延续到面板星排上。无冲突控制栏入口显示星级胶囊；卡片和冲突入口显示横排条目（RATING-04）。
+/// 排版取共享 <see cref="RatingPopupLayout"/>，落位取
 /// <see cref="RatingControlGeometry.PlacePopup"/>。面板下方铺一层全窗透明拦截层，点按外部即关闭并吞掉该次触摸。
 /// 数据由共享 <see cref="RatingSourcesViewModel"/> 驱动：打开即 Show，写入走来源整组写回，
 /// 成功且冲突解除时该 VM 关闭、弹窗随之收起。
 /// </summary>
 internal sealed class iOSRatingPopup : IDisposable
 {
-    /// <summary>弹窗内容形态：单条目或按来源逐条。</summary>
-    internal enum RatingPopupMode
-    {
-        /// <summary>非冲突：一个文件名/时间行加一条星排。</summary>
-        Single,
-
-        /// <summary>冲突：每个来源一条，任一条目点值整组写回。</summary>
-        Sources,
-    }
-
     private readonly MainViewModel _main;
     private readonly UIView _host;
     private readonly Func<ImageFile, int, Task> _commit;
@@ -97,9 +87,9 @@ internal sealed class iOSRatingPopup : IDisposable
     /// <summary>当前内容的星排，顺序与条目一致。</summary>
     internal IReadOnlyList<iOSRatingRow> Rows => _rows;
 
-    /// <summary>单条目模式下可继续承接手势的星排；来源模式没有。</summary>
+    /// <summary>可继续承接手势的星排，适用于选择器和无冲突卡片。</summary>
     internal iOSRatingRow? TrackingRow
-        => Mode == RatingPopupMode.Single && _rows.Count > 0 ? _rows[0] : null;
+        => Mode != RatingPopupMode.Sources && _rows.Count > 0 ? _rows[0] : null;
 
     /// <summary>条目文件名标签。</summary>
     internal IReadOnlyList<UILabel> NameLabels => _names;
@@ -148,7 +138,6 @@ internal sealed class iOSRatingPopup : IDisposable
         _horizontalRow = horizontalRow;
         _focusView = focusTarget ?? (anchor.IsAccessibilityElement ? anchor : null);
         AnchorRect = RectOf(anchor);
-        Mode = file.HasRatingConflict ? RatingPopupMode.Sources : RatingPopupMode.Single;
         _main.ShowRatingSources(file);
         _main.RatingSources.PropertyChanged += OnSourcesChanged;
         file.PropertyChanged += OnTargetChanged;
@@ -204,7 +193,7 @@ internal sealed class iOSRatingPopup : IDisposable
     }
 
     /// <summary>
-    /// 入口把同一次手势交给弹窗（紧凑胶囊与卡片长按共用）：只有单条目形态才把触摸延续到面板星排上，
+    /// 入口把同一次手势交给弹窗（紧凑胶囊与卡片长按共用）：无冲突时把触摸延续到面板星排上，
     /// 起点按延迟预览处理（越过点按阈值前不点亮）。返回是否真的开始转发。
     /// </summary>
     /// <param name="source">发起入口（控件胶囊或胶片卡片）。</param>
@@ -212,7 +201,7 @@ internal sealed class iOSRatingPopup : IDisposable
     /// <returns>已在弹窗星排上起手返回 true；弹窗未打开或为来源条目不转发。</returns>
     internal bool BeginExternal(UIView source, CGPoint pointInSource)
     {
-        if (!IsOpen || Mode != RatingPopupMode.Single || TrackingRow is not { } row) return false;
+        if (!IsOpen || TrackingRow is not { } row) return false;
         row.TrackBegan(row.ConvertPointFromView(pointInSource, source), deferPreview: true);
         return true;
     }
@@ -368,14 +357,11 @@ internal sealed class iOSRatingPopup : IDisposable
     /// <summary>按共享真值重建内容；星排正在手势中时跳过，避免把手指下的格子换掉。</summary>
     private void Refresh()
     {
-        if (!IsOpen || _refreshing || Target is not { } file) return;
+        if (!IsOpen || _refreshing) return;
         if (_rows.Any(row => row.IsTracking)) return;
         _refreshing = true;
         try
         {
-            Mode = file.HasRatingConflict && _main.RatingSources.Items.Count > 0
-                ? RatingPopupMode.Sources
-                : RatingPopupMode.Single;
             Build();
         }
         finally
@@ -393,20 +379,26 @@ internal sealed class iOSRatingPopup : IDisposable
         if (Panel is not { } panel) return;
         var content = panel.ContentView;
         var bounds = EdgeBounds();
+        Mode = RatingPopupLayout.ResolveMode(AnchorKind, file.HasRatingConflict);
+        bool selector = Mode == RatingPopupMode.Selector;
+        bool horizontal = !selector || _horizontalRow;
         var items = Mode == RatingPopupMode.Sources ? _main.RatingSources.Items : [];
-        bool sources = Mode == RatingPopupMode.Sources && items.Count > 0;
-        if (Mode == RatingPopupMode.Sources && !sources) Mode = RatingPopupMode.Single;
-        string? time = sources ? null : ShotTimeText.FormatShortShotTime(file.PhotoDate);
-        // 来源条目恒为横排星排，只有非冲突单条目才随竖排控件改成竖排星列。
-        bool horizontal = sources || _horizontalRow;
+        bool sources = items.Count > 0;
+        string? time = sources || selector ? null : ShotTimeText.FormatShortShotTime(file.PhotoDate);
         double availableMain = horizontal ? bounds.Width : bounds.Height;
-        double chrome = horizontal
-            ? RatingPopupLayout.HorizontalChrome
-            : RatingPopupLayout.ColumnChrome(time != null);
-        double pitch = RatingPopupLayout.Pitch(availableMain, chrome);
+        double pitch = RatingPopupLayout.Pitch(availableMain, RatingPopupLayout.MainAxisInsets);
+
+        panel.CornerConfiguration = selector
+            ? UICornerConfiguration.CreateCapsule()
+            : UICornerConfiguration.CreateUniformCorners(
+                UICornerRadius.CreateFixed((nfloat)DesignTokens.RatingPopupCornerRadius));
 
         var entries = new List<RatingPopupEntryLayout>();
-        if (sources)
+        if (selector)
+        {
+            entries.Add(RatingPopupLayout.Selector(pitch, horizontal));
+        }
+        else if (sources)
         {
             foreach (var item in items)
             {
@@ -417,9 +409,7 @@ internal sealed class iOSRatingPopup : IDisposable
         else
         {
             double timeWidth = time == null ? 0 : Measure(time, _metaFont);
-            entries.Add(horizontal
-                ? RatingPopupLayout.SingleRow(Measure(file.DisplayName, _nameFont), timeWidth, pitch)
-                : RatingPopupLayout.SingleColumn(Measure(file.DisplayName, _nameFont), timeWidth, pitch));
+            entries.Add(RatingPopupLayout.SingleRow(Measure(file.DisplayName, _nameFont), timeWidth, pitch));
         }
 
         for (int index = 0; index < entries.Count; index++)
@@ -437,7 +427,7 @@ internal sealed class iOSRatingPopup : IDisposable
             }
             else
             {
-                AddName(content, file.DisplayName, x + entry.Name.X, top + entry.Name.Y, entry.Name.Width);
+                if (!selector) AddName(content, file.DisplayName, x + entry.Name.X, top + entry.Name.Y, entry.Name.Width);
                 if (time != null && entry.Time.Width > 0) AddTime(content, time, x + entry.Time.X, top + entry.Time.Y, entry.Time.Width);
                 AddRow(content, entry, top, pitch, Math.Max(0, file.Rating), false);
             }
@@ -460,12 +450,10 @@ internal sealed class iOSRatingPopup : IDisposable
         iOSViewGeometry.SetRectIfNeeded(panel, new CGRect(PanelFrame.X, PanelFrame.Y, PanelFrame.Width, PanelFrame.Height));
     }
 
-    /// <summary>新建玻璃面板：系统玻璃材质 + 令牌圆角，固定深色外观；材质由入场动效从无到有过渡。</summary>
+    /// <summary>新建玻璃面板：系统玻璃材质与固定深色外观；材质由入场动效从无到有过渡。</summary>
     /// <returns>面板视图。</returns>
     private static UIVisualEffectView CreatePanel() => new((UIVisualEffect?)null)
     {
-        CornerConfiguration = UICornerConfiguration.CreateUniformCorners(
-            UICornerRadius.CreateFixed((nfloat)DesignTokens.RatingPopupCornerRadius)),
         OverrideUserInterfaceStyle = UIUserInterfaceStyle.Dark,
         ClipsToBounds = true,
         AccessibilityViewIsModal = true,

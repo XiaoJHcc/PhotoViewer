@@ -2,13 +2,15 @@ using PhotoViewer.Core.Design;
 
 namespace PhotoViewer.Shared;
 
+public enum RatingPopupMode { Card, Sources, Selector }
+
 /// <summary>
 /// 星级弹窗中单个条目的排版结果；全部矩形相对条目左上角。
-/// 单条目（非冲突）只用文件名/时间与星排，来源条目（冲突）只用文件名/时间之外的信息与星排。
+/// 卡片条目包含文件名和可选时间，冲突条目包含文件名和来源信息，选择器只包含星排。
 /// </summary>
 /// <param name="Width">条目宽（星排步长决定）。</param>
 /// <param name="Height">条目总高（含上下内边距）。</param>
-/// <param name="TwoLines">文件名是否独占首行（或竖排条目是否显示时间行）。</param>
+/// <param name="TwoLines">文件名是否独占首行。</param>
 /// <param name="Name">文件名矩形；宽度已让出同行右侧的时间或来源信息。</param>
 /// <param name="Time">拍摄时间矩形；不显示时为全零。</param>
 /// <param name="Badge">来源标签矩形；单条目为全零。</param>
@@ -27,7 +29,7 @@ public readonly record struct RatingPopupEntryLayout(
     bool StarsHorizontal);
 
 /// <summary>
-/// 星级弹窗的平台中立排版（RATING-07）：星排步长按可用空间收窄、单条目横排/竖排、
+/// 星级弹窗的平台中立排版（RATING-07）：星排步长按可用空间收窄、横竖星级胶囊、横排卡片条目、
 /// 冲突来源条目沿 RATING-04 口径排文件名与信息行，以及面板尺寸、条目起点与分隔线位置。
 /// 全部矩形相对条目（或面板）左上角，各端只负责落成原生视图。
 /// </summary>
@@ -60,8 +62,11 @@ public static class RatingPopupLayout
     /// <summary>弹窗星排每格边长下限（28 点）。</summary>
     public static double MinSlot => DesignTokens.RatingPopupMinSlot;
 
-    /// <summary>竖排弹窗宽度（120 点）。</summary>
-    public static double ColumnWidth => DesignTokens.RatingPopupColumnWidth;
+    /// <summary>优先显示冲突来源，否则按入口决定是否显示文件信息。</summary>
+    public static RatingPopupMode ResolveMode(RatingPopupAnchor anchor, bool hasConflict)
+        => hasConflict ? RatingPopupMode.Sources
+            : anchor == RatingPopupAnchor.Card ? RatingPopupMode.Card
+            : RatingPopupMode.Selector;
 
     /// <summary>按可用空间求星排步长：六格均分后向下取整并夹在最短与标准步长之间。</summary>
     /// <param name="availableMain">弹窗沿星排主轴的可用长度。</param>
@@ -70,14 +75,8 @@ public static class RatingPopupLayout
     public static double Pitch(double availableMain, double chrome)
         => Math.Clamp(Math.Floor((availableMain - chrome) / RatingControlGeometry.SlotCount), MinSlot, Slot);
 
-    /// <summary>横排弹窗的星排外固定占用：面板与条目两侧内边距。</summary>
-    public static double HorizontalChrome => 2 * (Padding + EntryPadding);
-
-    /// <summary>竖排弹窗的星排外交叉占用：内边距、文件名带与可选的时间行。</summary>
-    /// <param name="hasTime">是否显示时间行。</param>
-    /// <returns>星排之外占用的交叉轴长度。</returns>
-    public static double ColumnChrome(bool hasTime)
-        => 2 * Padding + 2 * EntryPadding + InfoHeight + (hasTime ? MetaLineGap + InfoHeight : 0) + LabelGap;
+    /// <summary>主轴上星排之外的长度（含面板与条目两端的内边距）。</summary>
+    public static double MainAxisInsets => 2 * (Padding + EntryPadding);
 
     /// <summary>条目宽：六格星排加两侧条目内边距。</summary>
     /// <param name="pitch">星排步长。</param>
@@ -117,37 +116,15 @@ public static class RatingPopupLayout
             true);
     }
 
-    /// <summary>
-    /// 非冲突单条目的竖排版式：文件名一行，放得下时时间独占一行，下方竖排星列（5 在上、0 在下）居中。
-    /// </summary>
-    /// <param name="nameWidth">文件名实测宽度。</param>
-    /// <param name="timeWidth">拍摄时间实测宽度；0 表示没有时间。</param>
-    /// <param name="pitch">星排步长。</param>
-    /// <returns>条目排版结果。</returns>
-    public static RatingPopupEntryLayout SingleColumn(double nameWidth, double timeWidth, double pitch)
+    /// <summary>星级胶囊的六个方格，四周留等量内边距。</summary>
+    public static RatingPopupEntryLayout Selector(double pitch, bool horizontal)
     {
-        double width = ColumnWidth - 2 * Padding;
-        double content = width - 2 * EntryPadding;
-        var name = new LayoutRect(EntryPadding, EntryPadding, content, InfoHeight);
-        bool showTime = timeWidth > 0 && timeWidth <= content + .5;
-        var time = showTime
-            ? new LayoutRect(EntryPadding, name.MaxY + MetaLineGap, content, InfoHeight)
-            : default;
-        var stars = new LayoutRect(
-            (width - pitch) / 2,
-            (showTime ? time.MaxY : name.MaxY) + LabelGap,
-            pitch,
-            RatingControlGeometry.SlotCount * pitch);
-        return new RatingPopupEntryLayout(
-            width,
-            stars.MaxY + EntryPadding,
-            showTime,
-            name,
-            time,
-            default,
-            default,
-            stars,
-            false);
+        double length = RatingControlGeometry.SlotCount * pitch;
+        double width = horizontal ? length : pitch;
+        double height = horizontal ? pitch : length;
+        var stars = new LayoutRect(EntryPadding, EntryPadding, width, height);
+        return new RatingPopupEntryLayout(width + 2 * EntryPadding, height + 2 * EntryPadding,
+            false, default, default, default, default, stars, horizontal);
     }
 
     /// <summary>

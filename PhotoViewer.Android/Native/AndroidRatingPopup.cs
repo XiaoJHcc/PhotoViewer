@@ -22,10 +22,8 @@ using PhotoViewer.ViewModels.Main;
 
 namespace PhotoViewer.Android.Native;
 
-internal enum RatingPopupMode { Single, Sources }
-
 /// <summary>
-/// RATING-04/07：同一个窗口内玻璃面板承载普通评分和冲突来源。布局取共享几何，控件与反馈由 Android 承载；
+/// RATING-04/07：窗口内玻璃面板承载星级选择器与横排条目。布局取共享几何，控件与反馈由 Android 承载；
 /// 面板宿主是根视图最上层的 <see cref="AndroidGlassPopupLayer"/>，与菜单、筛选下拉共用同一宿主。
 /// </summary>
 internal sealed class AndroidRatingPopup : IDisposable
@@ -46,6 +44,7 @@ internal sealed class AndroidRatingPopup : IDisposable
     private LayoutRect _bounds;
     private RatingPopupDirection _direction;
     private RatingPopupAnchor _kind;
+    private RatingPopupMode _mode;
     private bool _horizontal;
     private bool _disposed;
     private ImageFile? _target;
@@ -74,7 +73,7 @@ internal sealed class AndroidRatingPopup : IDisposable
     internal int HeightPxForChecks => _session?.Frame.Height() ?? 0;
     internal View? ContentViewForChecks => _panel;
     internal double PitchDpForChecks => _panel?.Pitch ?? 0;
-    internal RatingPopupMode ModeForChecks => _target?.HasRatingConflict == true ? RatingPopupMode.Sources : RatingPopupMode.Single;
+    internal RatingPopupMode ModeForChecks => _mode;
     internal RatingPopupAnchor AnchorKindForChecks => _kind;
     internal Rect SlotRectPx(int entryIndex, int rating) => _panel?.SlotRect(entryIndex, rating) ?? new Rect();
     internal int? PreviewForChecks => _gesture?.Preview;
@@ -98,10 +97,10 @@ internal sealed class AndroidRatingPopup : IDisposable
         _main.ShowRatingSources(target);
         var panel = new RatingPanel(_host.Context!, Choose, Close);
         _panel = panel;
-        var frame = BuildPanel();
+        var frame = BuildPanel(RatingPopupLayout.ResolveMode(kind, target.HasRatingConflict));
         AndroidGlassPopupSession? opened = null;
         opened = _popupLayer.Show(new AndroidGlassPopupRequest(panel, frame,
-            DesignTokens.RatingPopupCornerRadius, AndroidUiTheme.FromToken(DesignTokens.ColorPopupBackground),
+            CornerRadius(frame), AndroidUiTheme.FromToken(DesignTokens.ColorPopupBackground),
             Color.Transparent!, 0, "星级", entry, () => OnClosed(opened)));
         if (opened == null)
         {
@@ -164,10 +163,12 @@ internal sealed class AndroidRatingPopup : IDisposable
         else _host.Post(() => { if (ReferenceEquals(_session, session)) _popupLayer.Dismiss(session); });
     }
 
-    private Entry[] ReadEntries()
+    private Entry[] ReadEntries(RatingPopupMode mode)
     {
         var file = _target!;
-        if (file.HasRatingConflict && _main.RatingSources.Items.Count > 0)
+        if (mode == RatingPopupMode.Selector)
+            return [new(null, null, null, null, file.Rating >= 0 ? file.Rating : null)];
+        if (mode == RatingPopupMode.Sources && _main.RatingSources.Items.Count > 0)
             return _main.RatingSources.Items.Select(item => new Entry(item.Name, null, item.Kind, item.Status,
                 item.State.State == XmpRatingState.Rated ? item.State.Value : null)).ToArray();
         return [new(file.DisplayName, ShotTimeText.FormatShortShotTime(file.PhotoDate), null, null,
@@ -177,18 +178,24 @@ internal sealed class AndroidRatingPopup : IDisposable
     private void Refresh()
     {
         if (_target == null || _session == null || _gesture != null) return;
-        var entries = ReadEntries();
-        if (_entries.SequenceEqual(entries)) return;
-        var frame = BuildPanel(entries);
-        _popupLayer.Update(_session, frame);
+        var mode = RatingPopupLayout.ResolveMode(_kind, _target.HasRatingConflict);
+        var entries = ReadEntries(mode);
+        if (_mode == mode && _entries.SequenceEqual(entries)) return;
+        var frame = BuildPanel(mode, entries);
+        _popupLayer.Update(_session, frame, CornerRadius(frame));
     }
 
-    private Rect BuildPanel(Entry[]? entries = null)
+    private double CornerRadius(Rect frame) => _mode == RatingPopupMode.Selector
+        ? Math.Min(frame.Width(), frame.Height()) / (2 * Density)
+        : DesignTokens.RatingPopupCornerRadius;
+
+    private Rect BuildPanel(RatingPopupMode mode, Entry[]? entries = null)
     {
-        _entries = entries ?? ReadEntries();
+        _mode = mode;
+        _entries = entries ?? ReadEntries(mode);
         var panel = _panel!;
-        bool horizontal = _horizontal || _entries[0].Kind != null;
-        var size = panel.Bind(_entries, horizontal, _bounds.Width, _bounds.Height);
+        bool selector = mode == RatingPopupMode.Selector;
+        var size = panel.Bind(_entries, selector, !selector || _horizontal, _bounds.Width, _bounds.Height);
         var entry = _anchor!;
         var frame = RatingControlGeometry.PlacePopup(ToDp(entry), _bounds, size.Width, size.Height,
             _direction, DesignTokens.RatingPopupGap);
@@ -328,7 +335,7 @@ internal sealed class AndroidRatingPopup : IDisposable
         => new(new ShapeAppearanceModel.Builder().SetAllCornerSizes(AndroidUiTheme.Dp(context, radius)).Build())
         { FillColor = ColorStateList.ValueOf(AndroidUiTheme.FromToken(color)) };
 
-    private sealed record Entry(string Name, string? Time, string? Kind, string? Status, int? Rating);
+    private sealed record Entry(string? Name, string? Time, string? Kind, string? Status, int? Rating);
 
     private sealed class RatingPanel : ScrollView
     {
@@ -354,25 +361,34 @@ internal sealed class AndroidRatingPopup : IDisposable
             ViewCompat.SetAccessibilityPaneTitle(this, "星级");
         }
 
-        internal (double Width, double Height) Bind(Entry[] entries, bool horizontal, double maxWidth, double maxHeight)
+        internal (double Width, double Height) Bind(Entry[] entries, bool selector, bool horizontal, double maxWidth, double maxHeight)
         {
             _content.RemoveAllViews();
             _rows.Clear();
             _stars.Clear();
             _entries = entries;
             _horizontal = horizontal;
+            double available = horizontal ? maxWidth : maxHeight;
+            double pitch = Math.Floor((available - RatingPopupLayout.MainAxisInsets) / StarCount);
+            if (selector)
+            {
+                double cross = (horizontal ? maxHeight : maxWidth) - RatingPopupLayout.MainAxisInsets;
+                pitch = Math.Min(pitch, cross);
+            }
+            Pitch = Math.Clamp(pitch, 1, TouchTarget);
+            double pad = RatingPopupLayout.Padding;
+            if (selector)
+            {
+                var layout = RatingPopupLayout.Selector(Pitch, horizontal);
+                AddRow(layout.Stars with { X = pad + layout.Stars.X, Y = pad + layout.Stars.Y }, entries[0].Rating);
+                return SetSize(layout.Width + 2 * pad, layout.Height + 2 * pad);
+            }
+
             var nameProbe = Label("", true);
             var metaProbe = Label("", false);
             double lineHeight = Math.Max(RatingPopupLayout.InfoHeight,
                 Math.Max(nameProbe.LineHeight, metaProbe.LineHeight) / Density);
             double extraLine = lineHeight - RatingPopupLayout.InfoHeight;
-            double chrome = horizontal ? RatingPopupLayout.HorizontalChrome
-                : RatingPopupLayout.ColumnChrome(entries[0].Time != null) + extraLine * (entries[0].Time != null ? 2 : 1);
-            double available = horizontal ? maxWidth : maxHeight;
-            Pitch = Math.Max(1, Math.Min(TouchTarget, Math.Floor((available - chrome) / StarCount)));
-            double columnWidth = Math.Min(maxWidth, RatingPopupLayout.ColumnWidth);
-            if (!horizontal) Pitch = Math.Min(Pitch, columnWidth);
-            double pad = RatingPopupLayout.Padding;
             double y = pad;
             double Measure(TextView probe, string? text) => text == null ? 0 : Math.Ceiling(probe.Paint!.MeasureText(text) / Density);
             for (int i = 0; i < entries.Length; i++)
@@ -383,41 +399,14 @@ internal sealed class AndroidRatingPopup : IDisposable
                 var layout = item.Kind is { } kind
                     ? RatingPopupLayout.Source(name, Math.Min(Pitch * StarCount - RatingPopupLayout.LabelGap,
                         Measure(metaProbe, kind) + 2 * badgePad), Measure(metaProbe, item.Status), Pitch)
-                    : horizontal ? RatingPopupLayout.SingleRow(name, time, Pitch)
-                    : RatingPopupLayout.SingleColumn(name, time, Pitch);
+                    : RatingPopupLayout.SingleRow(name, time, Pitch);
                 double second = layout.TwoLines ? extraLine : 0;
-                var nameRect = layout.Name;
-                var timeRect = layout.Time;
-                var stars = layout.Stars;
-                if (!horizontal && columnWidth < RatingPopupLayout.ColumnWidth)
-                {
-                    nameRect = nameRect with { Width = Math.Max(0, columnWidth - 2 * (pad + RatingPopupLayout.EntryPadding)) };
-                    timeRect = timeRect with { Width = time <= nameRect.Width ? nameRect.Width : 0 };
-                    stars = stars with { X = (columnWidth - 2 * pad - Pitch) / 2 };
-                }
-                AddLabel(item.Name, nameRect, y, true, 0);
-                AddLabel(item.Time, timeRect, y, false, second, end: true);
+                AddLabel(item.Name, layout.Name, y, true, 0);
+                AddLabel(item.Time, layout.Time, y, false, second, end: true);
                 AddLabel(item.Kind, layout.Badge, y, false, second, badge: true);
                 AddLabel(item.Status, layout.Status, y, false, second, end: true);
-                var row = stars with { X = pad + stars.X, Y = y + stars.Y + extraLine + second };
-                _stars.Add(row);
-                var buttons = new MaterialButton[StarCount];
-                for (int j = 0; j < StarCount; j++)
-                {
-                    int value = horizontal ? j : StarCount - 1 - j;
-                    var button = new MaterialButton(Context!, null, Resource.Attribute.pvGlassButtonStyle)
-                    {
-                        ContentDescription = value == 0 ? "清除星级" : $"{value} 星",
-                        BackgroundTintList = ColorStateList.ValueOf(Color.Transparent),
-                        CornerRadius = Px(Pitch / 2),
-                    };
-                    button.Click += (_, _) => _choose(value);
-                    buttons[value] = button;
-                    var slot = RatingControlGeometry.SlotRect(value, Pitch * StarCount, Pitch, horizontal, Pitch);
-                    Add(button, slot with { X = slot.X + row.X, Y = slot.Y + row.Y });
-                }
-                _rows.Add(buttons);
-                RenderRow(i, item.Rating);
+                var stars = layout.Stars;
+                AddRow(stars with { X = pad + stars.X, Y = y + stars.Y + extraLine + second }, item.Rating);
                 y += layout.Height + extraLine + second;
                 if (i == entries.Length - 1) continue;
                 var separator = new View(Context!);
@@ -428,10 +417,13 @@ internal sealed class AndroidRatingPopup : IDisposable
             }
             nameProbe.Dispose();
             metaProbe.Dispose();
-            double width = horizontal ? RatingPopupLayout.EntryWidth(Pitch) + 2 * pad : columnWidth;
-            double height = y + pad;
-            _content.LayoutParameters = new FrameLayout.LayoutParams(Px(width), Px(height));
-            return (width, Math.Min(maxHeight, height));
+            return SetSize(RatingPopupLayout.EntryWidth(Pitch) + 2 * pad, y + pad);
+
+            (double Width, double Height) SetSize(double width, double height)
+            {
+                _content.LayoutParameters = new FrameLayout.LayoutParams(Px(width), Px(height));
+                return (width, Math.Min(maxHeight, height));
+            }
 
             void AddLabel(string? text, LayoutRect rect, double top, bool primary, double shift, bool end = false, bool badge = false)
             {
@@ -445,6 +437,29 @@ internal sealed class AndroidRatingPopup : IDisposable
                 }
                 Add(label, rect with { X = rect.X + pad, Y = rect.Y + top + shift, Height = lineHeight });
             }
+        }
+
+        private void AddRow(LayoutRect row, int? rating)
+        {
+            _stars.Add(row);
+            var buttons = new MaterialButton[StarCount];
+            for (int j = 0; j < StarCount; j++)
+            {
+                int value = _horizontal ? j : StarCount - 1 - j;
+                var button = new MaterialButton(Context!, null, Resource.Attribute.pvGlassButtonStyle)
+                {
+                    ContentDescription = value == 0 ? "清除星级" : $"{value} 星",
+                    BackgroundTintList = ColorStateList.ValueOf(Color.Transparent),
+                    CornerRadius = Px(Pitch / 2),
+                };
+                button.Click += (_, _) => _choose(value);
+                buttons[value] = button;
+                var slot = RatingControlGeometry.SlotRect(value, Pitch * StarCount, Pitch, _horizontal, Pitch);
+                Add(button, slot with { X = slot.X + row.X, Y = slot.Y + row.Y });
+            }
+            int index = _rows.Count;
+            _rows.Add(buttons);
+            RenderRow(index, rating);
         }
 
         private TextView Label(string text, bool primary)
