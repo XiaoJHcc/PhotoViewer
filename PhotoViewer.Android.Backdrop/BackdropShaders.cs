@@ -2,7 +2,7 @@ namespace PhotoViewer.Android.Backdrop;
 
 /// <summary>
 /// 上游 AGSL 着色器的逐字副本（<c>com.kyant.backdrop.internal/Shaders.kt</c> 与示例
-/// <c>utils/InteractiveHighlight.kt</c>）。常量、函数与语句顺序与上游一致，不在这里改写算法。
+/// <c>utils/InteractiveHighlight.kt</c>）。径向高光在输出时遵循 Android Paint 着色器的预乘 alpha 契约。
 /// </summary>
 /// <remarks>
 /// 共享的圆角矩形有向距离场单独保存，折射与高光着色器按上游的 <c>$RoundedRectSDF</c>
@@ -219,7 +219,7 @@ internal static class BackdropShaders
         half4 main(float2 coord) {
             float dist = distance(coord, position);
             float intensity = smoothstep(radius, radius * 0.5, dist);
-            return color * intensity;
+            return half4(color.rgb * color.a, color.a) * intensity;
         }
         """;
 }

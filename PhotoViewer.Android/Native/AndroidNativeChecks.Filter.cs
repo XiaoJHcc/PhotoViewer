@@ -6,6 +6,7 @@ using Android.Graphics;
 using Android.OS;
 using Android.Views;
 using Android.Widget;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Main;
@@ -17,7 +18,8 @@ namespace PhotoViewer.Android.Native;
 /// <c>--es pv-check filter</c>（验收专用）：筛选入口的存活与锚点语义。
 /// 入口全部是真实 Material 按钮——点按经控件自身的派发链落到按钮点击，选项经主窗口内弹层的真实行视图
 /// 写回共享筛选 VM；覆盖跨内存探测周期存活、重复布局、无关设置、星级设置、行选择、锚点隐藏、
-/// 旋转与窄屏滚动，以及入窗呈现、点外不穿透、模态与焦点归还、键盘导航和屏内夹取。
+/// 旋转与窄屏滚动，以及入窗呈现、点外不穿透、模态与焦点归还、菜单行圆角与按压泛光、
+/// 键盘导航和屏内夹取。
 /// </summary>
 internal static partial class AndroidNativeChecks
 {
@@ -43,6 +45,8 @@ internal static partial class AndroidNativeChecks
         await RunStepAsync("filter 点外不穿透", CheckOutsideTapAsync);
         await RunStepAsync("filter 模态与焦点策略", CheckModalFocusAsync);
         await RunStepAsync("filter 更多菜单焦点策略", CheckMoreMenuFocusAsync);
+        await RunStepAsync("filter 与更多菜单排版", CheckGlassMenuLayoutAsync);
+        await RunStepAsync("filter 菜单行圆角与泛光", CheckMenuRowPressFeedbackAsync);
         await RunStepAsync("filter 弹层屏内夹取", CheckPopupClampAsync);
         await RunStepAsync("filter 星级多选", CheckGroupedRatingMultiSelectAsync);
         await RunStepAsync("filter 无关设置", CheckGroupedUnrelatedSettingAsync);
@@ -98,9 +102,10 @@ internal static partial class AndroidNativeChecks
         int ratingRows = rows.Count(row => row.Group == "Rating");
         Check("filter 菜单行语义图标与分组",
             rows.Count == 14 && sortRows == 3 && orderRows == 2 && ratingRows == 9
-            && rows.All(row => row.HasIcon && row.IconDescription.Length > 0),
+            && rows.Select(row => row.Group).Distinct().SequenceEqual(new[] { "Sort", "Rating", "Order" })
+            && rows.All(row => row.IconDescription.Length > 0),
             $"rows={rows.Count} sort={sortRows} order={orderRows} rating={ratingRows} "
-            + $"icons={rows.Count(row => row.HasIcon)} glyphs={string.Join("|", rows.Select(row => row.IconDescription))}");
+            + $"icons={rows.Count(row => row.IconDescription.Length > 0)} glyphs={string.Join("|", rows.Select(row => row.IconDescription))}");
         var all = FindFilterRow(filter, "全部");
         Check("filter 菜单初始勾选全部",
             all.HasValue && all.Value.Selected && all.Value.Marked,
@@ -377,6 +382,133 @@ internal static partial class AndroidNativeChecks
             + $"entry={entry.GetType().Name}");
     }
 
+    private static async Task CheckGlassMenuLayoutAsync()
+    {
+        var root = _root!;
+        try
+        {
+            if (!await OpenGroupedMenuAsync(root))
+            {
+                Check("FILTER-08 玻璃菜单布局", false, "筛选未打开");
+                return;
+            }
+            CheckMenuSeparators("FILTER-08", root.PopupLayer.SessionForChecks, 2);
+            var content = root.FilterBar.DropdownContentViewForChecks;
+            var first = FindMenuRowView(content, "文件名");
+            var second = FindMenuRowView(content, "拍摄时间");
+            var third = FindMenuRowView(content, "文件大小");
+            bool compact = first != null && second != null && third != null
+                && first.Top == second.Top && second.Top == third.Top && first.Left != second.Left
+                && Math.Abs(first.Width - third.Width) <= 1;
+            if ((root.Resources?.Configuration?.FontScale ?? 1f) <= 1.3f
+                && (root.FilterBar.DropdownAnchorForChecks.Width / AndroidUiTheme.Density(root.Context!)) >= 220)
+                Check("FILTER-08 排序选项并列且当前项有底色", compact && second!.Selected,
+                    $"compact={compact} selected={second?.Selected}");
+            root.DismissFilterDropdown();
+
+            var entry = root.PhoneMoreButton.IsShown ? root.PhoneMoreButton : root.FilterBar.ComboForChecks.Second;
+            entry.PerformClick();
+            CheckMenuSeparators("MENU-08", root.PopupLayer.SessionForChecks, 3);
+            var menu = root.PopupLayer.SessionForChecks?.Content;
+            bool exif = FindMenuRowView(menu, "EXIF") is { };
+            Check("MENU-08 更多菜单形态项", exif == (root.Form != ScreenForm.Wide) && menu != null,
+                $"exif={exif} form={root.Form}");
+
+            var main = _main!;
+            bool before = main.IsAnalysisViewVisible;
+            try
+            {
+                bool clicked = ClickMenuText(menu, "分析栏");
+                Check("MENU-08 更多菜单点选即关闭并执行", clicked && !root.PopupLayer.IsOpen
+                    && main.IsAnalysisViewVisible != before, $"clicked={clicked} open={root.PopupLayer.IsOpen}");
+            }
+            finally
+            {
+                main.IsAnalysisViewVisible = before;
+            }
+        }
+        finally
+        {
+            root.DismissFilterDropdown();
+            root.DismissPhotoMenu();
+            await Task.Delay(300);
+        }
+    }
+
+    private static async Task CheckMenuRowPressFeedbackAsync()
+    {
+        var root = _root!;
+        var filter = root.FilterBar;
+        var bar = _main!.FileVM.FilterBar;
+        var order = bar.SortOrder;
+        var otherOrder = order == SortOrder.Ascending ? SortOrder.Descending : SortOrder.Ascending;
+        bool animate = OperatingSystem.IsAndroidVersionAtLeast(33) && !root.PopupLayer.ReduceMotionForChecks;
+        try
+        {
+            if (!await OpenGroupedMenuAsync(root)) throw new InvalidOperationException("筛选未打开");
+            var session = filter.DropdownInstanceForChecks;
+            var row = FindMenuRowView(session?.Content, otherOrder == SortOrder.Ascending ? "升序" : "降序")
+                as AndroidGlassMenu.Row ?? throw new InvalidOperationException("方向行不可用");
+            using (var bounds = new Rect(0, 0, row.Width, row.Height))
+                row.RequestRectangleOnScreen(bounds, true);
+            await Task.Delay(100);
+            using var rect = ScreenRectOf(row);
+            bool Touch(MotionEventActions action, long down) =>
+                DispatchRootTouch(root, action, rect.CenterX(), rect.CenterY(), down);
+
+            long down = SystemClock.UptimeMillis();
+            bool handled = Touch(MotionEventActions.Down, down);
+            await WaitAsync(() => row.Pressed && (!animate || row.PressGlowForChecks > .05f), "行按压反馈", 1800);
+            var (edge, end) = PressedRowCoverage(row);
+            Check("MENU-03 普通行按压圆角与泛光",
+                handled && edge > 0 && end == 0 && (animate || row.PressGlowForChecks == 0),
+                $"edge={edge} end={end} animate={animate} glow={row.PressGlowForChecks:0.00}");
+            Touch(MotionEventActions.Cancel, down);
+            await WaitAsync(() => !row.Pressed && row.PressGlowForChecks <= .001f, "取消后泛光消退", 2000);
+            Check("MENU-03 取消手势不点选", bar.SortOrder == order && filter.IsDropdownOpen,
+                $"order={bar.SortOrder} open={filter.IsDropdownOpen}");
+
+            down = SystemClock.UptimeMillis();
+            Touch(MotionEventActions.Down, down);
+            Touch(MotionEventActions.Up, down);
+            await WaitAsync(() => bar.SortOrder == otherOrder, "快速点选立即写回", 1500);
+            if (animate)
+                await WaitAsync(() => row.PressGlowForChecks > .01f, "快速点选仍有泛光", 1500);
+            await WaitAsync(() => row.PressGlowForChecks <= .001f, "松手后泛光消退", 2000);
+            Check("MENU-03 快速点选保留反馈与同一菜单", ReferenceEquals(session, filter.DropdownInstanceForChecks),
+                $"order={bar.SortOrder} open={filter.IsDropdownOpen}");
+        }
+        finally
+        {
+            bar.SortOrder = order;
+            root.DismissFilterDropdown();
+            await Task.Delay(250);
+        }
+    }
+
+    private static (uint Edge, uint End) PressedRowCoverage(View row)
+    {
+        using var bitmap = Bitmap.CreateBitmap(row.Width, row.Height, Bitmap.Config.Argb8888!)!;
+        using (var canvas = new Canvas(bitmap)) row.Draw(canvas);
+        uint AlphaAt(int x, int y) => (uint)bitmap.GetPixel(x, y) >> 24;
+        uint edge = AlphaAt(row.Width / 2, 1);
+        int inset = Math.Min(row.Width, row.Height) / 4;
+        uint end = Math.Max(AlphaAt(inset, 1), AlphaAt(row.Width - 1 - inset, 1));
+        return (edge, end);
+    }
+
+    private static void CheckMenuSeparators(string rule, AndroidGlassPopupSession? session, int count)
+    {
+        var menu = (session?.Content is ScrollView scroll ? scroll.GetChildAt(0) : session?.Content) as AndroidGlassMenu;
+        var lines = menu == null ? [] : Enumerable.Range(0, menu.ChildCount).Select(menu.GetChildAt)
+            .Where(view => view?.GetType() == typeof(View)).OfType<View>().ToArray();
+        int inset = menu == null ? 0 : AndroidUiTheme.DpPx(menu, DesignTokens.MenuAndroidSeparatorInset);
+        Check($"{rule} 组间分割线为内缩发丝线", menu != null && lines.Length == count
+            && lines.All(line => line.Height == 1 && line.Left >= inset && menu.Width - line.Right >= inset
+                && line.ImportantForAccessibility == ImportantForAccessibility.No),
+            $"count={lines.Length}/{count} insets={string.Join(",", lines.Select(line => line.Left))}");
+    }
+
     /// <summary>
     /// 键盘导航：显式进入键盘模式后打开面板——弹层聚焦首行，关闭时焦点归还入口并显示玻璃焦点环；
     /// 菜单行可聚焦、焦点搜索停在面板内；回车执行当前行且保持展开，Esc 关闭。
@@ -586,8 +718,8 @@ internal static partial class AndroidNativeChecks
         root.DismissFilterDropdown();
         await Task.Delay(120);
         bool opened = await OpenGroupedMenuAsync(root);
-        Check("filter 分组菜单实际点按打开", opened && filter.IsDropdownOpen && filter.DropdownKindForChecks == "Grouped",
-            $"open={filter.IsDropdownOpen} kind={filter.DropdownKindForChecks} anchor={filter.DropdownAnchorForChecks}");
+        Check("filter 分组菜单实际点按打开", opened && filter.IsDropdownOpen,
+            $"open={filter.IsDropdownOpen} anchor={filter.DropdownAnchorForChecks}");
         if (!opened) return;
         var instance = filter.DropdownInstanceForChecks;
         var anchor = filter.DropdownAnchorForChecks;
@@ -612,8 +744,11 @@ internal static partial class AndroidNativeChecks
 
         // 与 OnLayout 完全相同的参数再 Arrange 一次（幂等几何），不能因调用次数收起。
         var (row, contentWidth, leadingInset) = CurrentFilterGeometry(root);
-        filter.Arrange(row, contentWidth, leadingInset);
-        filter.Arrange(row, contentWidth, leadingInset);
+        for (int pass = 0; pass < 2; pass++)
+        {
+            if (root.Form == ScreenForm.Wide) filter.Arrange(row, contentWidth, leadingInset);
+            else filter.ArrangePhone(root.Height > root.Width, filter.PhoneFilterFrame, filter.PhoneMoreFrame);
+        }
         filter.CommitLayout();
         Check("filter 分组菜单重复相同 Arrange 仍开",
             ReferenceEquals(filter.DropdownInstanceForChecks, instance) && filter.IsDropdownOpen

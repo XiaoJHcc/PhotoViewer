@@ -1,14 +1,10 @@
 using System;
 using System.Collections.Generic;
-using Android.App;
 using Android.Content;
 using Android.Content.Res;
 using Android.Graphics;
 using Android.Views;
 using Android.Widget;
-using AndroidX.Core.View;
-using AndroidX.Core.View.Accessibility;
-using Google.Android.Material.Button;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Main;
@@ -46,14 +42,7 @@ internal sealed class AndroidFilterBar : FrameLayout
     private LayoutRect _moreSegment;
     private AndroidGlassPopupLayer? _popupLayer;
     private AndroidGlassPopupSession? _dropdown;
-    private FilterMenu? _dropdownKind;
-    private int _dropdownItemCount;
-    private int _dropdownX;
-    private int _dropdownY;
-    private int _dropdownWidth;
-    private int _dropdownHeight;
-    private readonly List<FilterMenuRow> _dropdownRows = [];
-    private readonly string _checkGlyph = AndroidIcons.Check;
+    private readonly List<FilterSelection> _dropdownRows = [];
 
     /// <summary>排序控件矩形（dp，验收读取）；宽形态与手机入口都是筛选段。</summary>
     internal LayoutRect SortFrame => _frames.Sort;
@@ -101,10 +90,9 @@ internal sealed class AndroidFilterBar : FrameLayout
     internal bool IsDropdownOpen => _dropdown is { IsOpen: true };
     /// <summary>当前下拉的面板实例（验收比对跨周期是不是同一个）。</summary>
     internal AndroidGlassPopupSession? DropdownInstanceForChecks => _dropdown;
-    /// <summary>当前下拉类型（验收读取）。</summary>
-    internal string? DropdownKindForChecks => _dropdownKind?.ToString();
-    /// <summary>当前下拉的屏幕定位与尺寸（px，验收读取）。</summary>
-    internal (int X, int Y, int Width, int Height) DropdownAnchorForChecks => (_dropdownX, _dropdownY, _dropdownWidth, _dropdownHeight);
+    /// <summary>当前下拉的位置与尺寸（窗口 px，验收读取）。</summary>
+    internal (int X, int Y, int Width, int Height) DropdownAnchorForChecks => _dropdown is { Frame: var frame }
+        ? (frame.Left, frame.Top, frame.Width(), frame.Height()) : default;
     /// <summary>当前下拉的内容视图（验收用真实行视图点选用）。</summary>
     internal View? DropdownContentViewForChecks => _dropdown?.Content;
     /// <summary>当前下拉的行状态（验收读取；关闭时为空）。</summary>
@@ -116,7 +104,7 @@ internal sealed class AndroidFilterBar : FrameLayout
             var rows = new List<FilterMenuRowForChecks>(_dropdownRows.Count);
             foreach (var row in _dropdownRows)
                 rows.Add(new FilterMenuRowForChecks(row.Label, row.Kind.ToString(), row.IsSelected(),
-                    row.Marked, row.HasIcon, row.IconDescription));
+                    row.Row.Marked, $"fluent {row.IconId}"));
             return rows;
         }
     }
@@ -124,41 +112,56 @@ internal sealed class AndroidFilterBar : FrameLayout
     /// <summary>冲突三角之外的浮层协调：下拉打开前通知宿主收起其它临时浮窗（RATING-04）。</summary>
     internal event Action? DropdownOpening;
 
-    /// <summary>「更多」段点按：交给宿主弹出主图菜单，并传入焦点归还用的入口。</summary>
-    internal event Action<LayoutRect, View>? MoreRequested;
+    /// <summary>「更多」段点按：由宿主按真实入口视图弹出主图菜单。</summary>
+    internal event Action<View>? MoreRequested;
 
-    /// <summary>
-    /// 筛选入口在屏幕矩形处弹出同一套三组菜单（排序/方向单选、星级多选；点选立即应用并保持展开）。
-    /// </summary>
-    /// <param name="anchor">入口的屏幕矩形（px）。</param>
-    internal void OpenGroupedMenuAtScreen(Rect anchor)
+    private void OpenGroupedMenu(View entry)
     {
-        if (Context is not Activity) return;
+        if (_popupLayer is not { } layer || !entry.IsShown) return;
         DropdownOpening?.Invoke();
         DismissDropdown();
         var filter = _main.FileVM.FilterBar;
-        var labels = new List<string>();
-        var values = new List<object>();
-        var kinds = new List<FilterMenu>();
+        using var anchor = AndroidGlassMenu.WindowAnchor(layer, entry);
+        var menu = new AndroidGlassMenu(layer, anchor);
+
+        void AddRow(List<AndroidGlassMenu.Row> group, FilterMenu kind, string label, string iconId,
+            Func<bool> selected, Action activate)
+        {
+            var row = new AndroidGlassMenu.Row(Context!, label, AndroidIcons.Glyph(iconId), selected(), () =>
+            {
+                activate();
+                RefreshDropdownSelection();
+            });
+            group.Add(row);
+            _dropdownRows.Add(new FilterSelection(kind, label, iconId, row, selected));
+        }
+
+        // FILTER-08：顶部三列排序，下面是星级多选与方向单选。
+        List<AndroidGlassMenu.Row> sort = [], rating = [], order = [];
         foreach (var option in filter.SortModes)
         {
-            labels.Add(option.DisplayName);
-            values.Add((SortMode)option.Value);
-            kinds.Add(FilterMenu.Sort);
-        }
-        foreach (var option in filter.SortOrders)
-        {
-            labels.Add(option.DisplayName);
-            values.Add((SortOrder)option.Value);
-            kinds.Add(FilterMenu.Order);
+            var value = (SortMode)option.Value;
+            AddRow(sort, FilterMenu.Sort, option.DisplayName, AndroidIcons.SortModeId(value),
+                () => filter.SortMode == value, () => filter.SortMode = value);
         }
         foreach (var option in filter.RatingFilters)
         {
-            labels.Add(option.DisplayName);
-            values.Add(option.Key);
-            kinds.Add(FilterMenu.Rating);
+            string value = option.Key;
+            AddRow(rating, FilterMenu.Rating, option.DisplayName, AndroidIcons.RatingFilterId(value),
+                () => filter.IsRatingFilterSelected(value), () => filter.ToggleRatingFilter(value));
         }
-        ShowGroupedMenu(labels, values, kinds, PopupGeometryForScreen(anchor, labels.Count));
+        foreach (var option in filter.SortOrders)
+        {
+            var value = (SortOrder)option.Value;
+            AddRow(order, FilterMenu.Order, option.DisplayName,
+                value == SortOrder.Ascending ? IconCatalog.FilterAscending : IconCatalog.FilterDescending,
+                () => filter.SortOrder == value, () => filter.SortOrder = value);
+        }
+        menu.AddGroup(sort, preferCompact: true);
+        menu.AddGroup(rating);
+        menu.AddGroup(order);
+        _dropdown = menu.Show(layer, anchor, "筛选", entry, OnDropdownClosed, anchoredToButton: true);
+        if (_dropdown == null) _dropdownRows.Clear();
     }
 
     /// <summary>构建筛选条并订阅共享筛选状态。</summary>
@@ -170,12 +173,12 @@ internal sealed class AndroidFilterBar : FrameLayout
         _main = main;
         _glassLayer = glassLayer;
         _filterButton = new AndroidGlassButton(context, AndroidIcons.Filter, "筛选");
-        _filterButton.Click += (_, _) => OpenGroupedMenu(ScreenRectOf(_filterSegment));
+        _filterButton.Click += (_, _) => OpenGroupedMenu(_filterButton);
         _filterButton.Visibility = ViewStates.Gone;
         AddView(_filterButton);
         _combo = new AndroidGlassCombo(context, AndroidIcons.Filter, "筛选", AndroidIcons.More, "更多");
-        _combo.First.Click += (_, _) => OpenGroupedMenu(ScreenRectOf(_filterSegment));
-        _combo.Second.Click += (_, _) => MoreRequested?.Invoke(_moreSegment, _combo.Second);
+        _combo.First.Click += (_, _) => OpenGroupedMenu(_combo.First);
+        _combo.Second.Click += (_, _) => MoreRequested?.Invoke(_combo.Second);
         _combo.Visibility = ViewStates.Gone;
         AddView(_combo);
         _glassLayer?.Register(_filterButton);
@@ -248,7 +251,7 @@ internal sealed class AndroidFilterBar : FrameLayout
     private void RefreshDropdownSelection()
     {
         if (_dropdown is not { IsOpen: true }) return;
-        foreach (var row in _dropdownRows) row.SyncSelection();
+        foreach (var row in _dropdownRows) row.Row.SetChecked(row.IsSelected());
     }
 
     /// <summary>
@@ -371,358 +374,30 @@ internal sealed class AndroidFilterBar : FrameLayout
         Invalidate();
     }
 
-    /// <summary>
-    /// 布局收尾：拿最终几何核对已打开下拉的锚点。锚点仍在可视区内且位置变了就跟着挪，
-    /// 控件被隐藏/滚出可视区（真正失效）才收起。
-    /// </summary>
+    /// <summary>锚点仍可见时保留打开时的菜单几何，否则收起。</summary>
     internal void CommitLayout()
     {
-        if (_dropdown is not { IsOpen: true } session || _dropdownKind is not { } kind) return;
-        if (!IsAttachedToWindow || Visibility != ViewStates.Visible || !IsShown)
-        {
-            DismissDropdown();
-            return;
-        }
-        // 分组菜单的锚点与尺寸在打开时确定；重排不改变它，入口失效时才收起。
-        if (kind == FilterMenu.Grouped) return;
-        if (!IsFrameVisible(_filterSegment))
-        {
-            DismissDropdown();
-            return;
-        }
-        var geometry = PopupGeometry(_filterSegment, _dropdownItemCount);
-        if (geometry.X == _dropdownX && geometry.Y == _dropdownY
-            && geometry.Width == _dropdownWidth && geometry.Height == _dropdownHeight) return;
-        _dropdownX = geometry.X;
-        _dropdownY = geometry.Y;
-        _dropdownWidth = geometry.Width;
-        _dropdownHeight = geometry.Height;
-        if (_popupLayer == null) return;
-        var screen = new Rect(geometry.X, geometry.Y, geometry.X + geometry.Width, geometry.Y + geometry.Height);
-        _popupLayer.Update(session, _popupLayer.ToWindow(screen));
+        if (_dropdown?.Entry is not { } entry) return;
+        using var visible = new Rect();
+        if (!entry.IsAttachedToWindow || !entry.IsShown || !entry.GetLocalVisibleRect(visible)
+            || !visible.Contains(entry.Width / 2, entry.Height / 2)) DismissDropdown();
     }
 
-    /// <summary>控件当前是否还能作为锚点：中心点落在本视图（含父级裁剪）的可见区域内。</summary>
-    /// <param name="frame">dp 矩形。</param>
-    /// <returns>可见返回 true。</returns>
-    private bool IsFrameVisible(LayoutRect frame)
+    private void OnDropdownClosed()
     {
-        var visible = new Rect();
-        if (!GetLocalVisibleRect(visible)) return false;
-        double density = AndroidUiTheme.Density(Context!);
-        int x = (int)Math.Round((frame.X + frame.Width / 2) * density);
-        int y = (int)Math.Round((frame.Y + frame.Height / 2) * density);
-        return visible.Contains(x, y);
-    }
-
-    /// <summary>打开分组菜单（入口屏幕矩形由真实视图位置换算）。</summary>
-    /// <param name="anchor">入口屏幕矩形（px）。</param>
-    private void OpenGroupedMenu(Rect anchor) => OpenGroupedMenuAtScreen(anchor);
-
-    /// <summary>本视图内 dp 矩形换算成屏幕 px。</summary>
-    private Rect ScreenRectOf(LayoutRect frame)
-    {
-        double density = AndroidUiTheme.Density(Context!);
-        var location = new int[2];
-        GetLocationOnScreen(location);
-        return new Rect(
-            location[0] + (int)Math.Round(frame.X * density),
-            location[1] + (int)Math.Round(frame.Y * density),
-            location[0] + (int)Math.Round(frame.MaxX * density),
-            location[1] + (int)Math.Round(frame.MaxY * density));
-    }
-
-    /// <summary>手机与宽形态共用的三组菜单：排序/方向单选、星级多选；点选立即应用并保持展开，就地更新勾选。</summary>
-    private void ShowGroupedMenu(List<string> labels, List<object> values,
-        List<FilterMenu> kinds, (int X, int Y, int Width, int Height) geometry)
-    {
-        if (Context is not Activity activity) return;
-        double density = AndroidUiTheme.Density(activity);
-        int itemHeight = (int)Math.Round(40 * density);
-        int padding = (int)Math.Round(4 * density);
-        int dividerHeight = Math.Max(1, (int)Math.Round(density));
-        var content = new LinearLayout(activity) { Orientation = global::Android.Widget.Orientation.Vertical };
-        content.SetPadding(padding, padding, padding, padding);
-        _dropdownRows.Clear();
-
-        void AddDivider()
-        {
-            var divider = new View(activity);
-            divider.SetBackgroundColor(AndroidUiTheme.Divider);
-            content.AddView(divider, new global::Android.Widget.LinearLayout.LayoutParams(global::Android.Views.ViewGroup.LayoutParams.MatchParent, dividerHeight));
-        }
-
-        for (int index = 0; index < labels.Count; index++)
-        {
-            if (index > 0 && kinds[index] != kinds[index - 1]) AddDivider();
-            var row = new FilterMenuRow(this, activity, kinds[index], values[index], labels[index], density,
-                ApplyFilterMenuRow);
-            _dropdownRows.Add(row);
-            content.AddView(row.View, new global::Android.Widget.LinearLayout.LayoutParams(global::Android.Views.ViewGroup.LayoutParams.MatchParent, itemHeight));
-        }
-
-        var metrics = Resources?.DisplayMetrics;
-        int screenHeight = metrics?.HeightPixels ?? Height;
-        int maxHeight = Math.Max(itemHeight, screenHeight - (int)Math.Round(16 * density));
-        int contentHeight = labels.Count * itemHeight + 2 * dividerHeight + padding * 2;
-        View popupContent = content;
-        if (contentHeight > maxHeight)
-        {
-            var scroll = new ScrollView(activity);
-            scroll.AddView(content);
-            popupContent = scroll;
-        }
-        if (_popupLayer == null) return;
-        var screen = new Rect(geometry.X, geometry.Y, geometry.X + geometry.Width, geometry.Y + geometry.Height);
-        AndroidGlassPopupSession? opened = null;
-        opened = _popupLayer.Show(new AndroidGlassPopupRequest(popupContent,
-            _popupLayer.ToWindow(screen), 8, AndroidUiTheme.ControlFill, AndroidUiTheme.ControlBorder, 1,
-            "筛选", MenuEntryView(), () => OnDropdownClosed(opened)));
-        if (opened == null) return;
-        _dropdown = opened;
-        _dropdownKind = FilterMenu.Grouped;
-        _dropdownItemCount = labels.Count;
-        _dropdownX = geometry.X;
-        _dropdownY = geometry.Y;
-        _dropdownWidth = geometry.Width;
-        _dropdownHeight = geometry.Height;
-    }
-
-    /// <summary>下拉关闭后清空本控件持有的面板状态（含被其它弹层替换的情况）。</summary>
-    private void OnDropdownClosed(AndroidGlassPopupSession? session)
-    {
-        if (session != null && !ReferenceEquals(session, _dropdown)) return;
         _dropdown = null;
-        _dropdownKind = null;
         _dropdownRows.Clear();
-        Refresh();
     }
 
-    /// <summary>下拉关闭后要归还焦点的入口：竖屏圆按钮，其余形态为合体的筛选段。</summary>
-    private View MenuEntryView() => _phonePortrait ? _filterButton : _combo.First;
+    /// <summary>关闭当前筛选菜单；淡出中的面板不算打开。</summary>
+    internal bool DismissDropdown() => _popupLayer?.Dismiss(_dropdown) == true;
 
-    /// <summary>手机入口的屏幕矩形算菜单位置；按钮下方不足时翻到上方。</summary>
-    private (int X, int Y, int Width, int Height) PopupGeometryForScreen(Rect anchor, int itemCount)
-    {
-        double density = AndroidUiTheme.Density(Context!);
-        var metrics = Resources?.DisplayMetrics;
-        int screenWidth = metrics?.WidthPixels ?? Width;
-        int screenHeight = metrics?.HeightPixels ?? Height;
-        int menuWidth = Math.Max((int)Math.Round(180 * density), anchor.Width());
-        int itemHeight = (int)Math.Round(40 * density);
-        int padding = (int)Math.Round(4 * density);
-        int groupBreaks = 2;
-        int contentHeight = itemCount * itemHeight + groupBreaks * Math.Max(1, (int)Math.Round(density)) + padding * 2;
-        int maxHeight = Math.Max(itemHeight, screenHeight - (int)Math.Round(16 * density));
-        int menuHeight = Math.Min(contentHeight, maxHeight);
-        int margin = (int)Math.Round(8 * density);
-        int x = anchor.Left;
-        int below = anchor.Bottom + (int)Math.Round(2 * density);
-        int above = anchor.Top - menuHeight - (int)Math.Round(2 * density);
-        int y = below + menuHeight > screenHeight - margin ? above : below;
-        x = Math.Clamp(x, margin, Math.Max(margin, screenWidth - menuWidth - margin));
-        y = Math.Clamp(y, margin, Math.Max(margin, screenHeight - menuHeight - margin));
-        return (x, y, menuWidth, menuHeight);
-    }
+    private sealed record FilterSelection(FilterMenu Kind, string Label, string IconId,
+        AndroidGlassMenu.Row Row, Func<bool> IsSelected);
 
-    /// <summary>按被点控件的真实屏幕位置算下拉窗口的位置与尺寸（夹在屏幕内；空间不足翻到上方）。</summary>
-    /// <param name="frame">控件矩形（本视图 dp）。</param>
-    /// <param name="itemCount">菜单项数。</param>
-    /// <returns>屏幕 px 矩形。</returns>
-    private (int X, int Y, int Width, int Height) PopupGeometry(LayoutRect frame, int itemCount)
-    {
-        double density = AndroidUiTheme.Density(Context!);
-        var barLocation = new int[2];
-        GetLocationOnScreen(barLocation);
-        var metrics = Resources?.DisplayMetrics;
-        int screenWidth = metrics?.WidthPixels ?? Width;
-        int screenHeight = metrics?.HeightPixels ?? Height;
-        int menuWidth = Math.Max((int)Math.Round(160 * density), (int)Math.Round(frame.Width * density));
-        int itemHeight = (int)Math.Round(40 * density);
-        int padding = (int)Math.Round(4 * density);
-        int contentHeight = itemCount * itemHeight + padding * 2;
-        int maxHeight = Math.Max(itemHeight, screenHeight - (int)Math.Round(16 * density));
-        int menuHeight = Math.Min(contentHeight, maxHeight);
-
-        int margin = (int)Math.Round(8 * density);
-        int x = barLocation[0] + (int)Math.Round(frame.X * density);
-        int below = barLocation[1] + (int)Math.Round(frame.MaxY * density) + (int)Math.Round(2 * density);
-        int above = barLocation[1] + (int)Math.Round(frame.Y * density) - menuHeight - (int)Math.Round(2 * density);
-        int y = below;
-        if (y + menuHeight > screenHeight - margin) y = above;
-        x = Math.Clamp(x, margin, Math.Max(margin, screenWidth - menuWidth - margin));
-        y = Math.Clamp(y, margin, Math.Max(margin, screenHeight - menuHeight - margin));
-        return (x, y, menuWidth, menuHeight);
-    }
-
-    /// <summary>关闭筛选下拉（返回键优先消费）。</summary>
-    /// <returns>关闭了返回 true；淡出中的旧面板不算打开。</returns>
-    internal bool DismissDropdown()
-    {
-        var session = _dropdown;
-        if (session == null) return false;
-        _dropdown = null;
-        _dropdownKind = null;
-        _dropdownRows.Clear();
-        return _popupLayer?.Dismiss(session) == true;
-    }
-
-    /// <summary>应用菜单行的选择；星级行按 FILTER-03 切换并联合集，排序/方向行单选。</summary>
-    /// <param name="row">被点选的行。</param>
-    private void ApplyFilterMenuRow(FilterMenuRow row)
-    {
-        var filter = _main.FileVM.FilterBar;
-        switch (row.Kind)
-        {
-            case FilterMenu.Sort:
-                filter.SortMode = (SortMode)row.Value;
-                break;
-            case FilterMenu.Order:
-                filter.SortOrder = (SortOrder)row.Value;
-                break;
-            default:
-                filter.ToggleRatingFilter((string)row.Value);
-                break;
-        }
-        RefreshDropdownSelection();
-    }
-
-    /// <summary>读取菜单行对应的共享筛选状态（「全部」只在无条件时选中）。</summary>
-    /// <param name="kind">行类型。</param>
-    /// <param name="value">行取值。</param>
-    /// <returns>已选中返回 true。</returns>
-    private bool IsFilterMenuValueSelected(FilterMenu kind, object value)
-    {
-        var filter = _main.FileVM.FilterBar;
-        return kind switch
-        {
-            FilterMenu.Sort => Equals(value, filter.SortMode),
-            FilterMenu.Order => Equals(value, filter.SortOrder),
-            _ => filter.IsRatingFilterSelected((string)value),
-        };
-    }
-
-    /// <summary>菜单行语义图标统一取共享 Fluent。</summary>
-    private static (ImageView Icon, string Description) CreateMenuIcon(Activity activity, FilterMenu kind,
-        object value)
-    {
-        string id = kind switch
-        {
-            FilterMenu.Sort => AndroidIcons.SortModeId((SortMode)value),
-            FilterMenu.Order => (SortOrder)value == SortOrder.Ascending
-                ? IconCatalog.FilterAscending
-                : IconCatalog.FilterDescending,
-            _ => AndroidIcons.RatingFilterId((string)value),
-        };
-        var color = id == IconCatalog.FilterConflict ? AndroidUiTheme.StarConflict : AndroidUiTheme.TextSecondary;
-        return GlyphIcon(activity, id, color);
-    }
-
-    private static (ImageView Icon, string Description) GlyphIcon(Activity activity, string id, Color color)
-    {
-        // 图标槽取菜单图标槽位令牌，字号取菜单图标字号：字形按排版框中心落在槽内，不按字体 advance 参与文本排版。
-        var drawable = new AndroidGlyphDrawable(activity, AndroidIcons.Glyph(id), AndroidIcons.Filled(id), null,
-            DesignTokens.MenuIconFontSize, DesignTokens.MenuIconSize);
-        drawable.SetTintList(ColorStateList.ValueOf(color));
-        var icon = new ImageView(activity);
-        icon.SetImageDrawable(drawable);
-        icon.SetScaleType(ImageView.ScaleType.Center);
-        icon.ImportantForAccessibility = ImportantForAccessibility.No;
-        return (icon, $"fluent {id}");
-    }
-
-    /// <summary>dp → px（布局参数）。</summary>
-    private static int Px(double density, double dp) => Math.Max(0, (int)Math.Round(dp * density));
-
-    /// <summary>
-    /// 分组菜单的一行：语义图标 + 文案 + 勾选字形。读屏把行作为可勾选控件，
-    /// 勾选态直接读共享筛选 VM，外部状态变化时只需重绘勾选字形。
-    /// </summary>
-    private sealed class FilterMenuRow
-    {
-        private readonly AndroidFilterBar _owner;
-        private readonly TextView _mark;
-
-        internal FilterMenuRow(AndroidFilterBar owner, Activity activity, FilterMenu kind, object value,
-            string label, double density, Action<FilterMenuRow> onApply)
-        {
-            _owner = owner;
-            Kind = kind;
-            Value = value;
-            Label = label;
-            var row = new LinearLayout(activity) { Orientation = global::Android.Widget.Orientation.Horizontal };
-            row.SetGravity(GravityFlags.CenterVertical);
-            row.SetPadding(Px(density, 12), 0, Px(density, 8), 0);
-            row.Clickable = true;
-            row.Focusable = true;
-            var (icon, description) = CreateMenuIcon(activity, kind, value);
-            IconDescription = description;
-            HasIcon = icon.Drawable != null;
-            row.AddView(icon, new global::Android.Widget.LinearLayout.LayoutParams(
-                Math.Max(1, Px(density, DesignTokens.MenuIconSize)),
-                global::Android.Views.ViewGroup.LayoutParams.MatchParent)
-            {
-                RightMargin = Px(density, DesignTokens.MenuIconGap),
-            });
-            var text = new TextView(activity) { Text = label, TextSize = (float)DesignTokens.DropdownFontSize };
-            text.SetTextColor(AndroidUiTheme.TextPrimary);
-            text.Gravity = GravityFlags.CenterVertical;
-            row.AddView(text, new global::Android.Widget.LinearLayout.LayoutParams(
-                0, global::Android.Views.ViewGroup.LayoutParams.MatchParent) { Weight = 1 });
-            _mark = new TextView(activity)
-            {
-                Gravity = GravityFlags.Center,
-            };
-            _mark.SetTextSize(global::Android.Util.ComplexUnitType.Dip, (float)DesignTokens.MenuIconFontSize);
-            _mark.SetTypeface(AndroidUiTheme.IconTypeface(activity), TypefaceStyle.Normal);
-            _mark.SetTextColor(AndroidUiTheme.Accent);
-            _mark.ImportantForAccessibility = ImportantForAccessibility.No;
-            row.AddView(_mark, new global::Android.Widget.LinearLayout.LayoutParams(
-                Px(density, 20), global::Android.Views.ViewGroup.LayoutParams.MatchParent));
-            ViewCompat.SetAccessibilityDelegate(row, new RowAccessibility(this));
-            row.Click += (_, _) => onApply(this);
-            View = row;
-            SyncSelection();
-        }
-
-        internal View View { get; }
-        internal FilterMenu Kind { get; }
-        internal object Value { get; }
-        internal string Label { get; }
-        internal string IconDescription { get; }
-        internal bool HasIcon { get; }
-        internal bool Marked => !string.IsNullOrEmpty(_mark.Text);
-
-        internal bool IsSelected() => _owner.IsFilterMenuValueSelected(Kind, Value);
-
-        /// <summary>就地更新勾选字形；不重建行、不移动焦点或菜单滚动位置。</summary>
-        internal void SyncSelection()
-        {
-            string text = IsSelected() ? _owner._checkGlyph : string.Empty;
-            if (_mark.Text == text) return;
-            _mark.Text = text;
-        }
-
-        /// <summary>读屏勾选态直接取共享筛选状态，外部变化无需重建节点。</summary>
-        private sealed class RowAccessibility : AccessibilityDelegateCompat
-        {
-            private readonly FilterMenuRow _row;
-
-            internal RowAccessibility(FilterMenuRow row) => _row = row;
-
-            public override void OnInitializeAccessibilityNodeInfo(View? host, AccessibilityNodeInfoCompat? info)
-            {
-                base.OnInitializeAccessibilityNodeInfo(host, info);
-                if (info == null) return;
-                info.Checkable = true;
-                info.SetChecked(_row.IsSelected());
-            }
-        }
-    }
-
-    /// <summary>筛选下拉行状态（验收用）：标签、分组、共享选中态、实际勾选字形与图标资源。</summary>
+    /// <summary>筛选下拉行状态（验收用）。</summary>
     internal readonly record struct FilterMenuRowForChecks(
-        string Label, string Group, bool Selected, bool Marked, bool HasIcon, string IconDescription);
+        string Label, string Group, bool Selected, bool Marked, string IconDescription);
 
     /// <summary>注销玻璃锚点并释放视图资源。</summary>
     /// <param name="disposing">是否释放托管资源。</param>
@@ -772,6 +447,5 @@ internal sealed class AndroidFilterBar : FrameLayout
     private static LayoutRect Offset(LayoutRect origin, LayoutRect local)
         => new(origin.X + local.X, origin.Y + local.Y, local.Width, local.Height);
 
-    /// <summary>筛选菜单类型（分组菜单内部行类型仍按三组区分）。</summary>
-    private enum FilterMenu { Sort, Order, Rating, Grouped }
+    private enum FilterMenu { Sort, Rating, Order }
 }

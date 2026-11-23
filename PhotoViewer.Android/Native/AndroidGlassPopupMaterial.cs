@@ -24,7 +24,7 @@ namespace PhotoViewer.Android.Native;
 /// </para>
 /// <para>
 /// 每个面板持有独立的 <see cref="BackdropEffectScope"/>、效果快照、轮廓缓存与高光绘制器：
-/// 效果快照只在密度、面板尺寸或圆角变化时重建，轮廓路径与画笔跨帧复用，不逐帧新建节点、着色器或 Path。
+/// 效果快照只在配方、密度、面板尺寸或圆角变化时重建，轮廓路径与画笔跨帧复用，不逐帧新建节点、着色器或 Path。
 /// 由 <see cref="AndroidGlassPopupLayer.Surface"/> 接管所有权，替换或宿主释放时调用 <see cref="Dispose"/>。
 /// </para>
 /// </remarks>
@@ -33,9 +33,11 @@ internal sealed class AndroidGlassPopupMaterial : IGlassPopupSurface, IDisposabl
     private readonly BackdropEffectScope _scope = new();
     private readonly BackdropHighlightRenderer _highlightRenderer = new();
     private readonly BackdropHighlight _highlight;
+    private readonly BackdropHighlight _menuHighlight;
     private readonly Paint _fillPaint = new(PaintFlags.AntiAlias);
     private readonly Paint _borderPaint = new(PaintFlags.AntiAlias);
     private readonly Color _surfaceColor;
+    private readonly Color _menuSurfaceColor;
     private readonly float _saturation;
     private readonly float _blurRadiusDp;
     private readonly float _lensHeightDp;
@@ -44,7 +46,7 @@ internal sealed class AndroidGlassPopupMaterial : IGlassPopupSurface, IDisposabl
     private BackdropRoundedRectangle _shape;
     private float _shapeRadiusDp = float.NaN;
     private BackdropEffect _effect = BackdropEffect.None;
-    private EffectKey _effectKey = new(float.NaN, 0f, 0f, float.NaN);
+    private EffectKey _effectKey = new(float.NaN, 0f, 0f, float.NaN, GlassPopupAppearance.Default);
     private long _effectBuildCount;
     private bool _disposed;
 
@@ -61,6 +63,13 @@ internal sealed class AndroidGlassPopupMaterial : IGlassPopupSurface, IDisposabl
             widthDp: (float)DesignTokens.PopupGlassAndroidHighlightWidth,
             style: new BackdropPlainHighlightStyle(
                 AndroidUiTheme.FromToken(DesignTokens.PopupGlassAndroidHighlightColor)));
+
+        _menuSurfaceColor = AndroidUiTheme.Layer(DesignTokens.PopupGlassAndroidMenuSurfaceColor,
+            DesignTokens.PopupGlassAndroidMenuSurfaceOpacity);
+        _menuHighlight = new BackdropHighlight(
+            widthDp: (float)DesignTokens.PopupGlassAndroidHighlightWidth,
+            style: new BackdropPlainHighlightStyle(
+                AndroidUiTheme.FromToken(DesignTokens.PopupGlassAndroidMenuHighlightColor)));
 
         _shape = new BackdropRoundedRectangle(0f, BackdropCornerStyle.Continuous);
         _outline = new BackdropShapeOutline(_shape);
@@ -104,10 +113,11 @@ internal sealed class AndroidGlassPopupMaterial : IGlassPopupSurface, IDisposabl
             EnsureEffect(context);
             BackdropDrawer.Draw(canvas, context.Backdrop, _effect, context.Draw);
             _fillPaint.SetStyle(Paint.Style.Fill);
-            _fillPaint.Color = _surfaceColor;
+            bool menu = context.Appearance == GlassPopupAppearance.Menu;
+            _fillPaint.Color = menu ? _menuSurfaceColor : _surfaceColor;
             canvas.DrawPath(_outline.Path, _fillPaint);
             if (BackdropCapabilities.IsRuntimeShaderSupported)
-                _highlightRenderer.Draw(canvas, _outline, _highlight);
+                _highlightRenderer.Draw(canvas, _outline, menu ? _menuHighlight : _highlight);
         }
         finally
         {
@@ -153,22 +163,26 @@ internal sealed class AndroidGlassPopupMaterial : IGlassPopupSurface, IDisposabl
 
     private void EnsureEffect(in GlassPopupSurfaceContext context)
     {
-        var key = new EffectKey(context.Density, context.WidthPx, context.HeightPx, context.CornerRadiusDp);
+        var key = new EffectKey(context.Density, context.WidthPx, context.HeightPx, context.CornerRadiusDp, context.Appearance);
         if (key == _effectKey) return;
         _effectKey = key;
 
+        bool menu = context.Appearance == GlassPopupAppearance.Menu;
+        float lensHeight = menu ? (float)DesignTokens.PopupGlassAndroidMenuLensHeight : _lensHeightDp;
+        float lensAmount = menu ? (float)DesignTokens.PopupGlassAndroidMenuLensAmount : _lensAmountDp;
         _scope.Shape = _shape;
         _scope.Apply(scope =>
         {
             scope.ColorControls(saturation: _saturation);
             scope.Blur(scope.DpToPx(_blurRadiusDp));
             if (BackdropCapabilities.IsRuntimeShaderSupported)
-                scope.Lens(scope.DpToPx(_lensHeightDp), scope.DpToPx(_lensAmountDp), depthEffect: true);
+                scope.Lens(scope.DpToPx(lensHeight), scope.DpToPx(lensAmount), depthEffect: true);
         }, context.Density, context.WidthPx, context.HeightPx);
         _effect = _scope.Build();
         _effectBuildCount++;
     }
 
     /// <summary>效果快照的重建键：密度、面板局部分辨率与请求圆角。</summary>
-    private readonly record struct EffectKey(float Density, float WidthPx, float HeightPx, float CornerRadiusDp);
+    private readonly record struct EffectKey(float Density, float WidthPx, float HeightPx, float CornerRadiusDp,
+        GlassPopupAppearance Appearance);
 }

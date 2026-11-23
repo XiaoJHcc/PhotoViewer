@@ -133,13 +133,18 @@ public sealed class BackdropInteractiveHighlight : IDisposable
     /// <summary>按下：位置钉在触点，进度弹向 1（减少动态效果时立即到位）。</summary>
     /// <param name="x">触点 X（px）。</param>
     /// <param name="y">触点 Y（px）。</param>
-    public void Begin(float x, float y)
+    /// <param name="initialProgress">最低起始亮度；默认从当前进度起步。</param>
+    public void Begin(float x, float y, float initialProgress = 0f)
     {
         _startX = x;
         _startY = y;
         _offsetX.SnapTo(0f);
         _offsetY.SnapTo(0f);
-        if (AnimationsEnabled) _pressProgress.AnimateTo(1f);
+        if (AnimationsEnabled)
+        {
+            if (initialProgress > PressProgress) _pressProgress.SnapTo(Math.Min(1f, initialProgress));
+            _pressProgress.AnimateTo(1f);
+        }
         else _pressProgress.SnapTo(1f);
     }
 
@@ -267,6 +272,7 @@ public sealed class BackdropInteractiveHighlight : IDisposable
             "position",
             Math.Clamp(xPx, 0f, widthPx),
             Math.Clamp(yPx, 0f, heightPx));
+        _paint.Alpha = 255;
         _paint.SetShader(shader.PlatformShader);
         canvas.DrawRect(0f, 0f, widthPx, heightPx, _paint);
     }

@@ -113,6 +113,8 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
     /// <summary>当前是否有逻辑上打开的弹层（淡出期间已算关闭）。</summary>
     internal bool IsOpen => _session is { IsOpen: true };
 
+    internal AndroidInsets MenuSafeInsets { get; set; }
+
     /// <summary>当前打开的弹层实例（验收读取；关闭后为空）。</summary>
     internal AndroidGlassPopupSession? SessionForChecks => _session;
 
@@ -437,6 +439,7 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
         private readonly BackdropShapeOutlineProvider _outlineProvider;
         private BackdropRoundedRectangle _shape;
         private float _cornerRadiusDp = float.NaN;
+        private GlassPopupAppearance _appearance;
         private Color _fill;
         private Color _border;
         private float _borderWidth;
@@ -460,6 +463,7 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
             RemoveAllViews();
             if (request.Content.Parent is ViewGroup old) old.RemoveView(request.Content);
             AddView(request.Content, new LayoutParams(LayoutParams.MatchParent, LayoutParams.MatchParent));
+            _appearance = request.Appearance;
             _fill = request.Fill;
             _border = request.Border;
             _density = Resources?.DisplayMetrics?.Density ?? 1f;
@@ -495,7 +499,7 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
             {
                 var context = new GlassPopupSurfaceContext(this, canvas, Layer?.Backdrop,
                     BackdropDrawContext.ForView(this, _location), Width, Height, _cornerRadiusDp, RadiusPx, _density,
-                    _fill, _border, _borderWidth);
+                    _fill, _border, _borderWidth, _appearance);
                 surface.Draw(context);
                 return;
             }
@@ -554,7 +558,8 @@ internal sealed class AndroidGlassPopupRequest
     /// <param name="entry">关闭后归还焦点的入口。</param>
     /// <param name="onClosed">逻辑关闭回调（清空调用方持有的弹层状态）。</param>
     public AndroidGlassPopupRequest(View content, Rect frame, double cornerRadiusDp,
-        Color fill, Color border, double borderWidthDp, string paneTitle, View? entry, Action? onClosed)
+        Color fill, Color border, double borderWidthDp, string paneTitle, View? entry, Action? onClosed,
+        GlassPopupAppearance appearance = GlassPopupAppearance.Default)
     {
         Content = content;
         Frame = frame;
@@ -563,6 +568,7 @@ internal sealed class AndroidGlassPopupRequest
         Border = border;
         BorderWidthDp = borderWidthDp;
         PaneTitle = paneTitle;
+        Appearance = appearance;
         Entry = entry;
         OnClosed = onClosed;
     }
@@ -574,6 +580,7 @@ internal sealed class AndroidGlassPopupRequest
     internal Color Border { get; }
     internal double BorderWidthDp { get; }
     internal string PaneTitle { get; }
+    internal GlassPopupAppearance Appearance { get; }
     internal View? Entry { get; }
     internal Action? OnClosed { get; }
 }
@@ -611,12 +618,14 @@ internal interface IGlassPopupSurface
     void Draw(in GlassPopupSurfaceContext context);
 }
 
+internal enum GlassPopupAppearance { Default, Menu }
+
 /// <summary>一次面板表面绘制所需的取样源与几何（供玻璃材质接入）。</summary>
 internal readonly struct GlassPopupSurfaceContext
 {
     internal GlassPopupSurfaceContext(View panel, Canvas canvas, IBackdrop? backdrop,
         BackdropDrawContext draw, int widthPx, int heightPx, float cornerRadiusDp, float cornerRadiusPx,
-        float density, Color fill, Color border, float borderWidthPx)
+        float density, Color fill, Color border, float borderWidthPx, GlassPopupAppearance appearance)
     {
         Panel = panel;
         Canvas = canvas;
@@ -630,6 +639,7 @@ internal readonly struct GlassPopupSurfaceContext
         Fill = fill;
         Border = border;
         BorderWidthPx = borderWidthPx;
+        Appearance = appearance;
     }
 
     /// <summary>正在绘制的面板视图（取样上下文与失效重绘的宿主）。</summary>
@@ -652,4 +662,5 @@ internal readonly struct GlassPopupSurfaceContext
     /// <summary>正式色层描边。</summary>
     internal Color Border { get; }
     internal float BorderWidthPx { get; }
+    internal GlassPopupAppearance Appearance { get; }
 }

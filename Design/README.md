@@ -31,7 +31,7 @@
 | 范围 | 对标强度 |
 |---|---|
 | 主窗口分区结构、几何、占位、边距、方形约束、动效参数 | 必须对齐 tokens 与 Web 参考壳导出的几何 |
-| 主窗口内的小型控件（下拉、菜单、按钮外观、tooltip、滚动条） | 功能与操作必须一致；外观可以原生。自绘的主屏按钮（Web）按上述对标链以 macOS 原生壳为外观参照（TOOLBAR-10）；自绘的下拉、菜单与 tooltip（Web、Android 自绘弹层）以旧壳 Avalonia Fluent 深色外观为准，数值见 `dropdown.*`、`popup.*`、`menu.*`、`tooltip.*` 令牌 |
+| 主窗口内的小型控件（下拉、菜单、按钮外观、tooltip、滚动条） | 功能与操作必须一致；外观可以原生。自绘的主屏按钮（Web）按上述对标链以 macOS 原生壳为外观参照（TOOLBAR-10）；自绘的下拉、菜单与 tooltip 默认以旧壳 Avalonia Fluent 深色为基准；Android 主屏玻璃菜单按 MENU-03 / FILTER-08 以 iOS 为参照，外观取 Android 菜单令牌 |
 | 设置窗口、工具窗口 | 分类、项目、行为与持久化必须一致；工具窗口的导航与容器与该平台设置统一（macOS 原生侧栏、iPad 分组列表 + 设置同款 sheet、Windows 常驻分类、Android Material 浮层）；视觉应当遵循各平台规范（macOS 系统设置、Win11 设置、iOS 设置、Material 3） |
 | 主屏图标 | 语义必须一致：Apple 使用 SF Symbols，Windows / Android 共用 `icons.json` 的 Fluent UI System Icons 映射、归一字体与视觉尺寸；Web 使用 `icon.font` / `icon.fontSolid` 与 `icon.*` 码位。标称尺寸取各控件的 glyph 字号令牌，光学对齐与实现规则见 ICON-01–05 |
 | 色彩、画质、物理 100% | 必须一致，由验收素材与色卡判定，不由 Web 参考壳判定（其照片为合成数据） |

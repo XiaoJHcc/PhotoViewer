@@ -366,18 +366,7 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         _phoneExif.ExifActivated += ShowExifTools;
         _phoneExif.Visibility = ViewStates.Gone;
         _sceneLayer.AddView(_phoneExif);
-        _filterBar.MoreRequested += (rect, entry) =>
-        {
-            var location = new int[2];
-            _filterBar.GetLocationOnScreen(location);
-            var photoLocation = new int[2];
-            _photo.GetLocationOnScreen(photoLocation);
-            double density = AndroidUiTheme.Density(Context!);
-            ShowPhotoMenu(
-                (float)(location[0] - photoLocation[0] + (rect.X + rect.Width / 2) * density),
-                (float)(location[1] - photoLocation[1] + (rect.Y + rect.Height) * density),
-                entry);
-        };
+        _filterBar.MoreRequested += ShowPhotoMenuAt;
 
         _detailHighlight = new DetailFrameView(activity);
         _detailHighlight.Visibility = ViewStates.Gone;
@@ -709,8 +698,9 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             LayoutOverlays(density);
             UpdateDetailHighlight();
             UpdateNavigationIndicator();
-            // 弹层宿主始终铺满窗口，面板在其中按自身窗口矩形落位（与主屏布局解耦）。
-            LayoutChild(_popupLayer, new LayoutRect(0, 0, widthDp, heightDp), density);
+            // 弹层宿主始终铺满窗口，菜单在其中使用当前安全区。
+            _popupLayer.MenuSafeInsets = _insets;
+            LayoutChild(_popupLayer, fullRect, density);
             // 筛选条滚动宿主的 BringToFront 会把它移到弹层之上；弹层仍须是最后一个子视图（绘制与命中最上层）。
             if (ChildCount > 0 && !ReferenceEquals(GetChildAt(ChildCount - 1), _popupLayer))
                 _popupLayer.BringToFront();
@@ -1303,157 +1293,74 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         return true;
     }
 
-    /// <summary>手机形态的「更多」按钮：在按钮下方打开与长按相同的主图菜单（MENU-08）。</summary>
-    /// <param name="anchor">锚点视图。</param>
-    internal void ShowPhotoMenuAt(View anchor)
+    /// <summary>「更多」按钮与主图长按共用菜单（MENU-08）。</summary>
+    private void ShowPhotoMenuAt(View entry)
     {
-        var location = new int[2];
-        anchor.GetLocationOnScreen(location);
-        var photoLocation = new int[2];
-        _photo.GetLocationOnScreen(photoLocation);
-        ShowPhotoMenu(location[0] - photoLocation[0] + anchor.Width / 2f,
-            location[1] - photoLocation[1] + anchor.Height, anchor);
+        if (!entry.IsShown) return;
+        using var anchor = AndroidGlassMenu.WindowAnchor(_popupLayer, entry);
+        PresentPhotoMenu(anchor, entry);
     }
 
-    /// <summary>主图长按菜单：在手指处弹出自绘面板；面板整体夹在屏幕内，超出高度时可滚动。</summary>
-    /// <param name="localX">触点在本视图内的像素横坐标。</param>
-    /// <param name="localY">触点在本视图内的像素纵坐标。</param>
-    /// <param name="entry">关闭后归还焦点的入口（手机「更多」按钮；长按为空则回到主图）。</param>
-    internal void ShowPhotoMenu(float localX, float localY, View? entry = null)
+    /// <summary>在主图手势给出的触点打开菜单。</summary>
+    internal void ShowPhotoMenu(float localX, float localY)
     {
-        if (Context is not Activity activity) return;
+        var location = new int[2];
+        _photo.GetLocationOnScreen(location);
+        int x = location[0] + (int)localX, y = location[1] + (int)localY;
+        using var screen = new Rect(x, y, x, y);
+        using var anchor = _popupLayer.ToWindow(screen);
+        PresentPhotoMenu(anchor, null);
+    }
+
+    private void PresentPhotoMenu(Rect anchor, View? entry)
+    {
         DismissPhotoMenu();
         CloseRatingPopup();
         _filterBar.DismissDropdown();
         _photoMenuItems.Clear();
-        var photoLocation = new int[2];
-        _photo.GetLocationOnScreen(photoLocation);
-        int touchX = photoLocation[0] + (int)localX;
-        int touchY = photoLocation[1] + (int)localY;
-        double density = AndroidUiTheme.Density(activity);
-        var metrics = Resources?.DisplayMetrics;
-        int screenWidth = metrics?.WidthPixels ?? Width;
-        int screenHeight = metrics?.HeightPixels ?? Height;
-        int menuWidth = (int)Math.Round(224 * density);
-        int itemHeight = (int)Math.Round(44 * density);
-        int padding = (int)Math.Round(4 * density);
-        int dividerHeight = Math.Max(1, (int)Math.Round(density));
         var state = new PhotoMenuState(
             _main.CurrentFile != null, _main.IsThumbnailViewVisible, _main.IsAnalysisViewVisible,
             _main.IsControlViewVisible, _session.IsEnhanced, _main.IsExifViewVisible);
-        // MENU-01：触屏没有「打开文件…」；EXIF 开关只在手机形态出现。
-        var menuItems = PhotoMenuCatalog.Build(state, includeOpenFile: false, includeExif: _form != ScreenForm.Wide);
-        int groupCount = 1;
-        for (int index = 1; index < menuItems.Count; index++)
-            if (menuItems[index].Group != menuItems[index - 1].Group) groupCount++;
-        int contentHeight = itemHeight * menuItems.Count + dividerHeight * (groupCount - 1) + padding * 2;
-        int maxHeight = Math.Max(itemHeight * 2, screenHeight - (int)Math.Round(16 * density));
-        int menuHeight = Math.Min(contentHeight, maxHeight);
-
-        var content = new LinearLayout(activity) { Orientation = Orientation.Vertical };
-        content.SetPadding(padding, padding, padding, padding);
-
-        void AddDivider()
-        {
-            var divider = new View(activity);
-            divider.SetBackgroundColor(AndroidUiTheme.Divider);
-            content.AddView(divider, new LinearLayout.LayoutParams(LayoutParams.MatchParent, dividerHeight));
-        }
-
-        void AddItem(string label, bool? check, PhotoMenuItemId itemId, Action action, bool enabled = true)
-        {
-            // 验收快照：只记录本次构建出的项（含实际绘制的图标字形），不参与布局、命中或可点击性判断。
-            string iconGlyph = AndroidIcons.ForMenu(itemId);
-            _photoMenuItems.Add((label, check == true, enabled, iconGlyph));
-            var row = new LinearLayout(activity) { Orientation = Orientation.Horizontal };
-            row.SetGravity(GravityFlags.CenterVertical);
-            row.SetPadding((int)Math.Round(12 * density), 0, (int)Math.Round(10 * density), 0);
-            row.Clickable = enabled;
-            row.Focusable = enabled;
-            row.Enabled = enabled;
-            row.ContentDescription = check == true ? $"{label}，已勾选" : label;
-            // MENU-03：勾选列在行首，命令图标紧随其后，文本占剩余宽度；勾号与图标都不发声，读屏只念整行名称。
-            var mark = new TextView(activity)
-            {
-                Text = check == true ? AndroidIcons.Check : "",
-                Gravity = GravityFlags.Center,
-            };
-            mark.SetTextSize(global::Android.Util.ComplexUnitType.Dip, 15);
-            mark.SetTypeface(AndroidUiTheme.IconTypeface(activity), TypefaceStyle.Normal);
-            mark.SetTextColor(enabled ? AndroidUiTheme.Accent : AndroidUiTheme.TextSecondary);
-            mark.ImportantForAccessibility = ImportantForAccessibility.No;
-            row.AddView(mark, new LinearLayout.LayoutParams((int)Math.Round(24 * density), LayoutParams.MatchParent));
-            // MENU-03/MENU-06：命令图标走纯绘制图标槽，按排版框中心落在图标槽令牌内，不参与文本排版，
-            // 因此不会被字体 advance 推宽、换行或静默缩小；槽位与间距仍是行几何令牌。
-            var icon = new AndroidGlyphView(activity, iconGlyph,
-                DesignTokens.MenuIconFontSize,
-                enabled ? AndroidUiTheme.TextPrimary : AndroidUiTheme.TextSecondary,
-                DesignTokens.MenuIconSize);
-            icon.Enabled = enabled;
-            var iconParams = new LinearLayout.LayoutParams(
-                (int)Math.Round(DesignTokens.MenuIconSize * density), LayoutParams.MatchParent)
-            {
-                RightMargin = (int)Math.Round(DesignTokens.MenuIconGap * density),
-            };
-            row.AddView(icon, iconParams);
-            var text = new TextView(activity)
-            {
-                Text = label,
-                TextSize = 15,
-            };
-            text.SetTextColor(enabled ? AndroidUiTheme.TextPrimary : AndroidUiTheme.TextSecondary);
-            text.Gravity = GravityFlags.CenterVertical;
-            text.Enabled = enabled;
-            row.AddView(text, new LinearLayout.LayoutParams(0, LayoutParams.MatchParent) { Weight = 1 });
-            row.Click += (_, _) =>
-            {
-                if (!enabled) return;
-                DismissPhotoMenu();
-                action();
-            };
-            content.AddView(row, new LinearLayout.LayoutParams(LayoutParams.MatchParent, itemHeight));
-        }
-
-        // MENU-01/MENU-06：共享目录给出固定文案、分组、勾选与可用性；这里只落原生行、图标与执行入口。
+        var items = PhotoMenuCatalog.Build(state, includeOpenFile: false, includeExif: _form != ScreenForm.Wide);
+        var menu = new AndroidGlassMenu(_popupLayer, anchor);
+        var rows = new List<AndroidGlassMenu.Row>();
         int group = -1;
-        foreach (var item in menuItems)
+        foreach (var item in items)
         {
             if (item.Group != group)
             {
-                if (group >= 0) AddDivider();
+                menu.AddGroup(rows);
+                rows.Clear();
                 group = item.Group;
             }
-            Action action = item.Id switch
-            {
-                PhotoMenuItemId.OpenFile or PhotoMenuItemId.OpenFolder => () => _ = _main.FolderVM.OpenFilePickerAsync(),
-                PhotoMenuItemId.Filmstrip => () => _main.ToggleThumbnailView(),
-                PhotoMenuItemId.Analysis => () => _main.ToggleAnalysisView(),
-                PhotoMenuItemId.ControlBar => () => _main.ToggleControlView(),
-                PhotoMenuItemId.Exif => () => _main.ToggleExifView(),
-                PhotoMenuItemId.Enhance => () => _session.ToggleEnhanced(),
-                PhotoMenuItemId.Tools => ShowTools,
-                _ => () => _main.OpenSettingWindow(),
-            };
-            AddItem(item.Text, item.IsCheck ? item.Checked : null, item.Id, action, item.Enabled);
+            string glyph = AndroidIcons.ForMenu(item.Id);
+            _photoMenuItems.Add((item.Text, item.Checked, item.Enabled, glyph));
+            rows.Add(new AndroidGlassMenu.Row(Context!, item.Text, glyph, item.IsCheck ? item.Checked : null,
+                () =>
+                {
+                    DismissPhotoMenu();
+                    ExecutePhotoMenuItem(item.Id);
+                }, item.Enabled));
         }
+        menu.AddGroup(rows);
+        _photoMenu = menu.Show(_popupLayer, anchor, "菜单", entry ?? _photo, () => _photoMenu = null,
+            anchoredToButton: entry != null);
+    }
 
-        View popupContent = content;
-        if (contentHeight > maxHeight)
+    private void ExecutePhotoMenuItem(PhotoMenuItemId id)
+    {
+        switch (id)
         {
-            var scroll = new ScrollView(activity) { VerticalScrollBarEnabled = true };
-            scroll.AddView(content);
-            popupContent = scroll;
+            case PhotoMenuItemId.OpenFile:
+            case PhotoMenuItemId.OpenFolder: _ = _main.FolderVM.OpenFilePickerAsync(); break;
+            case PhotoMenuItemId.Filmstrip: _main.ToggleThumbnailView(); break;
+            case PhotoMenuItemId.Analysis: _main.ToggleAnalysisView(); break;
+            case PhotoMenuItemId.ControlBar: _main.ToggleControlView(); break;
+            case PhotoMenuItemId.Exif: _main.ToggleExifView(); break;
+            case PhotoMenuItemId.Enhance: _session.ToggleEnhanced(); break;
+            case PhotoMenuItemId.Tools: ShowTools(); break;
+            case PhotoMenuItemId.Settings: _main.OpenSettingWindow(); break;
         }
-
-        int margin = (int)Math.Round(8 * density);
-        int x = Math.Clamp(touchX, margin, Math.Max(margin, screenWidth - menuWidth - margin));
-        int y = Math.Clamp(touchY, margin, Math.Max(margin, screenHeight - menuHeight - margin));
-        var screen = new Rect(x, y, x + menuWidth, y + menuHeight);
-        AndroidGlassPopupSession? opened = null;
-        opened = _popupLayer.Show(new AndroidGlassPopupRequest(popupContent, _popupLayer.ToWindow(screen),
-            8, AndroidUiTheme.ControlFill, AndroidUiTheme.ControlBorder, 1, "菜单", entry ?? _photo,
-            () => { if (ReferenceEquals(_photoMenu, opened)) _photoMenu = null; }));
-        _photoMenu = opened;
     }
 
     /// <summary>Activity 恢复（SAF 返回）后恢复栏位内容与主图：选择器期间可能丢失一帧/一次重建。</summary>

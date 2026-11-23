@@ -43,7 +43,7 @@
 | `backdrop/src/commonMain/kotlin/com/kyant/backdrop/shadow/Shadow.kt` | `BackdropShadow.cs` | 半径 24dp、下移半径/6、黑 10%、整体不透明度 1、默认混合模式 |
 | `backdrop/src/commonMain/kotlin/com/kyant/backdrop/shadow/ShadowModifier.kt` | `BackdropShadowRenderer.cs` | 离屏层按 `(ceil(w + 4r + dx), ceil(h + 4r + dy))` 录，层内画形状与清除遮罩，再画在 `(−2r, −2r)` |
 | `backdrop/src/commonMain/kotlin/com/kyant/backdrop/DrawBackdropModifier.kt` | `BackdropDrawer.cs` + `BackdropEffectLayer.cs` | 只移植「按效果链绘制背景」与玻璃元素自己的离屏效果层归属；高光/阴影由独立绘制器按该节点的先后关系组合，`onDrawBehind/Surface/Front`、`exportedBackdrop` 由接入层自行处理 |
-| `app/src/commonMain/kotlin/com/kyant/backdrop/catalog/utils/InteractiveHighlight.kt` | `BackdropInteractiveHighlight.cs` | 按压进度与位置弹簧（默认阻尼 0.5、刚度 300，阈值 0.001 / 0.01）、整面白 8% + 跟手径向白 15%、按下即起手、移动 `snapTo`、抬手弹回；颜色/半径/弹簧/动画开关可由产品令牌参数化，默认值保持上游；另提供只画径向高光的 `DrawRadial` 供接入层悬停态使用；含逐字 AGSL |
+| `app/src/commonMain/kotlin/com/kyant/backdrop/catalog/utils/InteractiveHighlight.kt` | `BackdropInteractiveHighlight.cs` | 按压进度与位置弹簧（默认阻尼 0.5、刚度 300，阈值 0.001 / 0.01）、整面白 8% + 跟手径向白 15%、按下即起手、移动 `snapTo`、抬手弹回；颜色/半径/弹簧/动画开关可由产品令牌参数化，默认值保持上游；另提供只画径向高光的 `DrawRadial` 供接入层悬停态使用；AGSL 按 Android Paint 的预乘 alpha 契约输出 |
 | `app/src/commonMain/kotlin/com/kyant/backdrop/catalog/utils/DragGestureInspector.kt` | `BackdropPressTracker.cs` | `Initial` + 主通道两次 Down 的语义落到 `MotionEvent`：Down 起手、Move 跟手、PointerUp 换手、Up 结束、Cancel 取消；不检查触控容差 |
 | `app/src/commonMain/kotlin/com/kyant/backdrop/catalog/components/LiquidButton.kt` | `BackdropInteractiveTransform.cs` | 只搬运 `layerBlock` 的形变公式：交叉轴按压放大、`maxOffset × tanh(initialDerivative × offset / maxOffset)`、按方向投影的 X/Y 拉伸；4dp、0.05 等由调用方按配方给出 |
 | `shapes/src/commonMain/kotlin/com/kyant/shapes/RoundedRectangularShape.kt` / `Capsule.kt` / `RoundedRectangle.kt` / `RoundedCornerStyle.kt` / `RectangleCornerRadii.kt` | `BackdropShape.cs` | `BackdropShape`、`BackdropCornerRadii`、`BackdropCornerStyle`、`Capsule`、`RoundedRectangle`、插值形状；圆角以 dp 给出，按密度换算 |
@@ -57,7 +57,7 @@
 
 ## AGSL 着色器
 
-全部逐字搬运，函数、常量、语句顺序与 uniform 名不改；只有空行的行尾空白按本仓库格式清理。
+折射和边缘着色器按上游移植；径向交互高光输出预乘 alpha，`Paint` 不透明度保持为 1，强度只由着色器的颜色 uniform 控制。
 
 | 上游 | 着色器 | 本模块常量 | 用途 | 最低 API |
 |---|---|---|---|---|
@@ -208,7 +208,7 @@ highlight.Draw(canvas, outline, BackdropHighlight.Default); // 内容之后
 
 1. 取上游新提交的 `backdrop/` 与 `shapes/` 子树（`git log --oneline <旧 sha>..<新 sha> -- backdrop`），逐文件对照本表判断是否有移植范围内改动。
 2. 只看上表「本模块」列涉及的文件；未移植清单中的组件不因升级而自动进入本库。
-3. 逐条同步到对应 C# 文件：效果链顺序、`padding` 提升条件、色彩矩阵常量、透镜 uniform、着色器源码必须与上游逐字一致，不得就地优化或夹带产品逻辑。
+3. 逐条同步到对应 C# 文件：效果链顺序、`padding` 提升条件、色彩矩阵常量、透镜 uniform 与着色器源码均以锁定上游为基准；交互高光保留上文 Android Paint 的预乘适配。
 4. 形状公式与常量按 Shapes 标签逐项对照；输出仍是 `android.graphics.Path` 与 `ViewOutlineProvider`，不引入 Compose 类型。
 5. 交互弹簧参数、起手/跟手/换手语义与 `layerBlock` 形变公式按示例同步；产品差异留在接入层。
 6. 更新本文件的上游提交、版本与映射表；在真机（API 31/32 与 API 33+）各跑一次分级回归，确认 `BackdropCapabilities.Describe()` 与实际外观一致。

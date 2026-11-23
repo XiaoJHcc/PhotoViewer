@@ -117,9 +117,13 @@ public static class DesignTokens
     public const uint ColorFilterToggleHoverBorder = 0xFF666666u;
     /// <summary>color.filter.toggle.hover.foreground（color） FILTER-06：相似聚类开关未勾选悬停文字。</summary>
     public const uint ColorFilterToggleHoverForeground = 0xFFCCCCCCu;
+    /// <summary>color.menu.android.separator（color） MENU-03：玻璃菜单组间的低对比发丝线。</summary>
+    public const uint ColorMenuAndroidSeparator = 0x26FFFFFFu;
+    /// <summary>color.menu.android.sort.selected（color） FILTER-08：当前排序选项的圆角状态底。</summary>
+    public const uint ColorMenuAndroidSortSelected = 0x26FFFFFFu;
     /// <summary>color.menu.foreground.disabled（color） MENU-07：菜单与下拉禁用文字（白 40%）。</summary>
     public const uint ColorMenuForegroundDisabled = 0x66FFFFFFu;
-    /// <summary>color.menu.item.hover（color） MENU-03：菜单项/下拉项悬停底（白 10%），直角。</summary>
+    /// <summary>color.menu.item.hover（color） MENU-03：菜单项/下拉项悬停底（白 10%），形状取平台菜单几何。</summary>
     public const uint ColorMenuItemHover = 0x19FFFFFFu;
     /// <summary>color.menu.item.pressed（color） MENU-03：菜单项/下拉项按下底（白 20%）。</summary>
     public const uint ColorMenuItemPressed = 0x33FFFFFFu;
@@ -489,6 +493,46 @@ public static class DesignTokens
     public const int InputLongPressDelay = 500;
     /// <summary>input.longPress.slop（pt） INPUT-07：长按判定的移动容差；超过即转为平移或滚动。</summary>
     public const double InputLongPressSlop = 8.0;
+    /// <summary>menu.android.anchorGap（pt） MENU-03：菜单与入口之间的间距。</summary>
+    public const double MenuAndroidAnchorGap = 2.0;
+    /// <summary>menu.android.check.gap（pt） MENU-03：行首勾选与语义图标之间的间距。</summary>
+    public const double MenuAndroidCheckGap = 8.0;
+    /// <summary>menu.android.cornerRadius（pt） MENU-03：菜单面板 G2 圆角。</summary>
+    public const double MenuAndroidCornerRadius = 32.0;
+    /// <summary>menu.android.edgeMargin（pt） MENU-03：菜单与窗口安全区边缘的间距。</summary>
+    public const double MenuAndroidEdgeMargin = 8.0;
+    /// <summary>menu.android.icon.fontSize（pt） MENU-06：菜单语义图标的标称字号。</summary>
+    public const double MenuAndroidIconFontSize = 17.0;
+    /// <summary>menu.android.icon.size（pt） MENU-06：菜单图标槽宽，独立于图标字号。</summary>
+    public const double MenuAndroidIconSize = 22.0;
+    /// <summary>menu.android.padding（pt） MENU-03：菜单内容的四周留白。</summary>
+    public const double MenuAndroidPadding = 10.0;
+    /// <summary>menu.android.press.initialProgress（ratio） MENU-03：菜单触点泛光的最低起始亮度，点选关闭时首帧仍可见。</summary>
+    public const double MenuAndroidPressInitialProgress = 0.65;
+    /// <summary>menu.android.row.fontSize（pt） MENU-03：普通菜单行文字，Android 按 sp 使用。</summary>
+    public const double MenuAndroidRowFontSize = 16.0;
+    /// <summary>menu.android.row.height（pt） MENU-03：菜单行最小高度，文字放大时按内容增高。</summary>
+    public const double MenuAndroidRowHeight = 42.0;
+    /// <summary>menu.android.row.paddingX（pt） MENU-03：行内左右留白。</summary>
+    public const double MenuAndroidRowPaddingX = 4.0;
+    /// <summary>menu.android.row.paddingY（pt） MENU-03：行内文字上下留白。</summary>
+    public const double MenuAndroidRowPaddingY = 6.0;
+    /// <summary>menu.android.separator.inset（pt） MENU-03：组间发丝线相对面板的左右缩进。</summary>
+    public const double MenuAndroidSeparatorInset = 24.0;
+    /// <summary>menu.android.separator.paddingY（pt） MENU-03：组间发丝线上下的留白；线宽为一个物理像素。</summary>
+    public const double MenuAndroidSeparatorPaddingY = 6.0;
+    /// <summary>menu.android.sort.cornerRadius（pt） FILTER-08：排序选项状态底色圆角。</summary>
+    public const double MenuAndroidSortCornerRadius = 20.0;
+    /// <summary>menu.android.sort.fontSize（pt） FILTER-08：顶部排序选项标题，Android 按 sp 使用。</summary>
+    public const double MenuAndroidSortFontSize = 12.0;
+    /// <summary>menu.android.sort.gap（pt） FILTER-08：相邻排序选项间距。</summary>
+    public const double MenuAndroidSortGap = 4.0;
+    /// <summary>menu.android.sort.height（pt） FILTER-08：顶部排序选项最小高度。</summary>
+    public const double MenuAndroidSortHeight = 56.0;
+    /// <summary>menu.android.sort.iconGap（pt） FILTER-08：顶部排序选项图标和标题间距。</summary>
+    public const double MenuAndroidSortIconGap = 3.0;
+    /// <summary>menu.android.width（pt） MENU-03：筛选与更多菜单常规宽度。</summary>
+    public const double MenuAndroidWidth = 248.0;
     /// <summary>menu.check.fontSize（pt） MENU-03：菜单勾选字形字号；勾选列宽仍为 menu.check.size。Web 参考壳现值，旧壳基线未采集菜单内部字号。</summary>
     public const double MenuCheckFontSize = 12.0;
     /// <summary>menu.check.gap（pt） MENU-03：勾选列与文本的间距。</summary>
@@ -575,6 +619,16 @@ public static class DesignTokens
     public const double PopupGlassAndroidLensAmount = 48.0;
     /// <summary>popup.glass.android.lens.height（pt） MENU-03：Android 窗口内玻璃弹层边缘折射带高度。</summary>
     public const double PopupGlassAndroidLensHeight = 24.0;
+    /// <summary>popup.glass.android.menu.highlight.color（color） MENU-03：玻璃菜单边缘高光色。</summary>
+    public const uint PopupGlassAndroidMenuHighlightColor = 0x33FFFFFFu;
+    /// <summary>popup.glass.android.menu.lens.amount（pt） MENU-03：菜单边缘折射强度。</summary>
+    public const double PopupGlassAndroidMenuLensAmount = 24.0;
+    /// <summary>popup.glass.android.menu.lens.height（pt） MENU-03：菜单边缘折射带高度。</summary>
+    public const double PopupGlassAndroidMenuLensHeight = 16.0;
+    /// <summary>popup.glass.android.menu.surface.color（color） MENU-03：深色玻璃菜单表面色。</summary>
+    public const uint PopupGlassAndroidMenuSurfaceColor = 0xFF1C1C1Eu;
+    /// <summary>popup.glass.android.menu.surface.opacity（ratio） MENU-03：菜单表面色的不透明度，保留背景色并保障文字对比。</summary>
+    public const double PopupGlassAndroidMenuSurfaceOpacity = 0.64;
     /// <summary>popup.glass.android.surface.color（color） MENU-03：Android 窗口内玻璃弹层的表面底色。</summary>
     public const uint PopupGlassAndroidSurfaceColor = 0xFF121212u;
     /// <summary>popup.glass.android.surface.opacity（ratio） MENU-03：Android 窗口内玻璃弹层表面底色的不透明度。</summary>

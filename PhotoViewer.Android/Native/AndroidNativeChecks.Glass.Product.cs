@@ -640,25 +640,83 @@ internal static partial class AndroidNativeChecks
         }
     }
 
+    /// <summary>
+    /// 窗口内弹层的玻璃材质：经真实筛选入口与真实「更多」入口各打开一次，分别核对面板打开、
+    /// 效果链节点已生成且稳定后复用同一份快照，并按各自面板矩形落一张诊断截图。
+    /// 取样源与表面类型由 <see cref="CheckGlassProductStructure"/> 覆盖；截图只供目检，不当作像素证明。
+    /// </summary>
     private static async Task CheckGlassPopupMaterialAsync(AndroidNativeRootView root)
     {
-        if (!await OpenGroupedMenuAsync(root))
-        {
-            Check("glass 弹层 真实筛选入口打开玻璃面板", false, "筛选下拉未打开");
-            return;
-        }
-        await Task.Delay(250);
-        var material = root.PopupLayer.Surface as AndroidGlassPopupMaterial;
-        long builds = material?.EffectBuildCountForChecks ?? -1;
+        var filter = root.FilterBar;
+        root.DismissPhotoMenu();
+        root.DismissFilterDropdown();
         await Task.Delay(180);
-        bool open = root.PopupLayer.IsOpen && root.FilterBar.IsDropdownOpen;
+
+        bool filterOpened = await OpenGroupedMenuAsync(root);
+        await CheckGlassPopupMenuAsync(root, "筛选下拉", filterOpened, "glass-product-popup-filter");
+        root.DismissFilterDropdown();
+        await WaitAsync(() => !root.PopupLayer.IsOpen && root.PopupLayer.Visibility == ViewStates.Gone,
+            "筛选下拉弹层淡出完成", 3000);
+
+        // 手机竖屏是独立圆按钮，其余形态是合体胶囊的更多段（与 MENU-08 的入口选择一致）。
+        var entry = root.PhoneMoreButton.IsShown ? root.PhoneMoreButton : filter.ComboForChecks.Second;
+        bool clicked = entry.PerformClick();
+        await WaitAsync(() => root.PopupLayer.IsOpen, "更多菜单打开", 5000);
+        bool moreOpened = clicked && ReferenceEquals(root.PopupLayer.SessionForChecks?.Entry, entry);
+        await CheckGlassPopupMenuAsync(root, "更多菜单", moreOpened, "glass-product-popup-more");
+        root.DismissPhotoMenu();
+        await WaitAsync(() => !root.PopupLayer.IsOpen && root.PopupLayer.Visibility == ViewStates.Gone,
+            "更多菜单弹层淡出完成", 3000);
+    }
+
+    /// <summary>
+    /// 一次真实入口打开的弹层材质断言：打开状态、当前表面材质、效果链已生成、稳定期内不重建。
+    /// 面板矩形外扩一圈后用同一回读落 PNG，与 <c>GlassBackdropSaveScreenshotAsync</c> 的命名口径一致。
+    /// </summary>
+    /// <param name="root">主屏根视图。</param>
+    /// <param name="name">菜单名称（写进报告）。</param>
+    /// <param name="opened">入口点按确实打开了本次菜单。</param>
+    /// <param name="shotName">截图文件名前缀。</param>
+    private static async Task CheckGlassPopupMenuAsync(AndroidNativeRootView root, string name,
+        bool opened, string shotName)
+    {
+        var layer = root.PopupLayer;
+        var session = layer.SessionForChecks;
+        // 每次打开后单独读当前表面：两个菜单将来各自分配材质时，这里读到的仍是本次菜单使用的那份。
+        var material = layer.Surface as AndroidGlassPopupMaterial;
+        bool open = opened && layer.IsOpen && session is { IsOpen: true };
+        await Task.Delay(250);
+        long builds = material?.EffectBuildCountForChecks ?? -1;
+        // 面板尺寸与圆角在打开期间不变：稳定窗口内效果链不应重建。
+        await Task.Delay(180);
+        // 打开期间表面不能被换掉：稳定窗口结束后仍是本次读到的那份材质。
+        bool current = material != null && ReferenceEquals(layer.Surface, material);
         bool effect = material?.EffectForChecks.RenderEffect != null;
         bool reused = material != null && material.EffectBuildCountForChecks == builds;
-        Check("glass 弹层 真实筛选入口生成并复用玻璃效果", open && effect && reused,
-            $"open={open} effect={effect} builds={builds}→{material?.EffectBuildCountForChecks}");
-        await GlassBackdropSaveScreenshotAsync(new Rect(0, 0, root.Width, root.Height), "glass-product-popup");
-        root.DismissFilterDropdown();
-        await WaitAsync(() => !root.PopupLayer.IsOpen, "玻璃弹层关闭", 3000);
+        Check($"glass 弹层 {name} 真实入口生成并复用玻璃效果", open && current && effect && reused,
+            $"open={open} surface={(material == null ? "null" : current ? "本次材质" : "已替换")} effect={effect} "
+                + $"builds={builds}→{material?.EffectBuildCountForChecks}");
+        if (session == null) return;
+        var region = GlassPopupShotRect(session.Frame, root);
+        if (region.Width() < 8 || region.Height() < 8)
+        {
+            GlassHostNote($"glass 弹层 {name} 截图跳过：面板矩形过小 {session.Frame}");
+            return;
+        }
+        await GlassBackdropSaveScreenshotAsync(region, shotName);
+    }
+
+    /// <summary>面板矩形外扩一圈（24dp，含圆角与边缘高光）后的窗口截图区域，夹在窗口内。</summary>
+    /// <param name="frame">面板窗口矩形。</param>
+    /// <param name="root">主屏根视图（提供窗口尺寸）。</param>
+    private static Rect GlassPopupShotRect(Rect frame, AndroidNativeRootView root)
+    {
+        int margin = (int)Math.Ceiling(AndroidUiTheme.Dp(_activity!, 24));
+        return new Rect(
+            Math.Clamp(frame.Left - margin, 0, root.Width),
+            Math.Clamp(frame.Top - margin, 0, root.Height),
+            Math.Clamp(frame.Right + margin, 0, root.Width),
+            Math.Clamp(frame.Bottom + margin, 0, root.Height));
     }
 
     /// <summary>两个 EXIF 块的变体、衬底色层与 tint 令牌断言（像素证明另在 <see cref="CheckGlassExifProductAsync"/>）。</summary>

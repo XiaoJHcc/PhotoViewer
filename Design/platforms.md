@@ -165,7 +165,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
   - **FILTER-08@mac**：使用 AppKit `NSMenu` 和 SF Symbols；原生单胶囊下拉只展示实际选项，不把入口标题列作选项。AppKit 无公开的逐段读屏值接口，完整星级条件与张数由分段控件的读屏值表达。标准菜单的点击会结束原生跟踪会话，AppKit 没有公开的项级保持展开属性；继续点选需重新打开，先前条件保留。
   - **FILTER-08@win**：分段和单胶囊都用 WinUI `MenuFlyout`，通过菜单项的 `Icon` 呈现 Fluent 字形。菜单项点选后由系统收起，没有公开的项级保持展开属性；继续点选需重新打开，先前条件保留。状态变化只更新既有菜单项及入口标签，不重建菜单。
   - **FILTER-08@ios**：系统 `UIButton` 上下文菜单与 `UIMenu`，使用 SF Symbols。中尺寸排序项、星级条件、方向在三个内联分组；`KeepsMenuPresented` 与 `UpdateVisibleMenu` 保持菜单展开并提交当前状态。切换已滚动菜单的星级条件时，系统可能把当前项移到可见区域中央，保留该原生行为。筛选与更多入口互斥。
-  - **FILTER-08@android**：玻璃锚点入口、窗口内玻璃面板与真实菜单行；全部菜单与星级标记取 `Design/icons.json` 的共享 Fluent 映射（无星级为禁止符号，数字档为对应数字圆）。点选即生效并在原弹层更新勾选，入口失效时关闭；点面板外只关闭且不穿透，关闭后键盘焦点归还入口。更多段弹主图菜单（宽形态不含 EXIF 项）。
+  - **FILTER-08@android**：玻璃锚点入口、窗口内玻璃面板与真实菜单行；顶部排序三列，下方星级与方向用内联分组，放大字号导致顶部三列放不下时改用纵排。全部菜单与星级标记取 `Design/icons.json` 的共享 Fluent 映射（无星级为禁止符号，数字档为对应数字圆）。点选即生效并在原弹层更新勾选，入口失效时关闭；点面板外只关闭且不穿透，关闭后键盘焦点归还入口。更多段弹主图菜单（宽形态不含 EXIF 项）。
 - **FILTER-07@web / FILTER-08@web**：桌面按三段合体或空间不足时用单胶囊；`platform=mac` 只覆盖列布局 42 点让位与标题栏几何。手机竖屏筛选与更多为两枚 44 点圆钮、横屏为 88 点合体。浏览器无原生菜单弹层，沿用 MENU-03 的 DOM 菜单组件，用 uicons 语义图标（「无星级」以禁止符号表达，其余用对应文件、相机、磁盘、箭头与数字等字形），原位更新筛选菜单项、保留焦点和滚动。
 
 ## image
@@ -267,14 +267,14 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
   - Windows：`PhotoViewer.Windows/Native/WindowsMainWindow.cs` 的 `BuildContextMenu`（`MenuFlyout`，勾选项用 `ToggleMenuFlyoutItem`）。
   - Android：`PhotoViewer.Android/Native/AndroidNativeRootView.cs` 的 `ShowPhotoMenu`（`AndroidGlassPopupLayer` 窗口内玻璃面板）。
 - **MENU-03、MENU-04**：弹出与收回。macOS/iOS/Windows 用系统菜单；Android 使用主窗口内玻璃面板并夹取到屏幕内（`ShowPhotoMenu`）。
-  - **MENU-03@android**：窗口内玻璃面板，定位与夹取自实现；全窗透明拦截、点外不穿透、读屏模态与焦点归还由共享弹层宿主承担。
+  - **MENU-03@android**：`AndroidGlassMenu` 共用 iOS 取向的圆角、内缩发丝分隔线及行列布局；主窗口的实际安全区定位，超高可滚。屏幕层取样和菜单光学配方由 `AndroidGlassPopupMaterial` 绘制；全窗透明拦截、点外不穿透、读屏模态与焦点归还由共享弹层宿主承担。
   - **MENU-04@ios**：卡片星级弹窗不抬升卡片、不移动列表布局。
 - **MENU-05**：卡片入口。卡片菜单按修订后的 MENU-05 退役，改为长按/辅助点按打开星级弹窗（RATING-07）；iOS 与 Android 都已改为卡片长按与辅助点按打开星级弹窗（FILM-05@ios、FILM-05@android），桌面用 tooltip + 星级按钮。
   - **MENU-05@android**：卡片长按不再有 `PopupMenu`，改为打开星级弹窗并把同一次触摸转发给弹窗星排；完整文件名与拍摄时间由弹窗条目的文件名/时间行承担，拍摄时间取 `ShotTimeText.FormatShortShotTime`（`PhotoViewer/Core/Platform/PhotoHintText.cs`），不使用桌面悬停提示的完整格式。
 - **MENU-06**：主图菜单与 macOS 系统菜单栏均有前置图标。
   - **MENU-06@mac / @ios**：使用 SF Symbols，共用 `PhotoViewer.Apple/AppleSymbolNames.cs` 的 `Menu` 映射；Mac 独有「打开文件…」用 `doc`、应用菜单「退出 PhotoViewer」用 `power`，系统菜单栏与右键菜单一样显示图标。
   - **MENU-06@win**：`WindowsIcons` 按 `Design/icons.json` 提供共享 Fluent 字形，普通项与勾选项都保留图标和原生勾选态。
-  - **MENU-06@android / @web**：自绘菜单在勾选列后绘制语义图标，几何取 `menu.icon.*`。Android 由 `AndroidIcons.ForMenu` 取 `Design/icons.json` 的共享 Fluent 字形；Web 使用 `icon.menu.*` 的 uicons 字形，增强复用 `icon.command.toggleEnhance`。
+  - **MENU-06@android / @web**：自绘菜单在勾选列后绘制语义图标，Android 几何取 `menu.android.*`，Web 取 `menu.icon.*`。Android 由 `AndroidIcons.ForMenu` 取 `Design/icons.json` 的共享 Fluent 字形；Web 使用 `icon.menu.*` 的 uicons 字形，增强复用 `icon.command.toggleEnhance`。
 - **MENU-07**：不可用项由 `PhotoMenuCatalog` 按当前照片给出（无照片时「雾天增强」置灰，工具可打开空态）；macOS 关闭 `NSMenu` 自动启用，显示前同步。
 - **MENU-08**：手机形态「更多」按钮的菜单。iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs` 的 `BuildMoreMenu` 用 `UIDeferredMenuElement` 延迟构建，内容直接取共享 `PhotoMenuCatalog`（手机形态 `includeExif: true`，与主图长按菜单同为栏位组末尾的「EXIF」），每次展开重建并按共享状态刷新勾选。Android `AndroidNativeRootView.ShowPhotoMenu` 同样以 `PhotoMenuCatalog(includeExif: true)` 提供内容，更多与主图长按复用同一入口。
 - **MENU-01@web**：不实现设置与工具窗口，主图菜单不生成「工具…/设置…」及其分组，其余项、顺序与勾选语义不变（SCOPE-01）。
