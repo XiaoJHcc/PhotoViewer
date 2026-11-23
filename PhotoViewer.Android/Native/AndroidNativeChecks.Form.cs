@@ -183,13 +183,62 @@ internal static partial class AndroidNativeChecks
         }
     }
 
-    /// <summary>共享控件真实节点：88/224 两档评分、槽宽 &gt;224 的绘制/命中原点、6 项 EXIF 裁到 2 项。</summary>
+    /// <summary>用相同星形的普通叠画验证紧凑星簇确实减淡下层，且擦除不会穿透玻璃底色。</summary>
+    private static void CheckCompactRatingOcclusion(Activity activity, double density)
+    {
+        int width = (int)Math.Round(RatingControlGeometry.Thickness * density);
+        int height = (int)Math.Round(RatingControlGeometry.CompactMinLength * density);
+        using var rating = new AndroidRatingControl(activity);
+        rating.SetOrientation(false);
+        rating.Layout(0, 0, width, height);
+
+        using var actual = Bitmap.CreateBitmap(width, height, Bitmap.Config.Argb8888!);
+        using var actualCanvas = new Canvas(actual);
+        rating.DrawGlassContent(actualCanvas);
+
+        using var reference = Bitmap.CreateBitmap(width, height, Bitmap.Config.Argb8888!);
+        using var referenceCanvas = new Canvas(reference);
+        using var paint = AndroidUiTheme.Paint(AndroidUiTheme.StarInactive);
+        paint.TextSize = (float)(RatingControlGeometry.CompactGlyph * density);
+        paint.SetTypeface(AndroidUiTheme.IconTypeface(activity));
+        for (int value = 5; value >= 1; value--)
+        {
+            double offset = RatingControlGeometry.CompactOffset(value, false, false, height / density);
+            AndroidUiTheme.DrawGlyphCentered(referenceCanvas, AndroidIcons.Star, paint,
+                width / 2f, (float)(height / 2.0 + offset * density));
+        }
+
+        var background = Color.Rgb(23, 61, 119);
+        using var composite = Bitmap.CreateBitmap(width, height, Bitmap.Config.Argb8888!);
+        using var compositeCanvas = new Canvas(composite);
+        compositeCanvas.DrawColor(background);
+        rating.DrawGlassContent(compositeCanvas);
+
+        int faded = 0;
+        int fullyOpaque = 0;
+        bool backgroundIntact = composite.GetPixel(0, 0) == background.ToArgb();
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                int actualAlpha = (int)((uint)actual.GetPixel(x, y) >> 24);
+                int referenceAlpha = (int)((uint)reference.GetPixel(x, y) >> 24);
+                if (actualAlpha > 0 && actualAlpha + 8 < referenceAlpha) faded++;
+                if (actualAlpha == 255) fullyOpaque++;
+                backgroundIntact &= (uint)composite.GetPixel(x, y) >> 24 == 255;
+            }
+        }
+        Check("RATING-07 紧凑星簇局部羽化且保留底层玻璃", faded > 0 && fullyOpaque > 0 && backgroundIntact,
+            $"faded={faded} opaque={fullyOpaque} backgroundIntact={backgroundIntact}");
+    }
+
+    /// <summary>共享控件真实节点：紧凑/展开评分、槽宽 &gt;224 的绘制/命中原点、6 项 EXIF 裁到 2 项。</summary>
     private static void CheckSharedWidgetGeometry()
     {
         var activity = _activity!;
         double density = AndroidUiTheme.Density(activity);
 
-        // 88 / 224 两档：控制栏真实节点。评分组显隐受用户设置影响，本段固定打开并在结束时还原。
+        // 紧凑 / 展开两档：控制栏真实节点。评分组显隐受用户设置影响，本段固定打开并在结束时还原。
         bool showRating = _main!.Settings.ShowRating;
         _main.Settings.ShowRating = true;
         var bar = new AndroidControlBar(activity, _main!);
@@ -210,11 +259,13 @@ internal static partial class AndroidNativeChecks
                     || node.Y + node.Height > compactFrame.MaxY + .6
                     || node.Width > RatingControlGeometry.CompactGlyph + .6
                     || node.Height > RatingControlGeometry.CompactGlyph + .6) compactInside = false;
-            Check("评分紧凑 88 静态星簇", Near(compactFrame.Width, RatingControlGeometry.CompactMinLength)
+            Check("评分紧凑静态星簇", Near(compactFrame.Width, RatingControlGeometry.CompactMinLength)
                     && compactNodes.Count == 5 && compactInside
                     && Near(bar.RatingGlyphSizeForChecks, RatingControlGeometry.CompactGlyph),
                 $"frame={compactFrame} nodes={compactNodes.Count} glyph={bar.RatingGlyphSizeForChecks:0.#} "
                 + $"sizes={string.Join("/", compactNodes.Select(n => $"{n.Width:0.#}x{n.Height:0.#}"))}");
+
+            CheckCompactRatingOcclusion(activity, density);
 
             bar.Arrange(true, RatingControlGeometry.ExpandedLength + ToolbarFlowLayout.Padding * 2);
             var expandedFrames = bar.GroupFramesForChecks();

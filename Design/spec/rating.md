@@ -125,9 +125,9 @@
 
 **几何与令牌**
 
-- 控件交叉轴取 `shell.glass.button.size`。展开态固有长度 = 6 × `rating.control.slot` + 2 × `rating.control.endInset`，沿槽位主轴居中；紧凑态铺满槽位主轴，移动端宽形态控制栏里放不下展开态时取 `rating.compact.minLength`。手机横屏控制栏先为 EXIF 块保住紧凑态最短长度、再把余下长度给星排，EXIF 按整项裁掉末尾项（SHELL-09、TOOLBAR-05）。字形取 `rating.control.glyph.fontSize` / `rating.control.clearGlyph.fontSize`（展开态）与 `rating.compact.glyph.fontSize`（紧凑态）。
+- 控件交叉轴取 `shell.glass.button.size`。展开态固有长度 = 6 × `rating.control.slot` + 2 × `rating.control.endInset`，沿槽位主轴居中。紧凑态铺满槽位主轴，移动端宽形态控制栏里放不下展开态时取 `rating.compact.minLength`。手机横屏控制栏预留同一最短长度，尽量显示完整的 EXIF 项，再将剩余长度交给评分胶囊（SHELL-09、TOOLBAR-05）。字形取 `rating.control.glyph.fontSize` / `rating.control.clearGlyph.fontSize`（展开态）与 `rating.compact.glyph.fontSize`（紧凑态）。
 - 紧凑态内容是沿胶囊均匀分布的五颗星，冲突时最前加警示三角（与展开态 0 号格同位）：首末字形中心落在胶囊两端半圆的圆心（距端点 `shell.glass.button.size` 的一半），其间等距，步长不超过 `rating.control.slot`；胶囊短时步长随之缩小、字形允许叠压，不另设最小间距。横排三角与 1 号星在左，竖排在下。
-- 叠压次序：警示三角在最上，其后 1 号星在 2 号星之上，依次到 5 号星在最下（点亮的星因此总在未点亮的之上）。下层字形被上层字形实心轮廓盖住的部分降为半透明并向外羽化，空心星的线条不在上层星内部交叉；不叠压时没有附加效果。
+- 叠压次序为警示三角在最上，其后 1 号星在 2 号星之上，依次到 5 号星在最下（点亮的星因此总在未点亮的之上）。iOS 和 Android 共用三层羽化参数，以每个上层字形的实心轮廓衰减下层星形。轮廓内下层保留约三分之一的不透明度，外缘渐变到完整不透明度，玻璃胶囊与状态层使用各自的材质。
 - 控件胶囊在展开态与紧凑态都按平台交互式玻璃响应按压（放大、回弹、高亮），星排与星簇随玻璃一同缩放；支持相邻玻璃融合的平台按 SHELL-12 组织胶囊容器。Android 13 及以上的胶囊只放大并显示跟手高光，不随手指位移、不沿拖动方向拉伸，玻璃形变不改变槽位几何、命中区与手势判定；胶囊的材质与版本分级取 TOOLBAR-10 的玻璃按钮配方。展开态被按住的格另按 `motion.rating.press.scale` 放大。玻璃按压状态不消费触摸，不改变滑动选星、紧凑态起手打开星级弹窗与卡片长按的触摸转交。
 - 弹窗星排每格 `rating.popup.slot`，可用空间不足时按六格均分收窄，不小于 `rating.popup.minSlot`；字形 `rating.popup.glyph.fontSize` / `rating.popup.clearGlyph.fontSize`；与入口相距 `rating.popup.gap`，圆角 `rating.popup.cornerRadius`，整体夹在窗口安全区内缩 `popup.ratingSources.edgeMargin` 的范围里。竖排控件打开的非冲突弹窗宽 `rating.popup.columnWidth`，文件名与拍摄时间各占一行，下方是竖排星列（5→0 自上而下）；冲突来源条目恒为横排星排。
 

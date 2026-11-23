@@ -722,6 +722,7 @@ internal sealed class AndroidRatingControl : MaterialCardView, IGlassAnchorConte
     private readonly Paint _starInactive;
     private readonly Paint _starClear;
     private readonly Paint _conflictPaint;
+    private readonly Paint _compactOcclusionPaint;
     private readonly RippleDrawable[] _slotRipples = new RippleDrawable[RatingControlGeometry.SlotCount];
     private readonly ColorStateList _stateLayer;
     private readonly Paint _focusPaint;
@@ -834,7 +835,10 @@ internal sealed class AndroidRatingControl : MaterialCardView, IGlassAnchorConte
         _starActive = StarPaint(context, AndroidUiTheme.StarActive, solid: true);
         _starInactive = StarPaint(context, AndroidUiTheme.StarInactive);
         _starClear = StarPaint(context, AndroidUiTheme.StarClear);
-        _conflictPaint = StarPaint(context, AndroidUiTheme.StarConflict);
+        _conflictPaint = StarPaint(context, AndroidUiTheme.StarConflict, solid: true);
+        _compactOcclusionPaint = StarPaint(context, Color.Black, solid: true);
+        using (var mode = new PorterDuffXfermode(PorterDuff.Mode.DstOut!))
+            _compactOcclusionPaint.SetXfermode(mode);
         _stateLayer = AndroidX.Core.Content.ContextCompat.GetColorStateList(context, Resource.Color.pv_glass_state_layer)
             ?? ColorStateList.ValueOf(Color.Transparent);
         for (int slot = 0; slot < _slotRipples.Length; slot++)
@@ -973,26 +977,14 @@ internal sealed class AndroidRatingControl : MaterialCardView, IGlassAnchorConte
                 double centerMain = (Horizontal ? control.X + slot.X : control.Y + slot.Y)
                     + (Horizontal ? slot.Width : slot.Height) / 2;
                 double centerCross = (Horizontal ? control.Y : control.X) + (Horizontal ? control.Height : control.Width) / 2;
-                DrawGlyph(canvas, value, centerMain, centerCross, density, alpha);
+                float x = (float)((Horizontal ? centerMain : centerCross) * density);
+                float y = (float)((Horizontal ? centerCross : centerMain) * density);
+                DrawGlyph(canvas, value, x, y, density, alpha, DesignTokens.ToolbarRatingGlyphFontSize);
             }
         }
         else
         {
-            bool conflict = _conflict;
-            double capsuleMain = Horizontal ? control.Width : control.Height;
-            double capsuleCross = Horizontal ? control.Height : control.Width;
-            if (conflict)
-            {
-                double offset = RatingControlGeometry.CompactOffset(0, true, Horizontal, capsuleMain);
-                DrawGlyph(canvas, 0, (Horizontal ? control.X : control.Y) + capsuleMain / 2 + offset,
-                    (Horizontal ? control.Y : control.X) + capsuleCross / 2, density, alpha);
-            }
-            for (int value = 1; value <= 5; value++)
-            {
-                double offset = RatingControlGeometry.CompactOffset(value, conflict, Horizontal, capsuleMain);
-                DrawGlyph(canvas, value, (Horizontal ? control.X : control.Y) + capsuleMain / 2 + offset,
-                    (Horizontal ? control.Y : control.X) + capsuleCross / 2, density, alpha);
-            }
+            DrawCompactCluster(canvas, control, rowLength, density, alpha);
         }
         if (IsFocused && !IsInTouchMode)
         {
@@ -1001,6 +993,41 @@ internal sealed class AndroidRatingControl : MaterialCardView, IGlassAnchorConte
                 (float)(control.MaxX * density) - density, (float)(control.MaxY * density) - density);
             canvas.DrawRoundRect(focus, focus.Height() / 2, focus.Height() / 2, _focusPaint);
         }
+    }
+
+    /// <summary>RATING-07：从 5 号星向冲突三角绘制，实心轮廓只擦除星簇图层里的下层字形。</summary>
+    private void DrawCompactCluster(Canvas canvas, LayoutRect control, double length, float density, int alpha)
+    {
+        double centerX = control.X + control.Width / 2;
+        double centerY = control.Y + control.Height / 2;
+        double glyphSize = RatingControlGeometry.CompactGlyph;
+        var passes = RatingControlGeometry.CompactOcclusionPasses;
+        // Fluent 字形位于 1.2em 方形单元内，单元分离时可直接绘制。
+        double overlapDistance = 1.2 * glyphSize * (1 + passes[0].Grow) / 2;
+        bool overlaps = RatingControlGeometry.CompactStep(length, _conflict) < overlapDistance;
+        int layer = overlaps
+            ? canvas.SaveLayer((float)(control.X * density), (float)(control.Y * density),
+                (float)(control.MaxX * density), (float)(control.MaxY * density), null)
+            : 0;
+        int lastStar = RatingControlGeometry.SlotCount - 1;
+        for (int value = lastStar; value >= (_conflict ? 0 : 1); value--)
+        {
+            double offset = RatingControlGeometry.CompactOffset(value, _conflict, Horizontal, length);
+            float x = (float)((centerX + (Horizontal ? offset : 0)) * density);
+            float y = (float)((centerY + (Horizontal ? 0 : offset)) * density);
+            if (overlaps && value < lastStar)
+            {
+                string mask = value == 0 ? AndroidIcons.Warning : AndroidIcons.StarFilled;
+                foreach (var (grow, opacity) in passes)
+                {
+                    _compactOcclusionPaint.TextSize = (float)(glyphSize * grow * density);
+                    _compactOcclusionPaint.Alpha = (int)Math.Round(opacity * 255);
+                    AndroidUiTheme.DrawGlyphCentered(canvas, mask, _compactOcclusionPaint, x, y);
+                }
+            }
+            DrawGlyph(canvas, value, x, y, density, alpha, glyphSize);
+        }
+        if (overlaps) canvas.RestoreToCount(layer);
     }
 
     /// <summary>
@@ -1027,18 +1054,13 @@ internal sealed class AndroidRatingControl : MaterialCardView, IGlassAnchorConte
     private static readonly int[] _emptyState = [];
 
     /// <summary>按星级值绘制字形：0 为清零叉（冲突时警示三角），1–5 取实心/描边星。</summary>
-    private void DrawGlyph(Canvas canvas, int value, double centerMain, double centerCross, float density, int alpha)
+    private void DrawGlyph(Canvas canvas, int value, float x, float y, float density, int alpha, double glyphSize)
     {
-        float x = (float)((Horizontal ? centerMain : centerCross) * density);
-        float y = (float)((Horizontal ? centerCross : centerMain) * density);
-        double glyphSize = Form == RatingControlForm.Compact
-            ? RatingControlGeometry.CompactGlyph
-            : DesignTokens.ToolbarRatingGlyphFontSize;
         if (value == 0)
         {
             if (_conflict)
             {
-                _conflictPaint.TextSize = AndroidUiTheme.Dp(Context!, DesignTokens.ToolbarRatingGlyphFontSize);
+                _conflictPaint.TextSize = (float)(glyphSize * density);
                 _conflictPaint.Alpha = alpha;
                 AndroidUiTheme.DrawGlyphCentered(canvas, AndroidIcons.Warning, _conflictPaint, x, y);
                 return;
@@ -1050,7 +1072,7 @@ internal sealed class AndroidRatingControl : MaterialCardView, IGlassAnchorConte
         }
         bool active = value <= (_ratingGesture?.Preview ?? _rating);
         var paint = active ? _starActive : _starInactive;
-        paint.TextSize = AndroidUiTheme.Dp(Context!, glyphSize);
+        paint.TextSize = (float)(glyphSize * density);
         paint.Alpha = alpha;
         AndroidUiTheme.DrawGlyphCentered(canvas, active ? AndroidIcons.StarFilled : AndroidIcons.Star, paint, x, y);
     }

@@ -668,7 +668,7 @@ public static class DesignTokens
     /// <summary>rating.compact.glyph.fontSize（pt） RATING-07：紧凑态叠压星字号。</summary>
     public const double RatingCompactGlyphFontSize = 18.0;
     /// <summary>rating.compact.minLength（pt） RATING-07：紧凑态胶囊最短主轴长度。</summary>
-    public const double RatingCompactMinLength = 88.0;
+    public const double RatingCompactMinLength = 64.0;
     /// <summary>rating.control.clearGlyph.fontSize（pt） RATING-07：控件清零叉字号。</summary>
     public const double RatingControlClearGlyphFontSize = 15.0;
     /// <summary>rating.control.endInset（pt） RATING-07：展开态星排两端到胶囊端的留白；固有长度 = 6×slot + 2×endInset。</summary>

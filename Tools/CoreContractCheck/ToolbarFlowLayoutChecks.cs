@@ -40,9 +40,9 @@ internal static class ToolbarFlowLayoutChecks
             && expandedRating.Kind == ControlBarGroupKind.Rating);
         var compactRating = ToolbarFlowLayout.Rating(223.99);
         c.True("可用主轴不足时星级组按紧凑态最短长度占位",
-            Near(compactRating.Main, 88) && Near(compactRating.Cross, 44));
+            Near(compactRating.Main, 64) && Near(compactRating.Cross, 44));
         c.True("可用主轴 229 时星级组展开", Near(ToolbarFlowLayout.Rating(229).Main, 224));
-        c.True("可用主轴 133 时星级组紧凑", Near(ToolbarFlowLayout.Rating(133).Main, 88));
+        c.True("可用主轴 133 时星级组紧凑", Near(ToolbarFlowLayout.Rating(133).Main, 64));
 
         var exifHorizontal = ToolbarFlowLayout.Exif(3, true);
         c.True("横排 EXIF 三项主轴 172、交叉轴 44",

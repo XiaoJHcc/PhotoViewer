@@ -14,9 +14,6 @@ namespace PhotoViewer.iOS.Native;
 /// </summary>
 internal sealed class iOSRatingCluster : UIView
 {
-    /// <summary>上层字形轮廓对下层的减淡：由外到内逐圈放大轮廓并按不透明度擦除，合成后轮廓内约剩 30%、外缘渐变到 0。</summary>
-    private static readonly (double Grow, double Alpha)[] OcclusionPasses = [(1.36, 0.18), (1.24, 0.25), (1.12, 0.45)];
-
     private int _value;
     private bool _conflict;
     private bool _horizontal = true;
@@ -82,7 +79,7 @@ internal sealed class iOSRatingCluster : UIView
             if (!bottom)
             {
                 var mask = triangle ? glyph : silhouette;
-                foreach (var (grow, alpha) in OcclusionPasses)
+                foreach (var (grow, alpha) in RatingControlGeometry.CompactOcclusionPasses)
                     mask.Draw(GlyphRect(mask, center, grow), CGBlendMode.DestinationOut, (nfloat)alpha);
             }
             glyph.ApplyTintColor(color).Draw(GlyphRect(glyph, center, 1));

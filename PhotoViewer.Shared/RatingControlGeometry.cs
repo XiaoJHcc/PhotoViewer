@@ -59,11 +59,16 @@ public static class RatingControlGeometry
     /// <summary>展开态固有主轴长度：六格步长加两端留白（224 点）。</summary>
     public static double ExpandedLength => SlotCount * Slot + 2 * EndInset;
 
-    /// <summary>紧凑态胶囊最短主轴长度（88 点）。</summary>
+    /// <summary>紧凑态胶囊最短主轴长度（64 点）。</summary>
     public static double CompactMinLength => DesignTokens.RatingCompactMinLength;
 
     /// <summary>紧凑态叠压星字号（18 点）。</summary>
     public static double CompactGlyph => DesignTokens.RatingCompactGlyphFontSize;
+
+    private static readonly (double Grow, double Alpha)[] OcclusionPasses = [(1.36, 0.18), (1.24, 0.25), (1.12, 0.45)];
+
+    /// <summary>紧凑星簇按上层字形轮廓由外到内减淡下层，每圈指定放大倍数与擦除不透明度。</summary>
+    public static ReadOnlySpan<(double Grow, double Alpha)> CompactOcclusionPasses => OcclusionPasses;
 
     /// <summary>紧凑态/卡片长按起手后视为点按、不预览的位移阈值（8 点）。</summary>
     public static double TapSlop => DesignTokens.RatingGestureTapSlop;

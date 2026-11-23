@@ -386,7 +386,8 @@ test("SHELL-09：手机横屏刘海侧列、88 合体、无衬底 EXIF 与镜像
     assert.deepEqual(landscape.panes.controlPane, { x: 790, y: 0, w: 54, h: 390 });
     assert.deepEqual(landscape.panes.fitRect, { x: 132, y: 0, w: 585, h: 390 });
     assert.equal(landscape.exif.variant, "bare");
-    assert.deepEqual(landscape.exif.frame, { x: 786, y: 10, w: 52, h: 112 });
+    assert.deepEqual(landscape.exif.frame, { x: 786, y: 10, w: 52, h: 150 });
+    assert.equal(landscape.exif.items.length, 4);
     assert.equal(landscape.control.slots.exif.w, t("toolbar.exif.item.width"));
     assert.equal(landscape.exif.items[0].w, t("toolbar.exif.item.width"));
     assert.equal(landscape.control.slots.exif.x + landscape.control.slots.exif.w / 2,
@@ -394,8 +395,8 @@ test("SHELL-09：手机横屏刘海侧列、88 合体、无衬底 EXIF 与镜像
     assert.equal(landscape.panes.controlPane.w, t("shell.glass.button.size") + t("toolbar.padding"));
     const { children: landscapeChildren, ...landscapeSlot } = landscape.control.slots.rating;
     assert.deepEqual(landscapeSlot, {
-        x: 790, y: 132, w: 44, h: 106, compact: true,
-        visual: { x: 790, y: 132, w: 44, h: 106 },
+        x: 790, y: 170, w: 44, h: 68, compact: true,
+        visual: { x: 790, y: 170, w: 44, h: 68 },
     });
     assert.equal(landscapeChildren.length, 6);
     assert.deepEqual(landscape.control.slots.command, { x: 790, y: 248, w: 44, h: 132 });
@@ -419,12 +420,12 @@ test("SHELL-09：手机横屏刘海侧列、88 合体、无衬底 EXIF 与镜像
     assert.deepEqual(mirrored.film.items[0], { x: 8, y: 64, w: 64, h: 76 });
     const { children: mirroredChildren, ...mirroredSlot } = mirrored.control.slots.rating;
     assert.deepEqual(mirroredSlot, {
-        x: 10, y: 132, w: 44, h: 106, compact: true,
-        visual: { x: 10, y: 132, w: 44, h: 106 },
+        x: 10, y: 170, w: 44, h: 68, compact: true,
+        visual: { x: 10, y: 170, w: 44, h: 68 },
     });
     assert.equal(mirroredChildren.length, 6);
     assert.deepEqual(mirrored.control.slots.command, { x: 10, y: 248, w: 44, h: 132 });
-    assert.deepEqual(mirrored.exif.frame, { x: 6, y: 10, w: 52, h: 112 });
+    assert.deepEqual(mirrored.exif.frame, { x: 6, y: 10, w: 52, h: 150 });
     assert.equal(mirrored.exif.frame.x + mirrored.exif.frame.w / 2,
         mirrored.control.slots.command.x + t("shell.phone.command.size") / 2, "镜像后 EXIF 容器未与命令列同轴");
     assert.deepEqual(mirrored.nodes["control.command"], [10, 248, 44, 132]);

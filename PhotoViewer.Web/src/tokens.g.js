@@ -328,7 +328,7 @@ const tokens = Object.freeze({
     "popup.ratingSources.metaLineGap": 4,
     "popup.ratingSources.nameFontSize": 11,
     "rating.compact.glyph.fontSize": 18,
-    "rating.compact.minLength": 88,
+    "rating.compact.minLength": 64,
     "rating.control.clearGlyph.fontSize": 15,
     "rating.control.endInset": 4,
     "rating.control.glyph.fontSize": 20,

@@ -32,7 +32,7 @@ internal static class RatingControlChecks
         c.Equal("展开态每格步长 36", 36d, RatingControlGeometry.Slot);
         c.Equal("星排端留白 4", 4d, RatingControlGeometry.EndInset);
         c.Equal("展开态固有长度 224", 224d, RatingControlGeometry.ExpandedLength);
-        c.Equal("紧凑态最短长度 88", 88d, RatingControlGeometry.CompactMinLength);
+        c.Equal("紧凑态最短长度 64", 64d, RatingControlGeometry.CompactMinLength);
         c.Equal("紧凑星字号 18", 18d, RatingControlGeometry.CompactGlyph);
         c.Equal("点按阈值 8", 8d, RatingControlGeometry.TapSlop);
         c.Equal("取消阈值 44", 44d, RatingControlGeometry.CancelSlop);
@@ -149,7 +149,9 @@ internal static class RatingControlChecks
 
         c.True("165 胶囊无冲突步长 = (165 − 44) / 4", Near(RatingControlGeometry.CompactStep(165, false), 30.25));
         c.True("165 胶囊冲突步长 = (165 − 44) / 5", Near(RatingControlGeometry.CompactStep(165, true), 24.2));
-        c.True("88 胶囊无冲突步长 11（字形互相叠压）", Near(RatingControlGeometry.CompactStep(88, false), 11));
+        c.True("64 胶囊无冲突步长 5，有冲突步长 4",
+            Near(RatingControlGeometry.CompactStep(64, false), 5)
+                && Near(RatingControlGeometry.CompactStep(64, true), 4));
         c.True("步长不超过展开态格宽 36", Near(RatingControlGeometry.CompactStep(223, false), 36));
         c.True("胶囊短于控件厚度时步长为 0", Near(RatingControlGeometry.CompactStep(30, false), 0));
 

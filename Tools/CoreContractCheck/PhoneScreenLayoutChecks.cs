@@ -1318,16 +1318,16 @@ internal static class PhoneScreenLayoutChecks
         var six = ExifLayout(size, 6);
         var nine = ExifLayout(size, 9);
 
-        c.True("横屏 874×402 四项 EXIF 按整项裁到三项、星级 124",
-            four.ExifItems == 3 && Near(four.Exif.Height, 112) && Near(four.Rating.Height, 124),
+        c.True("横屏 874×402 完整显示四项 EXIF、星级 86",
+            four.ExifItems == 4 && Near(four.Exif.Height, 150) && Near(four.Rating.Height, 86),
             $"显示项 {four.ExifItems}，EXIF {RectText(four.Exif)}，星级 {RectText(four.Rating)}");
 
-        c.True("横屏 874×402 六项 EXIF 按整项裁到三项",
-            six.ExifItems == 3 && Near(six.Exif.Height, 112),
+        c.True("横屏 874×402 六项 EXIF 按整项裁到四项",
+            six.ExifItems == 4 && Near(six.Exif.Height, 150),
             $"显示项 {six.ExifItems}，EXIF {RectText(six.Exif)}");
 
-        c.True("横屏 874×402 九项仍裁到三项且 EXIF 列不变",
-            nine.ExifItems == 3 && NearRect(nine.Exif, six.Exif),
+        c.True("横屏 874×402 九项仍裁到四项且 EXIF 列不变",
+            nine.ExifItems == 4 && NearRect(nine.Exif, six.Exif),
             $"显示项 {nine.ExifItems}，EXIF {RectText(nine.Exif)}");
 
         c.True("横屏 874×402 裁剪后星级仍保住紧凑态最短长度且整组刚好填满可用区间",
@@ -1338,9 +1338,9 @@ internal static class PhoneScreenLayoutChecks
 
         var shortSize = LandscapeSizes.Single(caseSize => caseSize.Name == "1024×320");
         var shortLayout = ExifLayout(shortSize, 4);
-        c.True("横屏 1024×320 四项 EXIF 裁到一项且星级不短于紧凑态最短长度",
-            shortLayout.ExifItems == 1
-                && Near(shortLayout.Exif.Height, ExifBlockGeometry.Size(1, false, bare: true).Height)
+        c.True("横屏 1024×320 四项 EXIF 裁到两项且星级不短于紧凑态最短长度",
+            shortLayout.ExifItems == 2
+                && Near(shortLayout.Exif.Height, ExifBlockGeometry.Size(2, false, bare: true).Height)
                 && shortLayout.Rating.Height >= RatingControlGeometry.CompactMinLength - Epsilon,
             $"显示项 {shortLayout.ExifItems}，EXIF {RectText(shortLayout.Exif)}，"
             + $"星级 {RectText(shortLayout.Rating)}");
@@ -1472,8 +1472,8 @@ internal static class PhoneScreenLayoutChecks
         var releaseShown = PhoneScreenLayout.Compute(releaseInput);
         var releaseHidden = PhoneScreenLayout.Compute(releaseInput with { ShowRating = false });
 
-        c.True("横屏 874×402 六项 EXIF：关闭评分后从三项升到六项、只剩一组间距且星级槽消失",
-            releaseShown.ExifItems == 3 && releaseHidden.ExifItems == 6
+        c.True("横屏 874×402 六项 EXIF：关闭评分后从四项升到六项、只剩一组间距且星级槽消失",
+            releaseShown.ExifItems == 4 && releaseHidden.ExifItems == 6
                 && !Has(releaseHidden.Rating)
                 && Near(releaseHidden.Exif.MaxY + ToolGroupSpacing, releaseHidden.Commands.Y)
                 && Near(releaseHidden.Exif.X, releaseShown.Exif.X),
@@ -1605,9 +1605,9 @@ internal static class PhoneScreenLayoutChecks
                 && Near(landscapeLayout.Rating.MaxX, 864),
             $"增强 {RectText(landscapeLayout.Commands)}");
 
-        c.True("iPhone 17 横屏 874×402：控制区自上而下 EXIF 28/星级 150/增强 284，星级 124",
-            Near(landscapeLayout.Exif.Y, 28) && Near(landscapeLayout.Rating.Y, 150)
-                && Near(landscapeLayout.Rating.Height, 124) && Near(landscapeLayout.Commands.Y, 284)
+        c.True("iPhone 17 横屏 874×402：控制区自上而下 EXIF 28/星级 188/增强 284，星级 86",
+            Near(landscapeLayout.Exif.Y, 28) && Near(landscapeLayout.Rating.Y, 188)
+                && Near(landscapeLayout.Rating.Height, 86) && Near(landscapeLayout.Commands.Y, 284)
                 && Near(landscapeLayout.Commands.Height, 88),
             $"EXIF {RectText(landscapeLayout.Exif)}，星级 {RectText(landscapeLayout.Rating)}，"
             + $"增强 {RectText(landscapeLayout.Commands)}");
@@ -1616,7 +1616,7 @@ internal static class PhoneScreenLayoutChecks
             Near(landscapeLayout.Exif.Width, DesignTokens.ToolbarExifItemWidth)
                 && Near(landscapeLayout.Exif.X, 816)
                 && Near(landscapeLayout.Exif.X + landscapeLayout.Exif.Width / 2, 842)
-                && landscapeLayout.ExifItems == 3,
+                && landscapeLayout.ExifItems == 4,
             $"EXIF {RectText(landscapeLayout.Exif)}，显示项 {landscapeLayout.ExifItems}");
 
         c.True("iPhone 17 横屏 874×402：分析栏与控制区共边（接缝 8 在分析区末端内）",
