@@ -48,8 +48,6 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
     private readonly LayerBackdropLayout _photoLayer;
     private readonly AndroidGlassControlLayer _glassLayer;
     private readonly AndroidPhotoMaterial _photoMaterial;
-    /// <summary>上一次让材质失效时的主图渲染代际；用于避免材质重绘与照片层重录互相触发。</summary>
-    private int _materialFrames = -1;
     private readonly AndroidBarScrim _fileBar;
     private readonly View _fileDivider;
     private readonly AndroidBarScrim _controlBackground;
@@ -277,7 +275,6 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         _screenLayer.AddView(_glassLayer, new FrameLayout.LayoutParams(LayoutParams.MatchParent, LayoutParams.MatchParent));
 
         _photoMaterial = new AndroidPhotoMaterial(_photoLayer);
-        _photoLayer.Recorded += OnPhotoLayerRecorded;
         // 共享效果层的离屏缓冲与主图纹理同属这一进程的 GPU 外部占用，一起记进预算源。
         _photo.AdditionalFootprint = () => _photoMaterial.FootprintBytes + _glassLayer.FootprintBytes;
 
@@ -482,8 +479,8 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         // MENU-03 / FILTER-08 / RATING-04：三处弹层共用主窗口内最上层宿主，取屏幕层最终画面。
         _popupLayer.Backdrop = BackdropCapabilities.IsRenderEffectSupported ? _screenLayer.Backdrop : null;
         _popupLayer.Surface = new AndroidGlassPopupMaterial();
-        _sceneLayer.Recorded += OnSceneLayerRecorded;
-        _screenLayer.Recorded += OnScreenLayerRecorded;
+        _sceneLayer.DescendantInvalidated += OnSceneInvalidated;
+        _screenLayer.DescendantInvalidated += OnScreenInvalidated;
         AddView(_popupLayer);
 
         _photo.PresentationFailed += reason => ShowStatus(
@@ -821,7 +818,8 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
                 (int)Math.Round((row ? content.Width : filterMain) * density),
                 (int)Math.Round(filterDocument * density));
             // FILM-07：列布局胶片条纵贯内容全高，筛选组浮在列表上方，不能被列表覆盖。
-            _filterScrollHost.BringToFront();
+            if (!ReferenceEquals(_sceneLayer.GetChildAt(_sceneLayer.ChildCount - 1), _filterScrollHost))
+                _filterScrollHost.BringToFront();
             LayoutChild(_filterScrollHost, filterRect, density);
             double filmWidth = row ? Math.Max(1, content.Width - similarityColumn) : Math.Max(1, content.Width);
             // FILM-07：宽形态列布局的胶片条纵贯文件栏内容全高，筛选组浮在列表上方；
@@ -1033,7 +1031,8 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
                 LayoutChild(_filterScrollHost, group, density);
             }
             // 横屏入口合体压在纵向胶片条上（SHELL-09）：列表从合体下方滚过，合体不能落在列表之下。
-            _filterScrollHost.BringToFront();
+            if (!ReferenceEquals(_sceneLayer.GetChildAt(_sceneLayer.ChildCount - 1), _filterScrollHost))
+                _filterScrollHost.BringToFront();
         }
 
         ApplyButton(_phoneMoreButton, portrait ? slots.More : default, density);
@@ -1166,44 +1165,33 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
         if (_startPending || _main.CurrentFile != null) StartSession();
     }
 
-    /// <summary>
-    /// 主图真的出了一帧：让照片层自己失效，迫使下一次遍历执行
-    /// <see cref="LayerBackdropLayout.DispatchDraw"/> 并重录子树，从而触发 <c>Recorded</c>；
-    /// 材质失效仍统一由 <see cref="OnPhotoLayerRecorded"/> 按渲染代际门控。只由真实帧驱动，不引入定时重绘。
-    /// </summary>
     private void OnPresentationFrameRendered()
     {
-        if (_disposed) return;
+        if (_disposed || !_photoMaterial.IsRealMaterial) return;
+
+        // 在遍历前一次性标脏；照片层仍先于所有栏底取样。录制完成时再失效会要求窗口补一帧。
         _photoLayer.Invalidate();
+        InvalidateVisible(_fileBar);
+        InvalidateVisible(_controlBackground);
+        InvalidateVisible(_phoneTopBar);
+        InvalidateVisible(_phoneBottomBar);
+        InvalidateVisible(_phoneLeadingBar);
+        InvalidateVisible(_phoneTrailingBar);
+        InvalidateVisible(_phoneExif);
+        InvalidateVisible(_controlBar.ExifBlock);
     }
 
-    /// <summary>
-    /// 照片层重录完成：只有主图真的换了一帧才让全部材质失效。切图、缩放拖动与表面重建后的新帧都会推进
-    /// <see cref="AndroidPhotoView.RenderedFrames"/>，因此都能跟上；按代际去重则挡住「材质失效 → 材质重绘 →
-    /// 再次遍历」的自触发重绘，不引入额外的连续重绘。
-    /// </summary>
-    private void OnPhotoLayerRecorded(object? sender, EventArgs e)
+    private static void InvalidateVisible(View view)
     {
-        if (_disposed) return;
-        int frames = _photo.RenderedFrames;
-        if (frames == _materialFrames) return;
-        _materialFrames = frames;
-        _fileBar.Invalidate();
-        _controlBackground.Invalidate();
-        _phoneTopBar.Invalidate();
-        _phoneBottomBar.Invalidate();
-        _phoneLeadingBar.Invalidate();
-        _phoneTrailingBar.Invalidate();
-        _phoneExif.Invalidate();
-        _controlBar.ExifBlock.Invalidate();
+        if (view.IsShown) view.Invalidate();
     }
 
-    private void OnSceneLayerRecorded(object? sender, EventArgs e)
+    private void OnSceneInvalidated()
     {
         if (!_disposed) _glassLayer.Invalidate();
     }
 
-    private void OnScreenLayerRecorded(object? sender, EventArgs e)
+    private void OnScreenInvalidated()
     {
         if (!_disposed) _popupLayer.InvalidateSurface();
     }
@@ -2162,14 +2150,13 @@ internal sealed class AndroidNativeRootView : FrameLayout, ICardRatingPopupHost
             _similarityPane.PopupHost = null;
 #endif
             _ratingPopup.Dispose();
-            _sceneLayer.Recorded -= OnSceneLayerRecorded;
-            _screenLayer.Recorded -= OnScreenLayerRecorded;
+            _sceneLayer.DescendantInvalidated -= OnSceneInvalidated;
+            _screenLayer.DescendantInvalidated -= OnScreenInvalidated;
             _popupLayer.Backdrop = null;
             _popupLayer.Dispose();
             _analysisPane.TileCountChanged -= RequestLayout;
             _analysisPane.DetailChanged -= UpdateDetailHighlight;
             _analysisPresenter.Dispose();
-            _photoLayer.Recorded -= OnPhotoLayerRecorded;
             _photo.AdditionalFootprint = null;
             _glassLayer.Dispose();
             _photo.Dispose();

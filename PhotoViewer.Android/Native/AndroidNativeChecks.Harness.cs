@@ -72,6 +72,9 @@ internal static partial class AndroidNativeChecks
                 case "glass":
                     await RunGlassChecksAsync();
                     break;
+                case "gesture-perf":
+                    await RunGesturePerfChecksAsync();
+                    break;
             }
         }
         catch (Exception exception)

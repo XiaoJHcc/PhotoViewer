@@ -2,6 +2,8 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using Handler = Android.OS.Handler;
+using Looper = Android.OS.Looper;
 using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Memory;
@@ -18,6 +20,7 @@ internal sealed partial class AndroidPhotoView
     private int _presentationVersion;
     private int _surfaceVersion;
     private Java.Lang.Runnable? _drawFrame;
+    private Handler? _drawDispatch;
     private bool _drawScheduled;
     private int _renderedFrames;
 
@@ -139,16 +142,36 @@ internal sealed partial class AndroidPhotoView
         _drawFrame ??= new Java.Lang.Runnable(() =>
         {
             _drawScheduled = false;
-            if (!_disposed) Draw();
+            Draw();
         });
         _drawScheduled = true;
-        PostOnAnimation(_drawFrame);
+        if (OperatingSystem.IsAndroidVersionAtLeast(28))
+        {
+            // 在当前输入/动画回调返回后提交；让 TextureView 的缓冲更新消息在下一次遍历前到达。
+            _drawDispatch ??= Handler.CreateAsync(Looper.MainLooper!);
+            _drawScheduled = _drawDispatch.Post(_drawFrame);
+        }
+        else
+        {
+            PostOnAnimation(_drawFrame);
+        }
     }
 
     private void CancelDraw()
     {
-        if (_drawFrame != null) RemoveCallbacks(_drawFrame);
+        if (!_drawScheduled || _drawFrame == null) return;
+        if (_drawDispatch != null) _drawDispatch.RemoveCallbacks(_drawFrame);
+        else RemoveCallbacks(_drawFrame);
         _drawScheduled = false;
+    }
+
+    private void DisposeDrawScheduler()
+    {
+        CancelDraw();
+        _drawDispatch?.Dispose();
+        _drawDispatch = null;
+        _drawFrame?.Dispose();
+        _drawFrame = null;
     }
 
     private AndroidPhotoRenderer CreateRenderer()

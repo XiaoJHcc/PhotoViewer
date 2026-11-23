@@ -92,10 +92,7 @@ internal sealed partial class AndroidPhotoView : FrameLayout, TextureView.ISurfa
     /// <summary>EGL 窗口表面就绪，允许宿主启动加载并按实际输出上传照片。</summary>
     internal event Action? SurfaceReady;
     /// <summary>
-    /// 成功提交一帧新画面之后触发（<see cref="Draw"/> 里 swap 成功、<c>RenderedFrames</c> 已推进，
-    /// 且内部纹理与容器都已失效之后）。宿主用它驱动需要「真实出帧」才能跟进的外部状态，
-    /// 例如让包住主图的照片层重新录制（只靠视图失效不足以保证录制容器的 <c>DispatchDraw</c> 重跑）。
-    /// 只随真实上屏帧触发，不引入定时器。
+    /// EGL 成功提交并标记主图待重绘后触发；宿主据此在同一次遍历前标记取样层和可见材质。
     /// </summary>
     internal event Action? PresentationFrameRendered;
     /// <summary>视口变化通知（会话据此决定代理尺寸与 Full 升级，覆盖层据此刷新）。</summary>
@@ -470,14 +467,8 @@ internal sealed partial class AndroidPhotoView : FrameLayout, TextureView.ISurfa
             _renderedFrames++;
             // 表面纹理的内容只在视图重绘时被界面渲染线程取用：swap 之后必须安排一次重绘，否则新帧要等下一次无关重绘。
             _textureView.Invalidate();
-            // 只失效内部 TextureView 不够：主图容器挂在照片层（LayerBackdropLayout）里，该层把整棵子树录进
-            // RenderNode 供栏底与带衬底 EXIF 取样，而层的录制由**容器自身**的重绘驱动；容器不失效时照片层
-            // 不会重录，材质就取不到新帧（切图/缩放后栏底停在旧画面）。这里让失效沿 _photoPane 传到照片层，
-            // 既保证录制跟上，也让材质按渲染代际失效；不引入连续或定时重绘。
             Invalidate();
-            // 实测：上面两处失效仍不足以保证录制容器重跑 DispatchDraw（照片层既不重录、也不触发 Recorded），
-            // 材质因此停在旧画面。把「出了一帧」这件事显式通知宿主，由宿主让照片层自己失效，
-            // 迫使下一次遍历真正重录并触发 Recorded。
+            // 自定义照片录制节点由宿主标脏；普通子视图失效不会重录该节点。
             PresentationFrameRendered?.Invoke();
         }
     }
@@ -1001,7 +992,7 @@ internal sealed partial class AndroidPhotoView : FrameLayout, TextureView.ISurfa
             _disposed = true;
             _surfaceVersion++;
             InvalidatePresentation();
-            CancelDraw();
+            DisposeDrawScheduler();
             SetRequestedImage(null, _generation);
             _image?.Release();
             _image = null;

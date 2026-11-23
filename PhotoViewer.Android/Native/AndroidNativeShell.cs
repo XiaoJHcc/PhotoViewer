@@ -123,8 +123,13 @@ public static class AndroidNativeShell
             AndroidSettingsStorage.UseIsolatedProfile("color");
         else if (!string.IsNullOrWhiteSpace(intent?.GetStringExtra("pv-stress")))
             AndroidSettingsStorage.UseIsolatedProfile("stress");
-        else if (intent?.GetStringExtra("pv-check") is "zoom" or "input" or "perf" or "background")
+        else if (intent?.GetStringExtra("pv-check") is "zoom" or "input" or "perf" or "background" or "gesture-perf")
+        {
             AndroidSettingsStorage.UseIsolatedProfile("input-checks");
+            // 手势性能的 normal 场景要固定为「栏位全部可见」的主屏，重复运行不受用户栏位显隐影响。
+            if (string.Equals(intent?.GetStringExtra("pv-check"), "gesture-perf", StringComparison.Ordinal))
+                AndroidShellPreferences.UseIsolatedProfile("gesture-perf");
+        }
         else if (string.Equals(intent?.GetStringExtra("pv-check"), "rating-perf", StringComparison.OrdinalIgnoreCase))
             AndroidSettingsStorage.UseIsolatedProfile("rating-perf");
         // 液态玻璃验收要核对真实存在的栏底与 EXIF 块：独立档从默认栏位显隐起跑，用户设置不参与。

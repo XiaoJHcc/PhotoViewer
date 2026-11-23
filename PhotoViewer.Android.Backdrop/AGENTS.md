@@ -111,7 +111,7 @@
 - **生命周期**：`BackdropEffectScope.Dispose()` 丢弃它持有的效果节点与着色器缓存，之后快照与 scope 都不可再用；`BackdropEffectScope.Reset()` 只重置效果链，不释放节点。`CombinedBackdrop` 不持有资源，不需要 `Dispose`。`LayerBackdropLayout` 释放自己的源层节点。高光/阴影绘制器各自 `Dispose`。
 - **每消费者一份 scope**：同一源层上的不同位置/尺寸控件必须各自持有 `BackdropEffectScope`。共用一份 scope（例如六处栏底共用一个材质对象）会让同一张效果节点在同一帧内被后画的消费者改写，先画的消费者在渲染时读到后者的内容。公共 API 无法从 `BackdropDrawContext` 可靠地猜出消费者身份，归属由调用方按控件建立。
 - **`TileMode`**：Java 枚举在绑定里是类而非常量，故本模块自带 `BackdropTileMode` 四值并映射到平台实例。
-- **取样顺序约束**：玻璃元素不得位于它所取样的 `LayerBackdropLayout` 子树内；取样方在层之后绘制时本来就读到本帧内容，层内容变化而取样方未被失效时订阅 `Recorded` 并让自己失效，可在下一次遍历跟上（最多一帧延迟）。
+- **取样顺序约束**：玻璃元素不得位于它所取样的 `LayerBackdropLayout` 子树内；取样方在层之后绘制时本来就读到本帧内容，硬件渲染下可订阅源容器的 `DescendantInvalidated`，让层之外的取样视图在同次遍历前标脏。已知源内容将变化时（如 EGL 提交照片帧），可显式同时失效源和消费者。
 
 ## 用法骨架
 
@@ -249,7 +249,7 @@ dotnet build /path/to/PhotoViewer.Android.Backdrop/PhotoViewer.Android.Backdrop.
 - 只画宿主交给它的层：`SurfaceView` 内容在系统合成器的独立图层上、不在界面渲染层，录不到；`TextureView` 子视图被 `RenderNode` 录制时会带上纹理（产品主图依赖这一点），本模块不对其他视图组合与平台版本作保证。
 - 子树上屏与取样共用同一次 `RenderNode` 录制；嵌套层仍各有自己的录制与合成成本，性能结论只在真机测。
 - `LayerBackdropLayout` 拥有自己的源层 `Backdrop`，视图被释放（`Dispose`）时一并回收 `RenderNode`；消费者效果层归各自的 `BackdropEffectScope`，两者互不代管。
-- 层内容变化仍需让消费者视图重绘（订阅 `LayerBackdropLayout.Recorded` 或显式 `Invalidate`）；源层每次完成新录制即递增内容代际，消费者效果层在消费者重绘时自行重录，不需要逐控件失效效果层。消费者位置/尺寸或 padding 变化、效果引用变化、裁切形状变化时同样重录；`LayerBackdrop.Invalidate()` 只用于外部改动了源层内容且没走正常录制的情况。
+- 层内容变化经子树失效通知或显式 `Invalidate` 驱动消费者视图；效果层在消费者绘制时按录制代际自行更新。消费者位置/尺寸或 padding 变化、效果引用变化、裁切形状变化时同样重录；`LayerBackdrop.Invalidate()` 只用于外部改动了源层内容且没走正常录制的情况。
 - 逆变换只补偿玻璃元素自身的缩放与旋转（左上角原点），不补偿平移，与上游 `InverseLayerScope` 相同；祖先容器的缩放/旋转不在补偿范围内。
 - 高光与阴影通过 `Canvas.saveLayer` 绘制，画布裁剪仍由宿主决定；阴影半径外扩超出视图时，接入层需提供不裁切的绘制范围。
 - 低版本不提供半透明自绘替代：分级为 `ColorLayer` 时调用方必须画正式色层。API 31/32 没有折射与着色器高光，高光退回纯色描边。

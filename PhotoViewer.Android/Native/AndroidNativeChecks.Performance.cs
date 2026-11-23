@@ -159,6 +159,6 @@ internal static partial class AndroidNativeChecks
         await Task.Delay(100);
         int rendered = photo.RenderedFrames - frames;
         Check("绘制合帧 同一轮20次更新不立即交换", immediate == 0, $"immediate={immediate}");
-        Check("绘制合帧 下一帧仅绘制一次", rendered == 1, $"frames={rendered}");
+        Check("绘制合帧 同一轮20次更新仅提交一次", rendered == 1, $"frames={rendered}");
     }
 }

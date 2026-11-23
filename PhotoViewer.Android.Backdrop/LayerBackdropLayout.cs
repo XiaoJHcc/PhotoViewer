@@ -18,8 +18,7 @@ namespace PhotoViewer.Android.Backdrop;
 /// </para>
 /// <para>
 /// 取样方必须位于本容器**之外**且在层之后绘制（上游「玻璃元素不得位于自己取样的子树内」）；
-/// 这样取样时读到的是本帧内容。层内容变化而取样方本身没有被失效时（例如照片换帧），
-/// 订阅 <see cref="Recorded"/> 并让自己 <c>Invalidate()</c>，可在下一次遍历跟上。
+/// 子树内容变化时可订阅 <see cref="DescendantInvalidated"/> 将取样方标脏，在同次遍历按该顺序绘制。
 /// </para>
 /// <para>
 /// 软件画布（<c>View.draw(Canvas)</c> 离屏回读等）不录制：<c>Canvas.drawRenderNode</c> 只支持硬件画布。
@@ -58,6 +57,16 @@ public class LayerBackdropLayout : FrameLayout
 
     /// <summary>本帧重录完成后触发。</summary>
     public event EventHandler? Recorded;
+
+    /// <summary>硬件渲染子树失效时触发，不依赖本容器是否重录。</summary>
+    public event Action? DescendantInvalidated;
+
+    [SupportedOSPlatform("android26.0")]
+    public override void OnDescendantInvalidated(View child, View target)
+    {
+        base.OnDescendantInvalidated(child, target);
+        if (RecordsBackdrop) DescendantInvalidated?.Invoke();
+    }
 
     /// <summary>
     /// 释放取样源。<see cref="Backdrop"/> 的 <c>RenderNode</c> 归本容器所有，

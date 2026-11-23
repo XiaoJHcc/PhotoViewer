@@ -101,8 +101,7 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
     }
 
     /// <summary>
-    /// 取样层完成新录制后请求面板重绘（屏幕层 <c>Recorded</c> 时由接线方调用）；
-    /// 打开期间由材质按内容代际重录本地取样，不再逐帧新建效果节点。
+    /// 屏幕层子树失效时标记正在呈现的面板，按绘制顺序取样同一次遍历的屏幕层。
     /// </summary>
     internal void InvalidateSurface()
     {

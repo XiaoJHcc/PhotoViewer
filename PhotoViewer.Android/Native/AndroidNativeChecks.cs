@@ -32,7 +32,7 @@ namespace PhotoViewer.Android.Native;
 /// </summary>
 /// <remarks>
 /// <c>faults</c> / <c>layout</c> / <c>input</c> / <c>storage</c> / <c>filter</c> / <c>zoom</c> / <c>color</c> / <c>edition</c> /
-/// <c>rating-perf</c> / <c>glass</c> 是独立模式：按精确模式名分发，
+/// <c>rating-perf</c> / <c>glass</c> / <c>gesture-perf</c> 是独立模式：按精确模式名分发，
 /// 素材入口见模块手册（<see cref="Wants"/> 不覆盖它们），不并入 <c>all</c>。
 /// </remarks>
 internal static partial class AndroidNativeChecks
@@ -842,7 +842,7 @@ internal static partial class AndroidNativeChecks
         // EDITION-07：报告名带发行版，标准版与 AI 版在同一设备上互不覆盖。
         File.WriteAllText(IOPath.Combine(directory,
             $"android-checks-{_mode}-{AndroidAppCapabilities.EditionName}.txt"), report.ToString());
-        if (_mode is "zoom" or "input" or "rating-perf" or "glass")
+        if (_mode is "zoom" or "input" or "rating-perf" or "glass" or "gesture-perf")
         {
             global::Android.Util.Log.Info("PhotoViewerChecks", $"{_mode}: PASS {_passed} / FAIL {_failed}");
             foreach (var line in Lines) global::Android.Util.Log.Info("PhotoViewerChecks", line);
@@ -1323,5 +1323,5 @@ internal static partial class AndroidNativeChecks
     /// <summary>
     /// 独立模式按精确模式名匹配，不并入 <c>all</c>；素材入口见模块手册。
     /// </summary>
-    private static bool IsStandaloneMode => _mode is "faults" or "form" or "layout" or "input" or "storage" or "filter" or "zoom" or "color" or "perf" or "background" or "edition" or "rating-perf" or "glass";
+    private static bool IsStandaloneMode => _mode is "faults" or "form" or "layout" or "input" or "storage" or "filter" or "zoom" or "color" or "perf" or "background" or "edition" or "rating-perf" or "glass" or "gesture-perf";
 }
