@@ -1888,8 +1888,19 @@ internal static class iOSNativeLayoutCheck
         if (file.HasRatingConflict)
             throw new InvalidOperationException($"{scope} 卡片长按核对要求非冲突夹具：{file.Name}");
         int index = list.FilteredFiles.IndexOf(file);
-        await UiDispatcher.InvokeAsync(() => list.ScrollToCurrent());
-        var card = await WaitForCardAsync(root, main, index, $"{scope} 卡片长按");
+        // 定位动画期间打开卡片弹窗会被滚动观察者按设计收起：这一段只做程序化直达，避免动画抢在长按前。
+        var filmReduceMotion = root.Filmstrip.ReduceMotionProvider;
+        iOSThumbnailCard card;
+        try
+        {
+            await UiDispatcher.InvokeAsync(() => root.Filmstrip.ReduceMotionProvider = () => true);
+            await UiDispatcher.InvokeAsync(() => list.ScrollToCurrent());
+            card = await WaitForCardAsync(root, main, index, $"{scope} 卡片长按");
+        }
+        finally
+        {
+            await UiDispatcher.InvokeAsync(() => root.Filmstrip.ReduceMotionProvider = filmReduceMotion);
+        }
         var popup = root.RatingPopup;
         if (popup.IsOpen) popup.Close();
         if (card.Interactions.OfType<UIContextMenuInteraction>().Any())

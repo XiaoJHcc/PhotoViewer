@@ -24,6 +24,7 @@ namespace PhotoViewer.Android.Core;
 /// </summary>
 internal sealed class AndroidRandomAccessSession : IStorageRandomAccessSession
 {
+    private const int ReadCacheSize = 32768;
     private readonly object _gate = new();
     private readonly FileChannel? _readChannel;
     private readonly FileChannel? _writeChannel;
@@ -33,6 +34,9 @@ internal sealed class AndroidRandomAccessSession : IStorageRandomAccessSession
     private readonly StorageAccessMode _mode;
     private readonly string _name;
     private readonly long? _knownLength;
+    private byte[]? _readCache;
+    private long _cacheOffset;
+    private int _cacheLength;
     private bool _disposed;
 
     private AndroidRandomAccessSession(
@@ -223,8 +227,8 @@ internal sealed class AndroidRandomAccessSession : IStorageRandomAccessSession
     /// <summary>打开时的属性快照（尺寸取新鲜投影、时间取同一次查询；写入后不自动更新）。</summary>
     public StorageRevision? Revision { get; }
 
-    /// <summary>从指定偏移读取；返回 0 表示已到文件末尾。</summary>
-    public async ValueTask<int> ReadAsync(
+    /// <summary>从指定偏移读取；返回 0 表示已到文件末尾。命中会话读缓冲时同步返回，避免反复跨 JNI 与线程切换。</summary>
+    public ValueTask<int> ReadAsync(
         long offset,
         Memory<byte> buffer,
         CancellationToken cancellationToken = default)
@@ -232,8 +236,30 @@ internal sealed class AndroidRandomAccessSession : IStorageRandomAccessSession
         cancellationToken.ThrowIfCancellationRequested();
         ThrowIfDisposed();
         if (offset < 0) throw new ArgumentOutOfRangeException(nameof(offset));
-        if (buffer.IsEmpty) return 0;
+        if (buffer.IsEmpty) return new ValueTask<int>(0);
 
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            if (_readCache is { } cache && _cacheLength > 0
+                && offset >= _cacheOffset && offset < _cacheOffset + _cacheLength)
+            {
+                int start = (int)(offset - _cacheOffset);
+                int available = _cacheLength - start;
+                if (available >= buffer.Length || _cacheLength < ReadCacheSize)
+                {
+                    int copied = Math.Min(available, buffer.Length);
+                    cache.AsSpan(start, copied).CopyTo(buffer.Span);
+                    return new ValueTask<int>(copied);
+                }
+            }
+        }
+
+        return ReadAsyncSlow(offset, buffer, cancellationToken);
+    }
+
+    private async ValueTask<int> ReadAsyncSlow(long offset, Memory<byte> buffer, CancellationToken cancellationToken)
+    {
         int read = await Task.Run(() => ReadCore(offset, buffer), cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         return read;
@@ -317,6 +343,24 @@ internal sealed class AndroidRandomAccessSession : IStorageRandomAccessSession
             {
                 var channel = _readChannel
                     ?? throw new StorageException(StorageError.NotSeekable, $"{_name} 以只写方式打开，不能读取");
+                // 容器头解析（HEIF/TIFF）连续发起大量小块读取：一次预读 32KB 到托管缓冲，后续小读零 JNI。
+                if (count <= ReadCacheSize / 2)
+                {
+                    _readCache ??= new byte[ReadCacheSize];
+                    channel.Position(offset);
+                    int filled = _input!.Read(_readCache, 0, ReadCacheSize);
+                    if (filled <= 0)
+                    {
+                        _cacheLength = 0;
+                        return 0;
+                    }
+                    _cacheOffset = offset;
+                    _cacheLength = filled;
+                    int copied = Math.Min(filled, count);
+                    Buffer.BlockCopy(_readCache, 0, array, arrayOffset, copied);
+                    return copied;
+                }
+
                 channel.Position(offset);
                 int read = _input!.Read(array, arrayOffset, count);
                 return read < 0 ? 0 : read;
@@ -349,6 +393,7 @@ internal sealed class AndroidRandomAccessSession : IStorageRandomAccessSession
             {
                 var channel = _writeChannel
                     ?? throw new StorageException(StorageError.NotSeekable, $"{_name} 没有可写通道");
+                _cacheLength = 0;
                 channel.Position(offset);
                 _output!.Write(array, arrayOffset, count);
             }
@@ -368,11 +413,11 @@ internal sealed class AndroidRandomAccessSession : IStorageRandomAccessSession
             {
                 var channel = _writeChannel
                     ?? throw new StorageException(StorageError.NotSeekable, $"{_name} 没有可写通道");
+                _cacheLength = 0;
                 global::Android.Systems.Os.Ftruncate(_fileDescriptor, length);
                 if (channel.Size() != length)
                     throw new StorageException(StorageError.Unsupported, $"当前存储未能调整 {_name} 的长度");
                 channel.Force(true);
-                _fileDescriptor.Sync();
             }
             catch (Exception exception) when (exception is not StorageException)
             {
@@ -404,8 +449,8 @@ internal sealed class AndroidRandomAccessSession : IStorageRandomAccessSession
             ThrowIfDisposed();
             try
             {
+                // FileChannel.Force(true) 在 ART 上已执行完整 fsync（数据+元数据），不再叠加第二次 FileDescriptor.Sync()。
                 _writeChannel!.Force(true);
-                _fileDescriptor.Sync();
             }
             catch (Exception exception)
             {

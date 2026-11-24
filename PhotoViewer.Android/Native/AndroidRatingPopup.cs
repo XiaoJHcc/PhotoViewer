@@ -5,7 +5,10 @@ using System.Linq;
 using Android.Content;
 using Android.Content.Res;
 using Android.Graphics;
+using Android.Graphics.Drawables;
+using Android.Graphics.Drawables.Shapes;
 using Android.OS;
+using Android.Provider;
 using Android.Text;
 using Android.Util;
 using Android.Views;
@@ -24,7 +27,9 @@ namespace PhotoViewer.Android.Native;
 
 /// <summary>
 /// RATING-04/07：窗口内玻璃面板承载星级选择器与横排条目。布局取共享几何，控件与反馈由 Android 承载；
-/// 面板宿主是根视图最上层的 <see cref="AndroidGlassPopupLayer"/>，与菜单、筛选下拉共用同一宿主。
+/// 紧凑态纯星级入口的滑动/拖放/取消三区由共享 <see cref="CompactRatingDragGesture"/> 驱动，
+/// 卡片长按仍走 <see cref="RatingGesture"/>。面板宿主是根视图最上层的
+/// <see cref="AndroidGlassPopupLayer"/>，与菜单、筛选下拉共用同一宿主。
 /// </summary>
 internal sealed class AndroidRatingPopup : IDisposable
 {
@@ -50,6 +55,7 @@ internal sealed class AndroidRatingPopup : IDisposable
     private ImageFile? _target;
     private Entry[] _entries = [];
     private RatingGesture? _gesture;
+    private CompactRatingDragGesture? _compactGesture;
     private View? _gestureOwner;
     private long _downTime;
     private bool _busy;
@@ -76,7 +82,13 @@ internal sealed class AndroidRatingPopup : IDisposable
     internal RatingPopupMode ModeForChecks => _mode;
     internal RatingPopupAnchor AnchorKindForChecks => _kind;
     internal Rect SlotRectPx(int entryIndex, int rating) => _panel?.SlotRect(entryIndex, rating) ?? new Rect();
-    internal int? PreviewForChecks => _gesture?.Preview;
+    internal int? PreviewForChecks => _compactGesture?.Preview ?? _gesture?.Preview;
+    internal int? CompactPreviewForChecks => _compactGesture?.Preview;
+    internal int? DropHoveredSlotForChecks => _panel?.DropHoveredSlotForChecks;
+    internal int? ScaledSlotForChecks => _panel?.ScaledSlotForChecks;
+    internal float ScaledScaleForChecks => _panel?.ScaledScaleForChecks ?? 1f;
+    internal string CompactZoneForChecks => _compactGesture?.Zone?.ToString().ToLowerInvariant() ?? "";
+    internal Rect PanelRectForChecks => _panel == null ? new Rect() : ScreenRect(_panel);
 
     internal bool Show(ImageFile target, RatingPopupAnchor kind, RatingPopupDirection direction,
         bool horizontal, View entry, Func<bool>? entryValid = null)
@@ -135,6 +147,7 @@ internal sealed class AndroidRatingPopup : IDisposable
         _entryValid = null;
         _target = null;
         _gesture = null;
+        _compactGesture = null;
         _entries = [];
         _busy = false;
         if (_main.RatingSources.IsOpen) _main.RatingSources.Close();
@@ -177,7 +190,7 @@ internal sealed class AndroidRatingPopup : IDisposable
 
     private void Refresh()
     {
-        if (_target == null || _session == null || _gesture != null) return;
+        if (_target == null || _session == null || _gesture != null || _compactGesture != null) return;
         var mode = RatingPopupLayout.ResolveMode(_kind, _target.HasRatingConflict);
         var entries = ReadEntries(mode);
         if (_mode == mode && _entries.SequenceEqual(entries)) return;
@@ -207,17 +220,25 @@ internal sealed class AndroidRatingPopup : IDisposable
 
     private async void Choose(int rating)
     {
-        if (!IsOpen || _busy || _panel is not { } panel) return;
-        _busy = true;
+        if (!IsOpen || _busy || _panel is not { } panel || _target is not { } target) return;
         panel.PerformHapticFeedback(OperatingSystem.IsAndroidVersionAtLeast(30)
             ? FeedbackConstants.Confirm : FeedbackConstants.ContextClick);
+        if (_mode != RatingPopupMode.Sources)
+        {
+            // RATING-07：非冲突弹窗（纯星级胶囊 / 卡片）提交后立即收起，不让用户等落盘；
+            // 后台继续写盘，失败仍由 STATE-03 提示条报告。
+            Close();
+            await _main.SetRatingAsync(target, rating);
+            return;
+        }
+        _busy = true;
         try { await _main.RatingSources.SetRatingAsync(rating); }
         finally
         {
             if (ReferenceEquals(panel, _panel))
             {
                 _busy = false;
-                panel.ShowPreview(null);
+                panel.ShowCompactState(null, null, null);
                 Refresh();
             }
         }
@@ -228,6 +249,14 @@ internal sealed class AndroidRatingPopup : IDisposable
         if (!IsOpen || !ReferenceEquals(_entry, source) || _target?.HasRatingConflict != false) return false;
         _gestureOwner = source;
         _downTime = e.DownTime;
+        if (_kind == RatingPopupAnchor.Control && _mode == RatingPopupMode.Selector && _panel is { } panel)
+        {
+            _compactGesture = new CompactRatingDragGesture(Math.Max(0, _target!.Rating), _horizontal,
+                ToDp(_anchor!), ToDp(ScreenRect(panel)), ToDp(panel.RowOnScreen()), _direction);
+            _compactGesture.Begin(e.RawX / Density, e.RawY / Density);
+            ApplyCompactState(panel, _compactGesture);
+            return true;
+        }
         _gesture = new RatingGesture(Math.Max(0, _target.Rating), deferPreview: true);
         _gesture.Begin(e.RawX / Density, e.RawY / Density, 0);
         return true;
@@ -235,18 +264,42 @@ internal sealed class AndroidRatingPopup : IDisposable
 
     internal void MoveExternal(View source, MotionEvent e)
     {
-        if (!OwnsGesture(source, e) || _gesture is not { } gesture || _panel is not { } panel) return;
+        if (!OwnsGesture(source, e) || _panel is not { } panel) return;
+        if (_compactGesture is { IsActive: true } compact)
+        {
+            bool changed = compact.Move(e.RawX / Density, e.RawY / Density);
+            ApplyCompactState(panel, compact);
+            if (changed && compact.Preview.HasValue) SelectionHaptic(source);
+            return;
+        }
+        if (_gesture is not { } gesture) return;
         var (x, y, value, inBand) = Project(e, panel);
         if (!gesture.Move(x, y, value, inBand)) return;
         panel.ShowPreview(gesture.Preview);
-        if (gesture.Preview.HasValue)
-            source.PerformHapticFeedback(OperatingSystem.IsAndroidVersionAtLeast(34)
-                ? FeedbackConstants.SegmentTick : FeedbackConstants.ClockTick);
+        if (gesture.Preview.HasValue) SelectionHaptic(source);
     }
 
     internal void EndExternal(View source, MotionEvent e)
     {
-        if (!OwnsGesture(source, e) || _gesture is not { } gesture || _panel is not { } panel) return;
+        if (!OwnsGesture(source, e) || _panel is not { } panel) return;
+        if (_compactGesture is { } compact)
+        {
+            _compactGesture = null;
+            var compactResult = compact.End(e.RawX / Density, e.RawY / Density);
+            if (compactResult.Outcome == RatingGestureOutcome.Commit)
+            {
+                panel.ShowCompactState(compactResult.Value, null, null);
+                Choose(compactResult.Value);
+            }
+            else
+            {
+                panel.ShowCompactState(null, null, null);
+                if (compactResult.Outcome == RatingGestureOutcome.None) Close();
+            }
+            _gestureOwner = null;
+            return;
+        }
+        if (_gesture is not { } gesture) return;
         var (x, y, value, inBand) = Project(e, panel);
         var result = gesture.End(x, y, value, inBand);
         ClearGesture();
@@ -261,6 +314,9 @@ internal sealed class AndroidRatingPopup : IDisposable
     internal void CancelExternal(View source, MotionEvent e)
     {
         if (!OwnsGesture(source, e)) return;
+        _compactGesture?.Cancel();
+        _compactGesture = null;
+        _panel?.ShowCompactState(null, null, null);
         ClearGesture();
         Close();
     }
@@ -270,9 +326,22 @@ internal sealed class AndroidRatingPopup : IDisposable
     private void ClearGesture()
     {
         _gesture = null;
+        _compactGesture = null;
         _gestureOwner = null;
         _panel?.ShowPreview(null);
     }
+
+    /// <summary>把紧凑态三区手势的预览、放大槽与 hover 槽同步到弹窗星排。</summary>
+    /// <param name="panel">弹窗面板。</param>
+    /// <param name="gesture">紧凑态手势。</param>
+    private static void ApplyCompactState(RatingPanel panel, CompactRatingDragGesture gesture)
+        => panel.ShowCompactState(gesture.Preview, gesture.ScaledSlot, gesture.DropHoverSlot);
+
+    /// <summary>预览跨档的选择触感（Android 34+ 分段刻度，低版本时钟刻度）。</summary>
+    /// <param name="source">发起入口。</param>
+    private static void SelectionHaptic(View source)
+        => source.PerformHapticFeedback(OperatingSystem.IsAndroidVersionAtLeast(34)
+            ? FeedbackConstants.SegmentTick : FeedbackConstants.ClockTick);
 
     private (double X, double Y, int Value, bool InBand) Project(MotionEvent e, RatingPanel panel)
     {
@@ -340,12 +409,16 @@ internal sealed class AndroidRatingPopup : IDisposable
     private sealed class RatingPanel : ScrollView
     {
         private readonly FrameLayout _content;
+        private readonly View _dropHover;
+        private readonly ColorStateList _stateLayer;
         private readonly List<MaterialButton[]> _rows = [];
         private readonly List<LayoutRect> _stars = [];
         private readonly Action<int> _choose;
         private readonly Action _close;
         private Entry[] _entries = [];
         private bool _horizontal;
+        private int? _dropHoverSlot;
+        private int? _scaledSlot;
         internal double Pitch { get; private set; }
         private double Density => AndroidUiTheme.Density(Context!);
 
@@ -356,6 +429,20 @@ internal sealed class AndroidRatingPopup : IDisposable
             _content = new FrameLayout(context);
             // 星级数值是产品坐标，RTL 环境不翻转 0→5。
             _content.LayoutDirection = global::Android.Views.LayoutDirection.Ltr;
+            _stateLayer = AndroidX.Core.Content.ContextCompat.GetColorStateList(context,
+                Resource.Color.pv_glass_state_layer) ?? ColorStateList.ValueOf(Color.Transparent);
+            // RATING-07：中区 hover 底衬由本层显式绘制，不依赖触摸模式下的系统 Hovered 状态。
+            var hoverFill = new ShapeDrawable(new OvalShape());
+            hoverFill.Paint!.Color = new Color(_stateLayer.GetColorForState(
+                [global::Android.Resource.Attribute.StateHovered], AndroidUiTheme.TextPrimary));
+            _dropHover = new View(context)
+            {
+                Background = hoverFill,
+                Clickable = false,
+                Focusable = false,
+                ImportantForAccessibility = ImportantForAccessibility.No,
+                Visibility = ViewStates.Gone,
+            };
             AddView(_content);
             ClipToOutline = true;
             ViewCompat.SetAccessibilityPaneTitle(this, "星级");
@@ -364,6 +451,13 @@ internal sealed class AndroidRatingPopup : IDisposable
         internal (double Width, double Height) Bind(Entry[] entries, bool selector, bool horizontal, double maxWidth, double maxHeight)
         {
             _content.RemoveAllViews();
+            _content.AddView(_dropHover, new FrameLayout.LayoutParams(0, 0)
+            {
+                Gravity = GravityFlags.Left | GravityFlags.Top,
+            });
+            _dropHover.Visibility = ViewStates.Gone;
+            _dropHoverSlot = null;
+            _scaledSlot = null;
             _rows.Clear();
             _stars.Clear();
             _entries = entries;
@@ -499,6 +593,114 @@ internal sealed class AndroidRatingPopup : IDisposable
         internal void ShowPreview(int? value)
         {
             if (_rows.Count != 0) RenderRow(0, value ?? _entries[0].Rating);
+        }
+
+        /// <summary>拖放区 hover 命中的星格（验收读取；仅真实绘制出圆形底衬时有值）。</summary>
+        internal int? DropHoveredSlotForChecks
+            => _dropHover.Visibility == ViewStates.Visible ? _dropHoverSlot : null;
+
+        /// <summary>当前按 <c>motion.rating.press.scale</c> 放大的星格（验收读取）。</summary>
+        internal int? ScaledSlotForChecks => _scaledSlot;
+
+        /// <summary>当前放大星格的实际缩放（验收读取；无放大时为 1）。</summary>
+        internal float ScaledScaleForChecks
+            => _scaledSlot is { } value && _rows.Count != 0 ? _rows[0][value].ScaleX : 1f;
+
+        /// <summary>
+        /// 紧凑态三区手势的浮窗表现：预览值、放大槽与拖放区圆形 hover。
+        /// 进入滑动区、取消区或抬手时 hover 与放大都立即清除。
+        /// </summary>
+        /// <param name="preview">预览星级；null 清空。</param>
+        /// <param name="scaledSlot">要放大的星格；null 恢复全部。</param>
+        /// <param name="hoverSlot">拖放区命中的星格；null 清除。</param>
+        internal void ShowCompactState(int? preview, int? scaledSlot, int? hoverSlot)
+        {
+            ShowPreview(preview);
+            ScaleSlot(scaledSlot);
+            ShowDropHover(hoverSlot);
+        }
+
+        /// <summary>预览对应星格按令牌放大；系统动画缩放为 0 或减少动态效果时不缩放。</summary>
+        /// <param name="slot">星格 0–5；null 恢复。</param>
+        private void ScaleSlot(int? slot)
+        {
+            int? clamped = slot is >= 0 and < StarCount ? slot : null;
+            if (_scaledSlot == clamped)
+            {
+                if (clamped is not null && ReduceMotion())
+                {
+                    _scaledSlot = null;
+                    ResetScaleButtons();
+                }
+                return;
+            }
+            ResetScaleButtons();
+            _scaledSlot = null;
+            if (clamped is not { } value || _rows.Count == 0 || ReduceMotion()) return;
+            _scaledSlot = value;
+            var button = _rows[0][value];
+            float scale = (float)DesignTokens.MotionRatingPressScale;
+            button.Animate()!.Cancel();
+            button.Animate()!.ScaleX(scale).ScaleY(scale).SetDuration(180).Start();
+        }
+
+        /// <summary>恢复所有星格的 1.0×（减少动态效果时直接写入）。</summary>
+        private void ResetScaleButtons()
+        {
+            if (_rows.Count == 0) return;
+            foreach (var button in _rows[0])
+            {
+                button.Animate()!.Cancel();
+                if (ReduceMotion())
+                {
+                    button.ScaleX = 1f;
+                    button.ScaleY = 1f;
+                }
+                else
+                {
+                    button.Animate()!.ScaleX(1f).ScaleY(1f).SetDuration(120).Start();
+                }
+            }
+        }
+
+        /// <summary>把圆形 hover 底衬落到命中星格的内切正圆；离开中区或抬手立即隐藏。</summary>
+        /// <param name="slot">星格 0–5；null 清除。</param>
+        private void ShowDropHover(int? slot)
+        {
+            _dropHoverSlot = slot is >= 0 and < StarCount ? slot : null;
+            if (_dropHoverSlot is not { } value || _rows.Count == 0 || _stars.Count == 0)
+            {
+                _dropHover.Visibility = ViewStates.Gone;
+                return;
+            }
+            var row = _stars[0];
+            var local = RatingControlGeometry.SlotRect(value, Pitch * StarCount, Pitch, _horizontal, Pitch);
+            int side = Math.Max(1, Px(Pitch));
+            int centerX = Px(row.X + local.X + local.Width / 2);
+            int centerY = Px(row.Y + local.Y + local.Height / 2);
+            var parameters = _dropHover.LayoutParameters as FrameLayout.LayoutParams
+                ?? new FrameLayout.LayoutParams(0, 0) { Gravity = GravityFlags.Left | GravityFlags.Top };
+            parameters.Width = side;
+            parameters.Height = side;
+            parameters.LeftMargin = centerX - side / 2;
+            parameters.TopMargin = centerY - side / 2;
+            parameters.Gravity = GravityFlags.Left | GravityFlags.Top;
+            _dropHover.LayoutParameters = parameters;
+            _dropHover.Visibility = ViewStates.Visible;
+        }
+
+        /// <summary>系统动画时长缩放为 0 视为减少动态效果。</summary>
+        private bool ReduceMotion()
+        {
+            try
+            {
+                return Settings.Global.GetFloat(Context!.ContentResolver!,
+                    Settings.Global.AnimatorDurationScale, 1f) == 0f;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         internal Rect SlotRect(int entry, int value) => entry >= 0 && entry < _rows.Count && value is >= 0 and < StarCount

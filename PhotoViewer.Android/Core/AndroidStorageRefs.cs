@@ -334,7 +334,9 @@ internal static class AndroidStorageSupport
             return new StorageException(StorageError.AccessDenied, $"无权{operation}", exception);
         if (IsSeekRejectionMessage(message))
             return new StorageException(StorageError.NotSeekable, $"{operation}失败：目标不可定位", exception);
-        if (exception is Java.IO.FileNotFoundException or FileNotFoundException or DirectoryNotFoundException)
+        if (exception is Java.IO.FileNotFoundException or FileNotFoundException or DirectoryNotFoundException
+            || message.Contains("FileNotFoundException", StringComparison.Ordinal)
+            || message.Contains("Missing file for ", StringComparison.Ordinal))
             return new StorageException(StorageError.ObjectGone, $"目标已不存在，无法{operation}", exception);
         if (exception is UnauthorizedAccessException)
             return new StorageException(StorageError.AccessDenied, $"无权{operation}", exception);
@@ -495,10 +497,12 @@ public sealed class AndroidFileRef : IFileRef
                     ?? throw new StorageException(StorageError.ObjectGone, $"{Name} 无法打开");
                 // 取到流之后到交还调用方之间仍可能被取消：这条流还没有接手者，必须在这里关掉。
                 cancellationToken.ThrowIfCancellationRequested();
-                // Provider 的流可能来自管道（不可定位）：能定位的保持原流（MetadataExtractor 要求可 Seek），
-                // 探测到 ESPIPE/不支持定位的包一层明确不可 Seek 的流，避免 CopyToAsync 消费者反复探测 Position；
+                // Provider 的流可能来自管道（不可定位）：能定位的包一层 64KB 托管缓冲（减少 MetadataExtractor
+                // 逐字节跨 JNI 读取的开销），探测到 ESPIPE/不支持定位的包一层明确不可 Seek 的流；
                 // 其它 IO 失败（Provider 断开）如实抛 typed 异常，不伪装成「不可定位」。
-                var stream = IsSeekable(pending) ? pending : new NonSeekableReadStream(pending);
+                Stream stream = IsSeekable(pending)
+                    ? (pending.CanSeek ? new BufferedStream(pending, 65536) : pending)
+                    : new NonSeekableReadStream(pending);
                 pending = null;
                 return stream;
             }
@@ -931,6 +935,41 @@ public sealed class AndroidFolderRef : IFolderRef
     /// <returns>本地路径或 null。</returns>
     public string? TryGetLocalPath() => _localPath;
 
+    /// <summary>
+    /// 轻量探测目录是否仍可访问：SAF 仅回查目录自身投影（O(1)），不走默认的全目录子项枚举，
+    /// 避免后台 3 秒轮询在大目录下持续触发数百毫秒的 Provider 枚举并阻塞评分读写。
+    /// </summary>
+    /// <param name="cancellationToken">取消令牌。</param>
+    public Task CheckAccessAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_localPath is { } local)
+        {
+            try
+            {
+                using var entries = Directory.EnumerateFileSystemEntries(local).GetEnumerator();
+                entries.MoveNext();
+                return Task.CompletedTask;
+            }
+            catch (Exception exception)
+            {
+                throw AndroidStorageSupport.Wrap(exception, $"访问 {CachedName}");
+            }
+        }
+        return Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_documentId != null)
+            {
+                EnsureDocumentReachable();
+                return;
+            }
+            using var cursor = _resolver.Query(BuildChildrenUri(), AndroidStorageSupport.ProjectionColumns,
+                null, null, null) ?? throw new StorageException(
+                StorageError.ObjectGone, $"{CachedName} 已不存在或无法访问");
+        }, cancellationToken);
+    }
+
     /// <summary>异步枚举直接子项；每 64 项让出一次，避免大目录阻塞 UI。</summary>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>文件与子目录序列。</returns>
@@ -1016,12 +1055,19 @@ public sealed class AndroidFolderRef : IFolderRef
             return await Task.Run(() => FindDocumentFile(name, cancellationToken), cancellationToken)
                 .ConfigureAwait(false);
 
-        await foreach (var item in GetItemsAsync(cancellationToken).ConfigureAwait(false))
+        cancellationToken.ThrowIfCancellationRequested();
+        string full = System.IO.Path.Combine(_localPath, name);
+        if (File.Exists(full))
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (item is IFileRef file && string.Equals(file.Name, name, StringComparison.Ordinal))
-                return file;
+            foreach (string entry in Directory.EnumerateFiles(_localPath, name))
+            {
+                if (string.Equals(System.IO.Path.GetFileName(entry), name, StringComparison.Ordinal))
+                    return new AndroidFileRef(entry);
+            }
+            return null;
         }
+        if (!Directory.Exists(_localPath))
+            throw new StorageException(StorageError.ObjectGone, $"{CachedName} 已不存在");
         return null;
     }
 
@@ -1030,6 +1076,38 @@ public sealed class AndroidFolderRef : IFolderRef
         string operation = $"查找 {name}";
         try
         {
+            // Android 系统外部存储 Provider 的文档 ID 为确定性的 "<dirDocId>/<name>"（根目录以 ':' 结尾）；
+            // 直接 O(1) 探测单文件投影，避免每次评分预检/校验对上千张照片做两次全目录 SAF 枚举。
+            if (_treeUri != null && _documentId != null
+                && string.Equals(_treeUri.Authority, "com.android.externalstorage.documents", StringComparison.Ordinal))
+            {
+                string childId = _documentId.EndsWith(':') || _documentId.EndsWith('/')
+                    ? _documentId + name
+                    : $"{_documentId}/{name}";
+                if (BuildDocumentUri(childId) is { } directUri)
+                {
+                    try
+                    {
+                        var metadata = AndroidStorageSupport.QueryDocument(_resolver, directUri, name);
+                        cancellationToken.ThrowIfCancellationRequested();
+                        string? actualName = metadata.DisplayName ?? AndroidStorageSupport.NameFromDocumentId(childId);
+                        if (!string.Equals(metadata.MimeType, DocumentsContract.Document.MimeTypeDir, StringComparison.Ordinal)
+                            && string.Equals(actualName, name, StringComparison.Ordinal))
+                        {
+                            return new AndroidFileRef(_resolver, directUri, _treeUri, metadata, true);
+                        }
+                        EnsureDocumentReachable();
+                        return null;
+                    }
+                    catch (StorageException exception) when (exception.Error == StorageError.ObjectGone)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        EnsureDocumentReachable();
+                        return null;
+                    }
+                }
+            }
+
             using var cursor = _resolver.Query(BuildChildrenUri(), AndroidStorageSupport.ProjectionColumns,
                 null, null, null) ?? throw new StorageException(
                 StorageError.ObjectGone, $"{CachedName} 已不存在或无法枚举");

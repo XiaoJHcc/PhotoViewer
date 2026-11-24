@@ -39,6 +39,21 @@ public enum RatingPopupAnchor
 }
 
 /// <summary>
+/// 紧凑态星级控件三区手势的当前区域（RATING-07）：沿「控件 → 弹窗 → 主图内侧」的 1D 投影划分。
+/// </summary>
+public enum RatingDragZone
+{
+    /// <summary>下区/滑动区：从间距中线到控件侧屏幕边缘，按主轴相对位移增减星级。</summary>
+    Slide,
+
+    /// <summary>中区/拖放区：覆盖近侧半间距与整个浮窗，按弹窗星排的绝对位置选星。</summary>
+    Drop,
+
+    /// <summary>上区/取消区：越过浮窗远端边缘，清空预览且抬手不写。</summary>
+    Cancel,
+}
+
+/// <summary>
 /// 星级控件的平台中立几何（RATING-07）：形态判定、控件在槽位内的矩形、六格星排的槽位与
 /// 「主轴坐标 → 值」映射、紧凑星簇偏移、弹窗方向表与落位夹取。各端只负责把结果换算成原生坐标。
 /// </summary>
@@ -73,8 +88,83 @@ public static class RatingControlGeometry
     /// <summary>紧凑态/卡片长按起手后视为点按、不预览的位移阈值（8 点）。</summary>
     public static double TapSlop => DesignTokens.RatingGestureTapSlop;
 
+    /// <summary>紧凑态滑动区每增减 1 星的相对拖动距离（20 点）。</summary>
+    public static double SlideStep => DesignTokens.RatingGestureSlideStep;
+
     /// <summary>交叉轴越出星排/弹窗该距离即进入取消区（44 点）。</summary>
     public static double CancelSlop => DesignTokens.RatingGestureCancelSlop;
+
+    /// <summary>
+    /// 三区划分用的 1D 投影：沿「控件 → 弹窗 → 主图内侧」方向递增并取正值。
+    /// </summary>
+    /// <param name="x">触点横坐标。</param>
+    /// <param name="y">触点纵坐标。</param>
+    /// <param name="direction">弹窗展开方向。</param>
+    /// <returns>投影坐标 u。</returns>
+    public static double ExpansionProjection(double x, double y, RatingPopupDirection direction)
+        => direction switch
+        {
+            RatingPopupDirection.Up => -y,
+            RatingPopupDirection.Down => y,
+            RatingPopupDirection.Left => -x,
+            _ => x,
+        };
+
+    /// <summary>
+    /// 滑动区相对步进的增星方向主轴坐标 s：横排取 x（0 在左、5 在右），
+    /// 竖排取 −y（向上的值更大，即向上加星、向下减星）。
+    /// </summary>
+    /// <param name="x">触点横坐标。</param>
+    /// <param name="y">触点纵坐标。</param>
+    /// <param name="horizontalRow">星排主轴是否为水平方向。</param>
+    /// <returns>增星方向的坐标 s。</returns>
+    public static double IncreaseAxis(double x, double y, bool horizontalRow) => horizontalRow ? x : -y;
+
+    /// <summary>
+    /// 紧凑态三区判定（RATING-07）：以控件近边缘与浮窗近边缘的中点切分间距，向上/下/左/右旋转对称。
+    /// 滑动区从间距中线一直到控件侧屏幕边缘，拖放区覆盖浮窗与近侧半间距，取消区从浮窗远端边缘之外开始；
+    /// 三区在主轴以外的方向不截断，调用方无需传交叉轴范围。三个矩形须与触点在同一坐标空间。
+    /// </summary>
+    /// <param name="x">触点横坐标。</param>
+    /// <param name="y">触点纵坐标。</param>
+    /// <param name="anchor">星级控件的入口矩形。</param>
+    /// <param name="panel">星级弹窗面板矩形。</param>
+    /// <param name="direction">弹窗展开方向。</param>
+    /// <returns>触点所在的区域。</returns>
+    public static RatingDragZone ResolveCompactDragZone(double x, double y, LayoutRect anchor, LayoutRect panel,
+        RatingPopupDirection direction)
+    {
+        double anchorNear;
+        double panelNear;
+        double panelFar;
+        switch (direction)
+        {
+            case RatingPopupDirection.Up:
+                anchorNear = -anchor.Y;
+                panelNear = -panel.MaxY;
+                panelFar = -panel.Y;
+                break;
+            case RatingPopupDirection.Left:
+                anchorNear = -anchor.X;
+                panelNear = -panel.MaxX;
+                panelFar = -panel.X;
+                break;
+            case RatingPopupDirection.Right:
+                anchorNear = anchor.MaxX;
+                panelNear = panel.X;
+                panelFar = panel.MaxX;
+                break;
+            default:
+                anchorNear = anchor.MaxY;
+                panelNear = panel.Y;
+                panelFar = panel.MaxY;
+                break;
+        }
+        double u = ExpansionProjection(x, y, direction);
+        double split = (anchorNear + panelNear) / 2;
+        if (u < split) return RatingDragZone.Slide;
+        return u <= panelFar ? RatingDragZone.Drop : RatingDragZone.Cancel;
+    }
 
     /// <summary>按槽位主轴长度判定形态：达到固有长度即为展开态，阈值即固有长度本身。</summary>
     /// <param name="availableMain">槽位沿主轴的可用长度。</param>

@@ -38,6 +38,7 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
     private AndroidGlassPopupSession? _session;
     private AndroidGlassPopupSession? _closing;
     private ValueAnimator? _animator;
+    private bool _swallowOwnEntryGesture;
     private bool _disposed;
 
     /// <summary>建立铺满窗口的弹层宿主；未打开时不可见、不拦截触摸。</summary>
@@ -145,6 +146,8 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
 
         var session = new AndroidGlassPopupSession(request, _panel);
         _session = session;
+        _swallowOwnEntryGesture = false;
+        _panel.Clickable = true;
         _panel.Bind(request);
         Visibility = ViewStates.Visible;
         HideBackground();
@@ -201,21 +204,61 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
         _surface?.OnHidden();
     }
 
-    /// <summary>面板外点按在抬起时关闭；整个手势都由本层消费，不穿透。</summary>
+    /// <summary>
+    /// SHELL-12 / MENU-03 / RATING-07：点面板外（非当前弹层自身入口）立即关闭弹层并将该次点击透传给下方控件；
+    /// 点当前弹层自身入口只关闭并消费本次手势，避免同一次点击关完后立即重开。淡出期间不拦任何触摸。
+    /// </summary>
     /// <param name="e">触摸事件。</param>
-    /// <returns>恒为 true（拦截层消费该次手势）。</returns>
-    public override bool OnTouchEvent(MotionEvent? e)
+    /// <returns>是否由弹层消费。</returns>
+    public override bool DispatchTouchEvent(MotionEvent? e)
     {
-        if (e == null) return true;
-        if (e.ActionMasked is MotionEventActions.Up or MotionEventActions.Cancel) Dismiss();
-        return true;
+        if (e == null) return false;
+        if (_swallowOwnEntryGesture)
+        {
+            if (e.ActionMasked is MotionEventActions.Up or MotionEventActions.Cancel)
+                _swallowOwnEntryGesture = false;
+            return true;
+        }
+        if (_session is not { IsOpen: true } session) return false;
+        if (IsInsidePanel(e)) return base.DispatchTouchEvent(e);
+        if (e.ActionMasked == MotionEventActions.Down)
+        {
+            bool onOwnEntry = IsOnEntry(session.Entry, e);
+            Dismiss();
+            if (onOwnEntry)
+            {
+                _swallowOwnEntryGesture = true;
+                return true;
+            }
+        }
+        return false;
     }
 
-    /// <summary>淡出期间由拦截层接管触摸，避免关闭途中误触菜单项或星排。</summary>
-    /// <param name="e">触摸事件。</param>
-    /// <returns>淡出中返回 true；打开期间返回 false，让面板内容照常接收。</returns>
-    public override bool OnInterceptTouchEvent(MotionEvent? e)
-        => _session == null && _closing != null;
+    private bool IsInsidePanel(MotionEvent e)
+    {
+        if (_panel.Visibility != ViewStates.Visible) return false;
+        float x = e.GetX(), y = e.GetY();
+        return x >= _panel.Left && x <= _panel.Right && y >= _panel.Top && y <= _panel.Bottom;
+    }
+
+    private bool IsOnEntry(View? entry, MotionEvent e)
+    {
+        if (entry == null || !entry.IsAttachedToWindow || !entry.IsShown || entry.Width <= 0 || entry.Height <= 0)
+            return false;
+        var entryPos = new int[2];
+        entry.GetLocationOnScreen(entryPos);
+        GetLocationOnScreen(_location);
+        float screenX = _location[0] + e.GetX();
+        float screenY = _location[1] + e.GetY();
+        return screenX >= entryPos[0] && screenX <= entryPos[0] + entry.Width
+            && screenY >= entryPos[1] && screenY <= entryPos[1] + entry.Height;
+    }
+
+    /// <summary>面板外触摸已在 <see cref="DispatchTouchEvent"/> 透传，本层自身不再消费。</summary>
+    public override bool OnTouchEvent(MotionEvent? e) => false;
+
+    /// <summary>打开期间交由面板内容正常处理，关闭/淡出期间不拦触摸。</summary>
+    public override bool OnInterceptTouchEvent(MotionEvent? e) => false;
 
     /// <summary>面板内焦点不越出面板：背景已阻断，键盘导航留在弹层内。</summary>
     /// <param name="focused">当前焦点视图。</param>
@@ -290,6 +333,7 @@ internal sealed class AndroidGlassPopupLayer : FrameLayout
         _session = null;
         session.IsOpen = false;
         _closing = session;
+        _panel.Clickable = false;
         RestoreBackground();
         RestoreFocus(session.Entry);
         // 回调只清空调用方状态；放在恢复背景之后，重入打开新弹层也不会被旧面板的淡出牵连。

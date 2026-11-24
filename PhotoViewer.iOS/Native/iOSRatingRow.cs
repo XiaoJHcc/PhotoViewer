@@ -74,6 +74,7 @@ internal sealed class iOSRatingHaptics : IDisposable
 internal sealed class iOSRatingRow : UIView
 {
     private readonly UIImageView[] _slots = new UIImageView[RatingControlGeometry.SlotCount];
+    private readonly UIView _dropHover;
     private readonly UILongPressGestureRecognizer _press;
     private readonly iOSRatingHaptics _haptics;
     private readonly double _pitch;
@@ -81,6 +82,7 @@ internal sealed class iOSRatingRow : UIView
     private readonly double _clearGlyphSize;
     private RatingGesture? _gesture;
     private UIImageView? _pressed;
+    private int? _dropHoveredSlot;
     private int _value;
     private bool _conflict;
     private int? _preview;
@@ -107,6 +109,15 @@ internal sealed class iOSRatingRow : UIView
         _glyphSize = glyphSize;
         _clearGlyphSize = clearGlyphSize;
         BackgroundColor = UIColor.Clear;
+        // RATING-07：拖放区命中星格的圆形 hover 底衬，画在字形下方；原生 UIHoverStyle 与星形缩放各自独立。
+        _dropHover = new UIView(CGRect.Empty)
+        {
+            BackgroundColor = iOSColors.FromToken(DesignTokens.ColorMenuItemHover),
+            UserInteractionEnabled = false,
+            Hidden = true,
+            ClipsToBounds = true,
+        };
+        AddSubview(_dropHover);
         for (int value = 0; value < _slots.Length; value++)
         {
             var slot = new UIImageView(CGRect.Empty)
@@ -142,6 +153,36 @@ internal sealed class iOSRatingRow : UIView
 
     /// <summary>当前是否一次手势进行中（弹窗据此避免中途重建星排）。</summary>
     internal bool IsTracking => _gesture is { IsActive: true };
+
+    /// <summary>当前拖放区 hover 命中的星格（验收读取；null 表示没有圆形底衬）。</summary>
+    internal int? DropHoveredSlot => _dropHoveredSlot;
+
+    /// <summary>当前按 <c>motion.rating.press.scale</c> 放大的星格（验收读取）。</summary>
+    internal int? ScaledSlotForChecks => _pressed is null ? null : Array.IndexOf(_slots, _pressed);
+
+    /// <summary>提前唤醒触感引擎（紧凑态起手调用）。</summary>
+    internal void PrepareHaptic() => _haptics.Prepare();
+
+    /// <summary>预览跨档的选择触感（紧凑态三区手势调用）。</summary>
+    internal void SelectionHaptic() => _haptics.Selection();
+
+    /// <summary>提交的轻冲击触感（紧凑态三区手势调用）。</summary>
+    internal void CommitHaptic() => _haptics.Commit();
+
+    /// <summary>
+    /// 紧凑态三区手势的浮窗表现：预览值、放大槽与拖放区圆形 hover。
+    /// 预览为空、进入取消区或抬手时放大与 hover 都立即清除。
+    /// </summary>
+    /// <param name="preview">预览星级；null 清空。</param>
+    /// <param name="scaledSlot">要按令牌放大的星格；null 恢复所有格子。</param>
+    /// <param name="hoverSlot">拖放区命中的星格；null 清除 hover。</param>
+    internal void ApplyCompactState(int? preview, int? scaledSlot, int? hoverSlot)
+    {
+        Preview = preview;
+        SetDropHover(hoverSlot);
+        if (scaledSlot is { } value) PressSlot(value);
+        else ReleasePress();
+    }
 
     /// <summary>星排主轴是否为水平方向（横排 0 在最左、竖排 5 在最上）。</summary>
     internal bool Horizontal
@@ -251,6 +292,7 @@ internal sealed class iOSRatingRow : UIView
     {
         _preview = null;
         _pending = false;
+        SetDropHover(null);
         Render();
     }
 
@@ -266,7 +308,9 @@ internal sealed class iOSRatingRow : UIView
         int value = ValueAt(main);
         _gesture.Begin(main, cross, value);
         Preview = _gesture.Preview;
-        PressSlot(value);
+        // RATING-07：延迟预览起手不放大任何格，直到产生真实预览才放大对应星格。
+        if (Preview is { } preview) PressSlot(preview);
+        else ReleasePress();
     }
 
     /// <summary>移动：预览跟随手指，跨档时一次选择触感。</summary>
@@ -297,6 +341,7 @@ internal sealed class iOSRatingRow : UIView
             return new RatingGestureResult(RatingGestureOutcome.None, _value);
         var (main, cross) = MainCross(pointInRow);
         var result = gesture.End(main, cross, ValueAt(main), inBand ?? InBand(cross));
+        SetDropHover(null);
         switch (result.Outcome)
         {
             case RatingGestureOutcome.Commit:
@@ -322,6 +367,7 @@ internal sealed class iOSRatingRow : UIView
         _gesture?.Cancel();
         _gesture = null;
         ReleasePress();
+        SetDropHover(null);
         Preview = null;
     }
 
@@ -340,6 +386,43 @@ internal sealed class iOSRatingRow : UIView
             var rect = RatingControlGeometry.SlotRect(value, main, cross, _horizontal, _pitch);
             iOSViewGeometry.SetRectIfNeeded(_slots[value], new CGRect(rect.X, rect.Y, rect.Width, rect.Height));
         }
+        UpdateDropHover();
+    }
+
+    /// <summary>设置拖放区 hover 命中槽并刷新底衬。</summary>
+    /// <param name="value">星格 0–5；null 清除。</param>
+    private void SetDropHover(int? value)
+    {
+        int? clamped = value is >= 0 and < RatingControlGeometry.SlotCount ? value : null;
+        if (_dropHoveredSlot == clamped)
+        {
+            UpdateDropHover();
+            return;
+        }
+        _dropHoveredSlot = clamped;
+        UpdateDropHover();
+    }
+
+    /// <summary>把圆形底衬落到命中槽的内切正圆；未命中、越界或尚未布局时隐藏。</summary>
+    private void UpdateDropHover()
+    {
+        if (_dropHoveredSlot is not { } value)
+        {
+            _dropHover.Hidden = true;
+            return;
+        }
+        var slot = _slots[value];
+        double side = Math.Min((double)slot.Bounds.Width, (double)slot.Bounds.Height);
+        if (side <= 0)
+        {
+            _dropHover.Hidden = true;
+            return;
+        }
+        // 用未变换的 bounds/center：hover 圆不随按压缩放变化，星形缩放仍由格子自身承担。
+        var center = slot.Center;
+        _dropHover.Frame = new CGRect(center.X - side / 2, center.Y - side / 2, side, side);
+        _dropHover.Layer.CornerRadius = (nfloat)(side / 2);
+        _dropHover.Hidden = false;
     }
 
     /// <summary>释放星排：摘掉挂在自身上的两种触感交互并释放生成器。</summary>

@@ -36,6 +36,7 @@ internal sealed class iOSRatingPopup : IDisposable
         ?? throw new InvalidOperationException("系统字体不可用");
     private readonly UIVisualEffect _glassEffect = new UIGlassEffect();
     private UIView? _catcher;
+    private CompactRatingDragGesture? _compactGesture;
     private ClosingPanel? _closing;
     private UIView? _focusView;
     private bool _horizontalRow = true;
@@ -165,6 +166,7 @@ internal sealed class iOSRatingPopup : IDisposable
     internal void Close()
     {
         if (!IsOpen && Panel == null) return;
+        _compactGesture = null;
         IsOpen = false;
         Unsubscribe();
         if (_main.RatingSources.IsOpen) _main.RatingSources.Close();
@@ -181,6 +183,7 @@ internal sealed class iOSRatingPopup : IDisposable
     /// <summary>立即关闭：移走面板并同步释放其中的子视图与星排（切图、重开前与销毁时使用）。</summary>
     internal void CloseImmediately()
     {
+        _compactGesture = null;
         IsOpen = false;
         Unsubscribe();
         if (_main.RatingSources.IsOpen) _main.RatingSources.Close();
@@ -193,8 +196,9 @@ internal sealed class iOSRatingPopup : IDisposable
     }
 
     /// <summary>
-    /// 入口把同一次手势交给弹窗（紧凑胶囊与卡片长按共用）：无冲突时把触摸延续到面板星排上，
-    /// 起点按延迟预览处理（越过点按阈值前不点亮）。返回是否真的开始转发。
+    /// 入口把同一次手势交给弹窗（紧凑胶囊与卡片长按共用）：无冲突时把触摸延续到面板星排上。
+    /// 紧凑态纯星级入口走共享 <see cref="CompactRatingDragGesture"/> 三区；卡片长按仍按延迟预览处理
+    /// （越过点按阈值前不点亮）。返回是否真的开始转发。
     /// </summary>
     /// <param name="source">发起入口（控件胶囊或胶片卡片）。</param>
     /// <param name="pointInSource">入口坐标中的触点。</param>
@@ -202,6 +206,18 @@ internal sealed class iOSRatingPopup : IDisposable
     internal bool BeginExternal(UIView source, CGPoint pointInSource)
     {
         if (!IsOpen || TrackingRow is not { } row) return false;
+        if (AnchorKind == RatingPopupAnchor.Control && Mode == RatingPopupMode.Selector)
+        {
+            var hostPoint = _host.ConvertPointFromView(pointInSource, source);
+            var rowRect = row.ConvertRectToView(row.Bounds, _host);
+            _compactGesture = new CompactRatingDragGesture(Math.Max(0, Target?.Rating ?? 0), row.Horizontal,
+                AnchorRect, PanelFrame, new LayoutRect(rowRect.X, rowRect.Y, rowRect.Width, rowRect.Height),
+                Direction);
+            row.PrepareHaptic();
+            _compactGesture.Begin((double)hostPoint.X, (double)hostPoint.Y);
+            ApplyCompactState(_compactGesture);
+            return true;
+        }
         row.TrackBegan(row.ConvertPointFromView(pointInSource, source), deferPreview: true);
         return true;
     }
@@ -212,6 +228,14 @@ internal sealed class iOSRatingPopup : IDisposable
     internal void MoveExternal(UIView source, CGPoint pointInSource)
     {
         if (TrackingRow is not { } row) return;
+        if (_compactGesture is { IsActive: true } compact)
+        {
+            var hostPoint = _host.ConvertPointFromView(pointInSource, source);
+            bool changed = compact.Move((double)hostPoint.X, (double)hostPoint.Y);
+            ApplyCompactState(compact);
+            if (changed && compact.Preview.HasValue) row.SelectionHaptic();
+            return;
+        }
         var point = row.ConvertPointFromView(pointInSource, source);
         row.TrackMoved(point, IsInBand(row, _host.ConvertPointFromView(pointInSource, source)));
     }
@@ -226,21 +250,54 @@ internal sealed class iOSRatingPopup : IDisposable
     {
         if (TrackingRow is not { } row)
         {
+            _compactGesture = null;
             Close();
             return new RatingGestureResult(RatingGestureOutcome.None, 0);
         }
+        if (_compactGesture is { } compact)
+        {
+            _compactGesture = null;
+            var hostPoint = _host.ConvertPointFromView(pointInSource, source);
+            var result = compact.End((double)hostPoint.X, (double)hostPoint.Y);
+            if (result.Outcome == RatingGestureOutcome.Commit)
+            {
+                row.ApplyCompactState(result.Value, null, null);
+                row.Pending = true;
+                row.CommitHaptic();
+                CommitAsync(result.Value);
+            }
+            else
+            {
+                row.ApplyCompactState(null, null, null);
+            }
+            if (result.Outcome == RatingGestureOutcome.None) Close();
+            return result;
+        }
         var point = row.ConvertPointFromView(pointInSource, source);
-        var result = row.TrackEnded(point, IsInBand(row, _host.ConvertPointFromView(pointInSource, source)));
-        if (result.Outcome == RatingGestureOutcome.None) Close();
-        return result;
+        var ended = row.TrackEnded(point, IsInBand(row, _host.ConvertPointFromView(pointInSource, source)));
+        if (ended.Outcome == RatingGestureOutcome.None) Close();
+        return ended;
     }
 
     /// <summary>入口手势被系统打断：清掉预览并收起弹窗。</summary>
     internal void CancelExternal()
     {
+        if (_compactGesture is not null)
+        {
+            _compactGesture.Cancel();
+            _compactGesture = null;
+            TrackingRow?.ApplyCompactState(null, null, null);
+            Close();
+            return;
+        }
         TrackingRow?.TrackCancelled();
         Close();
     }
+
+    /// <summary>把紧凑态三区手势的预览、放大槽与 hover 槽同步到弹窗星排。</summary>
+    /// <param name="gesture">紧凑态手势。</param>
+    private void ApplyCompactState(CompactRatingDragGesture gesture)
+        => TrackingRow?.ApplyCompactState(gesture.Preview, gesture.ScaledSlot, gesture.DropHoverSlot);
 
     /// <summary>
     /// 入口手势的取消带：入口与弹窗交叉轴范围的并集两侧外扩取消阈值，主轴再限制在星排两端半格内。
@@ -303,6 +360,21 @@ internal sealed class iOSRatingPopup : IDisposable
     private async void CommitAsync(int value)
     {
         if (_busy || !IsOpen || Target is not { } target) return;
+        bool closeNow = Mode != RatingPopupMode.Sources;
+        if (closeNow)
+        {
+            // RATING-07：非冲突弹窗提交后立即收起，后台继续完成落盘，不阻挡用户继续切图或操作。
+            Close();
+            try
+            {
+                await _commit(target, value);
+            }
+            catch (Exception exception)
+            {
+                Console.Error.WriteLine($"[Native] 星级弹窗写回失败：{exception.Message}");
+            }
+            return;
+        }
         _busy = true;
         try
         {
@@ -358,7 +430,7 @@ internal sealed class iOSRatingPopup : IDisposable
     private void Refresh()
     {
         if (!IsOpen || _refreshing) return;
-        if (_rows.Any(row => row.IsTracking)) return;
+        if (_compactGesture != null || _rows.Any(row => row.IsTracking)) return;
         _refreshing = true;
         try
         {
@@ -759,12 +831,26 @@ internal sealed class iOSRatingPopup : IDisposable
         internal UIVisualEffectView? Panel { get; set; } = panel;
     }
 
-    /// <summary>全窗透明拦截层：吞掉外部点按并关闭弹窗，不作为读屏元素。</summary>
+    /// <summary>触点是否落在当前弹窗自身触发入口内（用于避免同一次点击关完弹窗后立即重开）。</summary>
+    private bool IsPointInAnchor(CGPoint point, UIView inView)
+    {
+        if (AnchorView is not { } anchor || anchor.Window == null) return false;
+        var local = anchor.ConvertPointFromView(point, inView);
+        return anchor.Bounds.Contains(local);
+    }
+
+    /// <summary>窗口内失焦监听层：点面板外（非自身入口）立即关闭并透传该次点击到底层控件；点自身入口只关闭不重开。</summary>
     private sealed class DismissCatcher(iOSRatingPopup owner) : UIView
     {
-        /// <summary>点按外部：关闭弹窗，不把这次触摸继续交给下面的主图。</summary>
-        /// <param name="touches">触摸集合。</param>
-        /// <param name="evt">事件。</param>
+        public override UIView? HitTest(CGPoint point, UIEvent? uievent)
+        {
+            if (uievent?.Type != UIEventType.Touches || !owner.IsOpen) return null;
+            if (owner.IsPointInAnchor(point, this)) return this;
+            owner.Close();
+            return null;
+        }
+
+        /// <summary>点按自身入口：关闭弹窗并消费本次触摸，防止立即重开。</summary>
         public override void TouchesBegan(NSSet touches, UIEvent? evt) => owner.Close();
     }
 }

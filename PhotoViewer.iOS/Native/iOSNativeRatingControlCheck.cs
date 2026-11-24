@@ -17,6 +17,7 @@ namespace PhotoViewer.iOS.Native;
 /// <summary>
 /// 验收专用（非产品行为，测试钩子）：<c>--pv-native-rating-control-check &lt;目录&gt;</c> 程序化核对星级控件与星级弹窗——
 /// [RATING-07] 展开/紧凑两态的形态阈值、点按与滑动预览（触感计数与每行生成器实例复用）、取消带与取消、紧凑态弹窗落位与同手势续接、
+/// 紧凑态三区（按 SlideStep 相对步进、拖放绝对选星与圆形 hover/放大、取消区与跨区衔接）、
 /// 星级胶囊尺寸与来源条目标签实测宽度排版、弹窗外点/ Esc / 切图 / 入口移动四种收起路径、减少动态效果、竖排紧凑弹窗、读屏增减与禁用态；
 /// [RATING-04] 冲突三角打开来源弹窗、整组写回与冲突消解、卡片三角入口；iPhone 竖屏紧凑/展开、横屏两种刘海方向
 /// （真实 <c>RequestGeometryUpdate</c> 旋转、控制列竖排次序与方向表、旋转收起弹窗）；iPad 宽形态行/列控制栏的
@@ -219,7 +220,9 @@ internal static class iOSNativeRatingControlCheck
             await VerifyExpandedCancelAsync();
             await VerifyCompactTapAsync();
             await VerifyCompactSlideAsync();
+            await VerifyCompactDropAsync();
             await VerifyCompactCancelAsync();
+            await VerifyCompactCrossZoneAsync();
             await VerifyPopupClosingAsync();
             await VerifyReduceMotionAsync();
             await VerifyPopupMaterialAsync();
@@ -915,9 +918,78 @@ internal static class iOSNativeRatingControlCheck
             }
         }
 
-        /// <summary>RATING-07 紧凑态滑动：手指不必移进弹窗，抬手按弹窗主轴投影取值并写回。</summary>
+        /// <summary>
+        /// RATING-07 紧凑态滑动区：越过点按阈值后仍按原值等待第一个步距，
+        /// 之后相对增减；到 5 后继续外拉锚点跟手，反向一个步距立即降档且无回拉死区。
+        /// </summary>
         /// <returns>任务。</returns>
         private async Task VerifyCompactSlideAsync()
+        {
+            var file = _representative;
+            await OpenFileAsync(file);
+            await SetRatingAsync(file, 2);
+            var control = CreateStandalone(Centered(150, 44, .55), true, DefaultDirection);
+            try
+            {
+                RefreshControl(control);
+                await EnsurePopupClosedAsync();
+                var popup = _root.RatingPopup;
+                int before = _commits.Count;
+                var haptics = Haptics();
+                var capsule = CapsuleCenter(control);
+                double step = RatingControlGeometry.SlideStep;
+                double subStep = (RatingControlGeometry.TapSlop + step) / 2;
+                control.TrackBegan(capsule);
+                if (popup.TrackingRow is not { } tracking)
+                    throw new InvalidOperationException("紧凑态滑动没有可续接的星排");
+                control.TrackMoved(new CGPoint(capsule.X + subStep, capsule.Y));
+                if (tracking.Preview != 2)
+                    throw new InvalidOperationException($"越过阈值但不足一步的预览 {tracking.Preview} ≠ 2");
+                if (tracking.DropHoveredSlot != null)
+                    throw new InvalidOperationException("滑动区出现了拖放区 hover");
+                if (_commits.Count != before)
+                    throw new InvalidOperationException("滑动预览阶段写回了星级");
+                control.TrackMoved(new CGPoint(capsule.X + step, capsule.Y));
+                if (tracking.Preview != 3)
+                    throw new InvalidOperationException($"相对 1 步（{step:0.#} 点）后预览 {tracking.Preview} ≠ 3");
+                control.TrackMoved(new CGPoint(capsule.X + step * 2, capsule.Y));
+                if (tracking.Preview != 4)
+                    throw new InvalidOperationException($"相对 2 步后预览 {tracking.Preview} ≠ 4");
+                control.TrackMoved(new CGPoint(capsule.X + step * 4, capsule.Y));
+                if (tracking.Preview != 5)
+                    throw new InvalidOperationException($"相对 4 步后预览 {tracking.Preview} ≠ 5");
+                control.TrackMoved(new CGPoint(capsule.X + step * 5, capsule.Y));
+                if (tracking.Preview != 5)
+                    throw new InvalidOperationException($"5 星继续外拉后预览 {tracking.Preview} ≠ 5");
+                control.TrackMoved(new CGPoint(capsule.X + step * 4, capsule.Y));
+                if (tracking.Preview != 4)
+                    throw new InvalidOperationException($"从 5 星反向 {step:0.#} 点未立即降为 4（预览 {tracking.Preview}）");
+                control.TrackEnded(new CGPoint(capsule.X + step * 4, capsule.Y));
+                await WaitAsync(() => _commits.Count == before + 1, "紧凑态相对滑动写回一次");
+                if (_commits[before].Value != 4)
+                    throw new InvalidOperationException($"紧凑态相对滑动写回 {_commits[before].Value} ≠ 4");
+                await WaitForFileRatingAsync(file, 4, "紧凑态相对滑动");
+                await WaitAsync(() => !popup.IsOpen, "相对滑动写回成功后弹窗收起");
+                var after = Haptics();
+                if (after.Selection <= haptics.Selection || after.Commit != haptics.Commit + 1)
+                    throw new InvalidOperationException(
+                        $"紧凑滑动触感增量 selection={after.Selection - haptics.Selection}、commit={after.Commit - haptics.Commit}");
+                _lines.Add($"PASS RATING-07 紧凑态滑动区：越过阈值但不足一步保持原值 2，按 {step:0.#} 点步距依次预览 3/4/5，" +
+                    $"5 星继续外拉后反向 {step:0.#} 点立即回到 4；预览跨档有选择触感、抬手 1 次轻冲击并只写回一次（4）");
+            }
+            finally
+            {
+                RemoveView(control);
+                await EnsurePopupClosedAsync();
+            }
+        }
+
+        /// <summary>
+        /// RATING-07 紧凑态拖放区：按星排绝对位置选星，越出两端夹到 0/5；
+        /// 命中格同时出现圆形 hover 底衬与 motion.rating.press.scale 放大，抬手提交一次。
+        /// </summary>
+        /// <returns>任务。</returns>
+        private async Task VerifyCompactDropAsync()
         {
             var file = _representative;
             await OpenFileAsync(file);
@@ -932,23 +1004,35 @@ internal static class iOSNativeRatingControlCheck
                 var capsule = CapsuleCenter(control);
                 control.TrackBegan(capsule);
                 if (popup.TrackingRow is not { } tracking)
-                    throw new InvalidOperationException("紧凑态滑动没有可续接的星排");
-                var slot5 = tracking.ConvertPointToView(SlotCenter(tracking, 5), control);
-                var target = new CGPoint((double)slot5.X, capsule.Y);
-                control.TrackMoved(target);
+                    throw new InvalidOperationException("紧凑态拖放没有可续接的星排");
+                var slot4 = tracking.ConvertPointToView(SlotCenter(tracking, 4), control);
+                control.TrackMoved(slot4);
+                if (tracking.Preview != 4 || tracking.DropHoveredSlot != 4 || tracking.ScaledSlotForChecks != 4)
+                    throw new InvalidOperationException(
+                        $"拖放预览 {tracking.Preview}、hover {tracking.DropHoveredSlot}、放大 {tracking.ScaledSlotForChecks}（期望 4/4/4）");
+                await Task.Delay(350);
+                double scale = (double)tracking.SlotViews[4].Transform.A;
+                if (Math.Abs(scale - DesignTokens.MotionRatingPressScale) > .05)
+                    throw new InvalidOperationException($"拖放命中格放大 {scale:0.###}× ≠ {DesignTokens.MotionRatingPressScale:0.##}×");
+                var farLeft = tracking.ConvertPointToView(new CGPoint(0, SlotCenter(tracking, 4).Y), control);
+                control.TrackMoved(farLeft);
+                if (tracking.Preview != 0)
+                    throw new InvalidOperationException($"拖放越出星排左端预览 {tracking.Preview} ≠ 0");
+                var farRight = tracking.ConvertPointToView(
+                    new CGPoint((double)tracking.Bounds.Width + 40, SlotCenter(tracking, 4).Y), control);
+                control.TrackMoved(farRight);
                 if (tracking.Preview != 5)
-                    throw new InvalidOperationException($"弹窗主轴投影预览 {tracking.Preview} ≠ 5");
-                control.TrackEnded(target);
-                await WaitAsync(() => _commits.Count == before + 1, "紧凑态滑动写回一次");
+                    throw new InvalidOperationException($"拖放越出星排右端预览 {tracking.Preview} ≠ 5");
+                control.TrackEnded(farRight);
+                await WaitAsync(() => _commits.Count == before + 1, "紧凑态拖放写回一次");
                 if (_commits[before].Value != 5)
-                    throw new InvalidOperationException($"紧凑态滑动写回 {_commits[before].Value} ≠ 5");
-                await WaitForFileRatingAsync(file, 5, "紧凑态滑动");
-                await WaitAsync(() => !popup.IsOpen, "滑动写回成功后弹窗收起");
-                RefreshControl(control);
-                if (control.Value != 5)
-                    throw new InvalidOperationException($"写回后控件显示 {control.Value} ≠ 5");
-                _lines.Add("PASS RATING-07 紧凑态滑动：在胶囊高度上横移到弹窗 5 号格的横坐标即预览 5，" +
-                    "抬手 1 次写回（值 5）并收起弹窗、控件显示 5");
+                    throw new InvalidOperationException($"紧凑态拖放写回 {_commits[before].Value} ≠ 5");
+                await WaitForFileRatingAsync(file, 5, "紧凑态拖放");
+                await WaitAsync(() => !popup.IsOpen, "拖放写回成功后弹窗收起");
+                if (tracking.DropHoveredSlot != null)
+                    throw new InvalidOperationException("抬手后 hover 未清除");
+                _lines.Add("PASS RATING-07 紧凑态拖放区：命中 4 号格预览 4、圆形 hover 与 1.25× 放大同时出现，" +
+                    "越出星排两端分别夹到 0/5，抬手 1 次写回（5）并收起弹窗");
             }
             finally
             {
@@ -957,7 +1041,10 @@ internal static class iOSNativeRatingControlCheck
             }
         }
 
-        /// <summary>RATING-07 紧凑态取消：交叉轴越出取消带即清空预览、抬手不写并收起弹窗。</summary>
+        /// <summary>
+        /// RATING-07 紧凑态取消区：手指越过浮窗远端边缘即清空预览、hover 与放大，
+        /// 抬手不写并收起弹窗；取消区不再沿用旧的交叉轴取消带。
+        /// </summary>
         /// <returns>任务。</returns>
         private async Task VerifyCompactCancelAsync()
         {
@@ -975,19 +1062,99 @@ internal static class iOSNativeRatingControlCheck
                 control.TrackBegan(capsule);
                 if (popup.TrackingRow is not { } tracking)
                     throw new InvalidOperationException("紧凑态取消没有可续接的星排");
-                var below = new CGPoint(capsule.X,
-                    (double)control.Capsule.Frame.GetMaxY() + RatingControlGeometry.CancelSlop + 2);
-                control.TrackMoved(below);
-                if (tracking.Preview != null)
-                    throw new InvalidOperationException($"越出取消带后预览仍为 {tracking.Preview}");
-                control.TrackEnded(below);
+                var capsuleHost = FrameInHost(control.Capsule);
+                var cancelHost = new CGPoint((double)capsuleHost.X + 10, (double)popup.PanelFrame.Y - 10);
+                var target = control.ConvertPointFromView(cancelHost, _root.View!);
+                control.TrackMoved(target);
+                if (tracking.Preview != null || tracking.DropHoveredSlot != null
+                    || tracking.ScaledSlotForChecks != null)
+                    throw new InvalidOperationException(
+                        $"进入取消区后预览 {tracking.Preview}、hover {tracking.DropHoveredSlot}、放大 {tracking.ScaledSlotForChecks}");
+                control.TrackEnded(target);
                 if (_commits.Count != before)
-                    throw new InvalidOperationException("取消带外抬手仍写回了星级");
+                    throw new InvalidOperationException("取消区抬手仍写回了星级");
                 await WaitAsync(() => !popup.IsOpen, "取消后弹窗收起");
                 int disk = await ReadDiskRatingAsync(file);
                 if (disk != 5)
                     throw new InvalidOperationException($"取消路径改写了磁盘（{disk} 星）");
-                _lines.Add("PASS RATING-07 紧凑态取消：沿交叉轴越出胶囊 + 取消阈值后预览为空、抬手 0 次写回并收起弹窗，磁盘保持 5 星");
+                _lines.Add("PASS RATING-07 紧凑态取消区：越过浮窗远端边缘后预览、hover 与放大全部清空，" +
+                    "抬手 0 次写回并收起弹窗，磁盘保持 5 星");
+            }
+            finally
+            {
+                RemoveView(control);
+                await EnsurePopupClosedAsync();
+            }
+        }
+
+        /// <summary>
+        /// RATING-07 紧凑态跨区衔接：下区→中区立即绝对选星，中区→下区以当前预览为新锚点续滑；
+        /// 取消区→中区恢复绝对选星，取消区→下区以原星级恢复相对滑动。
+        /// </summary>
+        /// <returns>任务。</returns>
+        private async Task VerifyCompactCrossZoneAsync()
+        {
+            var file = _representative;
+            await OpenFileAsync(file);
+            await SetRatingAsync(file, 2);
+            var control = CreateStandalone(Centered(150, 44, .55), true, DefaultDirection);
+            try
+            {
+                RefreshControl(control);
+                await EnsurePopupClosedAsync();
+                var popup = _root.RatingPopup;
+                int before = _commits.Count;
+                var capsule = CapsuleCenter(control);
+                double step = RatingControlGeometry.SlideStep;
+                control.TrackBegan(capsule);
+                if (popup.TrackingRow is not { } tracking)
+                    throw new InvalidOperationException("紧凑态跨区没有可续接的星排");
+                control.TrackMoved(new CGPoint(capsule.X + step, capsule.Y));
+                if (tracking.Preview != 3)
+                    throw new InvalidOperationException($"跨区前滑动预览 {tracking.Preview} ≠ 3");
+                var slot5 = tracking.ConvertPointToView(SlotCenter(tracking, 5), control);
+                control.TrackMoved(slot5);
+                if (tracking.Preview != 5 || tracking.DropHoveredSlot != 5)
+                    throw new InvalidOperationException(
+                        $"下区→中区后预览 {tracking.Preview}、hover {tracking.DropHoveredSlot}（期望 5/5）");
+                var back = new CGPoint((double)slot5.X, capsule.Y);
+                control.TrackMoved(back);
+                if (tracking.Preview != 5 || tracking.DropHoveredSlot != null)
+                    throw new InvalidOperationException(
+                        $"中区→下区以当前预览为基值失败（预览 {tracking.Preview}、hover {tracking.DropHoveredSlot}）");
+                control.TrackMoved(new CGPoint(back.X - step, back.Y));
+                if (tracking.Preview != 4)
+                    throw new InvalidOperationException($"中区→下区续滑 {step:0.#} 点后预览 {tracking.Preview} ≠ 4");
+                control.TrackEnded(new CGPoint(back.X - step, back.Y));
+                await WaitAsync(() => _commits.Count == before + 1, "跨区续滑写回一次");
+                if (_commits[before].Value != 4)
+                    throw new InvalidOperationException($"跨区续滑写回 {_commits[before].Value} ≠ 4");
+                await WaitForFileRatingAsync(file, 4, "跨区续滑");
+                await WaitAsync(() => !popup.IsOpen, "跨区续滑写回后弹窗收起");
+
+                await SetRatingAsync(file, 2);
+                await EnsurePopupClosedAsync();
+                int second = _commits.Count;
+                control.TrackBegan(capsule);
+                if (popup.TrackingRow is not { } secondRow)
+                    throw new InvalidOperationException("取消区重入没有可续接的星排");
+                var capsuleHost = FrameInHost(control.Capsule);
+                var cancel = control.ConvertPointFromView(
+                    new CGPoint((double)capsuleHost.X, (double)popup.PanelFrame.Y - 10), _root.View!);
+                control.TrackMoved(cancel);
+                var slot3 = secondRow.ConvertPointToView(SlotCenter(secondRow, 3), control);
+                control.TrackMoved(slot3);
+                if (secondRow.Preview != 3 || secondRow.DropHoveredSlot != 3)
+                    throw new InvalidOperationException(
+                        $"上区→中区恢复失败（预览 {secondRow.Preview}、hover {secondRow.DropHoveredSlot}）");
+                control.TrackEnded(slot3);
+                await WaitAsync(() => _commits.Count == second + 1, "取消区重入中区写回一次");
+                if (_commits[second].Value != 3)
+                    throw new InvalidOperationException($"取消区重入中区写回 {_commits[second].Value} ≠ 3");
+                await WaitForFileRatingAsync(file, 3, "取消区重入中区");
+                await WaitAsync(() => !popup.IsOpen, "取消区重入中区写回后弹窗收起");
+                _lines.Add($"PASS RATING-07 紧凑态跨区衔接：下区滑动 3 → 中区绝对 5，中区回下区以 5 为基值反向 {step:0.#} 点得 4；" +
+                    "取消区经中区选 3 正常写回，一次手势最多提交一次");
             }
             finally
             {
@@ -1584,19 +1751,26 @@ internal static class iOSNativeRatingControlCheck
                     throw new InvalidOperationException(
                         $"弹窗右缘 {popup.PanelFrame.MaxX:0.#} 未停在胶囊左缘 {capsuleHost.X:0.#} 左侧 {DesignTokens.RatingPopupGap:0.#} 点");
                 RequirePanelInsideSafeArea("竖排紧凑弹窗");
+                double step = RatingControlGeometry.SlideStep;
+                control.TrackMoved(new CGPoint(capsule.X, capsule.Y - step));
+                if (tracking.Preview != 4)
+                    throw new InvalidOperationException($"竖排向上滑动 {step:0.#} 点后预览 {tracking.Preview} ≠ 4");
+                control.TrackMoved(new CGPoint(capsule.X, capsule.Y));
+                if (tracking.Preview != 3)
+                    throw new InvalidOperationException($"竖排向下滑动 {step:0.#} 点后预览 {tracking.Preview} ≠ 3");
                 var slot1 = tracking.ConvertPointToView(SlotCenter(tracking, 1), control);
-                var target = new CGPoint(capsule.X, (double)slot1.Y);
-                control.TrackMoved(target);
-                if (tracking.Preview != 1)
-                    throw new InvalidOperationException($"竖排滑动预览 {tracking.Preview} ≠ 1");
-                control.TrackEnded(target);
+                control.TrackMoved(slot1);
+                if (tracking.Preview != 1 || tracking.DropHoveredSlot != 1)
+                    throw new InvalidOperationException(
+                        $"竖排拖放预览 {tracking.Preview}、hover {tracking.DropHoveredSlot}（期望 1/1）");
+                control.TrackEnded(slot1);
                 await WaitAsync(() => _commits.Count == before + 1, "竖排滑动写回一次");
                 if (_commits[before].Value != 1)
                     throw new InvalidOperationException($"竖排滑动写回 {_commits[before].Value} ≠ 1");
                 await WaitForFileRatingAsync(file, 1, "竖排滑动");
                 await WaitAsync(() => !popup.IsOpen, "竖排滑动写回后弹窗收起");
                 _lines.Add($"PASS RATING-07 竖排紧凑弹窗：44×150 竖排控件为紧凑态、弹窗星排竖排（5 号在 0 号上方）、" +
-                    "面板右缘停在胶囊左侧，竖排滑到 1 号预览 1，抬手 1 次写回（值 1）");
+                    $"面板右缘停在胶囊左侧，竖排向上 {step:0.#} 点加星、向下 {step:0.#} 点减星，拖放 1 号格预览 1 并写回（值 1）");
             }
             finally
             {
@@ -1809,14 +1983,10 @@ internal static class iOSNativeRatingControlCheck
             int slide = _commits.Count;
             phone.TrackBegan(capsule);
             if (popup.TrackingRow is not { } slideRow) throw new InvalidOperationException("手机竖屏滑动没有可续接的星排");
-            slideRow.SetNeedsLayout();
-            slideRow.LayoutIfNeeded();
-            var slot5Point = slideRow.ConvertPointToView(SlotCenter(slideRow, 5), phone);
-            var slideTarget = new CGPoint((double)slot5Point.X, capsule.Y);
-            phone.TrackMoved(slideTarget);
+            phone.TrackMoved(new CGPoint(capsule.X + 84, capsule.Y));
             if (slideRow.Preview != 5)
-                throw new InvalidOperationException($"手机竖屏紧凑滑动预览 {slideRow.Preview} ≠ 5");
-            phone.TrackEnded(slideTarget);
+                throw new InvalidOperationException($"手机竖屏紧凑相对滑动预览 {slideRow.Preview} ≠ 5");
+            phone.TrackEnded(new CGPoint(capsule.X + 84, capsule.Y));
             await WaitAsync(() => _commits.Count == slide + 1, "手机竖屏滑动写回一次");
             if (_commits[slide].Value != 5)
                 throw new InvalidOperationException($"手机竖屏滑动写回 {_commits[slide].Value} ≠ 5");
@@ -1827,16 +1997,19 @@ internal static class iOSNativeRatingControlCheck
             int cancel = _commits.Count;
             phone.TrackBegan(capsule);
             if (popup.TrackingRow is not { } cancelRow) throw new InvalidOperationException("手机竖屏取消没有可续接的星排");
-            var below = new CGPoint(capsule.X,
-                (double)phone.Capsule.Frame.GetMaxY() + RatingControlGeometry.CancelSlop + 2);
-            phone.TrackMoved(below);
-            if (cancelRow.Preview != null)
-                throw new InvalidOperationException($"手机竖屏紧凑取消后预览仍为 {cancelRow.Preview}");
-            phone.TrackEnded(below);
-            if (_commits.Count != cancel) throw new InvalidOperationException("手机竖屏取消带外抬手写回了星级");
+            var phoneCapsuleHost = FrameInHost(phone.Capsule);
+            var above = phone.ConvertPointFromView(
+                new CGPoint((double)phoneCapsuleHost.X, (double)popup.PanelFrame.Y - 10), _root.View!);
+            phone.TrackMoved(above);
+            if (cancelRow.Preview != null || cancelRow.DropHoveredSlot != null
+                || cancelRow.ScaledSlotForChecks != null)
+                throw new InvalidOperationException(
+                    $"手机竖屏紧凑取消后预览 {cancelRow.Preview}、hover {cancelRow.DropHoveredSlot}");
+            phone.TrackEnded(above);
+            if (_commits.Count != cancel) throw new InvalidOperationException("手机竖屏取消区抬手写回了星级");
             await WaitAsync(() => !popup.IsOpen, "手机竖屏紧凑取消后弹窗收起");
             _lines.Add($"PASS RATING-07 手机竖屏紧凑：上下张开启时槽位 {slot.Width:0.#} → 紧凑态；起手打开星级胶囊（Up、" +
-                "面板在胶囊上方且安全区内），点弹窗 2 号星写回 2、滑动到 5 号写回 5、越出取消带 0 次写回并收起弹窗");
+                "面板在胶囊上方且安全区内），点弹窗 2 号星写回 2、相对滑动 84 点预览 5 并写回 5、越出浮窗远端 0 次写回并收起弹窗");
 
             // 竖屏 · 上下张关闭：默认勾选命令多于三项时，独立上一张/下一张补位进入可选命令组，
             // 先扣除可选命令组的占宽，再按剩余槽位判定星级形态。

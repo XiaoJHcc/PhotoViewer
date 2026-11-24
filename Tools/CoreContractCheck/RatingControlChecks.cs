@@ -20,6 +20,8 @@ internal static class RatingControlChecks
         RunPopupPlacement(c);
         RunExternalInBand(c);
         RunGesture(c);
+        RunCompactDragZone(c);
+        RunCompactDragGesture(c);
         RunPopupLayout(c);
         RunIntegration(c);
     }
@@ -389,6 +391,228 @@ internal static class RatingControlChecks
         c.True("非 0 号格仍正常提交",
             zeroValueResult.Outcome == RatingGestureOutcome.Commit && zeroValueResult.Value == 3,
             ResultText(zeroValueResult));
+    }
+
+    private static void RunCompactDragZone(Checks c)
+    {
+        c.Section("紧凑态三区几何");
+        c.Equal("滑动步长 20", 20d, RatingControlGeometry.SlideStep);
+
+        // 竖屏底栏：控件在上、浮窗向上展开。间距 8，面板底 292、顶 224，星排主轴横排。
+        var upAnchor = new LayoutRect(250, 300, 88, 44);
+        var upPanel = new LayoutRect(150, 224, 288, 68);
+        c.Equal("向上：控件侧屏幕边缘属于滑动区", RatingDragZone.Slide,
+            RatingControlGeometry.ResolveCompactDragZone(294, 1000, upAnchor, upPanel, RatingPopupDirection.Up));
+        c.Equal("向上：间距中线属于拖放区（含边界）", RatingDragZone.Drop,
+            RatingControlGeometry.ResolveCompactDragZone(294, 296, upAnchor, upPanel, RatingPopupDirection.Up));
+        c.Equal("向上：浮窗中部属于拖放区", RatingDragZone.Drop,
+            RatingControlGeometry.ResolveCompactDragZone(294, 260, upAnchor, upPanel, RatingPopupDirection.Up));
+        c.Equal("向上：浮窗远端边缘仍属于拖放区", RatingDragZone.Drop,
+            RatingControlGeometry.ResolveCompactDragZone(294, 224, upAnchor, upPanel, RatingPopupDirection.Up));
+        c.Equal("向上：越过浮窗远端即取消区", RatingDragZone.Cancel,
+            RatingControlGeometry.ResolveCompactDragZone(294, 223.99, upAnchor, upPanel, RatingPopupDirection.Up));
+        c.Equal("向上：滑动区在横向不截断", RatingDragZone.Slide,
+            RatingControlGeometry.ResolveCompactDragZone(-5000, 500, upAnchor, upPanel, RatingPopupDirection.Up));
+        c.Equal("向上：拖放区在横向不截断", RatingDragZone.Drop,
+            RatingControlGeometry.ResolveCompactDragZone(5000, 260, upAnchor, upPanel, RatingPopupDirection.Up));
+
+        // 向下展开：面板顶 352、底 420，中线 348。
+        var downAnchor = new LayoutRect(250, 300, 88, 44);
+        var downPanel = new LayoutRect(150, 352, 288, 68);
+        c.Equal("向下：控件侧属于滑动区", RatingDragZone.Slide,
+            RatingControlGeometry.ResolveCompactDragZone(294, 340, downAnchor, downPanel, RatingPopupDirection.Down));
+        c.Equal("向下：间距中线属于拖放区", RatingDragZone.Drop,
+            RatingControlGeometry.ResolveCompactDragZone(294, 348, downAnchor, downPanel, RatingPopupDirection.Down));
+        c.Equal("向下：浮窗远端边缘属于拖放区", RatingDragZone.Drop,
+            RatingControlGeometry.ResolveCompactDragZone(294, 420, downAnchor, downPanel, RatingPopupDirection.Down));
+        c.Equal("向下：越过浮窗远端即取消区", RatingDragZone.Cancel,
+            RatingControlGeometry.ResolveCompactDragZone(294, 420.01, downAnchor, downPanel, RatingPopupDirection.Down));
+
+        // 横屏左栏：控件在右、浮窗向左展开。面板右 242、左 130，中线 −246。
+        var leftAnchor = new LayoutRect(250, 100, 44, 224);
+        var leftPanel = new LayoutRect(130, 56, 112, 312);
+        c.Equal("向左：控件侧属于滑动区", RatingDragZone.Slide,
+            RatingControlGeometry.ResolveCompactDragZone(1000, 200, leftAnchor, leftPanel, RatingPopupDirection.Left));
+        c.Equal("向左：浮窗中部属于拖放区", RatingDragZone.Drop,
+            RatingControlGeometry.ResolveCompactDragZone(200, 200, leftAnchor, leftPanel, RatingPopupDirection.Left));
+        c.Equal("向左：浮窗远端边缘属于拖放区", RatingDragZone.Drop,
+            RatingControlGeometry.ResolveCompactDragZone(130, 200, leftAnchor, leftPanel, RatingPopupDirection.Left));
+        c.Equal("向左：越过浮窗远端即取消区", RatingDragZone.Cancel,
+            RatingControlGeometry.ResolveCompactDragZone(129.99, 200, leftAnchor, leftPanel, RatingPopupDirection.Left));
+        c.Equal("向左：拖放区在纵向不截断", RatingDragZone.Drop,
+            RatingControlGeometry.ResolveCompactDragZone(200, -5000, leftAnchor, leftPanel, RatingPopupDirection.Left));
+
+        // 横屏右栏：控件在左、浮窗向右展开。面板左 298、右 410，中线 296。
+        var rightAnchor = new LayoutRect(250, 100, 44, 224);
+        var rightPanel = new LayoutRect(298, 56, 112, 312);
+        c.Equal("向右：控件侧属于滑动区", RatingDragZone.Slide,
+            RatingControlGeometry.ResolveCompactDragZone(200, 200, rightAnchor, rightPanel, RatingPopupDirection.Right));
+        c.Equal("向右：间距中线属于拖放区", RatingDragZone.Drop,
+            RatingControlGeometry.ResolveCompactDragZone(296, 200, rightAnchor, rightPanel, RatingPopupDirection.Right));
+        c.Equal("向右：浮窗远端边缘属于拖放区", RatingDragZone.Drop,
+            RatingControlGeometry.ResolveCompactDragZone(410, 200, rightAnchor, rightPanel, RatingPopupDirection.Right));
+        c.Equal("向右：越过浮窗远端即取消区", RatingDragZone.Cancel,
+            RatingControlGeometry.ResolveCompactDragZone(410.01, 200, rightAnchor, rightPanel, RatingPopupDirection.Right));
+
+        // 间距为零：控件近边缘与浮窗近边缘重合，中线即该边，滑动区与拖放区零缝隙。
+        var zeroAnchor = new LayoutRect(250, 300, 88, 44);
+        var zeroPanel = new LayoutRect(150, 232, 288, 68);
+        c.Equal("零间距：中线以下仍是滑动区", RatingDragZone.Slide,
+            RatingControlGeometry.ResolveCompactDragZone(294, 300.01, zeroAnchor, zeroPanel, RatingPopupDirection.Up));
+        c.Equal("零间距：中线属于拖放区", RatingDragZone.Drop,
+            RatingControlGeometry.ResolveCompactDragZone(294, 300, zeroAnchor, zeroPanel, RatingPopupDirection.Up));
+
+        c.Equal("增星主轴：横排取 x", 120d, RatingControlGeometry.IncreaseAxis(120, 500, true));
+        c.Equal("增星主轴：竖排取 −y", -120d, RatingControlGeometry.IncreaseAxis(500, 120, false));
+    }
+
+    private static void RunCompactDragGesture(Checks c)
+    {
+        c.Section("紧凑态三区手势");
+        var anchor = new LayoutRect(250, 300, 88, 44);
+        var panel = new LayoutRect(150, 224, 288, 68);
+        var row = new LayoutRect(158, 232, 264, 44);
+        var start = (X: 294d, Y: 322d);
+
+        var tap = new CompactRatingDragGesture(2, true, anchor, panel, row, RatingPopupDirection.Up);
+        tap.Begin(start.X, start.Y);
+        var tapResult = tap.End(start.X, start.Y);
+        c.True("未越点按阈值即抬手保持弹窗",
+            tapResult.Outcome == RatingGestureOutcome.KeepPopup && tapResult.Value == 2, ResultText(tapResult));
+
+        double s = RatingControlGeometry.SlideStep;
+        var small = new CompactRatingDragGesture(2, true, anchor, panel, row, RatingPopupDirection.Up);
+        small.Begin(start.X, start.Y);
+        bool smallChanged = small.Move(start.X + s - 1, start.Y);
+        c.True("越过点按阈值但不足一个步距仍保持原星级",
+            smallChanged && small.Preview == 2 && small.Moved, "预览 " + small.Preview);
+        c.True("不足一个步距抬手不写并收起", small.End(start.X + s - 1, start.Y).Outcome == RatingGestureOutcome.None);
+
+        var step = new CompactRatingDragGesture(2, true, anchor, panel, row, RatingPopupDirection.Up);
+        step.Begin(start.X, start.Y);
+        bool stepped = step.Move(start.X + s, start.Y) && step.Preview == 3
+            && step.Move(start.X + s * 2, start.Y) && step.Preview == 4
+            && step.Move(start.X + s * 4, start.Y) && step.Preview == 5;
+        c.True($"滑动区按 {s:0.#} 点相对步进 2→3→4→5，单帧大步可循环进档", stepped, "预览 " + step.Preview);
+        step.Move(start.X + s * 5, start.Y);
+        bool boundary = step.Preview == 5 && step.Move(start.X + s * 4, start.Y) && step.Preview == 4;
+        c.True($"到达 5 后继续外拉锚点跟手，反向 {s:0.#} 点立即降为 4", boundary, "预览 " + step.Preview);
+        var stepResult = step.End(start.X + s * 4, start.Y);
+        c.True("滑动区抬手只提交最终值",
+            stepResult.Outcome == RatingGestureOutcome.Commit && stepResult.Value == 4, ResultText(stepResult));
+
+        var large = new CompactRatingDragGesture(0, true, anchor, panel, row, RatingPopupDirection.Up);
+        large.Begin(start.X, start.Y);
+        c.True($"单帧 {s * 5:0.#} 点从 0 直达 5", large.Move(start.X + s * 5, start.Y) && large.Preview == 5,
+            "预览 " + large.Preview);
+        c.True($"到达 5 后反向 {s * 5:0.#} 点直达 0", large.Move(start.X, start.Y) && large.Preview == 0,
+            "预览 " + large.Preview);
+        large.Move(start.X - s, start.Y);
+        c.True($"到达 0 后继续外拉锚点跟手，反向 {s:0.#} 点立即升为 1",
+            large.Preview == 0 && large.Move(start.X, start.Y) && large.Preview == 1, "预览 " + large.Preview);
+
+        var verticalAnchor = new LayoutRect(250, 100, 44, 224);
+        var verticalPanel = new LayoutRect(130, 56, 112, 312);
+        var verticalRow = new LayoutRect(142, 64, 44, 288);
+        var verticalStart = (X: 272d, Y: 212d);
+        var vertical = new CompactRatingDragGesture(2, false, verticalAnchor, verticalPanel, verticalRow,
+            RatingPopupDirection.Left);
+        vertical.Begin(verticalStart.X, verticalStart.Y);
+        c.True("竖排向上拖动加星（s = −y）",
+            vertical.Move(verticalStart.X, verticalStart.Y - s) && vertical.Preview == 3,
+            "预览 " + vertical.Preview);
+        c.True("竖排向下拖动减星", vertical.Move(verticalStart.X, verticalStart.Y) && vertical.Preview == 2,
+            "预览 " + vertical.Preview);
+
+        var drop = new CompactRatingDragGesture(2, true, anchor, panel, row, RatingPopupDirection.Up);
+        drop.Begin(start.X, start.Y);
+        bool dropChanged = drop.Move(356, 254);
+        c.True("中区按星排绝对位置选星并给出 hover 与放大槽",
+            dropChanged && drop.Preview == 4 && drop.DropHoverSlot == 4 && drop.ScaledSlot == 4,
+            $"预览 {drop.Preview}，hover {drop.DropHoverSlot}，放大 {drop.ScaledSlot}");
+        var dropResult = drop.End(356, 254);
+        c.True("中区抬手提交绝对位置值",
+            dropResult.Outcome == RatingGestureOutcome.Commit && dropResult.Value == 4, ResultText(dropResult));
+
+        var clamp = new CompactRatingDragGesture(2, true, anchor, panel, row, RatingPopupDirection.Up);
+        clamp.Begin(start.X, start.Y);
+        c.True("中区越出星排左端夹到 0", clamp.Move(0, 254) && clamp.Preview == 0, "预览 " + clamp.Preview);
+        c.True("中区越出星排右端夹到 5", clamp.Move(1000, 254) && clamp.Preview == 5, "预览 " + clamp.Preview);
+
+        var cancel = new CompactRatingDragGesture(2, true, anchor, panel, row, RatingPopupDirection.Up);
+        cancel.Begin(start.X, start.Y);
+        cancel.Move(start.X, 200);
+        c.True("进入取消区清空预览、hover 与放大",
+            cancel.Preview is null && cancel.DropHoverSlot is null && cancel.ScaledSlot is null,
+            $"区域 {cancel.Zone}，预览 {cancel.Preview}");
+        c.True("取消区抬手不写", cancel.End(start.X, 200).Outcome == RatingGestureOutcome.None);
+
+        var slideToDropToSlide = new CompactRatingDragGesture(2, true, anchor, panel, row, RatingPopupDirection.Up);
+        slideToDropToSlide.Begin(start.X, start.Y);
+        slideToDropToSlide.Move(start.X + s, start.Y);
+        bool enteredDrop = slideToDropToSlide.Move(400, 254) && slideToDropToSlide.Preview == 5;
+        slideToDropToSlide.Move(400, 322);
+        bool backToSlide = slideToDropToSlide.Preview == 5 && slideToDropToSlide.DropHoverSlot is null;
+        bool continued = slideToDropToSlide.Move(400 - s, 322) && slideToDropToSlide.Preview == 4;
+        c.True("下区→中区切换绝对位置，中区→下区以当前预览为新锚点续滑",
+            enteredDrop && backToSlide && continued, $"预览 {slideToDropToSlide.Preview}");
+        var crossResult = slideToDropToSlide.End(400 - s, 322);
+        c.True("跨区后抬手提交续滑值",
+            crossResult.Outcome == RatingGestureOutcome.Commit && crossResult.Value == 4, ResultText(crossResult));
+
+        var cancelToDrop = new CompactRatingDragGesture(2, true, anchor, panel, row, RatingPopupDirection.Up);
+        cancelToDrop.Begin(start.X, start.Y);
+        cancelToDrop.Move(start.X, 200);
+        c.True("上区→中区恢复绝对位置与 hover",
+            cancelToDrop.Move(312, 254) && cancelToDrop.Preview == 3 && cancelToDrop.DropHoverSlot == 3,
+            "预览 " + cancelToDrop.Preview);
+
+        var cancelToSlide = new CompactRatingDragGesture(2, true, anchor, panel, row, RatingPopupDirection.Up);
+        cancelToSlide.Begin(start.X, start.Y);
+        cancelToSlide.Move(start.X, 200);
+        c.True("上区→下区以原星级为基值恢复相对滑动",
+            cancelToSlide.Move(start.X, start.Y) && cancelToSlide.Preview == 2
+            && cancelToSlide.Move(start.X + s, start.Y) && cancelToSlide.Preview == 3,
+            "预览 " + cancelToSlide.Preview);
+
+        var sameDrop = new CompactRatingDragGesture(2, true, anchor, panel, row, RatingPopupDirection.Up);
+        sameDrop.Begin(start.X, start.Y);
+        sameDrop.Move(268, 254);
+        c.True("中区落回原值不写", sameDrop.End(268, 254).Outcome == RatingGestureOutcome.None);
+        var forcedSame = new CompactRatingDragGesture(2, true, anchor, panel, row, RatingPopupDirection.Up,
+            forceCommit: true);
+        forcedSame.Begin(start.X, start.Y);
+        forcedSame.Move(268, 254);
+        c.True("强制提交时中区同值也写",
+            forcedSame.End(268, 254).Outcome == RatingGestureOutcome.Commit);
+
+        // 浮窗与控件几乎贴近：中区近边界离落点不足点按阈值，进入中区仍视为已拖拽。
+        var closePanel = new LayoutRect(150, 225, 288, 68);
+        var closeDrop = new CompactRatingDragGesture(2, true, anchor, closePanel, row, RatingPopupDirection.Up);
+        closeDrop.Begin(start.X, 298);
+        bool earlyDrop = closeDrop.Move(start.X, 296.4) && closeDrop.Zone == RatingDragZone.Drop;
+        c.True("特殊场景下位移未超点按阈值，进入中区即不再按点按处理",
+            earlyDrop && closeDrop.Moved, $"区域 {closeDrop.Zone}，位移 1.6");
+        var earlyResult = closeDrop.End(start.X, 296.4);
+        c.True("进入中区后抬手按拖放语义提交",
+            earlyResult.Outcome is RatingGestureOutcome.Commit or RatingGestureOutcome.None, ResultText(earlyResult));
+
+        var once = new CompactRatingDragGesture(2, true, anchor, panel, row, RatingPopupDirection.Up);
+        once.Begin(start.X, start.Y);
+        once.Move(356, 254);
+        var first = once.End(356, 254);
+        bool secondMove = once.Move(400, 254);
+        var second = once.End(400, 254);
+        c.True("一次手势最多提交一次，结束后移动与再次抬手都不写",
+            first.Outcome == RatingGestureOutcome.Commit && first.Value == 4 && !secondMove
+            && second.Outcome == RatingGestureOutcome.None && second.Value == 2,
+            $"{ResultText(first)} / {ResultText(second)}");
+
+        var cancelled = new CompactRatingDragGesture(2, true, anchor, panel, row, RatingPopupDirection.Up);
+        cancelled.Begin(start.X, start.Y);
+        cancelled.Move(356, 254);
+        cancelled.Cancel();
+        c.True("系统取消后抬手不写", cancelled.End(356, 254).Outcome == RatingGestureOutcome.None);
     }
 
     private static void RunPopupLayout(Checks c)

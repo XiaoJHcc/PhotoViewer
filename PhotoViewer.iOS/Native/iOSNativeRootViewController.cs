@@ -1743,7 +1743,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private async Task CommitPopupAsync(ImageFile file, int value)
     {
         RatingCommitted?.Invoke(file, value);
-        await _main.RatingSources.SetRatingAsync(value);
+        if (_main.RatingSources.IsOpen && ReferenceEquals(_main.RatingSources.Target, file))
+            await _main.RatingSources.SetRatingAsync(value);
+        else
+            await _main.SetRatingAsync(file, value);
         UpdateRatingControls();
     }
 

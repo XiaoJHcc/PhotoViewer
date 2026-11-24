@@ -225,7 +225,7 @@ internal static partial class AndroidNativeChecks
     }
 
     /// <summary>
-    /// 点面板外只关闭弹层，该次触摸不穿透：落点取筛选入口本身——若事件穿透，入口会再次打开下拉。
+    /// 点面板外关闭并透传：点自身入口只关闭不重开；点面板外其它位置立即关闭且不拦截该次点击。
     /// </summary>
     private static async Task CheckOutsideTapAsync()
     {
@@ -236,14 +236,14 @@ internal static partial class AndroidNativeChecks
         await Task.Delay(180);
         if (!await OpenGroupedMenuAsync(root))
         {
-            Check("filter 点面板外只关闭", false, "下拉未打开");
+            Check("filter 点面板外关闭并透传", false, "下拉未打开");
             return;
         }
         var session = filter.DropdownInstanceForChecks;
         var entry = FilterEntryView(filter);
         if (session == null || entry == null)
         {
-            Check("filter 点面板外只关闭", false, $"session={session != null} entry={entry != null}");
+            Check("filter 点面板外关闭并透传", false, $"session={session != null} entry={entry != null}");
             root.DismissFilterDropdown();
             return;
         }
@@ -252,22 +252,37 @@ internal static partial class AndroidNativeChecks
         root.PopupLayer.GetLocationOnScreen(origin);
         var panel = new Rect(session.Frame);
         panel.Offset(origin[0], origin[1]);
-        var (outsideX, outsideY) = OutsidePoint(panel, root);
-        bool outside = !panel.Contains(outsideX, outsideY);
-        var before = main.CurrentFile;
+        // 1) 点自身入口：关闭且不会在同一手势内立刻重开。
         long now = SystemClock.UptimeMillis();
-        bool downHandled = DispatchRootTouch(root, MotionEventActions.Down, outsideX, outsideY, now);
-        bool upHandled = DispatchRootTouch(root, MotionEventActions.Up, outsideX, outsideY, now + 60);
+        DispatchRootTouch(root, MotionEventActions.Down, entryRect.CenterX(), entryRect.CenterY(), now);
+        DispatchRootTouch(root, MotionEventActions.Up, entryRect.CenterX(), entryRect.CenterY(), now + 60);
         await Task.Delay(350);
-        bool closed = !filter.IsDropdownOpen && !root.PopupLayer.IsOpen;
-        // 穿透会在同一位置再次点开入口；再等一个淡出周期确认没有被重新打开。
-        await Task.Delay(500);
-        bool stayedClosed = !filter.IsDropdownOpen && !root.PopupLayer.IsOpen;
-        bool sameFile = ReferenceEquals(main.CurrentFile, before);
-        Check("filter 点面板外只关闭且不穿透",
-            outside && downHandled && upHandled && closed && stayedClosed && sameFile,
-            $"outside={outside} entry={entryRect} panel={panel} down={downHandled} up={upHandled} "
-            + $"closed={closed} stayed={stayedClosed} file={before?.Name}→{main.CurrentFile?.Name}");
+        bool entryClosed = !filter.IsDropdownOpen && !root.PopupLayer.IsOpen;
+        await Task.Delay(350);
+        bool entryStayedClosed = !filter.IsDropdownOpen && !root.PopupLayer.IsOpen;
+
+        // 2) 重新打开后点面板外非自身入口（例如「更多」入口）：同一次点击既关闭筛选又直接打开更多。
+        bool reopened = await OpenGroupedMenuAsync(root);
+        bool passThroughClosed = false;
+        bool passThroughTriggered = false;
+        if (reopened && filter.DropdownInstanceForChecks is { } second)
+        {
+            View moreEntry = root.PhoneMoreButton.IsShown ? root.PhoneMoreButton : filter.ComboForChecks.Second;
+            var moreRect = ScreenRectOf(moreEntry);
+            long t2 = SystemClock.UptimeMillis();
+            DispatchRootTouch(root, MotionEventActions.Down, moreRect.CenterX(), moreRect.CenterY(), t2);
+            DispatchRootTouch(root, MotionEventActions.Up, moreRect.CenterX(), moreRect.CenterY(), t2 + 60);
+            await Task.Delay(300);
+            passThroughClosed = !filter.IsDropdownOpen;
+            passThroughTriggered = root.PopupLayer.IsOpen && !ReferenceEquals(root.PopupLayer.SessionForChecks, second);
+            root.DismissPhotoMenu();
+            await Task.Delay(200);
+        }
+        Check("filter 点面板外关闭并透传（点自身入口不重开）",
+            entryClosed && entryStayedClosed && reopened && passThroughClosed && passThroughTriggered,
+            $"entry={entryRect} panel={panel} entryClosed={entryClosed} stayed={entryStayedClosed} "
+            + $"reopened={reopened} passClosed={passThroughClosed} passTriggered={passThroughTriggered} "
+            + $"current={main.CurrentFile?.Name}");
     }
 
     /// <summary>

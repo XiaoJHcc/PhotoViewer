@@ -679,6 +679,8 @@ public static class DesignTokens
     public const double RatingControlSlot = 36.0;
     /// <summary>rating.gesture.cancelSlop（pt） RATING-07：手指在交叉轴越出星排/弹窗该距离即进入取消区。</summary>
     public const double RatingGestureCancelSlop = 44.0;
+    /// <summary>rating.gesture.slideStep（pt） RATING-07：紧凑态滑动区每增减 1 星的相对拖动距离（5 档共 100 点）。</summary>
+    public const double RatingGestureSlideStep = 20.0;
     /// <summary>rating.gesture.tapSlop（pt） RATING-07：紧凑态/卡片长按起手后未越过该距离视为点按，不预览。</summary>
     public const double RatingGestureTapSlop = 8.0;
     /// <summary>rating.popup.clearGlyph.fontSize（pt） RATING-07：弹窗清零叉字号。</summary>

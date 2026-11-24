@@ -1132,6 +1132,7 @@ internal sealed class AndroidRatingControl : MaterialCardView, IGlassAnchorConte
 
     /// <summary>
     /// 紧凑胶囊的手指跟踪：起手打开弹窗并把落点交给弹窗星排，之后的移动与抬手原样转发；
+    /// 无冲突纯星级入口由弹窗用共享 <see cref="CompactRatingDragGesture"/> 按三区处理（RATING-07），
     /// 弹窗未打开（无当前照片）或为冲突来源条目时不转发，整套手势仍由本控件消费。
     /// </summary>
     /// <param name="e">触摸事件。</param>

@@ -53,6 +53,7 @@ internal static partial class AndroidNativeChecks
         await RunStepAsync("RATING-04 失败保留", CheckRatingSourcesFailureAsync);
         await RunStepAsync("RATING-07 卡片长按", CheckRatingPopupCardAsync);
         await RunStepAsync("RATING-07 紧凑起手", CheckRatingPopupCompactAsync);
+        await RunStepAsync("RATING-07 紧凑三区", CheckRatingPopupCompactZonesAsync);
         await RunStepAsync("IMAGE-03", CheckFullFailureAsync);
         await RunStepAsync("STATE-02/OPEN-03", CheckOpenFailureAsync);
         await RunStepAsync("STATE-03", CheckRatingFailureAsync);

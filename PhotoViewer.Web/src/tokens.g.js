@@ -334,6 +334,7 @@ const tokens = Object.freeze({
     "rating.control.glyph.fontSize": 20,
     "rating.control.slot": 36,
     "rating.gesture.cancelSlop": 44,
+    "rating.gesture.slideStep": 20,
     "rating.gesture.tapSlop": 8,
     "rating.popup.clearGlyph.fontSize": 18,
     "rating.popup.cornerRadius": 24,

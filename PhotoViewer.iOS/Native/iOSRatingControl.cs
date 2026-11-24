@@ -154,7 +154,10 @@ internal sealed class iOSRatingControl : UIView
         ApplyForm();
     }
 
-    /// <summary>紧凑态起手：先请宿主打开弹窗，再把同一次手势转给弹窗内的单条目星排。</summary>
+    /// <summary>
+    /// 紧凑态起手：先请宿主打开弹窗，再把同一次手势转给弹窗内的单条目星排。
+    /// 无冲突纯星级入口由弹窗用共享 <see cref="CompactRatingDragGesture"/> 按三区处理（RATING-07）。
+    /// </summary>
     /// <param name="pointInControl">控件坐标中的触点。</param>
     internal void TrackBegan(CGPoint pointInControl)
     {
@@ -165,12 +168,12 @@ internal sealed class iOSRatingControl : UIView
         if (popup.BeginExternal(this, pointInControl)) _forwardingPopup = popup;
     }
 
-    /// <summary>紧凑态移动：按手势在弹窗坐标中的位置取值（手指不必移进弹窗）。</summary>
+    /// <summary>紧凑态移动：滑动区相对步进、拖放区绝对选星、取消区清空（手指不必移进弹窗）。</summary>
     /// <param name="pointInControl">控件坐标中的触点。</param>
     internal void TrackMoved(CGPoint pointInControl)
         => _forwardingPopup?.MoveExternal(this, pointInControl);
 
-    /// <summary>紧凑态抬手：写回由弹窗接管；越界不写时收起弹窗，点按保持弹窗。</summary>
+    /// <summary>紧凑态抬手：写回由弹窗接管；取消或同值收起，未越点按阈值则保持弹窗。</summary>
     /// <param name="pointInControl">控件坐标中的触点。</param>
     internal void TrackEnded(CGPoint pointInControl)
     {
