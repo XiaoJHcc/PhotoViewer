@@ -1,108 +1,33 @@
 using System.ComponentModel;
 using CoreGraphics;
 using Foundation;
-using PhotoViewer.Apple;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Platform;
+using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Tools;
 using UIKit;
 
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// 原生 EXIF 详情页（UIKit 版）：顶部居中显示不含后缀的文件名与格式切换，下方按元数据分组渲染卡片，
-/// 每行 7 列（ID 60 点、1 点分隔线、名称/中文名/值按 2:2:3 分配，见共享 <see cref="ExifTableGeometry"/>）。
-/// 卡片由 <see cref="UITableViewStyle.InsetGrouped"/> 表格自身绘制：左右内缩、分组间距与连续圆角都取系统口径，
-/// 本页只从系统布局边距读取一次横向 inset，不再叠加自绘外边距或自绘圆角（自绘会与系统卡片叠成双层圆角）。
-/// 长分组列表用 <see cref="UITableView"/> 承载以获得原生虚拟化；窄宽度下列仍保持 2:2:3，由文本换行与
-/// 值列最多 3 行尾部截断自适应。数据全部来自共享 <see cref="ExifDetailViewModel"/>
-/// （含惰性加载、异步补全与当前格式状态），本视图只读不写业务状态。
+/// 原生 EXIF 详情页（UIKit 版）：直接继承 <see cref="UITableViewController"/>（<see cref="UITableViewStyle.InsetGrouped"/>），
+/// 顶部展示不含扩展名的文件名与原生 <see cref="UISegmentedControl"/> 格式切换（单格式只显示非交互扩展名），
+/// 下方以原生分组标题 + AutoLayout 自适应键值行展示全部元数据（中文名 / 英文名 / Tag ID / 值），
+/// 并通过系统 <see cref="UIContextMenuConfiguration"/> 提供长按拷贝值、名称与整行。
 /// </summary>
-internal sealed class iOSExifDetailView : UIViewController
+internal sealed class iOSExifDetailView : UITableViewController
 {
-    /// <summary>文件名行的上外边距（旧壳 Margin 12,12,12,4）。</summary>
-    private const double HeaderTopMargin = 12;
+    private const string CellReuseId = "ExifTagCell";
+    private const string HeaderReuseId = "ExifGroupHeader";
 
-    /// <summary>文件名行的下外边距。</summary>
-    private const double HeaderBottomMargin = 4;
-
-    /// <summary>加载提示的上下外边距（旧壳 Margin 12,12）。</summary>
-    private const double LoadingMargin = 12;
-
-    /// <summary>分组标题的上外边距（旧壳 Margin 12,18,12,6）。</summary>
-    private const double GroupHeaderTopMargin = 18;
-
-    /// <summary>分组标题的下外边距。</summary>
-    private const double GroupHeaderBottomMargin = 6;
-
-    /// <summary>分组标题与系统卡片之间的留白（旧壳卡片 Margin 12,4）。</summary>
-    private const double CardTopMargin = 4;
-
-    /// <summary>系统布局边距尚未就绪时的回退左右内缩（iPhone/iPad 的 InsetGrouped 标准值）。</summary>
-    private const double FallbackHorizontalInset = 16;
-
-    /// <summary>测量换行高度的宽度上限。</summary>
-    private const double MeasureLimit = 10000;
-
-    /// <summary>格式按钮左右内边距（旧壳 ListBoxItem 内容 Margin 8,4）。</summary>
-    private const double FormatPaddingX = 8;
-
-    /// <summary>格式按钮上下内边距。</summary>
-    private const double FormatPaddingY = 4;
-
-    /// <summary>格式按钮之间的间距（旧壳 StackPanel Spacing 4）。</summary>
-    private const double FormatSpacing = 4;
-
-    /// <summary>文件名与格式切换之间的间距（旧壳 StackPanel Spacing 8）。</summary>
-    private const double HeaderSpacing = 8;
-
-    /// <summary>分组标题颜色（深色玻璃上取系统主标签色）。</summary>
-    private static readonly UIColor GroupHeaderColor = UIColor.Label;
-
-    private static readonly UIColor CardColor = UIColor.SecondarySystemGroupedBackground;
-    private static readonly UIColor DividerColor = UIColor.Separator;
-
-    /// <summary>Tag ID 文字取系统次标签色，与 Mac 同口径，在深色卡片上保持可读。</summary>
-    private static readonly UIColor IdTextColor = UIColor.SecondaryLabel;
-
-    /// <summary>英文名称取系统次标签色。</summary>
-    private static readonly UIColor NameColor = UIColor.SecondaryLabel;
-
-    /// <summary>中文译名取系统三级标签色。</summary>
-    private static readonly UIColor ChineseColor = UIColor.TertiaryLabel;
-
-    /// <summary>值取系统主标签色。</summary>
-    private static readonly UIColor ValueColor = UIColor.Label;
-
-    /// <summary>文件名取系统主标签色。</summary>
-    private static readonly UIColor FileNameColor = UIColor.Label;
-
-    /// <summary>加载提示取系统次标签色。</summary>
-    private static readonly UIColor LoadingColor = UIColor.SecondaryLabel;
-
-    /// <summary>文件名 14 点字体。</summary>
-    private static readonly UIFont FileNameFont = UIFont.SystemFontOfSize(14);
-
-    /// <summary>分组标题 16 点粗体。</summary>
-    private static readonly UIFont GroupHeaderFont = UIFont.BoldSystemFontOfSize(16);
-
-    /// <summary>单元格 13 点字体。</summary>
-    private static readonly UIFont CellFont = UIFont.SystemFontOfSize(13);
-
-    /// <summary>Tag ID 11 点等宽字体。</summary>
-    private static readonly UIFont IdFont = UIFont.FromName("Menlo", 11) ?? UIFont.SystemFontOfSize(11);
-
-    /// <summary>格式切换 13 点字体。</summary>
-    private static readonly UIFont FormatFont = UIFont.SystemFontOfSize(13);
-
-    private readonly UITableView _table;
-    private readonly HeaderView _header;
-    private readonly TableSource _source;
+    private readonly Action? _onClose;
+    private HeaderView? _header;
     private ExifDetailViewModel? _viewModel;
+    private double _lastHeaderWidth = -1;
     private bool _disposed;
 
     /// <summary>原生表格（验收读取分区/行数与渲染文本）。</summary>
-    internal UITableView Table => _table;
+    internal UITableView Table => TableView;
 
     /// <summary>当前绑定的 EXIF 详情 VM。</summary>
     internal ExifDetailViewModel? ViewModel => _viewModel;
@@ -113,57 +38,52 @@ internal sealed class iOSExifDetailView : UIViewController
     /// <summary>当前标签行数（未加载为 0）。</summary>
     internal int TagCount => _viewModel?.Groups?.Sum(group => group.Tags.Count) ?? 0;
 
-    /// <summary>多格式时的格式切换按钮（验收触发真实点击）。</summary>
-    internal IReadOnlyList<UIButton> FormatButtons => _header.FormatButtons;
+    /// <summary>多格式时的原生分段选择器；单格式时为 null 或隐藏。</summary>
+    internal UISegmentedControl? FormatControl => _header?.FormatControl;
 
-    /// <summary>文件名标签的当前 frame（验收核对与系统卡片左缘对齐）。</summary>
-    internal CGRect FileNameFrame => _header.FileNameFrame;
+    /// <summary>文件名标签在表格坐标系中的当前 frame。</summary>
+    internal CGRect FileNameFrame => _header?.FileNameFrame ?? CGRect.Empty;
 
-    /// <summary>
-    /// 行卡片在表格坐标中的横向范围：<see cref="UITableViewStyle.InsetGrouped"/> 已按表格布局边距把卡片内缩，
-    /// 这里只读取那一次系统 inset。手机（16）与 iPad（16 或 20）由系统按当前宽度给出，壳层不再叠加固定边距。
-    /// </summary>
-    /// <param name="tableView">EXIF 表格。</param>
-    /// <returns>卡片左边距与宽度（点）。</returns>
-    internal static (double Left, double Width) CardSpan(UITableView tableView)
+    public iOSExifDetailView(Action? onClose = null) : base(UITableViewStyle.InsetGrouped)
     {
-        double left = (double)tableView.LayoutMargins.Left;
-        double right = (double)tableView.LayoutMargins.Right;
-        if (left + right <= 0)
-        {
-            left = right = FallbackHorizontalInset;
-        }
-        return (left, Math.Max(1, (double)tableView.Bounds.Width - left - right));
+        _onClose = onClose;
     }
 
-    /// <summary>建立表格、文件名/格式切换头与数据源。</summary>
-    public iOSExifDetailView() : base(null, null)
+    public override void ViewDidLoad()
     {
+        base.ViewDidLoad();
         Title = "EXIF 详情";
-        View!.BackgroundColor = UIColor.SystemGroupedBackground;
-        _table = new UITableView(CGRect.Empty, UITableViewStyle.InsetGrouped)
+        if (_onClose != null)
         {
-            BackgroundColor = UIColor.Clear,
-            SeparatorStyle = UITableViewCellSeparatorStyle.None,
-            RowHeight = 0,
-            EstimatedRowHeight = 0,
-            SectionHeaderTopPadding = 0,
-            ContentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentBehavior.Never,
-            AllowsSelection = false,
-            // 与工具首页同口径：EXIF 卡片按系统 inset 铺满 sheet，不额外收进 readable width 的居中窄列。
-            CellLayoutMarginsFollowReadableWidth = false,
-        };
-        _table.RegisterClassForCellReuse(typeof(RowCell), TableSource.CellId);
+            NavigationItem.RightBarButtonItem = new UIBarButtonItem(UIBarButtonSystemItem.Close, (_, _) => _onClose());
+        }
+
+        TableView.BackgroundColor = UIColor.SystemGroupedBackground;
+        TableView.CellLayoutMarginsFollowReadableWidth = false;
+        TableView.AllowsSelection = false;
+        TableView.RowHeight = UITableView.AutomaticDimension;
+        TableView.EstimatedRowHeight = 56;
+        TableView.SectionHeaderHeight = UITableView.AutomaticDimension;
+        TableView.EstimatedSectionHeaderHeight = 36;
+        TableView.RegisterClassForCellReuse(typeof(ExifTagCell), CellReuseId);
+        TableView.RegisterClassForHeaderFooterViewReuse(typeof(UITableViewHeaderFooterView), HeaderReuseId);
+
         _header = new HeaderView(SelectFormat);
-        _table.TableHeaderView = _header;
-        _table.TableFooterView = new UIView(new CGRect(0, 0, 1, 24)) { BackgroundColor = UIColor.Clear };
-        _source = new TableSource(this);
-        _table.Source = _source;
-        View.AddSubview(_table);
+        if (_viewModel != null)
+        {
+            _header.Show(_viewModel);
+        }
+        TableView.TableHeaderView = _header;
+        UpdateHeaderLayout(force: true);
+    }
+
+    public override void ViewDidLayoutSubviews()
+    {
+        base.ViewDidLayoutSubviews();
+        UpdateHeaderLayout(force: false);
     }
 
     /// <summary>绑定 EXIF 详情 VM 并按当前状态重建内容；VM 实例变化时切换订阅。</summary>
-    /// <param name="viewModel">共享 EXIF 详情 VM。</param>
     internal void Show(ExifDetailViewModel viewModel)
     {
         if (_disposed) return;
@@ -173,96 +93,131 @@ internal sealed class iOSExifDetailView : UIViewController
             _viewModel = viewModel;
             _viewModel.PropertyChanged += OnViewModelChanged;
         }
-        _header.Show(_viewModel);
-        _table.ReloadData();
-        LayoutHeader();
+        if (IsViewLoaded)
+        {
+            _header?.Show(_viewModel);
+            UpdateHeaderLayout(force: true);
+            TableView.ReloadData();
+        }
     }
 
-    /// <summary>表格铺满页面并在尺寸变化后重排文件名头。</summary>
-    public override void ViewDidLayoutSubviews()
+    public override nint NumberOfSections(UITableView tableView) => GroupCount;
+
+    public override nint RowsInSection(UITableView tableView, nint section)
+        => _viewModel?.Groups is { } groups && section >= 0 && section < groups.Count
+            ? groups[(int)section].Tags.Count
+            : 0;
+
+    public override UIView GetViewForHeader(UITableView tableView, nint section)
     {
-        base.ViewDidLayoutSubviews();
-        _table.Frame = View!.SafeAreaLayoutGuide.LayoutFrame;
-        LayoutHeader();
+        var header = tableView.DequeueReusableHeaderFooterView(HeaderReuseId)
+            ?? new UITableViewHeaderFooterView((NSString)HeaderReuseId);
+        if (_viewModel?.Groups is { } groups && section >= 0 && section < groups.Count)
+        {
+            var config = UIListContentConfiguration.ProminentInsetGroupedHeaderConfiguration;
+            config.Text = groups[(int)section].Name;
+            header.ContentConfiguration = config;
+        }
+        return header;
     }
 
-    /// <summary>VM 内容变化（格式切换、EXIF 异步到达、切换照片）后合并重载，跨线程通知统一回到主线程。</summary>
-    /// <param name="sender">事件源（EXIF 详情 VM）。</param>
-    /// <param name="args">属性变化参数。</param>
+    public override UITableViewCell GetCell(UITableView tableView, NSIndexPath indexPath)
+    {
+        var cell = (ExifTagCell)tableView.DequeueReusableCell(CellReuseId, indexPath);
+        var tag = _viewModel!.Groups![(int)indexPath.Section].Tags[(int)indexPath.Row];
+        cell.Configure(tag);
+        return cell;
+    }
+
+    /// <summary>TOOLS-03：通过系统长按上下文菜单提供原生拷贝值 / 名称 / 整行。</summary>
+    public override UIContextMenuConfiguration? GetContextMenuConfiguration(
+        UITableView tableView, NSIndexPath indexPath, CGPoint point)
+    {
+        if (TryGetTag(indexPath) is not { } tag) return null;
+        return UIContextMenuConfiguration.Create(
+            identifier: null,
+            previewProvider: null,
+            actionProvider: _ => BuildCopyMenu(tag));
+    }
+
+    /// <summary>验收缝：按行索引构造与长按相同的原生拷贝菜单。</summary>
+    internal UIMenu? BuildCopyMenuForChecks(NSIndexPath indexPath)
+        => TryGetTag(indexPath) is { } tag ? BuildCopyMenu(tag) : null;
+
+    internal static UIMenu BuildCopyMenu(MetadataTag tag)
+    {
+        var copyValue = UIAction.Create("拷贝值", UIImage.GetSystemImage("doc.on.doc"), null, _ =>
+            UIPasteboard.General.String = tag.Value);
+        var copyName = UIAction.Create("拷贝名称", UIImage.GetSystemImage("tag"), null, _ =>
+            UIPasteboard.General.String = tag.Name);
+        var copyLine = UIAction.Create("拷贝整行", UIImage.GetSystemImage("list.bullet.rectangle"), null, _ =>
+        {
+            string label = string.IsNullOrWhiteSpace(tag.ChineseName)
+                ? $"{tag.TagIdHex} {tag.Name}"
+                : $"{tag.TagIdHex} {tag.Name} ({tag.ChineseName})";
+            UIPasteboard.General.String = $"{label}: {tag.Value}";
+        });
+        return UIMenu.Create(tag.Name, [copyValue, copyName, copyLine]);
+    }
+
+    private MetadataTag? TryGetTag(NSIndexPath indexPath)
+    {
+        if (_viewModel?.Groups is not { } groups) return null;
+        int section = (int)indexPath.Section;
+        int row = (int)indexPath.Row;
+        if (section < 0 || section >= groups.Count) return null;
+        var tags = groups[section].Tags;
+        return row >= 0 && row < tags.Count ? tags[row] : null;
+    }
+
     private void OnViewModelChanged(object? sender, PropertyChangedEventArgs args)
     {
         if (_disposed || !ReferenceEquals(sender, _viewModel)) return;
         UiDispatcher.Post(() =>
         {
-            if (_disposed || !ReferenceEquals(sender, _viewModel)) return;
-            _header.Show(_viewModel);
-            _table.ReloadData();
-            LayoutHeader();
+            if (_disposed || !ReferenceEquals(sender, _viewModel) || !IsViewLoaded) return;
+            _header?.Show(_viewModel);
+            UpdateHeaderLayout(force: true);
+            TableView.ReloadData();
         });
     }
 
-    /// <summary>切换格式：写回共享 VM（触发惰性加载）后立即重载。</summary>
-    /// <param name="entry">目标格式条目。</param>
-    private void SelectFormat(FormatEntry entry)
+    private void SelectFormat(int index)
     {
-        if (_viewModel == null) return;
-        _viewModel.SelectedFormat = entry;
-        _header.Show(_viewModel);
-        _table.ReloadData();
-        LayoutHeader();
+        if (_viewModel == null || index < 0 || index >= _viewModel.Formats.Count) return;
+        _viewModel.SelectedFormat = _viewModel.Formats[index];
+        _header?.Show(_viewModel);
+        UpdateHeaderLayout(force: true);
+        TableView.ReloadData();
     }
 
-    /// <summary>按当前宽度重新计算并挂上文件名/格式切换头（表格头不会自动布局）。</summary>
-    private void LayoutHeader()
+    private void UpdateHeaderLayout(bool force)
     {
-        double width = Math.Max(1, (double)_table.Bounds.Width);
-        double height = _header.RequiredHeight(width);
-        if (Math.Abs((double)_header.Frame.Height - height) > .01 || Math.Abs((double)_header.Frame.Width - width) > .01)
-            _header.Frame = new CGRect(0, 0, width, height);
-        var span = CardSpan(_table);
-        _header.HorizontalInset = span.Left;
-        _table.TableHeaderView = _header;
-        _header.SetNeedsLayout();
-    }
+        if (_header == null) return;
+        double width = (double)TableView.Bounds.Width;
+        if (width <= 1) return;
+        if (!force && Math.Abs(width - _lastHeaderWidth) < .5) return;
+        _lastHeaderWidth = width;
 
-    /// <summary>单条元数据的行高：名称/中文名/值在 2:2:3 列宽下换行后的最大高度 + 上下内边距。</summary>
-    /// <param name="tag">元数据标签。</param>
-    /// <param name="cardWidth">系统 inset grouped 卡片宽度（表格宽 - 系统布局边距）。</param>
-    /// <returns>行高。</returns>
-    internal static double RowHeight(MetadataTag tag, double cardWidth)
-    {
-        if (cardWidth <= 0) return ExifTableGeometry.CellPaddingY * 2 + 18;
-        var columns = ExifTableGeometry.Compute(cardWidth);
-        double nameHeight = MeasureHeight(tag.Name, CellFont, columns.NameTextWidth, 0);
-        double chineseHeight = MeasureHeight(tag.ChineseName ?? "", CellFont, columns.ChineseTextWidth, 0);
-        double valueHeight = MeasureHeight(tag.Value, CellFont, columns.ValueTextWidth, ExifTableGeometry.ValueMaxLines);
-        return Math.Max(nameHeight, Math.Max(chineseHeight, valueHeight)) + ExifTableGeometry.CellPaddingY * 2;
-    }
+        double left = (double)TableView.LayoutMargins.Left;
+        double right = (double)TableView.LayoutMargins.Right;
+        if (left + right <= 0) left = right = 16;
+        _header.SetHorizontalMargins(left, right);
 
-    /// <summary>量出文本在给定宽度下换行后的高度；<paramref name="maxLines"/> 为 0 时不限行数。</summary>
-    /// <param name="text">目标文本。</param>
-    /// <param name="font">字体。</param>
-    /// <param name="width">可用宽度。</param>
-    /// <param name="maxLines">最多显示行数。</param>
-    /// <returns>文本高度（点）。</returns>
-    private static double MeasureHeight(string text, UIFont font, double width, int maxLines)
-    {
-        double lineHeight = Math.Ceiling((double)font.LineHeight);
-        if (width <= 0 || string.IsNullOrEmpty(text)) return lineHeight;
-        using var measure = new UILabel
+        var target = new CGSize((nfloat)width, UIView.UILayoutFittingCompressedSize.Height);
+        var size = _header.SystemLayoutSizeFittingSize(
+            target,
+            (float)UILayoutPriority.Required,
+            (float)UILayoutPriority.FittingSizeLevel);
+        double height = Math.Max(1, Math.Ceiling((double)size.Height));
+        if (Math.Abs((double)_header.Frame.Width - width) > .5
+            || Math.Abs((double)_header.Frame.Height - height) > .5)
         {
-            Text = text,
-            Font = font,
-            Lines = 0,
-            LineBreakMode = UILineBreakMode.WordWrap,
-        };
-        double height = (double)measure.SizeThatFits(new CGSize(width, MeasureLimit)).Height;
-        if (maxLines > 0) height = Math.Min(height, lineHeight * maxLines);
-        return Math.Max(1, Math.Ceiling(height));
+            _header.Frame = new CGRect(0, 0, (nfloat)width, (nfloat)height);
+            TableView.TableHeaderView = _header;
+        }
     }
 
-    /// <summary>释放订阅并拆除表格数据源。</summary>
-    /// <param name="disposing">是否释放托管资源。</param>
     protected override void Dispose(bool disposing)
     {
         if (disposing && !_disposed)
@@ -273,377 +228,261 @@ internal sealed class iOSExifDetailView : UIViewController
                 _viewModel.PropertyChanged -= OnViewModelChanged;
                 _viewModel = null;
             }
-            _table.Source = null;
         }
         base.Dispose(disposing);
     }
 
-    /// <summary>表格数据源：每个元数据分组一个 section（分组标题 + 圆角卡片行）。</summary>
-    private sealed class TableSource(iOSExifDetailView owner) : UITableViewSource
-    {
-        /// <summary>行复用标识。</summary>
-        internal const string CellId = "ExifRow";
-
-        /// <summary>分组数。</summary>
-        /// <param name="tableView">表格。</param>
-        /// <returns>分组数。</returns>
-        public override nint NumberOfSections(UITableView tableView) => owner.GroupCount;
-
-        /// <summary>分组内的标签行数。</summary>
-        /// <param name="tableView">表格。</param>
-        /// <param name="section">分组索引。</param>
-        /// <returns>行数。</returns>
-        public override nint RowsInSection(UITableView tableView, nint section)
-            => owner._viewModel?.Groups is { } groups && section >= 0 && section < groups.Count ? groups[(int)section].Tags.Count : 0;
-
-        /// <summary>复用行并按当前标签配置（末行隐藏行分隔线；卡片圆角由系统 inset grouped 卡片给出）。</summary>
-        /// <param name="tableView">表格。</param>
-        /// <param name="indexPath">行索引。</param>
-        /// <returns>已配置的单元格。</returns>
-        public override UITableViewCell GetCell(UITableView tableView, NSIndexPath indexPath)
-        {
-            var cell = (RowCell)tableView.DequeueReusableCell(CellId, indexPath);
-            var group = owner._viewModel!.Groups![(int)indexPath.Section];
-            cell.Configure(group.Tags[(int)indexPath.Row], indexPath.Row == group.Tags.Count - 1);
-            return cell;
-        }
-
-        /// <summary>行高取共享 7 列几何下的换行测量值。</summary>
-        /// <param name="tableView">表格。</param>
-        /// <param name="indexPath">行索引。</param>
-        /// <returns>行高。</returns>
-        public override nfloat GetHeightForRow(UITableView tableView, NSIndexPath indexPath)
-        {
-            var group = owner._viewModel!.Groups![(int)indexPath.Section];
-            double cardWidth = CardSpan(tableView).Width;
-            return (nfloat)(RowHeight(group.Tags[(int)indexPath.Row], cardWidth) + ExifTableGeometry.DividerThickness);
-        }
-
-        /// <summary>分组标题：左上 16 点粗体，与系统卡片左缘对齐，带旧壳的 18/6 上下外边距。</summary>
-        /// <param name="tableView">表格。</param>
-        /// <param name="section">分组索引。</param>
-        /// <returns>分组标题视图。</returns>
-        public override UIView GetViewForHeader(UITableView tableView, nint section)
-        {
-            var group = owner._viewModel!.Groups![(int)section];
-            var host = new UIView { BackgroundColor = UIColor.Clear };
-            var span = CardSpan(tableView);
-            var label = new UILabel(new CGRect((nfloat)span.Left, GroupHeaderTopMargin, (nfloat)span.Width, GroupHeaderFont.LineHeight))
-            {
-                Text = group.Name,
-                Font = GroupHeaderFont,
-                TextColor = GroupHeaderColor,
-                BackgroundColor = UIColor.Clear,
-            };
-            host.AddSubview(label);
-            return host;
-        }
-
-        /// <summary>分组标题高度。</summary>
-        /// <param name="tableView">表格。</param>
-        /// <param name="section">分组索引。</param>
-        /// <returns>高度。</returns>
-        public override nfloat GetHeightForHeader(UITableView tableView, nint section)
-            => (nfloat)(GroupHeaderTopMargin + Math.Ceiling((double)GroupHeaderFont.LineHeight) + GroupHeaderBottomMargin + CardTopMargin);
-    }
-
     /// <summary>
-    /// 元数据行：行卡片即系统 inset grouped 的卡片（底色 <see cref="CardColor"/>、圆角与首末行圆角全由表格绘制），
-    /// 内部 7 列（ID / 名称 / 中文名 / 值）与 1 点分隔线直接铺在单元格内容区，不再叠加自绘卡片与固定圆角。
+    /// 原生 EXIF 元数据行：保留系统 <see cref="UITableViewStyle.InsetGrouped"/> 默认背景、圆角与分隔线，
+    /// 左侧以动态字体呈现中文名（缺失时英文名）与「英文名 · Tag ID」，右侧对齐呈现最多 3 行的值。
     /// </summary>
-    [Register("PViOSExifRowCell")]
-    internal sealed class RowCell : UITableViewCell
+    [Register("PViOSExifTagCell")]
+    internal sealed class ExifTagCell : UITableViewCell
     {
-        private static readonly nfloat IdColumnWidth = (nfloat)ExifTableGeometry.IdColumnWidth;
-        private static readonly nfloat DividerWidth = (nfloat)ExifTableGeometry.DividerThickness;
+        private readonly UILabel _titleLabel;
+        private readonly UILabel _metaLabel;
+        private readonly UILabel _valueLabel;
 
-        private readonly SelectableTextView _idText;
-        private readonly SelectableTextView _name;
-        private readonly SelectableTextView _chinese;
-        private readonly SelectableTextView _value;
-        private readonly UIView[] _dividers = [new UIView(), new UIView(), new UIView()];
-        private readonly UIView _rowDivider = new();
+        internal UILabel TitleLabel => _titleLabel;
+        internal UILabel MetaLabel => _metaLabel;
+        internal UILabel ValueLabel => _valueLabel;
 
-        /// <summary>按原生复用池创建行。</summary>
-        /// <param name="style">单元格样式。</param>
-        /// <param name="reuseIdentifier">复用标识。</param>
         [Export("initWithStyle:reuseIdentifier:")]
-        public RowCell(UITableViewCellStyle style, string reuseIdentifier) : base(style, reuseIdentifier)
+        public ExifTagCell(UITableViewCellStyle style, string reuseIdentifier) : base(style, reuseIdentifier)
         {
-            // 卡片底色交给单元格背景：InsetGrouped 表格按系统边距内缩并给首末行连续圆角，壳层不再自绘。
-            BackgroundColor = CardColor;
+            SelectionStyle = UITableViewCellSelectionStyle.None;
             ContentView.BackgroundColor = UIColor.Clear;
-            // TOOLS-03：标签文本可长按选择复制，故用只读可选文本视图而不是 UILabel。
-            _idText = SelectableText(IdFont, IdTextColor, UITextAlignment.Center, 1, UILineBreakMode.TailTruncation);
-            _name = SelectableText(CellFont, NameColor, UITextAlignment.Left, 0, UILineBreakMode.WordWrap);
-            _chinese = SelectableText(CellFont, ChineseColor, UITextAlignment.Left, 0, UILineBreakMode.WordWrap);
-            _value = SelectableText(CellFont, ValueColor, UITextAlignment.Left, ExifTableGeometry.ValueMaxLines, UILineBreakMode.TailTruncation);
-            foreach (var divider in _dividers) divider.BackgroundColor = DividerColor;
-            _rowDivider.BackgroundColor = DividerColor;
-            ContentView.AddSubview(_idText);
-            ContentView.AddSubview(_name);
-            ContentView.AddSubview(_chinese);
-            ContentView.AddSubview(_value);
-            foreach (var divider in _dividers) ContentView.AddSubview(divider);
-            ContentView.AddSubview(_rowDivider);
+
+            _titleLabel = new UILabel
+            {
+                Font = UIFont.PreferredSubheadline!,
+                AdjustsFontForContentSizeCategory = true,
+                TextColor = UIColor.Label,
+                Lines = 0,
+                LineBreakMode = UILineBreakMode.WordWrap,
+                TranslatesAutoresizingMaskIntoConstraints = false,
+            };
+
+            var metaFont = UIFontMetrics.DefaultMetrics.GetScaledFont(
+                UIFont.MonospacedDigitSystemFontOfSize(11, UIFontWeight.Regular)!);
+            _metaLabel = new UILabel
+            {
+                Font = metaFont,
+                AdjustsFontForContentSizeCategory = true,
+                TextColor = UIColor.SecondaryLabel,
+                Lines = 0,
+                LineBreakMode = UILineBreakMode.WordWrap,
+                TranslatesAutoresizingMaskIntoConstraints = false,
+            };
+
+            _valueLabel = new UILabel
+            {
+                Font = UIFont.PreferredSubheadline!,
+                AdjustsFontForContentSizeCategory = true,
+                TextColor = UIColor.Label,
+                TextAlignment = UITextAlignment.Right,
+                Lines = ExifTableGeometry.ValueMaxLines,
+                LineBreakMode = UILineBreakMode.TailTruncation,
+                TranslatesAutoresizingMaskIntoConstraints = false,
+            };
+
+            var keyStack = new UIStackView([_titleLabel, _metaLabel])
+            {
+                Axis = UILayoutConstraintAxis.Vertical,
+                Alignment = UIStackViewAlignment.Fill,
+                Spacing = 2,
+                TranslatesAutoresizingMaskIntoConstraints = false,
+            };
+            keyStack.SetContentCompressionResistancePriority((float)UILayoutPriority.DefaultHigh, UILayoutConstraintAxis.Horizontal);
+            _valueLabel.SetContentHuggingPriority((float)UILayoutPriority.DefaultHigh, UILayoutConstraintAxis.Horizontal);
+            _valueLabel.SetContentCompressionResistancePriority((float)UILayoutPriority.DefaultHigh + 1, UILayoutConstraintAxis.Horizontal);
+
+            ContentView.AddSubview(keyStack);
+            ContentView.AddSubview(_valueLabel);
+
+            var minHeight = ContentView.HeightAnchor.ConstraintGreaterThanOrEqualTo(44);
+            minHeight.Priority = 999;
+
+            var maxValueWidth = _valueLabel.WidthAnchor.ConstraintLessThanOrEqualTo(
+                ContentView.LayoutMarginsGuide.WidthAnchor, (nfloat)0.56);
+            maxValueWidth.Priority = 999;
+
+            var maxKeyWidth = keyStack.WidthAnchor.ConstraintLessThanOrEqualTo(
+                ContentView.LayoutMarginsGuide.WidthAnchor, (nfloat)0.58);
+            maxKeyWidth.Priority = 998;
+
+            NSLayoutConstraint.ActivateConstraints(
+            [
+                minHeight,
+                maxValueWidth,
+                maxKeyWidth,
+
+                keyStack.LeadingAnchor.ConstraintEqualTo(ContentView.LayoutMarginsGuide.LeadingAnchor),
+                keyStack.TopAnchor.ConstraintGreaterThanOrEqualTo(ContentView.TopAnchor, 10),
+                keyStack.BottomAnchor.ConstraintLessThanOrEqualTo(ContentView.BottomAnchor, -10),
+                keyStack.CenterYAnchor.ConstraintEqualTo(ContentView.CenterYAnchor),
+
+                _valueLabel.LeadingAnchor.ConstraintGreaterThanOrEqualTo(keyStack.TrailingAnchor, 12),
+                _valueLabel.TrailingAnchor.ConstraintEqualTo(ContentView.LayoutMarginsGuide.TrailingAnchor),
+                _valueLabel.TopAnchor.ConstraintGreaterThanOrEqualTo(ContentView.TopAnchor, 10),
+                _valueLabel.BottomAnchor.ConstraintLessThanOrEqualTo(ContentView.BottomAnchor, -10),
+                _valueLabel.CenterYAnchor.ConstraintEqualTo(ContentView.CenterYAnchor),
+            ]);
         }
 
-        /// <summary>按标签内容与末行状态配置（末行隐藏行分隔线）。</summary>
-        /// <param name="tag">元数据标签。</param>
-        /// <param name="last">分组末行。</param>
-        internal void Configure(MetadataTag tag, bool last)
+        internal void Configure(MetadataTag tag)
         {
-            _idText.Text = tag.TagIdHex;
-            _name.Text = tag.Name;
-            _chinese.Text = tag.ChineseName ?? "";
-            _value.Text = tag.Value;
-            _rowDivider.Hidden = last;
-            SetNeedsLayout();
+            bool hasChinese = !string.IsNullOrWhiteSpace(tag.ChineseName);
+            _titleLabel.Text = hasChinese ? tag.ChineseName : tag.Name;
+            _metaLabel.Text = hasChinese ? $"{tag.Name} · {tag.TagIdHex}" : tag.TagIdHex;
+            _valueLabel.Text = tag.Value;
+            AccessibilityLabel = hasChinese ? $"{tag.ChineseName}，{tag.Name}" : tag.Name;
+            AccessibilityValue = tag.Value;
+            AccessibilityHint = "长按可拷贝标签值或名称";
         }
-
-        /// <summary>按共享 7 列几何在单元格内容区摆放 ID 列、三条列分隔线、三列文本与行分隔线。</summary>
-        public override void LayoutSubviews()
-        {
-            base.LayoutSubviews();
-            double cardWidth = Math.Max(1, (double)ContentView.Bounds.Width);
-            double cardHeight = Math.Max(1, (double)ContentView.Bounds.Height);
-            var columns = ExifTableGeometry.Compute(cardWidth);
-            double idHeight = Math.Min((double)_idText.Font!.LineHeight, cardHeight);
-            _idText.Frame = new CGRect(0, (nfloat)((cardHeight - idHeight) / 2), IdColumnWidth, (nfloat)idHeight);
-
-            double x = ExifTableGeometry.IdColumnWidth;
-            _dividers[0].Frame = new CGRect((nfloat)x, 0, DividerWidth, (nfloat)cardHeight);
-            x += ExifTableGeometry.DividerThickness;
-            _name.Frame = new CGRect((nfloat)(x + ExifTableGeometry.CellPaddingX), ExifTableGeometry.CellPaddingY,
-                (nfloat)columns.NameTextWidth, (nfloat)Math.Max(1, cardHeight - ExifTableGeometry.CellPaddingY * 2));
-            x += columns.NameColumn;
-            _dividers[1].Frame = new CGRect((nfloat)x, 0, DividerWidth, (nfloat)cardHeight);
-            x += ExifTableGeometry.DividerThickness;
-            _chinese.Frame = new CGRect((nfloat)(x + ExifTableGeometry.CellPaddingX), ExifTableGeometry.CellPaddingY,
-                (nfloat)columns.ChineseTextWidth, (nfloat)Math.Max(1, cardHeight - ExifTableGeometry.CellPaddingY * 2));
-            x += columns.ChineseColumn;
-            _dividers[2].Frame = new CGRect((nfloat)x, 0, DividerWidth, (nfloat)cardHeight);
-            x += ExifTableGeometry.DividerThickness;
-            _value.Frame = new CGRect((nfloat)(x + ExifTableGeometry.CellPaddingX), ExifTableGeometry.CellPaddingY,
-                (nfloat)columns.ValueTextWidth, (nfloat)Math.Max(1, cardHeight - ExifTableGeometry.CellPaddingY * 2));
-            _rowDivider.Frame = new CGRect(0, (nfloat)(cardHeight - DividerWidth), (nfloat)cardWidth, DividerWidth);
-        }
-
-        /// <summary>只读可选文本；值列超过三行时尾部截断。</summary>
-        /// <param name="font">字体。</param>
-        /// <param name="color">颜色。</param>
-        /// <param name="alignment">对齐方式。</param>
-        /// <param name="lines">行数上限；0 表示不限。</param>
-        /// <param name="mode">换行模式。</param>
-        /// <returns>可选文本视图。</returns>
-        private static SelectableTextView SelectableText(UIFont font, UIColor color, UITextAlignment alignment, int lines,
-            UILineBreakMode mode) => new()
-        {
-            Font = font,
-            TextColor = color,
-            TextAlignment = alignment,
-            Lines = lines,
-            LineBreakMode = mode,
-        };
     }
 
     /// <summary>
-    /// TOOLS-03 的只读可选文本：外观与 UILabel 一致，但长按可选中复制（UITextView 提供原生选择菜单）。
+    /// 顶部文件名与原生格式切换头：单格式仅显示扩展名文字，多格式使用原生 <see cref="UISegmentedControl"/>，
+    /// 加载中展示系统 <see cref="UIActivityIndicatorView"/> 与提示文本。
     /// </summary>
-    internal sealed class SelectableTextView : UITextView
-    {
-        /// <summary>以标签语义创建文本视图：禁用编辑与滚动，去掉文本容器内边距。</summary>
-        public SelectableTextView() : base(CGRect.Empty)
-        {
-            Editable = false;
-            Selectable = true;
-            ScrollEnabled = false;
-            UserInteractionEnabled = true;
-            BackgroundColor = UIColor.Clear;
-            ClipsToBounds = true;
-            DataDetectorTypes = UIDataDetectorType.None;
-            TextContainerInset = UIEdgeInsets.Zero;
-            TextContainer.LineFragmentPadding = 0;
-        }
-
-        /// <summary>行数上限；0 表示不限（对齐 UILabel.Lines）。</summary>
-        internal int Lines
-        {
-            set => TextContainer.MaximumNumberOfLines = (nuint)Math.Max(0, value);
-        }
-
-        /// <summary>换行模式（对齐 UILabel.LineBreakMode）。</summary>
-        internal UILineBreakMode LineBreakMode
-        {
-            set => TextContainer.LineBreakMode = value;
-        }
-    }
-
-    /// <summary>文件名 + 格式切换头：单格式显示文字标签，多格式显示原生 configuration 格式按钮。</summary>
     private sealed class HeaderView : UIView
     {
+        private readonly Action<int> _onSelectFormat;
         private readonly UILabel _fileName;
-        private readonly UILabel _formatLabel;
-        private readonly UILabel _loading;
-        private readonly Action<FormatEntry> _select;
-        private readonly List<UIButton> _buttons = [];
-        private bool _showLoading;
-        private double _horizontalInset = FallbackHorizontalInset;
+        private readonly UILabel _singleFormat;
+        private readonly UISegmentedControl _segmented;
+        private readonly UIStackView _loadingRow;
+        private readonly UIActivityIndicatorView _spinner;
+        private readonly NSLayoutConstraint _leading;
+        private readonly NSLayoutConstraint _trailing;
+        private string[] _formatLabels = [];
 
-        /// <summary>构造三个常驻标签。</summary>
-        /// <param name="select">格式切换回调。</param>
-        public HeaderView(Action<FormatEntry> select)
+        internal UISegmentedControl? FormatControl => _segmented.Hidden ? null : _segmented;
+        internal CGRect FileNameFrame => _fileName.ConvertRectToView(_fileName.Bounds, this);
+
+        internal HeaderView(Action<int> onSelectFormat)
         {
-            _select = select;
+            _onSelectFormat = onSelectFormat;
             BackgroundColor = UIColor.Clear;
-            _fileName = SingleLineLabel("", FileNameFont, FileNameColor);
-            _formatLabel = SingleLineLabel("", FormatFont, ChineseColor);
-            _loading = SingleLineLabel("加载中...", FormatFont, LoadingColor);
-            _loading.TextAlignment = UITextAlignment.Center;
-            AddSubview(_fileName);
-            AddSubview(_formatLabel);
-            AddSubview(_loading);
-        }
 
-        /// <summary>多格式时的格式切换按钮（验收触发真实点击）。</summary>
-        internal IReadOnlyList<UIButton> FormatButtons => _buttons;
-
-        /// <summary>
-        /// 头部内容的左右内缩（取系统 InsetGrouped 卡片的左缘），文件名与格式组在这个区间内居中。
-        /// 直接跟随表格布局边距，宽窗口/窄窗口与 iPhone/iPad 用同一口径，不再叠加自绘边距。
-        /// </summary>
-        internal double HorizontalInset
-        {
-            get => _horizontalInset;
-            set
+            _fileName = new UILabel
             {
-                if (Math.Abs(_horizontalInset - value) < .01) return;
-                _horizontalInset = value;
-                SetNeedsLayout();
-            }
+                Font = UIFont.PreferredHeadline!,
+                AdjustsFontForContentSizeCategory = true,
+                TextColor = UIColor.Label,
+                TextAlignment = UITextAlignment.Center,
+                Lines = 1,
+                LineBreakMode = UILineBreakMode.MiddleTruncation,
+                TranslatesAutoresizingMaskIntoConstraints = false,
+            };
+
+            _singleFormat = new UILabel
+            {
+                Font = UIFont.PreferredFootnote!,
+                AdjustsFontForContentSizeCategory = true,
+                TextColor = UIColor.SecondaryLabel,
+                TextAlignment = UITextAlignment.Center,
+                Lines = 1,
+                TranslatesAutoresizingMaskIntoConstraints = false,
+            };
+
+            _segmented = new UISegmentedControl
+            {
+                Hidden = true,
+                TranslatesAutoresizingMaskIntoConstraints = false,
+            };
+            _segmented.ValueChanged += (_, _) => _onSelectFormat((int)_segmented.SelectedSegment);
+
+            _spinner = new UIActivityIndicatorView(UIActivityIndicatorViewStyle.Medium)
+            {
+                TranslatesAutoresizingMaskIntoConstraints = false,
+            };
+            var loadingLabel = new UILabel
+            {
+                Text = "加载中…",
+                Font = UIFont.PreferredFootnote!,
+                AdjustsFontForContentSizeCategory = true,
+                TextColor = UIColor.SecondaryLabel,
+                TranslatesAutoresizingMaskIntoConstraints = false,
+            };
+            _loadingRow = new UIStackView([_spinner, loadingLabel])
+            {
+                Axis = UILayoutConstraintAxis.Horizontal,
+                Alignment = UIStackViewAlignment.Center,
+                Spacing = 8,
+                Hidden = true,
+                TranslatesAutoresizingMaskIntoConstraints = false,
+            };
+
+            var stack = new UIStackView([_fileName, _singleFormat, _segmented, _loadingRow])
+            {
+                Axis = UILayoutConstraintAxis.Vertical,
+                Alignment = UIStackViewAlignment.Center,
+                Spacing = 8,
+                TranslatesAutoresizingMaskIntoConstraints = false,
+            };
+            AddSubview(stack);
+
+            _leading = stack.LeadingAnchor.ConstraintEqualTo(LeadingAnchor, 16);
+            _trailing = stack.TrailingAnchor.ConstraintEqualTo(TrailingAnchor, -16);
+            NSLayoutConstraint.ActivateConstraints(
+            [
+                stack.TopAnchor.ConstraintEqualTo(TopAnchor, 12),
+                stack.BottomAnchor.ConstraintEqualTo(BottomAnchor, -8),
+                _leading,
+                _trailing,
+                _fileName.WidthAnchor.ConstraintLessThanOrEqualTo(stack.WidthAnchor),
+            ]);
         }
 
-        /// <summary>文件名标签的当前 frame（验收核对与卡片左缘对齐）。</summary>
-        internal CGRect FileNameFrame => _fileName.Frame;
+        internal void SetHorizontalMargins(double left, double right)
+        {
+            _leading.Constant = (nfloat)left;
+            _trailing.Constant = (nfloat)(-right);
+        }
 
-        /// <summary>绑定 VM 当前状态：文件名、格式切换按钮与加载提示。</summary>
-        /// <param name="viewModel">共享 EXIF 详情 VM。</param>
         internal void Show(ExifDetailViewModel? viewModel)
         {
-            foreach (var button in _buttons)
+            _fileName.Text = viewModel?.BaseFileName ?? string.Empty;
+            bool loading = viewModel?.IsLoading ?? false;
+            _loadingRow.Hidden = !loading;
+            if (loading) _spinner.StartAnimating();
+            else _spinner.StopAnimating();
+
+            if (viewModel == null)
             {
-                button.RemoveFromSuperview();
-                button.Dispose();
+                _singleFormat.Hidden = true;
+                _segmented.Hidden = true;
+                return;
             }
-            _buttons.Clear();
-            _fileName.Text = viewModel?.BaseFileName ?? "";
-            _showLoading = viewModel?.IsLoading ?? false;
-            _loading.Hidden = !_showLoading;
-            _formatLabel.Hidden = true;
-            if (viewModel == null) return;
+
             if (viewModel.HasMultipleFormats)
             {
-                foreach (var entry in viewModel.Formats)
+                _singleFormat.Hidden = true;
+                _segmented.Hidden = false;
+                var labels = viewModel.Formats.Select(entry => entry.Label).ToArray();
+                if (!_formatLabels.SequenceEqual(labels))
                 {
-                    var configuration = entry.IsSelected ? UIButtonConfiguration.TintedButtonConfiguration : UIButtonConfiguration.PlainButtonConfiguration;
-                    configuration.Title = entry.Label;
-                    configuration.ButtonSize = UIButtonConfigurationSize.Small;
-                    configuration.ContentInsets = new NSDirectionalEdgeInsets(2, 8, 2, 8);
-                    var button = new UIButton(UIButtonType.System) { Configuration = configuration };
-                    button.AccessibilityValue = entry.IsSelected ? "已选择" : "未选择";
-                    var capture = entry;
-                    button.TouchUpInside += (_, _) => _select(capture);
-                    AddSubview(button);
-                    _buttons.Add(button);
+                    _formatLabels = labels;
+                    _segmented.RemoveAllSegments();
+                    for (int index = 0; index < labels.Length; index++)
+                    {
+                        _segmented.InsertSegment(labels[index], (nint)index, false);
+                    }
+                }
+                int selected = viewModel.Formats.ToList().FindIndex(entry => entry.IsSelected);
+                if (selected >= 0 && _segmented.SelectedSegment != selected)
+                {
+                    _segmented.SelectedSegment = selected;
                 }
             }
             else
             {
-                _formatLabel.Hidden = false;
-                _formatLabel.Text = viewModel.SelectedFormat.Label;
+                _segmented.Hidden = true;
+                _singleFormat.Hidden = false;
+                _singleFormat.Text = viewModel.SelectedFormat.Label;
             }
         }
-
-        /// <summary>给定宽度下头部需要的高度（文件名行 + 可选加载提示）。</summary>
-        /// <param name="width">表格宽。</param>
-        /// <returns>头部高度。</returns>
-        internal double RequiredHeight(double width)
-        {
-            double lineHeight = Math.Ceiling((double)FileNameFont.LineHeight);
-            double formatHeight = Math.Max(32, Math.Ceiling((double)FormatFont.LineHeight) + FormatPaddingY * 2);
-            double height = HeaderTopMargin + Math.Max(lineHeight, formatHeight) + HeaderBottomMargin;
-            if (_showLoading) height += LoadingMargin + Math.Ceiling((double)FormatFont.LineHeight) + LoadingMargin;
-            return Math.Max(1, height);
-        }
-
-        /// <summary>文件名与格式切换整体按旧壳口径居中，加载提示占下一行。</summary>
-        public override void LayoutSubviews()
-        {
-            base.LayoutSubviews();
-            double width = Math.Max(1, (double)Bounds.Width);
-            double lineHeight = Math.Ceiling((double)FileNameFont.LineHeight);
-            double formatHeight = Math.Max(32, Math.Ceiling((double)FormatFont.LineHeight) + FormatPaddingY * 2);
-            double headerHeight = Math.Max(lineHeight, formatHeight);
-            double fileNameWidth = MeasureWidth(_fileName);
-            double formatWidth = 0;
-            if (_buttons.Count > 0)
-            {
-                for (int index = 0; index < _buttons.Count; index++)
-                    formatWidth += MeasureWidth(_buttons[index]) + FormatPaddingX * 2 + (index > 0 ? FormatSpacing : 0);
-            }
-            else if (!_formatLabel.Hidden)
-            {
-                formatWidth = MeasureWidth(_formatLabel);
-            }
-            double spacing = formatWidth > 0 ? HeaderSpacing : 0;
-            double inset = Math.Max(0, _horizontalInset);
-            double available = Math.Max(1, width - inset * 2);
-            double groupWidth = Math.Min(fileNameWidth + spacing + formatWidth, available);
-            double nameWidth = Math.Max(1, groupWidth - spacing - formatWidth);
-            double start = inset + Math.Max(0, (available - groupWidth) / 2);
-            _fileName.Frame = new CGRect(start, HeaderTopMargin + (headerHeight - lineHeight) / 2, nameWidth, lineHeight);
-            double x = start + nameWidth + spacing;
-            for (int index = 0; index < _buttons.Count; index++)
-            {
-                double size = MeasureWidth(_buttons[index]) + FormatPaddingX * 2;
-                _buttons[index].Frame = new CGRect(x, HeaderTopMargin + (headerHeight - formatHeight) / 2, size, formatHeight);
-                x += size + FormatSpacing;
-            }
-            if (_buttons.Count == 0)
-            {
-                double labelWidth = Math.Max(1, Math.Min(formatWidth, width - x - inset));
-                _formatLabel.Frame = new CGRect(x, HeaderTopMargin + (headerHeight - lineHeight) / 2, labelWidth, lineHeight);
-            }
-            double loadingHeight = Math.Ceiling((double)FormatFont.LineHeight);
-            double loadingTop = HeaderTopMargin + headerHeight + HeaderBottomMargin;
-            _loading.Frame = new CGRect(inset, loadingTop + LoadingMargin, available, loadingHeight);
-        }
-
-        /// <summary>单行文本的自然宽度。</summary>
-        /// <param name="label">目标标签或按钮标题。</param>
-        /// <returns>宽度（点）。</returns>
-        private static double MeasureWidth(UILabel label)
-            => Math.Ceiling((double)label.SizeThatFits(new CGSize(MeasureLimit, MeasureLimit)).Width);
-
-        /// <summary>单行文本的自然宽度（按钮标题）。</summary>
-        /// <param name="button">目标按钮。</param>
-        /// <returns>宽度（点）。</returns>
-        private static double MeasureWidth(UIButton button)
-            => Math.Ceiling((double)button.TitleLabel!.SizeThatFits(new CGSize(MeasureLimit, MeasureLimit)).Width);
-
-        /// <summary>创建单行标签。</summary>
-        /// <param name="text">初始文本。</param>
-        /// <param name="font">字体。</param>
-        /// <param name="color">颜色。</param>
-        /// <returns>标签。</returns>
-        private static UILabel SingleLineLabel(string text, UIFont font, UIColor color) => new()
-        {
-            Text = text,
-            Font = font,
-            TextColor = color,
-            Lines = 1,
-            LineBreakMode = UILineBreakMode.TailTruncation,
-            BackgroundColor = UIColor.Clear,
-        };
     }
 }

@@ -332,11 +332,12 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
   - 控制栏功能行的命令图标：Windows `WindowsIcons.ForCommand`，macOS/iOS `AppleSymbolNames.ForCommand`，Android `AndroidControlBar.CommandGlyph` 与 `AndroidIcons.ForCommand`，三者都按 `Design/icons.json` 取平台语义图标。键鼠相关控件的显隐按 INPUT-13（见 [input](#input)）。
   - **SETTINGS-01@ios**：控制栏功能沿用系统勾选排序列表，与 EXIF 显示表同为 52 点标准行高；绑定按钮只在有外设时出现，点按即在行内录制，长按或辅助点按出「清空」菜单；录制期间手指轻点任意处取消录制并保留原绑定。
   - **SETTINGS-01@android**：勾选字形→命令图标、命令图标→命令名的视觉间距取 `settings.android.icon.gap`（16）；勾选 44dp 命中区的透明内缩由图标负左边距抵消，命中区不缩小。
-  - **SETTINGS-08@ios**：控制页始终显示「边栏布局位置」；iPhone 的 `iOSLayoutModePicker` 只列并勾选「手机」，其他设备保留全部选项以便切回。「控制栏功能」标题下的两张独立原生设置卡片分别承载组合开关与可勾选排序的命令表；手机形态仅淡化不生效项的勾号，不显示绑定编辑和键盘映射。页内切换形态时页面就地重建分组。
+  - **SETTINGS-08@ios**：控制页使用原生 `UITableViewStyle.InsetGrouped`，始终显示「边栏布局位置」；iPhone 只列并勾选「手机」，其他设备保留全部选项以便切回。「控制栏功能」标题下的两个相邻原生分组分别承载组合开关与可勾选排序的命令表（第二组无标题）；手机形态仅淡化不生效项的勾号，不显示绑定编辑和键盘映射。页内切换形态时页面就地重建分组。
   - **SETTINGS-08 / SETTINGS-17@android**：手机设备的模式选择只列「手机」，控制页在「控制栏功能」标题下用两张独立 Material 卡片分别显示组合开关和完整命令表，手机形态淡化不生效项的勾号；上一张/下一张复用 Material 勾选行、不显示排序把手，写共享 `ShowNavigationButtons`，配置与既有绑定保留。
-  - **SETTINGS-17@ios**：上一张/下一张复用 `iOSNativeEmbeddedCheckableReorderListView` 的蓝色勾选、文字与 52 点行高，图标取 `chevron.left.chevron.right`，单项关闭排序把手，点行写共享 `ShowNavigationButtons`（`SettingsChangeImpact.Layout`）；关闭后收起组合式上下张，独立上下张按 SETTINGS-08 参与可选命令排序。
+  - **SETTINGS-17@ios**：上一张/下一张复用 `iOSNativeCheckableSettingsCell` 的蓝色勾选、文字与 52 点行高，图标取 `chevron.left.chevron.right`，单项分组关闭排序把手，点行写共享 `ShowNavigationButtons`（`SettingsChangeImpact.Layout`）；关闭后收起组合式上下张，独立上下张按 SETTINGS-08 参与可选命令排序。
 - **SETTINGS-03**：平台外观。macOS `NavigationSplitView` + `Form(.grouped)`；Windows Mica + `TitleBar` + `NavigationView`；iOS 半屏 sheet；Android Material 3 `BottomSheetDialog`。
-  - **SETTINGS-03@mac / @win / @ios / @android**：各自原生设置外观，明暗统一固定深色。iOS 整个应用固定深色（`Info.plist` `UIUserInterfaceStyle = Dark` + 窗口覆盖），页面不铺不透明底以保留 sheet 半透材质。
+  - **SETTINGS-03@mac / @win / @ios / @android**：各自原生设置外观，明暗统一固定深色。iOS 整个应用固定深色（`Info.plist` `UIUserInterfaceStyle = Dark` + 窗口覆盖），sheet 不覆写 `PreferredCornerRadius`（采用系统 `AutomaticDimension` 自动同心圆角与 iOS 26 原生玻璃→实底材质），设置与工具子页均以原生 `InsetGrouped` / 铺满 `View.Bounds` + `ContentInsetAdjustmentBehavior = Automatic`（工具诊断页显式 `SetContentScrollView`）接入导航栏滚动边缘模糊与底部安全区，并在根页与全部子页导航栏右侧提供系统关闭按钮；内容区滚动不拉大容器（`PrefersScrollingExpandsWhenScrolledToEdge = false`），`iOSSheetScrollGuard` 区分“未到顶向下滚动页面”（本轮手势拦误关）与“内容已到顶再次下拉”（允许关闭半屏），顶部把手/导航栏与外部点击正常关闭。
+  - **SETTINGS-07@ios**：缩放比例预设直接作为预览页 `InsetGrouped` 表格内的独立原生分组（`iOSScalePresetSection`），每条预设为独立 `UITableViewCell`（无边框等宽数值输入 + `%` + 行尾 44×44 删除按钮 + 原生左滑删除），末行为系统样式「添加缩放预设」整行入口，校验错误在原生 section footer 展示；排序通过 `MoveRow` 就地移动单元格，不丢焦、不重弹键盘。
 - **SETTINGS-04**：入口与关闭。关闭统一走 `NativeSettingsSession.ApplyAsync()` 一次提交并 `Dispose`（幂等）。
   - **SETTINGS-04@android**：设置与工具共用 `PhotoViewer.Android/Native/AndroidSheetScrollView.cs`。`Show()` 之前把浮层配成收起态（可见高度 = 屏高 × `settings.android.sheet.peekRatio`），外层面板高度为屏高 × `settings.android.sheet.heightRatio`，顶部把手/标题上拖扩大、下滑关闭；内容区按下时禁止祖先拦截，内容滚动与到顶下拉都不收起 sheet。内层布局高度每帧同步为面板当前可见高度，收起、拖动、重新收起与窗口尺寸/insets 变化都跟随，外层拖动几何不变。
 - **SETTINGS-05**：编辑隔离。工作副本以 `applyRuntimeSettings: false` 创建，缓存/解码/键盘映射副作用都在提交后执行（`SettingsViewModel`）。四端主屏订阅共享 `PresentationChanged(SettingsChangeImpact)`，按影响范围更新；预算/缓存等诊断走精确属性绑定，不触发主屏结构重建。Android 自绘下拉以最终屏幕锚点核对生命周期，相同几何重复布局不关闭；iOS 另以菜单与控制栏内容摘要保护已展示的控件。
@@ -371,7 +372,8 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）的几何与�
 - **TOOLS-02@win**：无首页/返回，常驻三分类；分类顺序与其他端一致为 EXIF → DINO → 照片数据统计。
 - **TOOLS-02@mac**：窗口外壳与设置共用同一 SwiftUI 侧栏组件与窗口样式（`PhotoViewer.Mac/Native/SwiftSettings/MacToolsUI.swift`），侧栏几何、选中态与工具栏不另行仿制；详情仍是 AppKit 页面。侧栏常驻、不设工具首页；默认 EXIF，无可用 EXIF 时落 DINO。
 - **TOOLS-02@ios / @android**：分组列表导航，主图菜单初次打开显示工具列表，不自动进入 DINO；两端控制栏 EXIF 入口都直达 EXIF 详情，已展示其他页也明确导航到 EXIF。无当前照片或 EXIF 详情不可用时退回列表。只读边界、生命周期、7 列 EXIF 与 3+2 瓦片不变；原生表格分隔线/分组材质可按 L4 取平台样式，业务列比例与内容不随之改变，也不新增功能。
-- **TOOLS-03、TOOLS-04**：EXIF 详情。macOS 为虚拟化 `NSTableView`（`PhotoViewer.Mac/Native/MacExifDetailView.cs`）：标签行自绘文本，点击时才在该文本上放置可选中文本框，行高按列宽缓存；iOS `UITableView`；Windows 7 列 `Grid`；Android 线性行 4 个内容列。
+- **TOOLS-03、TOOLS-04**：EXIF 详情。macOS 为虚拟化 `NSTableView`（`PhotoViewer.Mac/Native/MacExifDetailView.cs`）：标签行自绘文本，点击时才在该文本上放置可选中文本框，行高按列宽缓存；iOS 为原生 `UITableViewController(InsetGrouped)`；Windows 7 列 `Grid`；Android 线性行 4 个内容列。
+  - **TOOLS-03@ios**：采用原生 `UITableViewController(InsetGrouped)` 键值行（左列中文名 + 英文名/Tag ID，右列值最多 3 行尾部截断，AutoLayout 自适应行高 + 动态字体，保留系统默认卡片背景与发丝分隔线），多格式切换用原生 `UISegmentedControl`，长按行通过系统 `UIContextMenuConfiguration` 提供「拷贝值 / 拷贝名称 / 拷贝整行」。
   - **TOOLS-03@android**：4 个内容列承载 7 列几何，手机与平板同口径。
 - **TOOLS-05**：DINO 五瓦片。共享 `PhotoViewer/Core/AI/DinoDiagnosticPresenter.cs`；五瓦片 3+2，第六格留空，刚体拟合文本以整宽块置于网格下方（四端统一）。
 - **TOOLS-06**：计算时机。共享 presenter 先读库；离开页面或关闭窗口即取消在途任务（`ToolsViewModel.Deactivate()`，由 macOS `MacToolsWindow`、iOS `iOSToolsPresenter`、Windows `WindowsToolsWindow`、Android `AndroidToolsPresenter` 在离页与关闭时调用）。

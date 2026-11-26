@@ -69,12 +69,7 @@ internal static class iOSNativeSheetShotCheck
             await WaitAsync(() => settingsNavigation.TopViewController is iOSNativeFileSettingsViewController, "设置文件页");
             await Task.Delay(400);
             // 滚到页尾，让「缓存与预加载」分组与两条预算提示完整进画面
-            await UiDispatcher.InvokeAsync(() =>
-            {
-                var scroll = settingsNavigation.TopViewController!.View!.Subviews.OfType<UIScrollView>().Single();
-                double bottom = Math.Max(0, (double)scroll.ContentSize.Height - (double)scroll.Bounds.Height);
-                scroll.SetContentOffset(new CGPoint(0, bottom), false);
-            });
+            await UiDispatcher.InvokeAsync(() => ScrollToBottom(settingsNavigation.TopViewController!));
             await Task.Delay(300);
             await HoldAsync("settings-file", lines);
             await UiDispatcher.InvokeAsync(() => settingsNavigation.PopViewController(false));
@@ -83,12 +78,7 @@ internal static class iOSNativeSheetShotCheck
             await WaitAsync(() => settingsNavigation.TopViewController is iOSNativePreviewSettingsViewController, "设置预览页");
             await Task.Delay(400);
             await HoldAsync("settings-preview", lines);
-            await UiDispatcher.InvokeAsync(() =>
-            {
-                var scroll = settingsNavigation.TopViewController!.View!.Subviews.OfType<UIScrollView>().Single();
-                double bottom = Math.Max(0, (double)scroll.ContentSize.Height - (double)scroll.Bounds.Height);
-                scroll.SetContentOffset(new CoreGraphics.CGPoint(0, bottom), false);
-            });
+            await UiDispatcher.InvokeAsync(() => ScrollToBottom(settingsNavigation.TopViewController!));
             await Task.Delay(300);
             await HoldAsync("settings-presets", lines);
             await UiDispatcher.InvokeAsync(() => settingsNavigation.PopViewController(false));
@@ -109,12 +99,7 @@ internal static class iOSNativeSheetShotCheck
                 await Task.Delay(600);
                 await HoldAsync(stage, lines);
             }
-            await UiDispatcher.InvokeAsync(() =>
-            {
-                var scroll = control.View!.Subviews.OfType<UIScrollView>().Single();
-                double bottom = Math.Max(0, (double)scroll.ContentSize.Height - (double)scroll.Bounds.Height);
-                scroll.SetContentOffset(new CoreGraphics.CGPoint(0, bottom), false);
-            });
+            await UiDispatcher.InvokeAsync(() => ScrollToBottom(control));
             await Task.Delay(300);
             await HoldAsync("control-mapping", lines);
             await UiDispatcher.InvokeAsync(() =>
@@ -122,7 +107,7 @@ internal static class iOSNativeSheetShotCheck
                 control.Capabilities.Inject(true, false);
                 control.View!.LayoutIfNeeded();
                 // 回到顶部，让录制态按钮出现在截图里。
-                control.View.Subviews.OfType<UIScrollView>().Single().SetContentOffset(new CGPoint(0, 0), false);
+                ScrollToTop(control);
                 control.BeginRecording(settingsRoot.Session.WorkingSettings.Hotkeys[0], false);
             });
             await Task.Delay(400);
@@ -179,6 +164,28 @@ internal static class iOSNativeSheetShotCheck
             lines.Add($"FAIL {exception}");
             await File.WriteAllLinesAsync(report, lines);
             Console.Error.WriteLine("[NativeSmoke] FAIL sheet-shots " + exception);
+        }
+    }
+
+    /// <summary>获取页面主滚动视图（兼容 UITableViewController 与普通滚动宿主）。</summary>
+    private static UIScrollView ScrollOf(UIViewController controller)
+        => controller.View as UIScrollView ?? controller.View!.Subviews.OfType<UIScrollView>().Single();
+
+    private static void ScrollToTop(UIViewController controller)
+    {
+        var scroll = ScrollOf(controller);
+        scroll.SetContentOffset(new CGPoint(0, -scroll.AdjustedContentInset.Top), false);
+    }
+
+    private static void ScrollToBottom(UIViewController controller)
+    {
+        var scroll = ScrollOf(controller);
+        for (int pass = 0; pass < 2; pass++)
+        {
+            scroll.LayoutIfNeeded();
+            double minY = -(double)scroll.AdjustedContentInset.Top;
+            double maxY = Math.Max(minY, (double)scroll.ContentSize.Height - (double)scroll.Bounds.Height + (double)scroll.AdjustedContentInset.Bottom);
+            scroll.SetContentOffset(new CGPoint(0, maxY), false);
         }
     }
 

@@ -1,3 +1,4 @@
+using CoreAnimation;
 using CoreGraphics;
 using Foundation;
 using PhotoViewer.Core.AI;
@@ -7,88 +8,43 @@ using UIKit;
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// 原生诊断页（UIKit 版）：AI 版与旧壳 <c>DinoDebugView</c>/Mac 原生页同构 —— 标题与状态文本、
-/// DINO patch 三列瓦片（原图缩略图 / PCA-RGB / Cosine 相似度）、CV 网格三列瓦片
-/// （锐度 / 抖动拖影矢量，第六格留空），刚体拟合文本以整宽块放在网格下方；
-/// 标准版为三瓦片 CV 诊断（原图缩略图 / 锐度 / 抖动拖影），不建 patch 区、不留空槽。
-/// 全部数据来自共享 <see cref="DinoDiagnosticPresenter"/> 或 <see cref="CvDiagnosticPresenter"/>
-/// （读库快路径与现算都在那里完成），本视图只做位图适配与点击回传，绝不自行驱动推理。
+/// 原生诊断页（UIKit 版）：纯 AutoLayout 布局并经 <see cref="UIViewController.SetContentScrollView"/>
+/// 接入系统导航栏滚动边缘模糊与半屏 sheet 协调。
+/// AI 版保留 3+2 瓦片（第六格留空），标准版保留三瓦片同一行；刚体拟合文本以连续圆角分组卡片置于网格下方。
+/// 全部数据来自共享 <see cref="DinoDiagnosticPresenter"/> 或 <see cref="CvDiagnosticPresenter"/>，本视图只读不驱动推理。
 /// </summary>
 internal sealed class iOSDinoDiagnosticView : UIViewController
 {
-    /// <summary>页面左右外边距（旧壳 StackPanel Margin 16）。</summary>
     private const double PageMarginX = 16;
-
-    /// <summary>页面上外边距（旧壳 StackPanel Margin 16）。</summary>
-    private const double PageMarginTop = 16;
-
-    /// <summary>页面下外边距（旧壳 StackPanel Margin 0,0,0,24）。</summary>
-    private const double PageMarginBottom = 24;
-
-    /// <summary>标题下外边距（旧壳 Margin 0,0,0,12）。</summary>
-    private const double TitleBottomMargin = 12;
-
-    /// <summary>状态文本下外边距（旧壳 Margin 0,0,0,16）。</summary>
-    private const double StatusBottomMargin = 16;
-
-    /// <summary>栏目标题下外边距（旧壳 Margin 0,0,0,6）。</summary>
-    private const double SectionHeaderBottomMargin = 6;
-
-    /// <summary>两行瓦片网格之间的间距（旧壳 UniformGrid Margin 0,0,0,20）。</summary>
-    private const double GridGap = 20;
-
-    /// <summary>单个瓦片四周外边距（旧壳 Margin 4）。</summary>
-    private const double TileMargin = 4;
-
-    /// <summary>瓦片列数（旧壳 UniformGrid Columns 3）。</summary>
-    private const int TileColumns = 3;
-
-    /// <summary>刚体拟合面板的行间距（旧壳 StackPanel Spacing 6）。</summary>
-    private const double PanelSpacing = 6;
-
-    /// <summary>刚体拟合多行文本的上外边距（旧壳 Margin 0,4,0,0）。</summary>
-    private const double RigidTextTopMargin = 4;
-
-    /// <summary>刚体拟合多行文本的行高（旧壳 LineHeight 20）。</summary>
-    private const double RigidLineHeight = 20;
-
-    /// <summary>测量换行高度的宽度上限。</summary>
-    private const double MeasureLimit = 10000;
-
-    private static readonly UIColor TitleColor = UIColor.Label;
-    private static readonly UIColor StatusColor = UIColor.SecondaryLabel;
-    private static readonly UIColor SectionColor = UIColor.SecondaryLabel;
-    private static readonly UIColor PanelTitleColor = UIColor.Label;
-    private static readonly UIColor PanelMetricsColor = UIColor.SecondaryLabel;
-    private static readonly UIFont TitleFont = UIFont.PreferredHeadline!;
-    private static readonly UIFont StatusFont = UIFont.PreferredFootnote!;
-    private static readonly UIFont SectionFont = UIFont.PreferredSubheadline!;
-    private static readonly UIFont PanelMetricsFont = UIFont.PreferredCaption1!;
-    private static readonly UIFont RigidTextFont = UIFont.FromName("Menlo", 12) ?? UIFont.SystemFontOfSize(12)!;
-    private static readonly UIColor RigidTextColor = UIColor.Label;
+    private const double TileSpacing = 8;
 
 #if PHOTOVIEWER_DINO
     private readonly DinoDiagnosticPresenter _presenter;
 #else
     private readonly CvDiagnosticPresenter _presenter;
 #endif
-    private readonly UIScrollView _scroll;
-    private readonly DocumentView _document;
-    private readonly UILabel _title = SingleLineLabel(iOSAppCapabilities.DiagnosticName, TitleFont, TitleColor);
-    private readonly UILabel _status = SingleLineLabel("", StatusFont, StatusColor);
-#if PHOTOVIEWER_DINO
-    private readonly UILabel _patchHeader = SingleLineLabel("DINO patch (32×32，点击任意图设定参考点)", SectionFont, SectionColor);
-#endif
-    private readonly UILabel _cvHeader = SingleLineLabel("CV 网格诊断（32×32 中心采样，像素单位）", SectionFont, SectionColor);
-    private readonly UILabel _rigidTitle = SingleLineLabel("抖动分析（刚体拟合）", SectionFont, PanelTitleColor);
-    private readonly UILabel _rigidMetrics = SingleLineLabel("|T| / |ω| / residual", PanelMetricsFont, PanelMetricsColor);
-    private readonly UITextView _rigidText = new()
+    private readonly Action? _onClose;
+    private readonly UIScrollView _scroll = new()
     {
-        Editable = false, Selectable = true, ScrollEnabled = false,
-        BackgroundColor = UIColor.SecondarySystemGroupedBackground,
-        Font = RigidTextFont, TextColor = UIColor.Label,
-        TextContainerInset = new UIEdgeInsets(12, 12, 12, 12),
+        BackgroundColor = UIColor.Clear,
+        AlwaysBounceVertical = true,
+        TranslatesAutoresizingMaskIntoConstraints = false,
     };
+    private readonly DocumentView _document;
+    private readonly UILabel _status = WrappingLabel(string.Empty, UIFont.PreferredFootnote!, UIColor.SecondaryLabel);
+#if PHOTOVIEWER_DINO
+    private readonly UILabel _patchHeader = WrappingLabel("DINO patch（32×32，点击任意图设定参考点）", UIFont.PreferredSubheadline!, UIColor.SecondaryLabel);
+#endif
+    private readonly UILabel _cvHeader = WrappingLabel("CV 网格诊断（32×32 中心采样，像素单位）", UIFont.PreferredSubheadline!, UIColor.SecondaryLabel);
+    private readonly UILabel _rigidTitle = WrappingLabel("抖动分析（刚体拟合）", UIFont.PreferredSubheadline!, UIColor.Label);
+    private readonly UILabel _rigidMetrics = WrappingLabel("|T| / |ω| / residual", UIFont.PreferredCaption1!, UIColor.SecondaryLabel);
+    private readonly UIView _rigidCard = new()
+    {
+        BackgroundColor = UIColor.SecondarySystemGroupedBackground,
+        ClipsToBounds = true,
+        TranslatesAutoresizingMaskIntoConstraints = false,
+    };
+    private readonly UITextView _rigidText;
     private readonly iOSDiagnosticTile _thumbnailTile = new();
 #if PHOTOVIEWER_DINO
     private readonly iOSDiagnosticTile _pcaTile = new();
@@ -97,6 +53,7 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
     private readonly iOSDiagnosticTile _sharpnessTile = new();
     private readonly iOSDiagnosticTile _shakeTile = new();
     private readonly iOSShakeFieldView _shakeOverlay = new();
+    private readonly List<TileRowView> _tileRows = [];
     private readonly Dictionary<AnalysisTile, TileImages> _images = [];
     private readonly List<UIImage> _stale = [];
     private string? _rigidSource;
@@ -111,52 +68,54 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
         [_thumbnailTile, _sharpnessTile, _shakeTile];
 #endif
 
-    /// <summary>共享诊断 presenter（导航栏与验收读取状态）。</summary>
+    /// <summary>共享诊断 presenter（验收读取状态）。</summary>
 #if PHOTOVIEWER_DINO
     internal DinoDiagnosticPresenter Presenter => _presenter;
 #else
     internal CvDiagnosticPresenter Presenter => _presenter;
 #endif
 
-    /// <summary>刚体拟合标题块（验收核对整宽块位于网格下方，TOOLS-05）。</summary>
-    internal CGRect RigidTitleFrame => _rigidTitle.Frame;
+    /// <summary>刚体拟合标题在页面内容坐标系中的 frame（验收核对整宽块位于网格下方，TOOLS-05）。</summary>
+    internal CGRect RigidTitleFrame => _rigidTitle.ConvertRectToView(_rigidTitle.Bounds, _document);
 
-    /// <summary>第二行瓦片底边（验收核对刚体拟合块不挤进第六格）。</summary>
-    internal double SecondRowBottom => Math.Max(_sharpnessTile.Frame.GetMaxY(), _shakeTile.Frame.GetMaxY());
+    /// <summary>最后一行瓦片在页面内容坐标系中的底边纵坐标。</summary>
+    internal double SecondRowBottom
+    {
+        get
+        {
+            var sharpness = _sharpnessTile.ConvertRectToView(_sharpnessTile.Bounds, _document);
+            var shake = _shakeTile.ConvertRectToView(_shakeTile.Bounds, _document);
+            return Math.Max((double)sharpness.GetMaxY(), (double)shake.GetMaxY());
+        }
+    }
 
-    /// <summary>建立滚动容器、诊断瓦片与刚体拟合文本面板，并订阅 presenter 变化。</summary>
-    /// <param name="presenter">共享诊断 presenter（由工具壳持有）。</param>
 #if PHOTOVIEWER_DINO
-    internal iOSDinoDiagnosticView(DinoDiagnosticPresenter presenter) : base(null, null)
+    internal iOSDinoDiagnosticView(DinoDiagnosticPresenter presenter, Action? onClose = null) : base(null, null)
 #else
-    internal iOSDinoDiagnosticView(CvDiagnosticPresenter presenter) : base(null, null)
+    internal iOSDinoDiagnosticView(CvDiagnosticPresenter presenter, Action? onClose = null) : base(null, null)
 #endif
     {
         _presenter = presenter;
-        Title = iOSAppCapabilities.DiagnosticName;
-        View!.BackgroundColor = UIColor.SystemGroupedBackground;
-        _scroll = new UIScrollView { BackgroundColor = UIColor.Clear, AlwaysBounceVertical = true };
-        _rigidText.Layer.CornerRadius = 12;
-        _scroll.ContentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentBehavior.Never;
-        _document = new DocumentView(presenter.ClearCrosshair);
-        _scroll.AddSubview(_document);
-        View!.AddSubview(_scroll);
-        var views = new List<UIView> { _title, _status };
-#if PHOTOVIEWER_DINO
-        views.Add(_patchHeader);
-#endif
-        views.Add(_cvHeader);
-        views.Add(_rigidTitle);
-        views.Add(_rigidMetrics);
-        views.Add(_rigidText);
-        views.Add(_thumbnailTile);
-#if PHOTOVIEWER_DINO
-        views.Add(_pcaTile);
-        views.Add(_cosineTile);
-#endif
-        views.Add(_sharpnessTile);
-        views.Add(_shakeTile);
-        foreach (var view in views) _document.AddSubview(view);
+        _onClose = onClose;
+        _document = new DocumentView(presenter.ClearCrosshair) { TranslatesAutoresizingMaskIntoConstraints = false };
+
+        var monoDescriptor = UIFontDescriptor.PreferredFootnote.CreateWithDesign(UIFontDescriptorSystemDesign.Monospaced);
+        var monoFont = monoDescriptor != null
+            ? UIFont.FromDescriptor(monoDescriptor, 0)
+            : UIFontMetrics.DefaultMetrics.GetScaledFont(UIFont.FromName("Menlo", 12) ?? UIFont.SystemFontOfSize(12)!);
+        _rigidText = new UITextView
+        {
+            Editable = false,
+            Selectable = true,
+            ScrollEnabled = false,
+            BackgroundColor = UIColor.Clear,
+            Font = monoFont,
+            AdjustsFontForContentSizeCategory = true,
+            TextColor = UIColor.Label,
+            TextContainerInset = new UIEdgeInsets(12, 14, 12, 14),
+            TranslatesAutoresizingMaskIntoConstraints = false,
+        };
+
         _shakeTile.Overlay = _shakeOverlay;
         foreach (var tile in Tiles)
         {
@@ -165,28 +124,111 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
         }
         presenter.Changed += Sync;
         presenter.CrosshairChanged += Sync;
+    }
+
+    public override void ViewDidLoad()
+    {
+        base.ViewDidLoad();
+        Title = iOSAppCapabilities.DiagnosticName;
+        if (_onClose != null)
+        {
+            NavigationItem.RightBarButtonItem = new UIBarButtonItem(UIBarButtonSystemItem.Close, (_, _) => _onClose());
+        }
+
+        View!.BackgroundColor = UIColor.SystemGroupedBackground;
+        _rigidCard.Layer.CornerRadius = 16;
+        _rigidCard.Layer.CornerCurve = CACornerCurve.Continuous;
+        _rigidCard.AddSubview(_rigidText);
+        NSLayoutConstraint.ActivateConstraints(
+        [
+            _rigidText.TopAnchor.ConstraintEqualTo(_rigidCard.TopAnchor),
+            _rigidText.LeadingAnchor.ConstraintEqualTo(_rigidCard.LeadingAnchor),
+            _rigidText.TrailingAnchor.ConstraintEqualTo(_rigidCard.TrailingAnchor),
+            _rigidText.BottomAnchor.ConstraintEqualTo(_rigidCard.BottomAnchor),
+        ]);
+
+        var rigidHeaderStack = new UIStackView([_rigidTitle, _rigidMetrics])
+        {
+            Axis = UILayoutConstraintAxis.Vertical,
+            Spacing = 2,
+            TranslatesAutoresizingMaskIntoConstraints = false,
+        };
+        var rigidSection = new UIStackView([rigidHeaderStack, _rigidCard])
+        {
+            Axis = UILayoutConstraintAxis.Vertical,
+            Spacing = 8,
+            TranslatesAutoresizingMaskIntoConstraints = false,
+        };
+
+        var rootStack = new UIStackView
+        {
+            Axis = UILayoutConstraintAxis.Vertical,
+            Spacing = 16,
+            TranslatesAutoresizingMaskIntoConstraints = false,
+        };
+        rootStack.AddArrangedSubview(_status);
+        rootStack.SetCustomSpacing(12, _status);
+
+#if PHOTOVIEWER_DINO
+        var patchRow = new TileRowView(_thumbnailTile, _pcaTile, _cosineTile);
+        _tileRows.Add(patchRow);
+        var patchSection = new UIStackView([_patchHeader, patchRow])
+        {
+            Axis = UILayoutConstraintAxis.Vertical,
+            Spacing = 8,
+            TranslatesAutoresizingMaskIntoConstraints = false,
+        };
+        rootStack.AddArrangedSubview(patchSection);
+
+        var cvRow = new TileRowView(_sharpnessTile, _shakeTile, null);
+#else
+        var cvRow = new TileRowView(_thumbnailTile, _sharpnessTile, _shakeTile);
+#endif
+        _tileRows.Add(cvRow);
+        var cvSection = new UIStackView([_cvHeader, cvRow])
+        {
+            Axis = UILayoutConstraintAxis.Vertical,
+            Spacing = 8,
+            TranslatesAutoresizingMaskIntoConstraints = false,
+        };
+        rootStack.AddArrangedSubview(cvSection);
+        rootStack.AddArrangedSubview(rigidSection);
+
+        _document.AddSubview(rootStack);
+        _scroll.AddSubview(_document);
+        View.AddSubview(_scroll);
+        // 显式登记主滚动视图，接入导航栏滚动边缘效果与半屏 sheet 下拉协调。
+        SetContentScrollView(_scroll, NSDirectionalRectEdge.All);
+
+        NSLayoutConstraint.ActivateConstraints(
+        [
+            _scroll.TopAnchor.ConstraintEqualTo(View.TopAnchor),
+            _scroll.LeadingAnchor.ConstraintEqualTo(View.LeadingAnchor),
+            _scroll.TrailingAnchor.ConstraintEqualTo(View.TrailingAnchor),
+            _scroll.BottomAnchor.ConstraintEqualTo(View.BottomAnchor),
+
+            _document.TopAnchor.ConstraintEqualTo(_scroll.ContentLayoutGuide.TopAnchor),
+            _document.LeadingAnchor.ConstraintEqualTo(_scroll.ContentLayoutGuide.LeadingAnchor),
+            _document.TrailingAnchor.ConstraintEqualTo(_scroll.ContentLayoutGuide.TrailingAnchor),
+            _document.BottomAnchor.ConstraintEqualTo(_scroll.ContentLayoutGuide.BottomAnchor),
+            _document.WidthAnchor.ConstraintEqualTo(_scroll.FrameLayoutGuide.WidthAnchor),
+
+            rootStack.TopAnchor.ConstraintEqualTo(_document.TopAnchor, 12),
+            rootStack.BottomAnchor.ConstraintEqualTo(_document.BottomAnchor, -20),
+            rootStack.LeadingAnchor.ConstraintEqualTo(_document.SafeAreaLayoutGuide.LeadingAnchor, (nfloat)PageMarginX),
+            rootStack.TrailingAnchor.ConstraintEqualTo(_document.SafeAreaLayoutGuide.TrailingAnchor, (nfloat)(-PageMarginX)),
+        ]);
+
         Sync();
     }
 
-    /// <summary>页面出现在屏幕上时铺满并重排（presenter 数据由工具壳的导航入口驱动）。</summary>
-    /// <param name="animated">系统动画标记。</param>
     public override void ViewWillAppear(bool animated)
     {
         base.ViewWillAppear(animated);
-        _scroll.Frame = View!.SafeAreaLayoutGuide.LayoutFrame;
         Sync();
     }
 
-    /// <summary>尺寸变化时把滚动容器铺满并重排文档内容。</summary>
-    /// <param name="size">新的父容器尺寸。</param>
-    public override void ViewDidLayoutSubviews()
-    {
-        base.ViewDidLayoutSubviews();
-        _scroll.Frame = View!.SafeAreaLayoutGuide.LayoutFrame;
-        Relayout();
-    }
-
-    /// <summary>把 presenter 的瓦片状态同步到原生控件并重排；位图按引用比较，未变化不重编码。</summary>
+    /// <summary>把 presenter 的瓦片状态同步到原生控件；位图按引用比较，未变化不重编码。</summary>
     internal void Sync()
     {
         if (_disposed) return;
@@ -202,12 +244,9 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
         _shakeOverlay.ShakeField = _presenter.ShakeTile.ShakeField;
         foreach (var image in _stale) image.Dispose();
         _stale.Clear();
-        Relayout();
+        foreach (var row in _tileRows) row.RefreshHeight();
     }
 
-    /// <summary>同步单张瓦片的位图、说明、占位文字与全局十字准星。</summary>
-    /// <param name="tile">原生瓦片。</param>
-    /// <param name="source">presenter 侧的瓦片状态。</param>
     private void SyncTile(iOSDiagnosticTile tile, AnalysisTile source)
     {
         var images = _images.TryGetValue(source, out var cached) ? cached : _images[source] = new TileImages();
@@ -219,11 +258,6 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
         tile.SetCrosshair(_presenter.CrosshairU, _presenter.CrosshairV);
     }
 
-    /// <summary>按 <see cref="DecodedImage"/> 引用取原生位图；源变化时重编码并登记旧图待释放。</summary>
-    /// <param name="images">该瓦片的位图缓存。</param>
-    /// <param name="key">当前源位图；null 表示清空。</param>
-    /// <param name="background">是否是压暗背景层。</param>
-    /// <returns>调用方引用的原生位图。</returns>
     private UIImage? ImageFor(TileImages images, DecodedImage? key, bool background)
     {
         var previousKey = background ? images.Background : images.Source;
@@ -244,137 +278,25 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
         return image;
     }
 
-    /// <summary>更新刚体拟合多行文本；文本未变时保留带 20 点行高的属性串。</summary>
-    /// <param name="text">presenter 给出的多行判定文本。</param>
     private void SyncRigidText(string text)
     {
         if (_rigidSource == text) return;
         _rigidSource = text;
-        var paragraph = new NSMutableParagraphStyle
-        {
-            LineBreakMode = UILineBreakMode.WordWrap,
-            MinimumLineHeight = (nfloat)RigidLineHeight,
-            MaximumLineHeight = (nfloat)RigidLineHeight,
-        };
-        _rigidText.AttributedText = new NSAttributedString(text ?? string.Empty, new UIStringAttributes
-        {
-            Font = RigidTextFont,
-            ForegroundColor = RigidTextColor,
-            ParagraphStyle = paragraph,
-        });
+        _rigidText.Text = text ?? string.Empty;
     }
 
-    /// <summary>按当前宽度重排标题、状态、两行瓦片网格与刚体拟合面板，并刷新文档高度。</summary>
-    private void Relayout()
-    {
-        double width = Math.Max(1, (double)_scroll.Bounds.Width);
-        double contentWidth = Math.Max(1, width - PageMarginX * 2);
-        double cell = contentWidth / TileColumns;
-        double tileWidth = Math.Max(1, cell - TileMargin * 2);
-
-        double y = PageMarginTop;
-        _title.Frame = new CGRect(PageMarginX, y, contentWidth, LineHeight(TitleFont));
-        y += LineHeight(TitleFont) + TitleBottomMargin;
-        _status.Frame = new CGRect(PageMarginX, y, contentWidth, LineHeight(StatusFont));
-        y += LineHeight(StatusFont) + StatusBottomMargin;
-#if PHOTOVIEWER_DINO
-        _patchHeader.Frame = new CGRect(PageMarginX, y, contentWidth, LineHeight(SectionFont));
-        y += LineHeight(SectionFont) + SectionHeaderBottomMargin;
-
-        double rowTop = y;
-        y = rowTop + PlaceTiles(rowTop, cell, tileWidth, _thumbnailTile, _pcaTile, _cosineTile) + GridGap;
-        _cvHeader.Frame = new CGRect(PageMarginX, y, contentWidth, LineHeight(SectionFont));
-        y += LineHeight(SectionFont) + SectionHeaderBottomMargin;
-
-        rowTop = y;
-        double tileRowHeight = PlaceTiles(rowTop, cell, tileWidth, _sharpnessTile, _shakeTile, null);
-#else
-        _cvHeader.Frame = new CGRect(PageMarginX, y, contentWidth, LineHeight(SectionFont));
-        y += LineHeight(SectionFont) + SectionHeaderBottomMargin;
-        double rowTop = y;
-        double tileRowHeight = PlaceTiles(rowTop, cell, tileWidth, _thumbnailTile, _sharpnessTile, _shakeTile);
-#endif
-        // 刚体拟合文本以整宽块放在网格下方，不挤进瓦片格。
-        y = PlaceRigidPanel(rowTop + tileRowHeight, contentWidth);
-        _document.Frame = new CGRect(0, 0, width, Math.Max(1, y + PageMarginBottom));
-        _scroll.ContentSize = _document.Frame.Size;
-    }
-
-    /// <summary>把瓦片按等宽三列摆放（第三列可为空），返回该行高度（含上下外边距）。</summary>
-    /// <param name="top">行顶边纵坐标。</param>
-    /// <param name="cell">单列宽度。</param>
-    /// <param name="tileWidth">瓦片宽度。</param>
-    /// <param name="first">第一列瓦片。</param>
-    /// <param name="second">第二列瓦片。</param>
-    /// <param name="third">第三列瓦片；null 表示该格留空（TOOLS-05 第六格）。</param>
-    /// <returns>行高度。</returns>
-    private static double PlaceTiles(double top, double cell, double tileWidth, iOSDiagnosticTile first, iOSDiagnosticTile second, iOSDiagnosticTile? third)
-    {
-        double height = 0;
-        Place(first, 0);
-        Place(second, 1);
-        if (third != null) Place(third, 2);
-        return height;
-
-        void Place(iOSDiagnosticTile tile, int column)
-        {
-            double tileHeight = tile.RequiredHeight(tileWidth);
-            tile.Frame = new CGRect(PageMarginX + column * cell + TileMargin, top + TileMargin, tileWidth, tileHeight);
-            height = Math.Max(height, tileHeight + TileMargin * 2);
-        }
-    }
-
-    /// <summary>摆放网格下方的整宽刚体拟合文本面板（标题、量纲说明与多行判定文本），返回面板底边纵坐标。</summary>
-    /// <param name="top">面板顶边纵坐标。</param>
-    /// <param name="contentWidth">页面内容宽度（整宽块）。</param>
-    /// <returns>面板底边纵坐标。</returns>
-    private double PlaceRigidPanel(double top, double contentWidth)
-    {
-        double panelX = PageMarginX;
-        double panelWidth = Math.Max(1, contentWidth);
-        double y = top + TileMargin;
-        _rigidTitle.Frame = new CGRect(panelX, y, panelWidth, LineHeight(SectionFont));
-        y += LineHeight(SectionFont) + PanelSpacing;
-        _rigidMetrics.Frame = new CGRect(panelX, y, panelWidth, LineHeight(PanelMetricsFont));
-        y += LineHeight(PanelMetricsFont) + PanelSpacing + RigidTextTopMargin;
-        double textHeight = MeasureRigidText(panelWidth);
-        _rigidText.Frame = new CGRect(panelX, y, panelWidth, textHeight);
-        return y + textHeight + TileMargin;
-    }
-
-    /// <summary>量出刚体拟合文本在给定宽度下的高度（按 20 点行高，至少覆盖全部显式换行）。</summary>
-    /// <param name="width">可用宽度。</param>
-    /// <returns>文本高度（点）。</returns>
-    private double MeasureRigidText(double width)
-    {
-        double measured = (double)_rigidText.SizeThatFits(new CGSize(width, MeasureLimit)).Height;
-        int lines = 1;
-        foreach (char character in _rigidSource ?? "") if (character == '\n') lines++;
-        return Math.Max(measured, lines * RigidLineHeight);
-    }
-
-    /// <summary>字体的单行高度（上升部 + 下降部 + 行距）。</summary>
-    /// <param name="font">目标字体。</param>
-    /// <returns>行高（点）。</returns>
-    private static double LineHeight(UIFont font) => Math.Ceiling((double)font.LineHeight);
-
-    /// <summary>创建单行只读标签（尾部截断）。</summary>
-    /// <param name="text">初始文本。</param>
-    /// <param name="font">字体。</param>
-    /// <param name="color">文字颜色。</param>
-    /// <returns>标签。</returns>
-    private static UILabel SingleLineLabel(string text, UIFont font, UIColor color) => new()
+    private static UILabel WrappingLabel(string text, UIFont font, UIColor color) => new()
     {
         Text = text,
         Font = font,
+        AdjustsFontForContentSizeCategory = true,
         TextColor = color,
-        Lines = 1,
-        LineBreakMode = UILineBreakMode.TailTruncation,
+        Lines = 0,
+        LineBreakMode = UILineBreakMode.WordWrap,
         BackgroundColor = UIColor.Clear,
+        TranslatesAutoresizingMaskIntoConstraints = false,
     };
 
-    /// <summary>解除 presenter 订阅并释放位图与原生视图。</summary>
-    /// <param name="disposing">是否释放托管资源。</param>
     protected override void Dispose(bool disposing)
     {
         if (disposing && !_disposed)
@@ -395,48 +317,87 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
         base.Dispose(disposing);
     }
 
-    /// <summary>单张瓦片当前的主图与背景位图缓存。</summary>
+    /// <summary>
+    /// 等宽三列诊断瓦片行的 AutoLayout 宿主：列间距 8 点（<c>analysis.tile.spacing</c>），
+    /// 第三列可留空（TOOLS-05 第六格），高度随实际宽度与说明文字行数自动更新。
+    /// </summary>
+    private sealed class TileRowView : UIView
+    {
+        private readonly iOSDiagnosticTile?[] _slots;
+        private readonly NSLayoutConstraint _heightConstraint;
+
+        internal TileRowView(iOSDiagnosticTile first, iOSDiagnosticTile second, iOSDiagnosticTile? third)
+        {
+            TranslatesAutoresizingMaskIntoConstraints = false;
+            BackgroundColor = UIColor.Clear;
+            _slots = [first, second, third];
+            foreach (var tile in _slots)
+            {
+                if (tile != null) AddSubview(tile);
+            }
+            _heightConstraint = HeightAnchor.ConstraintEqualTo(100);
+            _heightConstraint.Priority = 999;
+            _heightConstraint.Active = true;
+        }
+
+        public override void LayoutSubviews()
+        {
+            base.LayoutSubviews();
+            RefreshHeight();
+        }
+
+        internal void RefreshHeight()
+        {
+            double width = (double)Bounds.Width;
+            if (width <= 1) return;
+            double tileWidth = Math.Max(1, (width - TileSpacing * 2) / 3.0);
+            double maxHeight = 0;
+            for (int column = 0; column < 3; column++)
+            {
+                if (_slots[column] is not { } tile) continue;
+                double height = tile.RequiredHeight(tileWidth);
+                tile.Frame = new CGRect(
+                    (nfloat)(column * (tileWidth + TileSpacing)),
+                    0,
+                    (nfloat)tileWidth,
+                    (nfloat)height);
+                maxHeight = Math.Max(maxHeight, height);
+            }
+            double target = Math.Max(1, Math.Ceiling(maxHeight));
+            if (Math.Abs((double)_heightConstraint.Constant - target) > .5)
+            {
+                _heightConstraint.Constant = (nfloat)target;
+            }
+        }
+    }
+
     private sealed class TileImages
     {
-        /// <summary>当前主图源（<see cref="AnalysisTile.Source"/>）。</summary>
         public DecodedImage? Source { get; set; }
-
-        /// <summary>主图对应的原生位图。</summary>
         public UIImage? SourceImage { get; set; }
-
-        /// <summary>当前压暗背景源（<see cref="AnalysisTile.Background"/>）。</summary>
         public DecodedImage? Background { get; set; }
-
-        /// <summary>背景对应的原生位图。</summary>
         public UIImage? BackgroundImage { get; set; }
     }
 
-    /// <summary>滚动内容容器；空白处点击清空诊断准星（瓦片点按优先）。</summary>
+    /// <summary>滚动内容容器；空白处点击清空诊断准星（瓦片与刚体文本自身消费点击）。</summary>
     private sealed class DocumentView : UIView
     {
         private readonly UITapGestureRecognizer _blankTap;
 
-        /// <summary>建立文档容器与空白点击识别器。</summary>
-        /// <param name="clearCrosshair">空白点击动作。</param>
         public DocumentView(Action clearCrosshair)
         {
             BackgroundColor = UIColor.Clear;
-            _blankTap = new UITapGestureRecognizer(clearCrosshair);
+            _blankTap = new UITapGestureRecognizer(clearCrosshair) { CancelsTouchesInView = false };
             _blankTap.Delegate = new TileExcludingDelegate();
             AddGestureRecognizer(_blankTap);
         }
 
-        /// <summary>只在空白处接收触摸，瓦片自身消费点击。</summary>
         private sealed class TileExcludingDelegate : UIGestureRecognizerDelegate
         {
-            /// <summary>命中诊断瓦片时不接收。</summary>
-            /// <param name="gestureRecognizer">本识别器。</param>
-            /// <param name="touch">触点。</param>
-            /// <returns>空白处为 true。</returns>
             public override bool ShouldReceiveTouch(UIGestureRecognizer gestureRecognizer, UITouch touch)
             {
                 for (var view = touch.View; view != null; view = view.Superview)
-                    if (view is iOSDiagnosticTile) return false;
+                    if (view is iOSDiagnosticTile or UITextView) return false;
                 return true;
             }
         }

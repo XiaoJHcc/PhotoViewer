@@ -1,166 +1,178 @@
 using System.Globalization;
+using CoreGraphics;
 using Foundation;
 using PhotoViewer.ViewModels.Settings;
 using UIKit;
 
 namespace PhotoViewer.iOS.Core;
 
-internal sealed class iOSScalePresetEditor : UIStackView
+/// <summary>
+/// 缩放比例预设的原生 <see cref="UITableViewStyle.InsetGrouped"/> 分组（SETTINGS-07）：
+/// 每条预设为独立原生单元格（无边框数值输入 + % + 行尾删除按钮 + 原生左滑删除），
+/// 末行为系统样式「添加缩放预设」操作行，校验错误显示在系统分组脚注中。
+/// 提交排序通过 <see cref="UITableView.MoveRow"/> 移动现有单元格，不销毁输入框、不抢焦点、不重弹键盘。
+/// </summary>
+internal sealed class iOSScalePresetSection : iOSNativeSettingsFormViewController.SettingsSection
 {
+    private const string AddCellReuseId = "ScalePresetAddRow";
+    private const string ValidationMessage = "请输入大于 0 且不超过 1600% 的数字";
+
     private readonly SettingsViewModel _settings;
-    private readonly Dictionary<SettingsViewModel.ScalePreset, (UIView Row, UITextField Field, UIButton Delete)> _rows = [];
-    private readonly UILabel _error = new() { TextColor = UIColor.SystemRed, Lines = 0, Hidden = true };
-    internal UIButton AddButton { get; }
-    internal IReadOnlyList<UITextField> Fields => _settings.ScalePresets.Select(preset => _rows[preset].Field).ToArray();
-    internal bool HasValidationError => !_error.Hidden;
-    private readonly UIView _errorRow;
-    private readonly UIView _addRow;
+    private readonly iOSNativeSettingsFormViewController _host;
+    private readonly Dictionary<SettingsViewModel.ScalePreset, iOSScalePresetCell> _cells = [];
+    private readonly UITableViewHeaderFooterView _errorFooter;
+    private readonly UILabel _errorLabel;
+    private bool _hasValidationError;
 
-    /// <summary>预设行的输入组（输入框 + %），验收核对其水平居中。</summary>
-    internal IReadOnlyList<UIView> FieldGroups => _settings.ScalePresets.Select(preset => _rows[preset].Field.Superview!).ToArray();
-    internal IReadOnlyList<UIButton> DeleteButtons => _settings.ScalePresets.Select(preset => _rows[preset].Delete).ToArray();
-
-    internal iOSScalePresetEditor(SettingsViewModel settings)
+    internal iOSScalePresetSection(
+        string headerTitle,
+        SettingsViewModel settings,
+        iOSNativeSettingsFormViewController host)
+        : base(headerTitle)
     {
         _settings = settings;
-        Axis = UILayoutConstraintAxis.Vertical;
-        Spacing = 0;
-        TranslatesAutoresizingMaskIntoConstraints = false;
-        AddButton = IconButton("plus.circle.fill", UIColor.SystemGreen, "新增100%预设");
-        AddButton.TouchUpInside += (_, _) =>
-        {
-            this.EndEditing(true);
-            _settings.AddScalePreset();
-            _settings.SortScalePreset();
-            SyncRows();
-        };
-        _error.Font = UIFont.PreferredFootnote!;
-        AddArrangedSubview(_errorRow = WrapError());
-        AddArrangedSubview(_addRow = CreateAddRow());
-        SyncRows();
-    }
+        _host = host;
 
-    private void SyncRows()
-    {
-        foreach (var stale in _rows.Keys.Where(preset => !_settings.ScalePresets.Contains(preset)).ToArray())
+        _errorLabel = new UILabel
         {
-            var row = _rows[stale].Row;
-            RemoveArrangedSubview(row);
-            row.RemoveFromSuperview();
-            _rows.Remove(stale);
-        }
-        foreach (var preset in _settings.ScalePresets)
-        {
-            if (!_rows.ContainsKey(preset)) CreateRow(preset);
-            _rows[preset].Delete.Enabled = _settings.CanRemoveScalePreset;
-        }
-        ReorderRows();
-    }
-
-    private void ReorderRows()
-    {
-        for (int index = 0; index < _settings.ScalePresets.Count; index++)
-        {
-            var row = _rows[_settings.ScalePresets[index]].Row;
-            if (Array.IndexOf(ArrangedSubviews, row) == index) continue;
-            RemoveArrangedSubview(row);
-            InsertArrangedSubview(row, (nuint)index);
-        }
-    }
-
-    private void CreateRow(SettingsViewModel.ScalePreset preset)
-    {
-        var field = new UITextField
-        {
-            Text = preset.Text,
-            KeyboardType = UIKeyboardType.DecimalPad,
-            BorderStyle = UITextBorderStyle.RoundedRect,
-            TextAlignment = UITextAlignment.Center,
-            AccessibilityLabel = "缩放比例预设",
+            TextColor = UIColor.SystemRed,
+            Font = UIFont.PreferredFootnote!,
+            AdjustsFontForContentSizeCategory = true,
+            Lines = 0,
+            LineBreakMode = UILineBreakMode.WordWrap,
             TranslatesAutoresizingMaskIntoConstraints = false,
         };
-        field.WidthAnchor.ConstraintEqualTo(96).Active = true;
-        var toolbar = new UIToolbar();
-        toolbar.SizeToFit();
-        toolbar.Items = [new UIBarButtonItem(UIBarButtonSystemItem.FlexibleSpace), new UIBarButtonItem(UIBarButtonSystemItem.Done, (_, _) => field.ResignFirstResponder())];
-        field.InputAccessoryView = toolbar;
-        field.ShouldReturn = _ => { field.ResignFirstResponder(); return true; };
-        field.EditingDidEnd += (_, _) => Commit(preset, field);
-        var delete = IconButton("minus.circle.fill", UIColor.SystemRed, "删除预设");
-        delete.TouchUpInside += (_, _) =>
-        {
-            this.EndEditing(true);
-            if (!_settings.CanRemoveScalePreset) return;
-            _settings.RemoveScalePreset(preset);
-            SyncRows();
-        };
-        var group = new UIStackView([field, new UILabel { Text = "%", TextColor = UIColor.SecondaryLabel }])
-        {
-            Axis = UILayoutConstraintAxis.Horizontal,
-            Alignment = UIStackViewAlignment.Center,
-            Spacing = 6,
-            TranslatesAutoresizingMaskIntoConstraints = false,
-        };
-        var row = CreateRowContainer(withSeparator: true);
-        row.AddSubview(group);
-        row.AddSubview(delete);
+        _errorFooter = new UITableViewHeaderFooterView();
+        _errorFooter.ContentView.AddSubview(_errorLabel);
         NSLayoutConstraint.ActivateConstraints(
         [
-            group.CenterXAnchor.ConstraintEqualTo(row.CenterXAnchor),
-            group.CenterYAnchor.ConstraintEqualTo(row.CenterYAnchor),
-            field.HeightAnchor.ConstraintGreaterThanOrEqualTo(34),
-            delete.TrailingAnchor.ConstraintEqualTo(row.TrailingAnchor, (nfloat)(-TrailingInset)),
-            delete.CenterYAnchor.ConstraintEqualTo(row.CenterYAnchor),
+            _errorLabel.TopAnchor.ConstraintEqualTo(_errorFooter.ContentView.TopAnchor, 8),
+            _errorLabel.LeadingAnchor.ConstraintEqualTo(_errorFooter.ContentView.LayoutMarginsGuide.LeadingAnchor),
+            _errorLabel.TrailingAnchor.ConstraintEqualTo(_errorFooter.ContentView.LayoutMarginsGuide.TrailingAnchor),
+            _errorLabel.BottomAnchor.ConstraintEqualTo(_errorFooter.ContentView.BottomAnchor, -8),
         ]);
-        _rows[preset] = (row, field, delete);
-        InsertArrangedSubview(row, (nuint)Math.Max(0, ArrangedSubviews.Length - 2));
+
+        SyncCells();
     }
 
-    private UIView CreateAddRow()
-    {
-        var row = CreateRowContainer(withSeparator: false);
-        row.AddSubview(AddButton);
-        NSLayoutConstraint.ActivateConstraints(
-        [
-            AddButton.TrailingAnchor.ConstraintEqualTo(row.TrailingAnchor, (nfloat)(-TrailingInset)),
-            AddButton.CenterYAnchor.ConstraintEqualTo(row.CenterYAnchor),
-        ]);
-        return row;
-    }
+    internal override int RowCount => _settings.ScalePresets.Count + 1;
 
-    private UIView WrapError()
-    {
-        var row = new UIView { TranslatesAutoresizingMaskIntoConstraints = false, Hidden = true };
-        _error.TranslatesAutoresizingMaskIntoConstraints = false;
-        row.AddSubview(_error);
-        NSLayoutConstraint.ActivateConstraints(
-        [
-            _error.TopAnchor.ConstraintEqualTo(row.TopAnchor, 8),
-            _error.BottomAnchor.ConstraintEqualTo(row.BottomAnchor, -8),
-            _error.LeadingAnchor.ConstraintEqualTo(row.LeadingAnchor, 16),
-            _error.TrailingAnchor.ConstraintEqualTo(row.TrailingAnchor, -16),
-        ]);
-        return row;
-    }
+    internal override UIView? FooterView => _hasValidationError ? _errorFooter : null;
 
-    /// <summary>标准 52 点行；预设行底部带与卡片一致的发丝分隔线。</summary>
-    private static UIView CreateRowContainer(bool withSeparator)
+    internal bool HasValidationError => _hasValidationError;
+
+    /// <summary>当前按顺序对应的全部预设输入框（验收读写）。</summary>
+    internal IReadOnlyList<UITextField> Fields
+        => _settings.ScalePresets.Select(preset => GetOrCreateCell(preset).Field).ToArray();
+
+    /// <summary>当前按顺序对应的全部预设删除按钮（验收核对禁删与命中区）。</summary>
+    internal IReadOnlyList<UIButton> DeleteButtons
+        => _settings.ScalePresets.Select(preset => GetOrCreateCell(preset).DeleteButton).ToArray();
+
+    /// <summary>末行「添加缩放预设」在分组中的行索引。</summary>
+    internal int AddRowIndex => _settings.ScalePresets.Count;
+
+    internal override UITableViewCell GetCell(UITableView tableView, NSIndexPath indexPath)
     {
-        var row = new UIView { TranslatesAutoresizingMaskIntoConstraints = false };
-        row.HeightAnchor.ConstraintEqualTo(52).Active = true;
-        if (withSeparator)
+        int row = (int)indexPath.Row;
+        if (row >= _settings.ScalePresets.Count)
         {
-            var separator = new UIView { BackgroundColor = UIColor.Separator, TranslatesAutoresizingMaskIntoConstraints = false };
-            row.AddSubview(separator);
-            NSLayoutConstraint.ActivateConstraints(
-            [
-                separator.LeadingAnchor.ConstraintEqualTo(row.LeadingAnchor),
-                separator.TrailingAnchor.ConstraintEqualTo(row.TrailingAnchor),
-                separator.BottomAnchor.ConstraintEqualTo(row.BottomAnchor),
-                separator.HeightAnchor.ConstraintEqualTo(1 / UIScreen.MainScreen.Scale),
-            ]);
+            return GetAddCell(tableView);
         }
-        return row;
+
+        var preset = _settings.ScalePresets[row];
+        var cell = GetOrCreateCell(preset);
+        cell.SetCanDelete(_settings.CanRemoveScalePreset);
+        return cell;
+    }
+
+    internal override void OnRowSelected(UITableView tableView, NSIndexPath indexPath)
+    {
+        tableView.DeselectRow(indexPath, true);
+        int row = (int)indexPath.Row;
+        if (row >= _settings.ScalePresets.Count)
+        {
+            AddPreset();
+            return;
+        }
+
+        if (row >= 0 && row < _settings.ScalePresets.Count)
+        {
+            GetOrCreateCell(_settings.ScalePresets[row]).FocusField();
+        }
+    }
+
+    internal override UISwipeActionsConfiguration? GetTrailingSwipeActions(UITableView tableView, NSIndexPath indexPath)
+    {
+        int row = (int)indexPath.Row;
+        if (row < 0 || row >= _settings.ScalePresets.Count || !_settings.CanRemoveScalePreset)
+        {
+            return null;
+        }
+
+        var preset = _settings.ScalePresets[row];
+        var delete = UIContextualAction.FromContextualActionStyle(
+            UIContextualActionStyle.Destructive,
+            "删除",
+            (_, _, completion) =>
+            {
+                bool deleted = RemovePreset(preset);
+                completion(deleted);
+            });
+        var config = UISwipeActionsConfiguration.FromActions([delete]);
+        config.PerformsFirstActionWithFullSwipe = true;
+        return config;
+    }
+
+    /// <summary>新增一项 100% 预设，排序后在原生表格中插入对应行。</summary>
+    internal void AddPreset()
+    {
+        _host.View?.EndEditing(true);
+        var before = new HashSet<SettingsViewModel.ScalePreset>(_settings.ScalePresets);
+        _settings.AddScalePreset();
+        _settings.SortScalePreset();
+        var added = _settings.ScalePresets.FirstOrDefault(preset => !before.Contains(preset));
+        SyncCells();
+
+        int section = _host.SectionIndexOf(this);
+        if (section >= 0 && added != null && _host.ViewIfLoaded?.Window != null)
+        {
+            int newIndex = _settings.ScalePresets.IndexOf(added);
+            if (newIndex >= 0)
+            {
+                var insertPath = NSIndexPath.FromRowSection(newIndex, section);
+                _host.TableView.InsertRows([insertPath], UITableViewRowAnimation.Automatic);
+                UpdateDeleteStates();
+                return;
+            }
+        }
+
+        _host.TableView.ReloadData();
+    }
+
+    /// <summary>删除指定预设并从原生表格移除该行；仅剩一项时忽略。</summary>
+    internal bool RemovePreset(SettingsViewModel.ScalePreset preset)
+    {
+        _host.View?.EndEditing(true);
+        if (!_settings.CanRemoveScalePreset) return false;
+        int oldIndex = _settings.ScalePresets.IndexOf(preset);
+        if (oldIndex < 0) return false;
+
+        _settings.RemoveScalePreset(preset);
+        _cells.Remove(preset);
+
+        int section = _host.SectionIndexOf(this);
+        if (section >= 0 && _host.ViewIfLoaded?.Window != null)
+        {
+            _host.TableView.DeleteRows([NSIndexPath.FromRowSection(oldIndex, section)], UITableViewRowAnimation.Automatic);
+            UpdateDeleteStates();
+        }
+        else
+        {
+            _host.TableView.ReloadData();
+        }
+
+        return true;
     }
 
     private void Commit(SettingsViewModel.ScalePreset preset, UITextField field)
@@ -168,37 +180,208 @@ internal sealed class iOSScalePresetEditor : UIStackView
         bool valid = (double.TryParse(field.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out double value)
             || double.TryParse(field.Text, NumberStyles.Float, CultureInfo.CurrentCulture, out value))
             && SettingsViewModel.IsValidScalePresetPercent(value);
-        _error.Hidden = valid;
-        _errorRow.Hidden = valid;
-        _error.Text = valid ? null : "请输入大于0且不超过1600%的数字";
+
+        SetValidationError(!valid);
+
+        int oldIndex = _settings.ScalePresets.IndexOf(preset);
         if (valid)
         {
             preset.Text = value.ToString("0.###", CultureInfo.InvariantCulture);
             _settings.ApplyScalePreset();
         }
         field.Text = preset.Text;
-        BeginInvokeOnMainThread(ReorderRows);
+
+        int newIndex = _settings.ScalePresets.IndexOf(preset);
+        if (valid && oldIndex >= 0 && newIndex >= 0 && oldIndex != newIndex)
+        {
+            int from = oldIndex;
+            int to = newIndex;
+            _host.BeginInvokeOnMainThread(() => MovePresetRow(from, to));
+        }
     }
 
-    /// <summary>行尾按钮右边距：44 点命中区内图标与卡片右缘留出标准 16 点。</summary>
-    private const double TrailingInset = 4;
-
-    /// <summary>无边框调色板符号按钮（白色符号 + 彩色圆底），44×44 命中区，禁用时系统自动淡化。</summary>
-    private static UIButton IconButton(string symbol, UIColor color, string label)
+    private void MovePresetRow(int fromIndex, int toIndex)
     {
-        var configuration = UIButtonConfiguration.PlainButtonConfiguration;
-        configuration.Image = UIImage.GetSystemImage(symbol);
-        configuration.PreferredSymbolConfigurationForImage = (UIImageSymbolConfiguration)UIImageSymbolConfiguration.Create(22)
-            .GetConfiguration(UIImageSymbolConfiguration.Create([UIColor.White, color]));
-        configuration.ContentInsets = new NSDirectionalEdgeInsets(0, 0, 0, 0);
-        var button = new UIButton(UIButtonType.System)
+        int section = _host.SectionIndexOf(this);
+        if (section < 0 || _host.ViewIfLoaded?.Window == null) return;
+        int count = _settings.ScalePresets.Count;
+        if (fromIndex < 0 || fromIndex >= count || toIndex < 0 || toIndex >= count || fromIndex == toIndex) return;
+
+        // 仅移动原生单元格，不 ReloadData、不重建 UITextField，避免打断其他行焦点或重弹键盘。
+        _host.TableView.BeginUpdates();
+        _host.TableView.MoveRow(
+            NSIndexPath.FromRowSection(fromIndex, section),
+            NSIndexPath.FromRowSection(toIndex, section));
+        _host.TableView.EndUpdates();
+    }
+
+    private void SetValidationError(bool hasError)
+    {
+        if (_hasValidationError == hasError) return;
+        _hasValidationError = hasError;
+        _errorLabel.Text = hasError ? ValidationMessage : null;
+        int section = _host.SectionIndexOf(this);
+        if (section < 0 || _host.ViewIfLoaded?.Window == null) return;
+        // 仅触发分组脚注重排，不重建预设单元格，不抢回输入框焦点。
+        UIView.PerformWithoutAnimation(() =>
         {
-            Configuration = configuration,
-            AccessibilityLabel = label,
+            _host.TableView.BeginUpdates();
+            _host.TableView.EndUpdates();
+        });
+    }
+
+    private void SyncCells()
+    {
+        foreach (var stale in _cells.Keys.Where(preset => !_settings.ScalePresets.Contains(preset)).ToArray())
+        {
+            _cells.Remove(stale);
+        }
+        foreach (var preset in _settings.ScalePresets)
+        {
+            GetOrCreateCell(preset);
+        }
+        UpdateDeleteStates();
+    }
+
+    private void UpdateDeleteStates()
+    {
+        bool canDelete = _settings.CanRemoveScalePreset;
+        foreach (var cell in _cells.Values)
+        {
+            cell.SetCanDelete(canDelete);
+        }
+    }
+
+    private iOSScalePresetCell GetOrCreateCell(SettingsViewModel.ScalePreset preset)
+    {
+        if (!_cells.TryGetValue(preset, out var cell))
+        {
+            cell = new iOSScalePresetCell(preset, Commit, p => _ = RemovePreset(p));
+            _cells[preset] = cell;
+        }
+        cell.SetCanDelete(_settings.CanRemoveScalePreset);
+        return cell;
+    }
+
+    private static UITableViewCell GetAddCell(UITableView tableView)
+    {
+        var cell = tableView.DequeueReusableCell(AddCellReuseId)
+            ?? new UITableViewCell(UITableViewCellStyle.Default, AddCellReuseId);
+        var config = UIListContentConfiguration.CellConfiguration;
+        config.Text = "添加缩放预设";
+        config.TextProperties.Color = UIColor.SystemBlue;
+        config.Image = UIImage.GetSystemImage("plus.circle.fill")
+            ?.ApplyConfiguration((UIImageSymbolConfiguration)UIImageSymbolConfiguration.Create(20)
+                .GetConfiguration(UIImageSymbolConfiguration.Create([UIColor.White, UIColor.SystemGreen])));
+        cell.ContentConfiguration = config;
+        cell.SelectionStyle = UITableViewCellSelectionStyle.Default;
+        cell.AccessibilityTraits = UIAccessibilityTrait.Button;
+        return cell;
+    }
+}
+
+/// <summary>
+/// 单条缩放比例预设的原生 <see cref="UITableViewCell"/>：
+/// 遵循系统 <c>LayoutMarginsGuide</c>、支持 Dynamic Type，内含无边框数值输入框、% 单位与 44×44 删除按钮。
+/// </summary>
+internal sealed class iOSScalePresetCell : UITableViewCell
+{
+    private readonly UITextField _field;
+    private readonly UIButton _deleteButton;
+
+    internal UITextField Field => _field;
+    internal UIButton DeleteButton => _deleteButton;
+
+    internal iOSScalePresetCell(
+        SettingsViewModel.ScalePreset preset,
+        Action<SettingsViewModel.ScalePreset, UITextField> onCommit,
+        Action<SettingsViewModel.ScalePreset> onDelete)
+        : base(UITableViewCellStyle.Default, null)
+    {
+        SelectionStyle = UITableViewCellSelectionStyle.None;
+
+        var font = UIFontMetrics.DefaultMetrics.GetScaledFont(
+            UIFont.MonospacedDigitSystemFontOfSize(17, UIFontWeight.Regular)!);
+
+        _field = new UITextField
+        {
+            Text = preset.Text,
+            Placeholder = "100",
+            Font = font,
+            AdjustsFontForContentSizeCategory = true,
+            TextColor = UIColor.Label,
+            KeyboardType = UIKeyboardType.DecimalPad,
+            BorderStyle = UITextBorderStyle.None,
+            ClearButtonMode = UITextFieldViewMode.WhileEditing,
+            AccessibilityLabel = "缩放比例预设",
             TranslatesAutoresizingMaskIntoConstraints = false,
         };
-        button.WidthAnchor.ConstraintEqualTo(44).Active = true;
-        button.HeightAnchor.ConstraintEqualTo(44).Active = true;
-        return button;
+        var toolbar = new UIToolbar(new CGRect(0, 0, 320, 44));
+        toolbar.Items =
+        [
+            new UIBarButtonItem(UIBarButtonSystemItem.FlexibleSpace),
+            new UIBarButtonItem(UIBarButtonSystemItem.Done, (_, _) => _field.ResignFirstResponder()),
+        ];
+        toolbar.SizeToFit();
+        _field.InputAccessoryView = toolbar;
+        _field.ShouldReturn = _ => { _field.ResignFirstResponder(); return true; };
+        _field.EditingDidEnd += (_, _) => onCommit(preset, _field);
+
+        var percentLabel = new UILabel
+        {
+            Text = "%",
+            Font = UIFont.PreferredBody!,
+            AdjustsFontForContentSizeCategory = true,
+            TextColor = UIColor.SecondaryLabel,
+            TranslatesAutoresizingMaskIntoConstraints = false,
+        };
+        percentLabel.SetContentHuggingPriority((float)UILayoutPriority.Required, UILayoutConstraintAxis.Horizontal);
+        percentLabel.SetContentCompressionResistancePriority((float)UILayoutPriority.Required, UILayoutConstraintAxis.Horizontal);
+
+        var deleteConfig = UIButtonConfiguration.PlainButtonConfiguration;
+        deleteConfig.Image = UIImage.GetSystemImage("minus.circle.fill");
+        deleteConfig.PreferredSymbolConfigurationForImage = (UIImageSymbolConfiguration)UIImageSymbolConfiguration.Create(22)
+            .GetConfiguration(UIImageSymbolConfiguration.Create([UIColor.White, UIColor.SystemRed]));
+        deleteConfig.ContentInsets = NSDirectionalEdgeInsets.Zero;
+        _deleteButton = new UIButton(UIButtonType.System)
+        {
+            Configuration = deleteConfig,
+            AccessibilityLabel = "删除预设",
+            TranslatesAutoresizingMaskIntoConstraints = false,
+        };
+        _deleteButton.TouchUpInside += (_, _) => onDelete(preset);
+
+        ContentView.AddSubview(_field);
+        ContentView.AddSubview(percentLabel);
+        ContentView.AddSubview(_deleteButton);
+
+        var minHeight = ContentView.HeightAnchor.ConstraintGreaterThanOrEqualTo(48);
+        minHeight.Priority = 999;
+
+        NSLayoutConstraint.ActivateConstraints(
+        [
+            minHeight,
+            _field.LeadingAnchor.ConstraintEqualTo(ContentView.LayoutMarginsGuide.LeadingAnchor),
+            _field.TopAnchor.ConstraintGreaterThanOrEqualTo(ContentView.TopAnchor, 6),
+            _field.BottomAnchor.ConstraintLessThanOrEqualTo(ContentView.BottomAnchor, -6),
+            _field.CenterYAnchor.ConstraintEqualTo(ContentView.CenterYAnchor),
+            _field.WidthAnchor.ConstraintGreaterThanOrEqualTo(64),
+            _field.HeightAnchor.ConstraintGreaterThanOrEqualTo(34),
+
+            percentLabel.LeadingAnchor.ConstraintEqualTo(_field.TrailingAnchor, 6),
+            percentLabel.CenterYAnchor.ConstraintEqualTo(ContentView.CenterYAnchor),
+
+            _deleteButton.LeadingAnchor.ConstraintGreaterThanOrEqualTo(percentLabel.TrailingAnchor, 12),
+            // 44×44 命中区右侧外扩，使 22pt 图标视觉右缘与系统 LayoutMarginsGuide 右缘对齐。
+            _deleteButton.TrailingAnchor.ConstraintEqualTo(ContentView.LayoutMarginsGuide.TrailingAnchor, 11),
+            _deleteButton.CenterYAnchor.ConstraintEqualTo(ContentView.CenterYAnchor),
+            _deleteButton.WidthAnchor.ConstraintEqualTo(44),
+            _deleteButton.HeightAnchor.ConstraintEqualTo(44),
+        ]);
+        _field.SetContentHuggingPriority((float)UILayoutPriority.DefaultHigh, UILayoutConstraintAxis.Horizontal);
     }
+
+    internal void SetCanDelete(bool canDelete) => _deleteButton.Enabled = canDelete;
+
+    internal void FocusField() => _field.BecomeFirstResponder();
 }

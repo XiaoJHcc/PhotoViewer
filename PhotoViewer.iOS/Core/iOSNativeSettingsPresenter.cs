@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
+using CoreGraphics;
 using Foundation;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Settings;
@@ -93,11 +95,10 @@ public sealed class iOSNativeSettingsPresenter : INativeSettingsPresenter
         return null;
     }
 
-    /// <summary>设置页与工具页共用的 sheet 圆角（验收按同一常量核对）。</summary>
-    internal const double SheetCornerRadius = 24;
-
     /// <summary>
     /// 配置 iOS 半屏浮窗的 detents 与交互参数。
+    /// 不覆写 <see cref="UISheetPresentationController.PreferredCornerRadius"/>，保持系统默认
+    /// <see cref="UISheetPresentationControllerDetent.AutomaticDimension"/>，由 iOS 26 自动计算底部同心圆角与原生材质。
     /// </summary>
     /// <param name="sheetPresentationController">系统 Sheet 控制器。</param>
     internal static void ConfigureSheetPresentation(UISheetPresentationController? sheetPresentationController)
@@ -113,18 +114,22 @@ public sealed class iOSNativeSettingsPresenter : INativeSettingsPresenter
             UISheetPresentationControllerDetent.CreateLargeDetent(),
         ];
         sheetPresentationController.PrefersGrabberVisible = true;
+        // SETTINGS-04：内容区滚动优先滚动列表，不借滚动拉大 sheet（收放由顶部把手/导航栏承担）。
         sheetPresentationController.PrefersScrollingExpandsWhenScrolledToEdge = false;
-        sheetPresentationController.PreferredCornerRadius = (nfloat)SheetCornerRadius;
     }
 }
 
 /// <summary>
 /// iOS 原生设置导航控制器。
-/// 负责持有关闭代理，确保系统下拉关闭时也会统一提交并释放工作副本。
+/// 负责持有关闭代理与内容滚动守卫，确保内容区下滑不误关半屏，且系统下拉/关闭按钮都会统一提交并释放工作副本。
 /// </summary>
 internal sealed class iOSNativeSettingsNavigationController : UINavigationController
 {
     private readonly iOSNativeSettingsDismissDelegate _dismissDelegate;
+    private readonly iOSSheetScrollGuard _scrollGuard = new();
+
+    /// <summary>内容区滚动守卫（验收核对内容滑动不触发关闭、把手与外部点击可关闭）。</summary>
+    internal iOSSheetScrollGuard ScrollGuard => _scrollGuard;
 
     /// <summary>
     /// 初始化原生设置导航控制器。
@@ -135,7 +140,8 @@ internal sealed class iOSNativeSettingsNavigationController : UINavigationContro
         : base(rootViewController)
     {
         ModalPresentationStyle = UIModalPresentationStyle.PageSheet;
-        _dismissDelegate = new iOSNativeSettingsDismissDelegate(settingsRoot);
+        Delegate = _scrollGuard;
+        _dismissDelegate = new iOSNativeSettingsDismissDelegate(this, settingsRoot);
     }
 
     /// <summary>
@@ -146,6 +152,7 @@ internal sealed class iOSNativeSettingsNavigationController : UINavigationContro
     public override void ViewWillAppear(bool animated)
     {
         base.ViewWillAppear(animated);
+        _scrollGuard.Attach(TopViewController);
         if (PresentationController != null)
         {
             PresentationController.Delegate = _dismissDelegate;
@@ -155,20 +162,31 @@ internal sealed class iOSNativeSettingsNavigationController : UINavigationContro
 
 /// <summary>
 /// iOS 原生设置关闭代理。
-/// 用于统一处理关闭按钮与下拉收起后的设置提交。
+/// 拦截内容区下滑到顶引起的误关闭，并统一处理关闭按钮与系统下拉收起后的设置提交。
 /// </summary>
 internal sealed class iOSNativeSettingsDismissDelegate : UIAdaptivePresentationControllerDelegate
 {
+    private readonly iOSNativeSettingsNavigationController _navigation;
     private readonly iOSNativeSettingsRootViewController _root;
 
     /// <summary>
     /// 初始化关闭代理。
     /// </summary>
+    /// <param name="navigation">设置导航控制器。</param>
     /// <param name="root">设置页根控制器。</param>
-    public iOSNativeSettingsDismissDelegate(iOSNativeSettingsRootViewController root)
+    public iOSNativeSettingsDismissDelegate(
+        iOSNativeSettingsNavigationController navigation,
+        iOSNativeSettingsRootViewController root)
     {
+        _navigation = navigation;
         _root = root;
     }
+
+    /// <summary>内容滚动手势期间不因下滑到顶误关半屏；顶部把手/导航栏下拉与外部点击正常放行。</summary>
+    /// <param name="presentationController">当前展示控制器。</param>
+    /// <returns>允许关闭时返回 true。</returns>
+    public override bool ShouldDismiss(UIPresentationController presentationController)
+        => _navigation.ScrollGuard.ShouldAllowDismiss(_navigation.TopViewController);
 
     /// <summary>
     /// 在系统 sheet 完成关闭后提交工作副本并释放会话（重复触发只执行一次）。
@@ -274,10 +292,7 @@ internal sealed class iOSNativeSettingsRootViewController : UITableViewControlle
     /// </summary>
     /// <param name="tableView">当前表格。</param>
     /// <returns>固定 1 个分组。</returns>
-    public override nint NumberOfSections(UITableView tableView)
-    {
-        return 1;
-    }
+    public override nint NumberOfSections(UITableView tableView) => 1;
 
     /// <summary>
     /// 返回当前分组的行数。
@@ -285,10 +300,7 @@ internal sealed class iOSNativeSettingsRootViewController : UITableViewControlle
     /// <param name="tableView">当前表格。</param>
     /// <param name="section">分组索引。</param>
     /// <returns>一级分类数量。</returns>
-    public override nint RowsInSection(UITableView tableView, nint section)
-    {
-        return _items.Length;
-    }
+    public override nint RowsInSection(UITableView tableView, nint section) => _items.Length;
 
     /// <summary>
     /// 构建一级分类单元格。
@@ -325,10 +337,10 @@ internal sealed class iOSNativeSettingsRootViewController : UITableViewControlle
 }
 
 /// <summary>
-/// 原生设置滚动表单基类。
-/// 负责搭建带卡片分组的滚动容器并提供常用原生控件行。
+/// 原生设置分组列表基类：直接继承系统 <see cref="UITableViewController"/>（<see cref="UITableViewStyle.InsetGrouped"/>），
+/// 由 UIKit 统一承担圆角卡片、系统边距、发丝分隔线、导航栏滚动边缘模糊、底部安全区避让与分组内拖拽排序。
 /// </summary>
-internal abstract class iOSNativeSettingsFormViewController : UIViewController
+internal abstract class iOSNativeSettingsFormViewController : UITableViewController
 {
     /// <summary>拉条行内拉条的最小宽度（行宽不足时压缩标题而不是压掉拉条）。</summary>
     private const double SliderRowSliderMinWidth = 88;
@@ -336,32 +348,49 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
     /// <summary>拉条行当前值的最小宽度（等宽数字右对齐）。</summary>
     private const double SliderRowValueMinWidth = 64;
 
-    private readonly UIScrollView _scrollView = new();
-    private readonly UIStackView _contentStack = new();
+    private readonly List<SettingsSection> _sections = [];
 
-    /// <summary>
-    /// 共享设置 ViewModel。
-    /// </summary>
+    /// <summary>共享设置 ViewModel。</summary>
     protected SettingsViewModel Settings { get; }
 
-    /// <summary>
-    /// 初始化原生表单基类。
-    /// </summary>
+    /// <summary>当前页面的分组清单（子类与验收只读访问）。</summary>
+    protected List<SettingsSection> Sections => _sections;
+
+    /// <summary>初始化原生分组表单基类。</summary>
     /// <param name="settings">共享设置 ViewModel。</param>
     protected iOSNativeSettingsFormViewController(SettingsViewModel settings)
+        : base(UITableViewStyle.InsetGrouped)
     {
         Settings = settings;
     }
 
-    /// <summary>
-    /// 初始化滚动容器。
-    /// </summary>
+    /// <summary>初始化原生分组列表、子页关闭按钮与空白点击收键盘手势。</summary>
     public override void ViewDidLoad()
     {
         base.ViewDidLoad();
-        View!.BackgroundColor = UIColor.SystemGroupedBackground;
-        ConfigureLayout();
+        NavigationItem.RightBarButtonItem = new UIBarButtonItem(UIBarButtonSystemItem.Close, (_, _) => DismissSettings());
+        TableView.BackgroundColor = UIColor.SystemGroupedBackground;
+        TableView.CellLayoutMarginsFollowReadableWidth = false;
+        TableView.KeyboardDismissMode = UIScrollViewKeyboardDismissMode.Interactive;
+        TableView.RowHeight = UITableView.AutomaticDimension;
+        TableView.EstimatedRowHeight = (nfloat)iOSNativeSettingsMetrics.ListRowHeight;
+        TableView.SectionHeaderHeight = UITableView.AutomaticDimension;
+        TableView.SectionFooterHeight = UITableView.AutomaticDimension;
+
+        var dismissKeyboard = new UITapGestureRecognizer(() => View?.EndEditing(true)) { CancelsTouchesInView = false };
+        dismissKeyboard.Delegate = new iOSNonControlTapDelegate();
+        TableView.AddGestureRecognizer(dismissKeyboard);
+
         RebuildContent();
+    }
+
+    private void DismissSettings()
+    {
+        if (NavigationController?.ViewControllers?.FirstOrDefault() is iOSNativeSettingsRootViewController root)
+        {
+            _ = root.CloseAsync();
+        }
+        DismissViewController(true, null);
     }
 
     public override void ViewWillDisappear(bool animated)
@@ -370,162 +399,184 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
         base.ViewWillDisappear(animated);
     }
 
-    /// <summary>
-    /// 子类构建页面内容。
-    /// </summary>
-    /// <param name="contentStack">页面主内容栈。</param>
-    protected abstract void BuildContent(UIStackView contentStack);
+    /// <summary>子类构建原生分组列表的各个 section。</summary>
+    /// <param name="sections">目标分组集合。</param>
+    protected abstract void BuildSections(List<SettingsSection> sections);
 
-    /// <summary>
-    /// 重新生成整页内容；保留用户滚动位置，不把长表单送回顶部。
-    /// </summary>
+    /// <summary>重新构建整页分组；保留用户滚动位置，不把长表单送回顶部。</summary>
     protected void RebuildContent()
     {
-        var offset = _scrollView.ContentOffset;
-        foreach (var view in _contentStack.ArrangedSubviews)
+        var offset = TableView.ContentOffset;
+        bool hadLayout = TableView.Bounds.Height > 0 && TableView.ContentSize.Height > 0;
+        _sections.Clear();
+        BuildSections(_sections);
+        bool hasReorderable = _sections.Any(section => section.CanReorder);
+        TableView.SetEditing(hasReorderable, false);
+        TableView.AllowsSelectionDuringEditing = true;
+        TableView.ReloadData();
+        if (!hadLayout) return;
+
+        TableView.LayoutIfNeeded();
+        double minY = -(double)TableView.AdjustedContentInset.Top;
+        double maxY = Math.Max(
+            minY,
+            (double)TableView.ContentSize.Height - (double)TableView.Bounds.Height + (double)TableView.AdjustedContentInset.Bottom);
+        var clamped = new CGPoint(offset.X, Math.Clamp((double)offset.Y, minY, maxY));
+        if (Math.Abs((double)(clamped.Y - TableView.ContentOffset.Y)) > .5)
+            TableView.SetContentOffset(clamped, false);
+    }
+
+    /// <summary>按当前内容就地重算单元格高度（不调用 ReloadData，不打断输入框焦点）。</summary>
+    protected void RefreshRowHeightsInPlace()
+    {
+        if (ViewIfLoaded?.Window == null) return;
+        UIView.PerformWithoutAnimation(() =>
         {
-            _contentStack.RemoveArrangedSubview(view);
-            view.RemoveFromSuperview();
+            TableView.BeginUpdates();
+            TableView.EndUpdates();
+        });
+    }
+
+    /// <summary>查找指定分组在表格中的当前 section 索引；未挂入时返回 -1。</summary>
+    /// <param name="section">目标分组。</param>
+    /// <returns>section 索引或 -1。</returns>
+    internal int SectionIndexOf(SettingsSection? section) => section == null ? -1 : _sections.IndexOf(section);
+
+    public override nint NumberOfSections(UITableView tableView) => _sections.Count;
+
+    public override nint RowsInSection(UITableView tableView, nint section)
+        => section >= 0 && section < _sections.Count ? _sections[(int)section].RowCount : 0;
+
+    public override string? TitleForHeader(UITableView tableView, nint section)
+    {
+        if (section < 0 || section >= _sections.Count) return null;
+        var title = _sections[(int)section].HeaderTitle;
+        return string.IsNullOrWhiteSpace(title) ? null : title;
+    }
+
+    public override nfloat EstimatedHeightForHeader(UITableView tableView, nint section)
+        => section >= 0 && section < _sections.Count && !string.IsNullOrWhiteSpace(_sections[(int)section].HeaderTitle) ? 32 : 0;
+
+    public override UIView GetViewForFooter(UITableView tableView, nint section)
+        => (section >= 0 && section < _sections.Count ? _sections[(int)section].FooterView : null)!;
+
+    public override nfloat EstimatedHeightForFooter(UITableView tableView, nint section)
+        => section >= 0 && section < _sections.Count && _sections[(int)section].FooterView != null ? 44 : 0;
+
+    public override UITableViewCell GetCell(UITableView tableView, NSIndexPath indexPath)
+        => _sections[(int)indexPath.Section].GetCell(tableView, indexPath);
+
+    public override nfloat GetHeightForRow(UITableView tableView, NSIndexPath indexPath)
+        => _sections[(int)indexPath.Section].GetRowHeight(tableView, indexPath);
+
+    public override nfloat EstimatedHeight(UITableView tableView, NSIndexPath indexPath)
+        => _sections[(int)indexPath.Section].GetEstimatedRowHeight(tableView, indexPath);
+
+    public override void RowSelected(UITableView tableView, NSIndexPath indexPath)
+        => _sections[(int)indexPath.Section].OnRowSelected(tableView, indexPath);
+
+    public override UISwipeActionsConfiguration? GetTrailingSwipeActionsConfiguration(UITableView tableView, NSIndexPath indexPath)
+        => indexPath.Section >= 0 && indexPath.Section < _sections.Count
+            ? _sections[(int)indexPath.Section].GetTrailingSwipeActions(tableView, indexPath)
+            : null;
+
+    public override bool CanEditRow(UITableView tableView, NSIndexPath indexPath)
+        => indexPath.Section >= 0 && indexPath.Section < _sections.Count && _sections[(int)indexPath.Section].CanReorder;
+
+    public override bool CanMoveRow(UITableView tableView, NSIndexPath indexPath)
+        => indexPath.Section >= 0 && indexPath.Section < _sections.Count && _sections[(int)indexPath.Section].CanReorder;
+
+    public override UITableViewCellEditingStyle EditingStyleForRow(UITableView tableView, NSIndexPath indexPath)
+        => UITableViewCellEditingStyle.None;
+
+    public override bool ShouldIndentWhileEditing(UITableView tableView, NSIndexPath indexPath) => false;
+
+    /// <summary>限制拖拽排序只在原分组内移动，不能跨分组拖出。</summary>
+    public override NSIndexPath CustomizeMoveTarget(
+        UITableView tableView,
+        NSIndexPath sourceIndexPath,
+        NSIndexPath proposedIndexPath)
+    {
+        if (proposedIndexPath.Section < sourceIndexPath.Section)
+            return NSIndexPath.FromRowSection(0, sourceIndexPath.Section);
+        if (proposedIndexPath.Section > sourceIndexPath.Section)
+        {
+            int lastRow = Math.Max(0, _sections[(int)sourceIndexPath.Section].RowCount - 1);
+            return NSIndexPath.FromRowSection(lastRow, sourceIndexPath.Section);
         }
-
-        BuildContent(_contentStack);
-        _scrollView.LayoutIfNeeded();
-        double maxY = Math.Max(0, (double)_scrollView.ContentSize.Height - (double)_scrollView.Bounds.Height);
-        var clamped = new CoreGraphics.CGPoint(offset.X, Math.Min((double)offset.Y, maxY));
-        if (clamped != _scrollView.ContentOffset) _scrollView.SetContentOffset(clamped, false);
+        return proposedIndexPath;
     }
 
-    /// <summary>
-    /// 配置滚动布局与安全区约束。
-    /// </summary>
-    private void ConfigureLayout()
+    public override void MoveRow(UITableView tableView, NSIndexPath sourceIndexPath, NSIndexPath destinationIndexPath)
     {
-        _scrollView.TranslatesAutoresizingMaskIntoConstraints = false;
-        var dismissKeyboard = new UITapGestureRecognizer(() => View?.EndEditing(true)) { CancelsTouchesInView = false };
-        dismissKeyboard.Delegate = new iOSNonControlTapDelegate();
-        _scrollView.AddGestureRecognizer(dismissKeyboard);
-        _scrollView.KeyboardDismissMode = UIScrollViewKeyboardDismissMode.Interactive;
-        _contentStack.TranslatesAutoresizingMaskIntoConstraints = false;
-        _contentStack.Axis = UILayoutConstraintAxis.Vertical;
-        _contentStack.Spacing = 20;
-        _contentStack.LayoutMarginsRelativeArrangement = true;
-        _contentStack.LayoutMargins = new UIEdgeInsets(16, 16, 24, 16);
-
-        var rootView = View!;
-        rootView.AddSubview(_scrollView);
-        _scrollView.AddSubview(_contentStack);
-
-        NSLayoutConstraint.ActivateConstraints(
-        [
-            _scrollView.TopAnchor.ConstraintEqualTo(rootView.SafeAreaLayoutGuide.TopAnchor),
-            _scrollView.LeadingAnchor.ConstraintEqualTo(rootView.LeadingAnchor),
-            _scrollView.TrailingAnchor.ConstraintEqualTo(rootView.TrailingAnchor),
-            _scrollView.BottomAnchor.ConstraintEqualTo(rootView.BottomAnchor),
-
-            _contentStack.TopAnchor.ConstraintEqualTo(_scrollView.ContentLayoutGuide.TopAnchor),
-            _contentStack.LeadingAnchor.ConstraintEqualTo(_scrollView.ContentLayoutGuide.LeadingAnchor),
-            _contentStack.TrailingAnchor.ConstraintEqualTo(_scrollView.ContentLayoutGuide.TrailingAnchor),
-            _contentStack.BottomAnchor.ConstraintEqualTo(_scrollView.ContentLayoutGuide.BottomAnchor),
-            _contentStack.WidthAnchor.ConstraintEqualTo(_scrollView.FrameLayoutGuide.WidthAnchor),
-        ]);
+        if (sourceIndexPath.Section != destinationIndexPath.Section) return;
+        _sections[(int)sourceIndexPath.Section].OnMoveRow(tableView, (int)sourceIndexPath.Section, sourceIndexPath.Row, destinationIndexPath.Row);
     }
 
-    /// <summary>
-    /// 创建带标题与说明的分组卡片。
-    /// </summary>
-    /// <param name="title">分组标题。</param>
-    /// <param name="footer">分组底部说明。</param>
-    /// <param name="rows">分组行视图。</param>
-    /// <returns>完整分组视图。</returns>
-    protected UIView CreateSection(string title, string? footer, params UIView[] rows)
+    /// <summary>创建原生静态行分组。</summary>
+    /// <param name="title">分组标题；空字符串或 null 时不显示标题。</param>
+    /// <param name="footerView">分组底部视图；可为 null。</param>
+    /// <param name="rows">分组单元格列表。</param>
+    /// <returns>原生静态分组。</returns>
+    protected static SettingsSection CreateSection(string? title, UIView? footerView, params UITableViewCell[] rows)
+        => new StaticRowsSection(title, rows, footerView);
+
+    /// <summary>创建自定义内容单元格（撑满系统分组卡片，由系统给出圆角与材质）。</summary>
+    /// <param name="content">单元格内容视图。</param>
+    /// <returns>原生单元格。</returns>
+    protected static UITableViewCell CreateCustomCell(UIView content)
     {
-        var sectionStack = new UIStackView
+        var cell = new UITableViewCell(UITableViewCellStyle.Default, null)
         {
-            Axis = UILayoutConstraintAxis.Vertical,
-            Spacing = 8,
-            TranslatesAutoresizingMaskIntoConstraints = false
+            SelectionStyle = UITableViewCellSelectionStyle.None,
         };
-
-        if (!string.IsNullOrWhiteSpace(title))
-        {
-            var titleLabel = CreateSectionTitleLabel(title);
-            sectionStack.AddArrangedSubview(titleLabel);
-        }
-
-        sectionStack.AddArrangedSubview(CreateCard(rows));
-
-        if (!string.IsNullOrWhiteSpace(footer))
-        {
-            sectionStack.AddArrangedSubview(CreateSectionFooterLabel(footer));
-        }
-
-        return sectionStack;
-    }
-
-    /// <summary>
-    /// 创建自定义内容行。
-    /// </summary>
-    /// <param name="content">行内内容视图。</param>
-    /// <returns>带默认边距的行视图。</returns>
-    protected UIView CreateCustomRow(UIView content)
-    {
-        var row = CreateRowContainer();
-        row.AddSubview(content);
+        content.TranslatesAutoresizingMaskIntoConstraints = false;
+        cell.ContentView.AddSubview(content);
         NSLayoutConstraint.ActivateConstraints(
         [
-            content.TopAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.TopAnchor),
-            content.LeadingAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.LeadingAnchor),
-            content.TrailingAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.TrailingAnchor),
-            content.BottomAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.BottomAnchor),
+            content.TopAnchor.ConstraintEqualTo(cell.ContentView.TopAnchor),
+            content.LeadingAnchor.ConstraintEqualTo(cell.ContentView.LeadingAnchor),
+            content.TrailingAnchor.ConstraintEqualTo(cell.ContentView.TrailingAnchor),
+            content.BottomAnchor.ConstraintEqualTo(cell.ContentView.BottomAnchor),
         ]);
-
-        return row;
+        return cell;
     }
 
-    /// <summary>
-    /// 创建开关设置行。
-    /// </summary>
-    /// <param name="title">主标题。</param>
-    /// <param name="subtitle">副标题。</param>
-    /// <param name="getter">读取当前值的方法。</param>
-    /// <param name="setter">写入值的方法。</param>
-    /// <param name="onValueChanged">值变化后的额外回调。</param>
-    /// <returns>原生开关行。</returns>
-    protected UIView CreateSwitchRow(
+    /// <summary>创建原生开关单元格（系统列表内容配置 + UISwitch 附件）。</summary>
+    protected static UITableViewCell CreateSwitchRow(
         string title,
         string? subtitle,
         Func<bool> getter,
         Action<bool> setter,
         Action? onValueChanged = null)
     {
-        var toggle = new UISwitch
+        var cell = new UITableViewCell(UITableViewCellStyle.Subtitle, null)
         {
-            On = getter()
+            SelectionStyle = UITableViewCellSelectionStyle.None,
         };
-        toggle.SetContentHuggingPriority((float)UILayoutPriority.Required, UILayoutConstraintAxis.Horizontal);
+        var configuration = UIListContentConfiguration.SubtitleCellConfiguration;
+        configuration.Text = title;
+        configuration.TextProperties.NumberOfLines = 0;
+        if (!string.IsNullOrWhiteSpace(subtitle))
+        {
+            configuration.SecondaryText = subtitle;
+            configuration.SecondaryTextProperties.Color = UIColor.SecondaryLabel;
+            configuration.SecondaryTextProperties.NumberOfLines = 0;
+        }
+        cell.ContentConfiguration = configuration;
+
+        var toggle = new UISwitch { On = getter() };
         toggle.ValueChanged += (_, _) =>
         {
             setter(toggle.On);
             onValueChanged?.Invoke();
         };
-
-        return CreateAccessoryRow(title, subtitle, toggle);
+        cell.AccessoryView = toggle;
+        return cell;
     }
 
-    /// <summary>
-    /// 创建步进器设置行。
-    /// </summary>
-    /// <param name="title">主标题。</param>
-    /// <param name="subtitle">副标题。</param>
-    /// <param name="getter">读取当前值的方法。</param>
-    /// <param name="setter">写入值的方法。</param>
-    /// <param name="minimumProvider">最小值提供器。</param>
-    /// <param name="maximumProvider">最大值提供器。</param>
-    /// <param name="step">步进值。</param>
-    /// <param name="valueFormatter">数值格式化器。</param>
-    /// <param name="onValueChanged">值变化后的额外回调。</param>
-    /// <returns>原生步进器行。</returns>
-    protected UIView CreateStepperRow(
+    /// <summary>创建原生步进器单元格。</summary>
+    protected static UITableViewCell CreateStepperRow(
         string title,
         string? subtitle,
         Func<int> getter,
@@ -537,10 +588,7 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
         Action? onValueChanged = null)
     {
         var valueLabel = CreateTrailingValueLabel();
-        var stepper = new UIStepper
-        {
-            StepValue = step
-        };
+        var stepper = new UIStepper { StepValue = step };
         stepper.SetContentHuggingPriority((float)UILayoutPriority.Required, UILayoutConstraintAxis.Horizontal);
 
         void Refresh()
@@ -572,7 +620,7 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
             Axis = UILayoutConstraintAxis.Horizontal,
             Alignment = UIStackViewAlignment.Center,
             Spacing = 10,
-            TranslatesAutoresizingMaskIntoConstraints = false
+            TranslatesAutoresizingMaskIntoConstraints = false,
         };
         accessoryStack.AddArrangedSubview(valueLabel);
         accessoryStack.AddArrangedSubview(stepper);
@@ -581,21 +629,10 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
     }
 
     /// <summary>
-    /// 创建滑条设置行：标题 → 弹性拉条 → 固定最小宽右对齐当前值，三者同行（SETTINGS-16）。
+    /// 创建原生滑条单元格：标题 → 弹性拉条 → 固定最小宽右对齐当前值，三者同行（SETTINGS-16）。
     /// 行宽不足时标题先换行收缩，拉条保有自己的最小宽度，不与数值叠压。
     /// </summary>
-    /// <param name="title">主标题。</param>
-    /// <param name="subtitle">副标题。</param>
-    /// <param name="getter">读取当前值的方法。</param>
-    /// <param name="setter">写入值的方法。</param>
-    /// <param name="minimum">最小值。</param>
-    /// <param name="maximum">最大值。</param>
-    /// <param name="step">步进；> 0 时取值只落在从最小值起算的整数倍刻度上（滑条与文本同步取整）。</param>
-    /// <param name="valueFormatter">数值格式化器。</param>
-    /// <param name="onValueChanged">值变化后的额外回调。</param>
-    /// <param name="onEditingCompleted">结束拖动后的额外回调。</param>
-    /// <returns>原生滑条行。</returns>
-    protected UIView CreateSliderRow(
+    protected static UITableViewCell CreateSliderRow(
         string title,
         string? subtitle,
         Func<int> getter,
@@ -607,13 +644,13 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
         Action? onValueChanged = null,
         Action? onEditingCompleted = null)
     {
-        var row = CreateRowContainer();
+        var cell = CreateRowCell();
         var contentStack = new UIStackView
         {
             Axis = UILayoutConstraintAxis.Horizontal,
             Alignment = UIStackViewAlignment.Center,
             Spacing = 12,
-            TranslatesAutoresizingMaskIntoConstraints = false
+            TranslatesAutoresizingMaskIntoConstraints = false,
         };
 
         var textStack = CreateTextStack(title, subtitle);
@@ -631,7 +668,7 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
         {
             MinValue = minimum,
             MaxValue = maximum,
-            Continuous = true
+            Continuous = true,
         };
         slider.SetContentHuggingPriority((float)UILayoutPriority.DefaultLow - 1, UILayoutConstraintAxis.Horizontal);
         slider.SetContentCompressionResistancePriority(
@@ -676,351 +713,352 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
 
         Refresh();
 
-        row.AddSubview(contentStack);
-
+        cell.ContentView.AddSubview(contentStack);
         NSLayoutConstraint.ActivateConstraints(
         [
-            contentStack.TopAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.TopAnchor),
-            contentStack.LeadingAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.LeadingAnchor),
-            contentStack.TrailingAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.TrailingAnchor),
-            contentStack.BottomAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.BottomAnchor),
+            contentStack.TopAnchor.ConstraintEqualTo(cell.ContentView.LayoutMarginsGuide.TopAnchor),
+            contentStack.LeadingAnchor.ConstraintEqualTo(cell.ContentView.LayoutMarginsGuide.LeadingAnchor),
+            contentStack.TrailingAnchor.ConstraintEqualTo(cell.ContentView.LayoutMarginsGuide.TrailingAnchor),
+            contentStack.BottomAnchor.ConstraintEqualTo(cell.ContentView.LayoutMarginsGuide.BottomAnchor),
         ]);
 
-        return row;
+        return cell;
     }
 
-    /// <summary>验收：用同一构建器生成一条滑条行（不挂到页面），用于核对同行几何与间距。</summary>
-    /// <param name="title">主标题。</param>
-    /// <param name="valueText">当前值文本。</param>
-    /// <returns>原生滑条行。</returns>
-    internal UIView CreateSliderRowForChecks(string title, string valueText)
+    /// <summary>验收：用同一构建器生成一条滑条单元格（不挂到页面），用于核对同行几何与间距。</summary>
+    internal UITableViewCell CreateSliderRowForChecks(string title, string valueText)
         => CreateSliderRow(title, null, () => 85, _ => { }, 75, 95, valueFormatter: _ => valueText);
 
-    /// <summary>
-    /// 创建导航跳转行。
-    /// </summary>
-    /// <param name="title">主标题。</param>
-    /// <param name="subtitle">副标题。</param>
-    /// <param name="trailingText">右侧补充文本。</param>
-    /// <param name="onTap">点击回调。</param>
-    /// <returns>可点击的导航行。</returns>
-    protected UIView CreateNavigationRow(
-        string title,
-        string? subtitle,
-        string? trailingText,
-        Action onTap)
+    private static UITableViewCell CreateAccessoryRow(string title, string? subtitle, UIView? accessoryView)
     {
-        var row = CreateRowContainer();
-        var button = new UIControl
-        {
-            TranslatesAutoresizingMaskIntoConstraints = false
-        };
-        button.TouchUpInside += (_, _) => onTap();
-        row.AddSubview(button);
-
-        var contentStack = new UIStackView
-        {
-            Axis = UILayoutConstraintAxis.Horizontal,
-            Alignment = UIStackViewAlignment.Center,
-            Spacing = 12,
-            TranslatesAutoresizingMaskIntoConstraints = false
-        };
+        var cell = CreateRowCell();
         var textStack = CreateTextStack(title, subtitle);
-        var trailingLabel = CreateTrailingValueLabel();
-        trailingLabel.Text = trailingText;
-        trailingLabel.TextAlignment = UITextAlignment.Right;
-        trailingLabel.Lines = 2;
-        var chevronLabel = new UILabel
+        cell.ContentView.AddSubview(textStack);
+
+        var minHeight = cell.ContentView.HeightAnchor.ConstraintGreaterThanOrEqualTo(44);
+        minHeight.Priority = 999;
+
+        var constraints = new List<NSLayoutConstraint>
         {
-            Text = "›",
-            Font = UIFont.SystemFontOfSize(20, UIFontWeight.Semibold),
-            TextColor = UIColor.TertiaryLabel,
-            TranslatesAutoresizingMaskIntoConstraints = false
+            minHeight,
+            textStack.LeadingAnchor.ConstraintEqualTo(cell.ContentView.LayoutMarginsGuide.LeadingAnchor),
+            textStack.TopAnchor.ConstraintGreaterThanOrEqualTo(cell.ContentView.LayoutMarginsGuide.TopAnchor),
+            textStack.BottomAnchor.ConstraintLessThanOrEqualTo(cell.ContentView.LayoutMarginsGuide.BottomAnchor),
+            textStack.CenterYAnchor.ConstraintEqualTo(cell.ContentView.CenterYAnchor),
         };
-        chevronLabel.SetContentCompressionResistancePriority((float)UILayoutPriority.Required, UILayoutConstraintAxis.Horizontal);
-
-        contentStack.AddArrangedSubview(textStack);
-        contentStack.AddArrangedSubview(CreateFlexibleSpacer());
-        contentStack.AddArrangedSubview(trailingLabel);
-        contentStack.AddArrangedSubview(chevronLabel);
-        button.AddSubview(contentStack);
-
-        NSLayoutConstraint.ActivateConstraints(
-        [
-            button.TopAnchor.ConstraintEqualTo(row.TopAnchor),
-            button.LeadingAnchor.ConstraintEqualTo(row.LeadingAnchor),
-            button.TrailingAnchor.ConstraintEqualTo(row.TrailingAnchor),
-            button.BottomAnchor.ConstraintEqualTo(row.BottomAnchor),
-
-            contentStack.TopAnchor.ConstraintEqualTo(button.LayoutMarginsGuide.TopAnchor),
-            contentStack.LeadingAnchor.ConstraintEqualTo(button.LayoutMarginsGuide.LeadingAnchor),
-            contentStack.TrailingAnchor.ConstraintEqualTo(button.LayoutMarginsGuide.TrailingAnchor),
-            contentStack.BottomAnchor.ConstraintEqualTo(button.LayoutMarginsGuide.BottomAnchor),
-        ]);
-
-        button.LayoutMargins = row.LayoutMargins;
-        return row;
-    }
-
-    /// <summary>
-    /// 创建只读说明行。
-    /// </summary>
-    /// <param name="title">主标题。</param>
-    /// <param name="subtitle">说明文本。</param>
-    /// <returns>只读信息行。</returns>
-    protected UIView CreateStaticInfoRow(string title, string? subtitle)
-    {
-        return CreateAccessoryRow(title, subtitle, null);
-    }
-
-    /// <summary>
-    /// 创建通用左右布局行。
-    /// </summary>
-    /// <param name="title">主标题。</param>
-    /// <param name="subtitle">副标题。</param>
-    /// <param name="accessoryView">右侧原生控件。</param>
-    /// <returns>构建完成的行视图。</returns>
-    private UIView CreateAccessoryRow(string title, string? subtitle, UIView? accessoryView)
-    {
-        var row = CreateRowContainer();
-        var horizontalStack = new UIStackView
-        {
-            Axis = UILayoutConstraintAxis.Horizontal,
-            Alignment = UIStackViewAlignment.Center,
-            Spacing = 12,
-            TranslatesAutoresizingMaskIntoConstraints = false
-        };
-
-        var textStack = CreateTextStack(title, subtitle);
-        horizontalStack.AddArrangedSubview(textStack);
-        horizontalStack.AddArrangedSubview(CreateFlexibleSpacer());
 
         if (accessoryView != null)
         {
-            horizontalStack.AddArrangedSubview(accessoryView);
+            accessoryView.TranslatesAutoresizingMaskIntoConstraints = false;
+            cell.ContentView.AddSubview(accessoryView);
+            constraints.Add(textStack.TrailingAnchor.ConstraintLessThanOrEqualTo(accessoryView.LeadingAnchor, -12));
+            constraints.Add(accessoryView.TrailingAnchor.ConstraintEqualTo(cell.ContentView.LayoutMarginsGuide.TrailingAnchor));
+            constraints.Add(accessoryView.TopAnchor.ConstraintGreaterThanOrEqualTo(cell.ContentView.LayoutMarginsGuide.TopAnchor));
+            constraints.Add(accessoryView.BottomAnchor.ConstraintLessThanOrEqualTo(cell.ContentView.LayoutMarginsGuide.BottomAnchor));
+            constraints.Add(accessoryView.CenterYAnchor.ConstraintEqualTo(cell.ContentView.CenterYAnchor));
+        }
+        else
+        {
+            constraints.Add(textStack.TrailingAnchor.ConstraintEqualTo(cell.ContentView.LayoutMarginsGuide.TrailingAnchor));
         }
 
-        row.AddSubview(horizontalStack);
-        NSLayoutConstraint.ActivateConstraints(
-        [
-            horizontalStack.TopAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.TopAnchor),
-            horizontalStack.LeadingAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.LeadingAnchor),
-            horizontalStack.TrailingAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.TrailingAnchor),
-            horizontalStack.BottomAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.BottomAnchor),
-        ]);
-
-        return row;
+        NSLayoutConstraint.ActivateConstraints(constraints.ToArray());
+        return cell;
     }
 
-    /// <summary>
-    /// 创建卡片容器，并在多行之间自动插入分隔线。
-    /// </summary>
-    /// <param name="rows">卡片中的行视图。</param>
-    /// <returns>圆角卡片视图。</returns>
-    protected UIView CreateCard(params UIView[] rows)
+    protected static UITableViewCell CreateRowCell()
     {
-        var card = new UIView
+        var cell = new UITableViewCell(UITableViewCellStyle.Default, null)
         {
-            BackgroundColor = UIColor.SecondarySystemGroupedBackground,
-            TranslatesAutoresizingMaskIntoConstraints = false
+            SelectionStyle = UITableViewCellSelectionStyle.None,
         };
-        card.Layer.CornerRadius = 16;
-        card.Layer.MasksToBounds = true;
-
-        var stack = new UIStackView
-        {
-            Axis = UILayoutConstraintAxis.Vertical,
-            Spacing = 0,
-            TranslatesAutoresizingMaskIntoConstraints = false
-        };
-        card.AddSubview(stack);
-
-        NSLayoutConstraint.ActivateConstraints(
-        [
-            stack.TopAnchor.ConstraintEqualTo(card.TopAnchor),
-            stack.LeadingAnchor.ConstraintEqualTo(card.LeadingAnchor),
-            stack.TrailingAnchor.ConstraintEqualTo(card.TrailingAnchor),
-            stack.BottomAnchor.ConstraintEqualTo(card.BottomAnchor),
-        ]);
-
-        for (var index = 0; index < rows.Length; index++)
-        {
-            stack.AddArrangedSubview(rows[index]);
-            if (index < rows.Length - 1)
-            {
-                stack.AddArrangedSubview(CreateSeparator());
-            }
-        }
-
-        return card;
+        cell.ContentView.DirectionalLayoutMargins = new NSDirectionalEdgeInsets(10, 16, 10, 16);
+        return cell;
     }
 
-    /// <summary>
-    /// 创建数字输入完成工具栏。
-    /// </summary>
-    /// <param name="textField">目标输入框。</param>
-    /// <returns>带完成按钮的工具栏。</returns>
-    protected static UIToolbar CreateDoneToolbar(UITextField textField)
-    {
-        var toolbar = new UIToolbar
-        {
-            TranslatesAutoresizingMaskIntoConstraints = false
-        };
-        toolbar.SizeToFit();
-
-        var flexibleItem = new UIBarButtonItem(UIBarButtonSystemItem.FlexibleSpace);
-        var doneItem = new UIBarButtonItem(UIBarButtonSystemItem.Done, (_, _) => textField.ResignFirstResponder());
-        toolbar.SetItems([flexibleItem, doneItem], false);
-        return toolbar;
-    }
-
-    /// <summary>
-    /// 创建标准行容器。
-    /// </summary>
-    /// <returns>带默认边距的空行视图。</returns>
-    private static UIView CreateRowContainer()
-    {
-        return new UIView
-        {
-            TranslatesAutoresizingMaskIntoConstraints = false,
-            LayoutMargins = new UIEdgeInsets(14, 16, 14, 16)
-        };
-    }
-
-    /// <summary>
-    /// 创建主副标题文本栈。
-    /// </summary>
-    /// <param name="title">主标题。</param>
-    /// <param name="subtitle">副标题。</param>
-    /// <returns>纵向文本栈。</returns>
     private static UIStackView CreateTextStack(string title, string? subtitle)
     {
         var stack = new UIStackView
         {
             Axis = UILayoutConstraintAxis.Vertical,
             Spacing = 4,
-            TranslatesAutoresizingMaskIntoConstraints = false
+            TranslatesAutoresizingMaskIntoConstraints = false,
         };
-        stack.AddArrangedSubview(CreateTitleLabel(title));
+        stack.AddArrangedSubview(new UILabel
+        {
+            Text = title,
+            Font = UIFont.PreferredBody!,
+            AdjustsFontForContentSizeCategory = true,
+            TextColor = UIColor.Label,
+            Lines = 0,
+            TranslatesAutoresizingMaskIntoConstraints = false,
+        });
 
         if (!string.IsNullOrWhiteSpace(subtitle))
         {
-            stack.AddArrangedSubview(CreateSubtitleLabel(subtitle));
+            stack.AddArrangedSubview(new UILabel
+            {
+                Text = subtitle,
+                Font = UIFont.PreferredFootnote!,
+                AdjustsFontForContentSizeCategory = true,
+                TextColor = UIColor.SecondaryLabel,
+                Lines = 0,
+                TranslatesAutoresizingMaskIntoConstraints = false,
+            });
         }
 
         return stack;
     }
 
-    /// <summary>
-    /// 创建分组标题标签。
-    /// </summary>
-    /// <param name="title">标题文本。</param>
-    /// <returns>分组标题标签。</returns>
-    private static UILabel CreateSectionTitleLabel(string title)
+    protected static UILabel CreateTrailingValueLabel() => new()
     {
-        return new UILabel
+        Font = UIFontMetrics.DefaultMetrics.GetScaledFont(
+            UIFont.MonospacedDigitSystemFontOfSize(14, UIFontWeight.Medium)!),
+        AdjustsFontForContentSizeCategory = true,
+        TextColor = UIColor.SecondaryLabel,
+        Lines = 1,
+        TranslatesAutoresizingMaskIntoConstraints = false,
+    };
+
+    /// <summary>原生分组表内的单个 section 契约。</summary>
+    internal abstract class SettingsSection
+    {
+        private readonly UIView? _footerView;
+
+        internal string? HeaderTitle { get; }
+        internal virtual UIView? FooterView => _footerView;
+        internal virtual bool CanReorder => false;
+        internal abstract int RowCount { get; }
+
+        protected SettingsSection(string? headerTitle, UIView? footerView = null)
         {
-            Text = title,
-            Font = UIFont.SystemFontOfSize(13, UIFontWeight.Semibold),
-            TextColor = UIColor.SecondaryLabel,
-            TranslatesAutoresizingMaskIntoConstraints = false
-        };
+            HeaderTitle = headerTitle;
+            _footerView = footerView;
+        }
+
+        internal abstract UITableViewCell GetCell(UITableView tableView, NSIndexPath indexPath);
+        internal virtual nfloat GetRowHeight(UITableView tableView, NSIndexPath indexPath) => UITableView.AutomaticDimension;
+        internal virtual nfloat GetEstimatedRowHeight(UITableView tableView, NSIndexPath indexPath)
+            => (nfloat)iOSNativeSettingsMetrics.ListRowHeight;
+        internal virtual void OnRowSelected(UITableView tableView, NSIndexPath indexPath) { }
+        internal virtual void OnMoveRow(UITableView tableView, int sectionIndex, int sourceRow, int destinationRow) { }
+        internal virtual UISwipeActionsConfiguration? GetTrailingSwipeActions(UITableView tableView, NSIndexPath indexPath) => null;
     }
 
-    /// <summary>
-    /// 创建分组底部说明标签。
-    /// </summary>
-    /// <param name="footer">说明文本。</param>
-    /// <returns>说明标签。</returns>
-    private static UILabel CreateSectionFooterLabel(string footer)
+    /// <summary>静态单元格分组（开关、步进器、拉条、弹出按钮、预设编辑器等）。</summary>
+    internal sealed class StaticRowsSection(string? headerTitle, IReadOnlyList<UITableViewCell> rows, UIView? footerView = null)
+        : SettingsSection(headerTitle, footerView)
     {
-        return new UILabel
-        {
-            Text = footer,
-            Font = UIFont.SystemFontOfSize(12),
-            TextColor = UIColor.SecondaryLabel,
-            Lines = 0,
-            TranslatesAutoresizingMaskIntoConstraints = false
-        };
+        internal IReadOnlyList<UITableViewCell> Rows => rows;
+        internal override int RowCount => rows.Count;
+        internal override UITableViewCell GetCell(UITableView tableView, NSIndexPath indexPath) => rows[indexPath.Row];
     }
 
-    /// <summary>
-    /// 创建主标题标签。
-    /// </summary>
-    /// <param name="title">标题文本。</param>
-    /// <returns>主标题标签。</returns>
-    private static UILabel CreateTitleLabel(string title)
+    /// <summary>布局模式单选分组：原生副标题单元格 + 系统勾选附件。</summary>
+    internal sealed class LayoutModeSection : SettingsSection
     {
-        return new UILabel
+        private readonly SettingsViewModel _settings;
+        private readonly bool _phoneOnly;
+        private readonly SettingsViewModel.LayoutModeItem[] _items;
+
+        internal LayoutModeSection(string headerTitle, SettingsViewModel settings, bool phoneOnly)
+            : base(headerTitle)
         {
-            Text = title,
-            Font = UIFont.SystemFontOfSize(16),
-            TextColor = UIColor.Label,
-            Lines = 0,
-            TranslatesAutoresizingMaskIntoConstraints = false
-        };
+            _settings = settings;
+            _phoneOnly = phoneOnly;
+            _items = settings.LayoutModes.Where(item => !phoneOnly || item.Value == LayoutMode.Phone).ToArray();
+        }
+
+        internal override int RowCount => _items.Length;
+
+        internal override UITableViewCell GetCell(UITableView tableView, NSIndexPath indexPath)
+        {
+            const string reuseIdentifier = "SettingsLayoutModeCell";
+            var cell = tableView.DequeueReusableCell(reuseIdentifier)
+                ?? new UITableViewCell(UITableViewCellStyle.Subtitle, reuseIdentifier);
+            var item = _items[indexPath.Row];
+            var configuration = UIListContentConfiguration.SubtitleCellConfiguration;
+            configuration.Text = item.DisplayName;
+            configuration.SecondaryText = item.Description;
+            configuration.SecondaryTextProperties.NumberOfLines = 0;
+            configuration.SecondaryTextProperties.Color = UIColor.SecondaryLabel;
+            cell.ContentConfiguration = configuration;
+            cell.Accessory = _phoneOnly || item.Value == _settings.LayoutMode
+                ? UITableViewCellAccessory.Checkmark
+                : UITableViewCellAccessory.None;
+            return cell;
+        }
+
+        internal override void OnRowSelected(UITableView tableView, NSIndexPath indexPath)
+        {
+            tableView.DeselectRow(indexPath, true);
+            _settings.LayoutMode = _items[indexPath.Row].Value;
+            // 同步当前分组内勾选态（若触发 Wide ↔ Phone 切换，控制页的 OnLayoutModeChanged 会重建分组）。
+            for (int row = 0; row < _items.Length; row++)
+            {
+                if (tableView.CellAt(NSIndexPath.FromRowSection(row, indexPath.Section)) is { } cell)
+                {
+                    cell.Accessory = _phoneOnly || _items[row].Value == _settings.LayoutMode
+                        ? UITableViewCellAccessory.Checkmark
+                        : UITableViewCellAccessory.None;
+                }
+            }
+        }
     }
 
-    /// <summary>
-    /// 创建副标题标签。
-    /// </summary>
-    /// <param name="subtitle">副标题文本。</param>
-    /// <returns>副标题标签。</returns>
-    private static UILabel CreateSubtitleLabel(string subtitle)
+    /// <summary>可勾选、可选拖拽排序的原生分组（文件格式 / 控制栏功能 / 上一张下一张 / EXIF 显示）。</summary>
+    internal sealed class CheckableListSection<TItem> : SettingsSection
     {
-        return new UILabel
-        {
-            Text = subtitle,
-            Font = UIFont.SystemFontOfSize(12),
-            TextColor = UIColor.SecondaryLabel,
-            Lines = 0,
-            TranslatesAutoresizingMaskIntoConstraints = false
-        };
-    }
+        private readonly Func<IReadOnlyList<TItem>> _itemsProvider;
+        private readonly Func<TItem, string> _titleSelector;
+        private readonly Func<TItem, string?> _subtitleSelector;
+        private readonly Func<TItem, bool> _isEnabledGetter;
+        private readonly Action<TItem, bool> _isEnabledSetter;
+        private readonly Action<int, int> _moveAction;
+        private readonly double _rowHeight;
+        private readonly bool _showsSubtitle;
+        private readonly bool _showsReorderControls;
+        private readonly Func<TItem, UIImage?>? _leadingIconSelector;
+        private readonly Func<TItem, UIView?>? _trailingAccessorySelector;
+        private readonly Func<TItem, bool>? _isCheckmarkActiveSelector;
+        private readonly Func<TItem, string?>? _accessibilityValueSelector;
+        private readonly Action? _onChanged;
 
-    /// <summary>
-    /// 创建右侧数值标签。
-    /// </summary>
-    /// <returns>数值展示标签。</returns>
-    protected static UILabel CreateTrailingValueLabel()
-    {
-        return new UILabel
+        internal CheckableListSection(
+            string? headerTitle,
+            Func<IReadOnlyList<TItem>> itemsProvider,
+            Func<TItem, string> titleSelector,
+            Func<TItem, string?> subtitleSelector,
+            Func<TItem, bool> isEnabledGetter,
+            Action<TItem, bool> isEnabledSetter,
+            Action<int, int> moveAction,
+            double rowHeight = 60,
+            bool showsSubtitle = true,
+            bool showsReorderControls = true,
+            Func<TItem, UIImage?>? leadingIconSelector = null,
+            Func<TItem, UIView?>? trailingAccessorySelector = null,
+            Func<TItem, bool>? isCheckmarkActiveSelector = null,
+            Func<TItem, string?>? accessibilityValueSelector = null,
+            Action? onChanged = null)
+            : base(headerTitle)
         {
-            Font = UIFont.MonospacedDigitSystemFontOfSize(14, UIFontWeight.Medium),
-            TextColor = UIColor.SecondaryLabel,
-            Lines = 1,
-            TranslatesAutoresizingMaskIntoConstraints = false
-        };
-    }
+            _itemsProvider = itemsProvider;
+            _titleSelector = titleSelector;
+            _subtitleSelector = subtitleSelector;
+            _isEnabledGetter = isEnabledGetter;
+            _isEnabledSetter = isEnabledSetter;
+            _moveAction = moveAction;
+            _rowHeight = rowHeight;
+            _showsSubtitle = showsSubtitle;
+            _showsReorderControls = showsReorderControls;
+            _leadingIconSelector = leadingIconSelector;
+            _trailingAccessorySelector = trailingAccessorySelector;
+            _isCheckmarkActiveSelector = isCheckmarkActiveSelector;
+            _accessibilityValueSelector = accessibilityValueSelector;
+            _onChanged = onChanged;
+        }
 
-    /// <summary>
-    /// 创建可伸缩空白占位视图。
-    /// </summary>
-    /// <returns>用于把右侧控件推向边缘的占位视图。</returns>
-    protected static UIView CreateFlexibleSpacer()
-    {
-        var spacer = new UIView
-        {
-            TranslatesAutoresizingMaskIntoConstraints = false
-        };
-        spacer.SetContentHuggingPriority((float)UILayoutPriority.DefaultLow, UILayoutConstraintAxis.Horizontal);
-        spacer.SetContentCompressionResistancePriority((float)UILayoutPriority.DefaultLow, UILayoutConstraintAxis.Horizontal);
-        return spacer;
-    }
+        internal override bool CanReorder => _showsReorderControls;
+        internal override int RowCount => _itemsProvider().Count;
 
-    /// <summary>
-    /// 创建分隔线。
-    /// </summary>
-    /// <returns>分隔线视图。</returns>
-    protected static UIView CreateSeparator()
-    {
-        var separator = new UIView
+        internal override nfloat GetRowHeight(UITableView tableView, NSIndexPath indexPath) => UITableView.AutomaticDimension;
+
+        internal override nfloat GetEstimatedRowHeight(UITableView tableView, NSIndexPath indexPath) => (nfloat)_rowHeight;
+
+        internal override UITableViewCell GetCell(UITableView tableView, NSIndexPath indexPath)
         {
-            BackgroundColor = UIColor.Separator,
-            TranslatesAutoresizingMaskIntoConstraints = false
-        };
-        separator.HeightAnchor.ConstraintEqualTo(1 / UIScreen.MainScreen.Scale).Active = true;
-        return separator;
+            var reuseIdentifier = _showsSubtitle
+                ? "SettingsCheckableSubtitleCell"
+                : "SettingsCheckableDefaultCell";
+            var cell = tableView.DequeueReusableCell(reuseIdentifier) as iOSNativeCheckableSettingsCell
+                ?? new iOSNativeCheckableSettingsCell(reuseIdentifier, _showsSubtitle, _rowHeight);
+            ConfigureCell(tableView, cell, (int)indexPath.Section, (int)indexPath.Row);
+            return cell;
+        }
+
+        internal void ConfigureCell(UITableView tableView, iOSNativeCheckableSettingsCell cell, int sectionIndex, int row)
+        {
+            var items = _itemsProvider();
+            if (row < 0 || row >= items.Count) return;
+            var item = items[row];
+            cell.Configure(
+                title: _titleSelector(item),
+                subtitle: _showsSubtitle ? _subtitleSelector(item) : null,
+                isEnabled: _isEnabledGetter(item),
+                accessibilityValue: _accessibilityValueSelector?.Invoke(item),
+                icon: _leadingIconSelector?.Invoke(item),
+                checkmarkActive: _isCheckmarkActiveSelector?.Invoke(item) ?? true);
+            cell.ShowsReorderControl = _showsReorderControls;
+            cell.SetTrailingAccessory(_trailingAccessorySelector?.Invoke(item));
+            cell.AccessibilityCustomActions = BuildReorderAccessibilityActions(tableView, sectionIndex, row, items.Count);
+        }
+
+        private UIAccessibilityCustomAction[]? BuildReorderAccessibilityActions(
+            UITableView tableView, int sectionIndex, int row, int count)
+        {
+            if (!_showsReorderControls || count <= 1 || sectionIndex < 0) return null;
+            var actions = new List<UIAccessibilityCustomAction>(2);
+            if (row > 0)
+            {
+                actions.Add(new UIAccessibilityCustomAction("上移", (UIAccessibilityCustomActionHandler)(_ =>
+                {
+                    PerformMove(tableView, sectionIndex, row, row - 1);
+                    return true;
+                })));
+            }
+            if (row + 1 < count)
+            {
+                actions.Add(new UIAccessibilityCustomAction("下移", (UIAccessibilityCustomActionHandler)(_ =>
+                {
+                    PerformMove(tableView, sectionIndex, row, row + 1);
+                    return true;
+                })));
+            }
+            return actions.Count > 0 ? actions.ToArray() : null;
+        }
+
+        private void PerformMove(UITableView tableView, int sectionIndex, int sourceRow, int destinationRow)
+        {
+            _moveAction(sourceRow, destinationRow);
+            tableView.BeginUpdates();
+            tableView.MoveRow(
+                NSIndexPath.FromRowSection(sourceRow, sectionIndex),
+                NSIndexPath.FromRowSection(destinationRow, sectionIndex));
+            tableView.EndUpdates();
+            RefreshInPlace(tableView, sectionIndex);
+            _onChanged?.Invoke();
+        }
+
+        /// <summary>就地刷新当前分组可见行的内容与附件（不重建单元格、不重置滚动位置）。</summary>
+        internal void RefreshInPlace(UITableView tableView, int sectionIndex)
+        {
+            if (sectionIndex < 0) return;
+            foreach (var cell in tableView.VisibleCells)
+            {
+                if (tableView.IndexPathForCell(cell) is { } indexPath
+                    && indexPath.Section == sectionIndex
+                    && cell is iOSNativeCheckableSettingsCell checkable)
+                {
+                    ConfigureCell(tableView, checkable, sectionIndex, (int)indexPath.Row);
+                }
+            }
+        }
+
+        internal override void OnRowSelected(UITableView tableView, NSIndexPath indexPath)
+        {
+            tableView.DeselectRow(indexPath, true);
+            var item = _itemsProvider()[indexPath.Row];
+            _isEnabledSetter(item, !_isEnabledGetter(item));
+            RefreshInPlace(tableView, indexPath.Section);
+            _onChanged?.Invoke();
+        }
+
+        internal override void OnMoveRow(UITableView tableView, int sectionIndex, int sourceRow, int destinationRow)
+        {
+            _moveAction(sourceRow, destinationRow);
+            RefreshInPlace(tableView, sectionIndex);
+            _onChanged?.Invoke();
+        }
     }
 }
 
@@ -1029,24 +1067,20 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
 /// </summary>
 internal sealed class iOSNativeFileSettingsViewController : iOSNativeSettingsFormViewController
 {
-    /// <summary>
-    /// 初始化文件设置页。
-    /// </summary>
-    /// <param name="settings">共享设置 ViewModel。</param>
+    private UILabel? _performanceInfo;
+    private UILabel? _cacheInfo;
+    private bool _infoRefreshHooked;
+    private SettingsSection? _fileFormatSection;
+
+    /// <summary>文件格式分组的当前 section 索引（验收定位真实分组）。</summary>
+    internal int FileFormatSectionIndex => SectionIndexOf(_fileFormatSection);
+
     public iOSNativeFileSettingsViewController(SettingsViewModel settings)
         : base(settings)
     {
     }
 
-    private UILabel? _performanceInfo;
-    private UILabel? _cacheInfo;
-    private bool _infoRefreshHooked;
-
-    /// <summary>
-    /// 构建文件设置页面内容。
-    /// </summary>
-    /// <param name="contentStack">页面主内容栈。</param>
-    protected override void BuildContent(UIStackView contentStack)
+    protected override void BuildSections(List<SettingsSection> sections)
     {
         Title = "文件";
 
@@ -1056,30 +1090,30 @@ internal sealed class iOSNativeFileSettingsViewController : iOSNativeSettingsFor
         _cacheInfo = cacheInfo;
         HookInfoRefresh();
 
-        contentStack.AddArrangedSubview(
-            CreateSection(
-                "",
-                null,
-                CreateSwitchRow(
-                    "同名文件视为同一张图片",
-                    "按列表排序优先级高的作为代表显示图片，修改星级时同步至所有同名文件",
-                    () => Settings.SameNameAsOnePhoto,
-                    value => Settings.SameNameAsOnePhoto = value)));
+        sections.Add(CreateSection(
+            null,
+            null,
+            CreateSwitchRow(
+                "同名文件视为同一张图片",
+                "按列表排序优先级高的作为代表显示图片，修改星级时同步至所有同名文件",
+                () => Settings.SameNameAsOnePhoto,
+                value => Settings.SameNameAsOnePhoto = value)));
 
-        contentStack.AddArrangedSubview(
-            CreateSection(
-                "支持的文件格式",
-                null,
-                new iOSNativeEmbeddedCheckableReorderListView<SettingsViewModel.FileFormatItem>(
-                    itemsProvider: () => Settings.FileFormats,
-                    titleSelector: item => item.DisplayName,
-                    subtitleSelector: item => item.ExtensionsText,
-                    isEnabledGetter: item => item.IsEnabled,
-                    isEnabledSetter: (item, value) => item.IsEnabled = value,
-                    moveAction: Settings.MoveFileFormat)));
+        _fileFormatSection = new CheckableListSection<SettingsViewModel.FileFormatItem>(
+            headerTitle: "支持的文件格式",
+            itemsProvider: () => Settings.FileFormats,
+            titleSelector: item => item.DisplayName,
+            subtitleSelector: item => item.ExtensionsText,
+            isEnabledGetter: item => item.IsEnabled,
+            isEnabledSetter: (item, value) => item.IsEnabled = value,
+            moveAction: Settings.MoveFileFormat,
+            rowHeight: 60,
+            showsSubtitle: true,
+            showsReorderControls: true);
+        sections.Add(_fileFormatSection);
 
         // 缓存容量由实测预算自动管理的平台不显示用户上限两项，其余行保持
-        var cacheRows = new List<UIView>
+        var cacheRows = new List<UITableViewCell>
         {
             CreateStepperRow(
                 "原生解码线程",
@@ -1155,24 +1189,43 @@ internal sealed class iOSNativeFileSettingsViewController : iOSNativeSettingsFor
             SettingsDocumentCodec.VisibleCenterDelayStepMs,
             valueFormatter: value => $"{value} ms"));
 
-        contentStack.AddArrangedSubview(CreateSection("缓存与预加载", null, cacheRows.ToArray()));
-
-        contentStack.AddArrangedSubview(performanceInfo);
-        contentStack.AddArrangedSubview(cacheInfo);
+        var footer = CreateCacheFooterView(performanceInfo, cacheInfo);
+        sections.Add(CreateSection("缓存与预加载", footer, cacheRows.ToArray()));
         RefreshInfoLabels();
     }
 
-    /// <summary>能力提示行：多行文本整段换行，不截断。</summary>
+    /// <summary>分组脚注容器：用原生 <see cref="UITableViewHeaderFooterView"/> 承接系统分组左右边距。</summary>
+    private static UITableViewHeaderFooterView CreateCacheFooterView(UILabel performanceInfo, UILabel cacheInfo)
+    {
+        var footer = new UITableViewHeaderFooterView();
+        var stack = new UIStackView([performanceInfo, cacheInfo])
+        {
+            Axis = UILayoutConstraintAxis.Vertical,
+            Spacing = 6,
+            TranslatesAutoresizingMaskIntoConstraints = false,
+        };
+        footer.ContentView.AddSubview(stack);
+        NSLayoutConstraint.ActivateConstraints(
+        [
+            stack.TopAnchor.ConstraintEqualTo(footer.ContentView.TopAnchor, 10),
+            stack.LeadingAnchor.ConstraintEqualTo(footer.ContentView.LayoutMarginsGuide.LeadingAnchor),
+            stack.TrailingAnchor.ConstraintEqualTo(footer.ContentView.LayoutMarginsGuide.TrailingAnchor),
+            stack.BottomAnchor.ConstraintEqualTo(footer.ContentView.BottomAnchor, -20),
+        ]);
+        return footer;
+    }
+
+    /// <summary>能力提示行：多行文本整段换行，不截断，支持动态字体。</summary>
     private static UILabel CreateInfoLabel() => new()
     {
-        Font = UIFont.SystemFontOfSize(12),
+        Font = UIFont.PreferredFootnote!,
+        AdjustsFontForContentSizeCategory = true,
         TextColor = UIColor.SecondaryLabel,
         Lines = 0,
         LineBreakMode = UILineBreakMode.WordWrap,
-        TranslatesAutoresizingMaskIntoConstraints = false
+        TranslatesAutoresizingMaskIntoConstraints = false,
     };
 
-    /// <summary>两段提示的文本与级别随周期内存探测刷新；整页重建只换控件，不重复订阅。</summary>
     private void HookInfoRefresh()
     {
         if (_infoRefreshHooked) return;
@@ -1192,31 +1245,47 @@ internal sealed class iOSNativeFileSettingsViewController : iOSNativeSettingsFor
 
     private void RefreshInfoLabels()
     {
+        bool heightChanged = false;
         string budgetText = Settings.PerformanceBudgetInfo;
         var budgetColor = InfoColor(Settings.PerformanceBudgetInfoLevel);
         if (_performanceInfo is { } performance && !SameInfo(performance, budgetText, budgetColor))
         {
+            double before = (double)performance.Bounds.Height;
             performance.Text = budgetText;
             performance.TextColor = budgetColor;
+            if (performance.Bounds.Width > 1)
+            {
+                double after = (double)performance.SizeThatFits(new CGSize(performance.Bounds.Width, nfloat.MaxValue)).Height;
+                heightChanged |= Math.Abs(after - before) > 1;
+            }
         }
 
         string countText = Settings.BitmapCacheCountInfo;
         var countColor = InfoColor(Settings.BitmapCacheCountInfoLevel);
         if (_cacheInfo is { } cache && !SameInfo(cache, countText, countColor))
         {
+            double before = (double)cache.Bounds.Height;
             cache.Text = countText;
             cache.TextColor = countColor;
+            if (cache.Bounds.Width > 1)
+            {
+                double after = (double)cache.SizeThatFits(new CGSize(cache.Bounds.Width, nfloat.MaxValue)).Height;
+                heightChanged |= Math.Abs(after - before) > 1;
+            }
+        }
+
+        if (heightChanged)
+        {
+            RefreshRowHeightsInPlace();
         }
     }
 
-    /// <summary>提示标签是否已是该文本与颜色；未变化就不重写，避免周期探测反复触发布局。</summary>
     private static bool SameInfo(UILabel label, string text, UIColor color)
     {
         var current = label.TextColor;
         return label.Text == text && current != null && (ReferenceEquals(current, color) || current.Equals(color));
     }
 
-    /// <summary>语义级别 → 颜色：错误取系统红、警告取 `color.settings.warning` 令牌、常规取次级色（与 Mac `levelColor` 同口径）。</summary>
     private static UIColor InfoColor(PerfInfoLevel level) => level switch
     {
         PerfInfoLevel.Error => UIColor.SystemRed,
@@ -1242,46 +1311,34 @@ internal sealed class iOSNativeFileSettingsViewController : iOSNativeSettingsFor
 /// </summary>
 internal sealed class iOSNativePreviewSettingsViewController : iOSNativeSettingsFormViewController
 {
-    /// <summary>
-    /// 初始化预览设置页。
-    /// </summary>
-    /// <param name="settings">共享设置 ViewModel。</param>
+    private iOSScalePresetSection? _presetSection;
+
+    /// <summary>缩放比例预设原生分组（验收访问字段与删增操作）。</summary>
+    internal iOSScalePresetSection? PresetSection => _presetSection;
+
+    /// <summary>缩放比例预设分组的当前 section 索引。</summary>
+    internal int PresetSectionIndex => SectionIndexOf(_presetSection);
+
     public iOSNativePreviewSettingsViewController(SettingsViewModel settings)
         : base(settings)
     {
     }
 
-    /// <summary>
-    /// 构建预览设置页面内容。
-    /// </summary>
-    /// <param name="contentStack">页面主内容栈。</param>
-    protected override void BuildContent(UIStackView contentStack)
+    protected override void BuildSections(List<SettingsSection> sections)
     {
         Title = "预览";
 
-        contentStack.AddArrangedSubview(
-            CreateSection(
-                "",
+        sections.Add(CreateSection(
+            null,
+            null,
+            CreateSwitchRow(
+                "缩放时显示指示器",
                 null,
-                CreateSwitchRow(
-                    "缩放时显示指示器",
-                    null,
-                    () => Settings.ShowZoomIndicator,
-                    value => Settings.ShowZoomIndicator = value)));
+                () => Settings.ShowZoomIndicator,
+                value => Settings.ShowZoomIndicator = value)));
 
-        contentStack.AddArrangedSubview(
-            CreateSection(
-                "缩放比例预设",
-                null,
-                CreateScalePresetEditor()));
-    }
-
-    private UIView CreateScalePresetEditor() => new iOSScalePresetEditor(Settings);
-
-    public override void ViewWillDisappear(bool animated)
-    {
-        View?.EndEditing(true);
-        base.ViewWillDisappear(animated);
+        _presetSection = new iOSScalePresetSection("缩放比例预设", Settings, this);
+        sections.Add(_presetSection);
     }
 }
 
@@ -1290,58 +1347,53 @@ internal sealed class iOSNativePreviewSettingsViewController : iOSNativeSettings
 /// </summary>
 internal sealed class iOSNativeExifSettingsViewController : iOSNativeSettingsFormViewController
 {
-    /// <summary>
-    /// 初始化 EXIF 设置页。
-    /// </summary>
-    /// <param name="settings">共享设置 ViewModel。</param>
+    private SettingsSection? _exifDisplaySection;
+
+    /// <summary>EXIF 显示分组的当前 section 索引（验收定位真实分组）。</summary>
+    internal int ExifDisplaySectionIndex => SectionIndexOf(_exifDisplaySection);
+
     public iOSNativeExifSettingsViewController(SettingsViewModel settings)
         : base(settings)
     {
     }
 
-    /// <summary>
-    /// 构建 EXIF 设置页面内容。
-    /// </summary>
-    /// <param name="contentStack">页面主内容栈。</param>
-    protected override void BuildContent(UIStackView contentStack)
+    protected override void BuildSections(List<SettingsSection> sections)
     {
         Title = "EXIF";
 
-        contentStack.AddArrangedSubview(
-            CreateSection(
-                "EXIF 显示/收纳",
-                null,
-                new iOSNativeEmbeddedCheckableReorderListView<SettingsViewModel.ExifDisplayItem>(
-                    itemsProvider: () => Settings.ExifDisplayItems,
-                    titleSelector: item => item.DisplayName,
-                    subtitleSelector: _ => null,
-                    isEnabledGetter: item => item.IsEnabled,
-                    isEnabledSetter: (item, value) => item.IsEnabled = value,
-                    moveAction: Settings.MoveExifDisplay,
-                    rowHeight: iOSNativeSettingsMetrics.ListRowHeight,
-                    cellStyle: UITableViewCellStyle.Default)));
+        _exifDisplaySection = new CheckableListSection<SettingsViewModel.ExifDisplayItem>(
+            headerTitle: "EXIF 显示/收纳",
+            itemsProvider: () => Settings.ExifDisplayItems,
+            titleSelector: item => item.DisplayName,
+            subtitleSelector: _ => null,
+            isEnabledGetter: item => item.IsEnabled,
+            isEnabledSetter: (item, value) => item.IsEnabled = value,
+            moveAction: Settings.MoveExifDisplay,
+            rowHeight: iOSNativeSettingsMetrics.ListRowHeight,
+            showsSubtitle: false,
+            showsReorderControls: true);
+        sections.Add(_exifDisplaySection);
 
-        contentStack.AddArrangedSubview(
-            CreateSection(
-                "评分与写回",
+        sections.Add(CreateSection(
+            "评分与写回",
+            null,
+            CreateSwitchRow(
+                "显示星级评分",
                 null,
-                CreateSwitchRow(
-                    "显示星级评分",
-                    null,
-                    () => Settings.ShowRating,
-                    value => Settings.ShowRating = value),
-                CreateSwitchRow(
-                    "安全修改文件星级",
-                    "检验文件字节变化再写回，降低损坏原文件概率",
-                    () => Settings.SafeSetRating,
-                    value => Settings.SafeSetRating = value)));
+                () => Settings.ShowRating,
+                value => Settings.ShowRating = value),
+            CreateSwitchRow(
+                "安全修改文件星级",
+                "检验文件字节变化再写回，降低损坏原文件概率",
+                () => Settings.SafeSetRating,
+                value => Settings.SafeSetRating = value)));
     }
 }
 
 /// <summary>
-/// iOS 原生控制设置页：布局模式、控制栏功能（上下张开关与命令表两张卡片）与键盘映射。
+/// iOS 原生控制设置页：布局模式、控制栏功能（上下张开关与命令表两张独立原生 InsetGrouped 卡片）与键盘映射。
 /// 宽形态命令行与 Mac 单行布局一致；手机形态的命令表同样完整保留勾选与排序，
-/// 不提供绑定编辑或键盘映射。宽形态连接键盘或鼠标后就地出现主/次绑定按钮。
+/// 不提供绑定编辑或键盘映射。宽形态连接键盘或鼠标后就地出现主/次绑定按钮与键盘映射分组。
 /// </summary>
 internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettingsFormViewController
 {
@@ -1349,12 +1401,12 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
     private readonly iOSHotkeyRecorder _recorder;
     private readonly Dictionary<SettingsViewModel.HotkeyItem, iOSHotkeyBindingButtons> _bindingButtons = [];
     internal const string NavigationIconSymbol = "chevron.left.chevron.right";
-    private iOSNativeEmbeddedCheckableReorderListView<SettingsViewModel.HotkeyItem>? _hotkeys;
-    private iOSNativeEmbeddedCheckableReorderListView<string>? _navigationList;
-    private UIView? _mapping;
-    /// <summary>本次内容构建时的形态（手机形态隐藏快捷键编辑与键盘映射）。</summary>
+
+    private LayoutModeSection? _layoutModeSection;
+    private CheckableListSection<string>? _navigationSection;
+    private CheckableListSection<SettingsViewModel.HotkeyItem>? _hotkeySection;
+    private StaticRowsSection? _mappingSection;
     private bool _phoneForm;
-    /// <summary>布局模式订阅是否已挂接（页面重新载入时不重复订阅）。</summary>
     private bool _layoutModeHooked;
 
     public iOSNativeControlSettingsViewController(SettingsViewModel settings) : base(settings)
@@ -1370,14 +1422,21 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
     /// <summary>快捷键录制器（行内按钮与验收共用）。</summary>
     internal iOSHotkeyRecorder Recorder => _recorder;
 
-    /// <summary>宽形态控制栏命令表（验收读取真实单元格）。</summary>
-    internal iOSNativeEmbeddedCheckableReorderListView<SettingsViewModel.HotkeyItem>? HotkeyList => _hotkeys;
+    /// <summary>布局模式分组索引（验收定位真实分组）。</summary>
+    internal int LayoutModeSectionIndex => SectionIndexOf(_layoutModeSection);
 
-    /// <summary>「控制栏功能」区的上一张/下一张开关列表（独立一张卡片，单项无排序）。</summary>
-    internal iOSNativeEmbeddedCheckableReorderListView<string>? NavigationList => _navigationList;
+    /// <summary>上一张/下一张开关分组索引（验收定位真实分组）。</summary>
+    internal int NavigationSectionIndex => SectionIndexOf(_navigationSection);
 
-    /// <summary>键盘映射分组（验收读取可见性）。</summary>
-    internal UIView? KeyboardMappingSection => _mapping;
+    /// <summary>控制栏命令表分组索引（验收定位真实分组）。</summary>
+    internal int HotkeySectionIndex => SectionIndexOf(_hotkeySection);
+
+    /// <summary>键盘映射分组索引；不可见或手机形态时为 -1。</summary>
+    internal int KeyboardMappingSectionIndex => SectionIndexOf(_mappingSection);
+
+    /// <summary>键盘映射分组的静态行（外设连接且宽形态时存在；验收核对弹出按钮）。</summary>
+    internal IReadOnlyList<UITableViewCell>? KeyboardMappingRows
+        => KeyboardMappingSectionIndex >= 0 ? _mappingSection?.Rows : null;
 
     /// <summary>设备本身是手机（iPhone）：形态固定为手机，布局选择只列「手机」。</summary>
     internal static bool IsPhoneDevice => UIDevice.CurrentDevice.UserInterfaceIdiom == UIUserInterfaceIdiom.Phone;
@@ -1385,33 +1444,35 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
     /// <summary>本页按手机形态排版：iPhone，或工作副本选了「手机」布局（SETTINGS-08）。</summary>
     internal bool PhoneForm => IsPhoneDevice || Settings.LayoutMode == LayoutMode.Phone;
 
-    protected override void BuildContent(UIStackView contentStack)
+    protected override void BuildSections(List<SettingsSection> sections)
     {
         Title = "控制";
         _phoneForm = PhoneForm;
-        contentStack.AddArrangedSubview(CreateSection("边栏布局位置", null,
-            new iOSLayoutModePicker(Settings, IsPhoneDevice)));
-        _hotkeys = null;
-        _mapping = null;
-        _navigationList = new iOSNativeEmbeddedCheckableReorderListView<string>(
+        _layoutModeSection = new LayoutModeSection("边栏布局位置", Settings, IsPhoneDevice);
+        sections.Add(_layoutModeSection);
+
+        _navigationSection = new CheckableListSection<string>(
+            headerTitle: "控制栏功能",
             itemsProvider: () => ["上一张/下一张"],
             titleSelector: item => item,
             subtitleSelector: _ => null,
             isEnabledGetter: _ => Settings.ShowNavigationButtons,
-            isEnabledSetter: (_, value) =>
-            {
-                Settings.ShowNavigationButtons = value;
-                // 组合开关决定独立上下张是否进入可选命令组：勾号的生效态立刻重算。
-                if (_phoneForm) _hotkeys?.RefreshInPlace();
-            },
+            isEnabledSetter: (_, value) => Settings.ShowNavigationButtons = value,
             moveAction: (_, _) => { },
             rowHeight: iOSNativeSettingsMetrics.ListRowHeight,
-            cellStyle: UITableViewCellStyle.Default,
+            showsSubtitle: false,
+            showsReorderControls: false,
             leadingIconSelector: _ => SymbolIcon(NavigationIconSymbol),
-            showsReorderControls: false);
-        // SETTINGS-08：上下张组合开关与可勾选排序的命令表各占一张卡片，只有第一张带「控制栏功能」标题，第二张不建标题行。
-        // 宽形态所有勾选命令按顺序生效；手机形态由共享 PhoneControlCommands 解析生效项，未生效项只淡化勾号。
-        _hotkeys = new iOSNativeEmbeddedCheckableReorderListView<SettingsViewModel.HotkeyItem>(
+            onChanged: () =>
+            {
+                // 组合开关决定独立上下张是否进入可选命令组：勾号的生效态立刻重算。
+                if (_phoneForm) _hotkeySection?.RefreshInPlace(TableView, HotkeySectionIndex);
+            });
+
+        // SETTINGS-08：上下张组合开关与可勾选排序的命令表各占一张原生 InsetGrouped 卡片，
+        // 只有第一张带「控制栏功能」标题，第二张不建标题，卡片间由系统分组间距自然隔开。
+        _hotkeySection = new CheckableListSection<SettingsViewModel.HotkeyItem>(
+            headerTitle: null,
             itemsProvider: () => Settings.Hotkeys,
             titleSelector: item => item.Name,
             subtitleSelector: _ => null,
@@ -1419,43 +1480,47 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
             isEnabledSetter: (item, value) => item.IsDisplay = value,
             moveAction: Settings.MoveHotkey,
             rowHeight: iOSNativeSettingsMetrics.ListRowHeight,
-            cellStyle: UITableViewCellStyle.Default,
+            showsSubtitle: false,
+            showsReorderControls: true,
+            leadingIconSelector: CommandIcon,
             trailingAccessorySelector: _phoneForm
                 ? null
                 : (Func<SettingsViewModel.HotkeyItem, UIView?>?)BindingButtons,
-            leadingIconSelector: CommandIcon,
             isCheckmarkActiveSelector: _phoneForm
                 ? (Func<SettingsViewModel.HotkeyItem, bool>?)IsPhoneCommandActive
                 : null,
             accessibilityValueSelector: _phoneForm
                 ? (Func<SettingsViewModel.HotkeyItem, string?>?)PhoneCommandAccessibilityValue
                 : null);
-        contentStack.AddArrangedSubview(CreateSection("控制栏功能", null, _navigationList));
-        contentStack.AddArrangedSubview(CreateSection("", null, _hotkeys));
+
+        sections.Add(_navigationSection);
+        sections.Add(_hotkeySection);
+
         if (_phoneForm)
         {
-            RefreshCapabilities();
+            _mappingSection = null;
             return;
         }
 
-        var rows = new List<UIView>
+        _mappingSection = new StaticRowsSection(
+            "键盘映射",
+            [
+                CreateSwitchRow("使用苹果键盘", null, () => Settings.UseAppleKeyboard, value => Settings.UseAppleKeyboard = value, RefreshHotkeyRows),
+                CreateMappingRow("Command", () => Settings.MapCommandTarget, value => Settings.MapCommandTarget = value),
+                CreateMappingRow("Option", () => Settings.MapOptionTarget, value => Settings.MapOptionTarget = value),
+                CreateMappingRow("Control", () => Settings.MapControlTarget, value => Settings.MapControlTarget = value),
+            ]);
+
+        if (_capabilities.HasExternalInput)
         {
-            CreateSwitchRow("使用苹果键盘", null, () => Settings.UseAppleKeyboard, value => Settings.UseAppleKeyboard = value, RefreshHotkeyRows),
-            CreateMappingRow("Command", () => Settings.MapCommandTarget, value => Settings.MapCommandTarget = value),
-            CreateMappingRow("Option", () => Settings.MapOptionTarget, value => Settings.MapOptionTarget = value),
-            CreateMappingRow("Control", () => Settings.MapControlTarget, value => Settings.MapControlTarget = value),
-        };
-        _mapping = CreateSection("键盘映射", null, rows.ToArray());
-        contentStack.AddArrangedSubview(_mapping);
-        RefreshCapabilities();
+            sections.Add(_mappingSection);
+        }
     }
 
     /// <summary>
     /// 手机形态下该命令是否实际显示在控制栏：唯一来源是共享 <see cref="PhoneControlCommands.Resolve"/>
     /// （跳过未勾选项、组合开关开启时跳过独立上下张、最多三项），设置页不复制筛选规则。
     /// </summary>
-    /// <param name="item">命令表行。</param>
-    /// <returns>已勾选且实际生效时为 true。</returns>
     private bool IsPhoneCommandActive(SettingsViewModel.HotkeyItem item)
         => PhoneControlCommands.Resolve(
                 Settings.Hotkeys.Where(hotkey => hotkey.IsDisplay).Select(hotkey => hotkey.Command),
@@ -1463,16 +1528,12 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
             .Contains(item.Command, StringComparer.Ordinal);
 
     /// <summary>手机形态命令行的读屏值：区分已勾选、已勾选但未在控制栏显示、未勾选。</summary>
-    /// <param name="item">命令表行。</param>
-    /// <returns>读屏值；宽形态不设置。</returns>
     private string PhoneCommandAccessibilityValue(SettingsViewModel.HotkeyItem item)
         => item.IsDisplay
             ? (IsPhoneCommandActive(item) ? "已勾选" : "已勾选，未在手机控制栏显示")
             : "未勾选";
 
     /// <summary>布局模式在页内改成「手机」或改回宽形态时，按新形态重建分组（工作副本，不影响主屏）。</summary>
-    /// <param name="sender">事件源（工作副本）。</param>
-    /// <param name="args">属性变化参数。</param>
     private void OnLayoutModeChanged(object? sender, PropertyChangedEventArgs args)
     {
         if (args.PropertyName != nameof(SettingsViewModel.LayoutMode) || PhoneForm == _phoneForm) return;
@@ -1480,7 +1541,6 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
         else BeginInvokeOnMainThread(RebuildContent);
     }
 
-    /// <summary>订阅工作副本的布局模式变化（整页只订阅一次）。</summary>
     public override void ViewDidLoad()
     {
         base.ViewDidLoad();
@@ -1489,7 +1549,6 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
         Settings.PropertyChanged += OnLayoutModeChanged;
     }
 
-    /// <summary>命令表的命令图标：取命令目录登记的同一条 SF Symbols，与控制栏按钮同一语义。</summary>
     private static UIImage? CommandIcon(SettingsViewModel.HotkeyItem item) => CommandIcon(item.Command);
 
     private static UIImage? CommandIcon(string command)
@@ -1502,8 +1561,9 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
     private static UIImage? SymbolIcon(string? symbol)
         => symbol == null
             ? null
-            : UIImage.GetSystemImage(symbol)?.ApplyConfiguration(
-                UIImageSymbolConfiguration.Create((nfloat)DesignTokens.ToolbarCommandGlyphFontSize));
+            : UIImage.GetSystemImage(symbol)
+                ?.ApplyConfiguration(UIImageSymbolConfiguration.Create((nfloat)DesignTokens.ToolbarCommandGlyphFontSize))
+                ?.ImageWithAlignmentRectInsets(UIEdgeInsets.Zero);
 
     /// <summary>每行的主/次快捷键按钮组：外设连接时创建或复用，纯触控返回 null 表示不显示。</summary>
     internal iOSHotkeyBindingButtons? BindingButtons(SettingsViewModel.HotkeyItem item)
@@ -1527,7 +1587,6 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
         _recorder.BeginRecording(item, secondary, View?.Window, () => BecomeFirstResponder());
     }
 
-    /// <summary>录制期间接管硬件按键：Esc 取消、Delete/Backspace 清空，其余经共享映射写工作副本。</summary>
     public override bool CanBecomeFirstResponder => true;
 
     public override void PressesBegan(NSSet<UIPress> presses, UIPressesEvent? evt)
@@ -1552,7 +1611,10 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
         if (!_recorder.IsRecording) base.PressesEnded(presses, evt!);
     }
 
-    private UIView CreateMappingRow(string title, Func<PhotoViewer.Core.Input.AppleMappingTarget> getter, Action<PhotoViewer.Core.Input.AppleMappingTarget> setter)
+    private UITableViewCell CreateMappingRow(
+        string title,
+        Func<PhotoViewer.Core.Input.AppleMappingTarget> getter,
+        Action<PhotoViewer.Core.Input.AppleMappingTarget> setter)
     {
         var configuration = UIButtonConfiguration.PlainButtonConfiguration;
         configuration.Indicator = UIButtonConfigurationIndicator.Popup;
@@ -1564,7 +1626,12 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
             ShowsMenuAsPrimaryAction = true,
             ChangesSelectionAsPrimaryAction = true,
             AccessibilityLabel = title,
+            TranslatesAutoresizingMaskIntoConstraints = false,
         };
+        if (button.TitleLabel != null)
+        {
+            button.TitleLabel.AdjustsFontForContentSizeCategory = true;
+        }
         button.SetContentHuggingPriority((float)UILayoutPriority.Required, UILayoutConstraintAxis.Horizontal);
         button.Menu = UIMenu.Create(Settings.AppleMappingTargets.Select(target =>
         {
@@ -1580,36 +1647,40 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
         var label = new UILabel
         {
             Text = title,
-            Font = UIFont.SystemFontOfSize(16)!,
+            Font = UIFont.PreferredBody!,
+            AdjustsFontForContentSizeCategory = true,
             TextColor = UIColor.Label,
             TranslatesAutoresizingMaskIntoConstraints = false,
         };
-        var stack = new UIStackView([label, CreateFlexibleSpacer(), button])
+        var cell = new UITableViewCell(UITableViewCellStyle.Default, null)
         {
-            Axis = UILayoutConstraintAxis.Horizontal,
-            Alignment = UIStackViewAlignment.Center,
-            Spacing = 12,
-            TranslatesAutoresizingMaskIntoConstraints = false,
+            SelectionStyle = UITableViewCellSelectionStyle.None,
         };
-        var row = new UIView { TranslatesAutoresizingMaskIntoConstraints = false, LayoutMargins = new UIEdgeInsets(4, 16, 4, 16) };
-        row.AddSubview(stack);
+        cell.ContentView.DirectionalLayoutMargins = new NSDirectionalEdgeInsets(4, 16, 4, 16);
+        cell.ContentView.AddSubview(label);
+        cell.ContentView.AddSubview(button);
+        var minHeight = cell.ContentView.HeightAnchor.ConstraintGreaterThanOrEqualTo(44);
+        minHeight.Priority = 999;
         NSLayoutConstraint.ActivateConstraints(
         [
-            stack.TopAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.TopAnchor),
-            stack.LeadingAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.LeadingAnchor),
-            stack.TrailingAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.TrailingAnchor),
-            stack.BottomAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.BottomAnchor),
-            row.HeightAnchor.ConstraintGreaterThanOrEqualTo(44),
+            minHeight,
+            label.LeadingAnchor.ConstraintEqualTo(cell.ContentView.LayoutMarginsGuide.LeadingAnchor),
+            label.CenterYAnchor.ConstraintEqualTo(cell.ContentView.CenterYAnchor),
+            label.TrailingAnchor.ConstraintLessThanOrEqualTo(button.LeadingAnchor, -12),
+            button.TrailingAnchor.ConstraintEqualTo(cell.ContentView.LayoutMarginsGuide.TrailingAnchor),
+            button.TopAnchor.ConstraintGreaterThanOrEqualTo(cell.ContentView.LayoutMarginsGuide.TopAnchor),
+            button.BottomAnchor.ConstraintLessThanOrEqualTo(cell.ContentView.LayoutMarginsGuide.BottomAnchor),
+            button.CenterYAnchor.ConstraintEqualTo(cell.ContentView.CenterYAnchor),
         ]);
-        return row;
+        return cell;
     }
 
     /// <summary>就地刷新行与行内按钮（录制、外设能力与验收直接改工作副本后共用）。</summary>
     internal void RefreshHotkeyRows()
     {
         RefreshBindingButtons();
-        _navigationList?.RefreshInPlace();
-        _hotkeys?.RefreshInPlace();
+        _navigationSection?.RefreshInPlace(TableView, NavigationSectionIndex);
+        _hotkeySection?.RefreshInPlace(TableView, HotkeySectionIndex);
     }
 
     private void RefreshBindingButtons()
@@ -1622,15 +1693,38 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
         }
     }
 
+    /// <summary>外设连接状态变化：就地刷新命令行，并按需增删键盘映射分组（不重建命令行、不改变滚动位置）。</summary>
     private void RefreshCapabilities()
     {
         bool external = _capabilities.HasExternalInput;
-        if (_mapping != null)
-        {
-            _mapping.Hidden = !external;
-            _mapping.AccessibilityElementsHidden = !external;
-        }
+        var offset = TableView.ContentOffset;
         RefreshHotkeyRows();
+
+        if (!_phoneForm && _mappingSection != null && ViewIfLoaded != null)
+        {
+            int mappingIndex = KeyboardMappingSectionIndex;
+            if (external && mappingIndex < 0)
+            {
+                int insertAt = Sections.Count;
+                Sections.Add(_mappingSection);
+                UIView.PerformWithoutAnimation(() =>
+                {
+                    TableView.InsertSections(NSIndexSet.FromIndex(insertAt), UITableViewRowAnimation.None);
+                    TableView.LayoutIfNeeded();
+                    TableView.SetContentOffset(offset, false);
+                });
+            }
+            else if (!external && mappingIndex >= 0)
+            {
+                Sections.RemoveAt(mappingIndex);
+                UIView.PerformWithoutAnimation(() =>
+                {
+                    TableView.DeleteSections(NSIndexSet.FromIndex(mappingIndex), UITableViewRowAnimation.None);
+                    TableView.LayoutIfNeeded();
+                    TableView.SetContentOffset(offset, false);
+                });
+            }
+        }
     }
 
     public override void ViewWillAppear(bool animated)
@@ -1679,408 +1773,67 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
 /// </summary>
 internal sealed class iOSNativeAiSettingsViewController : iOSNativeSettingsFormViewController
 {
-    /// <summary>
-    /// 初始化 AI 设置页。
-    /// </summary>
-    /// <param name="settings">共享设置 ViewModel。</param>
     public iOSNativeAiSettingsViewController(SettingsViewModel settings)
         : base(settings)
     {
     }
 
-    /// <summary>
-    /// 构建 AI 设置页内容。
-    /// </summary>
-    /// <param name="contentStack">页面主内容栈。</param>
-    protected override void BuildContent(UIStackView contentStack)
+    protected override void BuildSections(List<SettingsSection> sections)
     {
         Title = "AI";
 
 #if PHOTOVIEWER_DINO
-        contentStack.AddArrangedSubview(
-            CreateSection(
-                "相似聚类",
+        sections.Add(CreateSection(
+            "相似聚类",
+            null,
+            CreateSliderRow(
+                "相似度阈值",
                 null,
-                CreateSliderRow(
-                    "相似度阈值",
-                    null,
-                    () => (int)Math.Round(Settings.SimilarityThreshold * 100),
-                    value => Settings.SimilarityThreshold = value / 100.0,
-                    (int)Math.Round(SettingsViewModel.SimilarityThresholdMin * 100),
-                    (int)Math.Round(SettingsViewModel.SimilarityThresholdMax * 100),
-                    valueFormatter: value => $"{value}%"),
-                CreateSliderRow(
-                    "最多数量",
-                    null,
-                    () => Settings.SimilarityMaxResults,
-                    value => Settings.SimilarityMaxResults = value,
-                    SettingsViewModel.SimilarityMaxResultsMin,
-                    SettingsViewModel.SimilarityMaxResultsMax,
-                    valueFormatter: value => $"{value} 张")));
+                () => (int)Math.Round(Settings.SimilarityThreshold * 100),
+                value => Settings.SimilarityThreshold = value / 100.0,
+                (int)Math.Round(SettingsViewModel.SimilarityThresholdMin * 100),
+                (int)Math.Round(SettingsViewModel.SimilarityThresholdMax * 100),
+                valueFormatter: value => $"{value}%"),
+            CreateSliderRow(
+                "最多数量",
+                null,
+                () => Settings.SimilarityMaxResults,
+                value => Settings.SimilarityMaxResults = value,
+                SettingsViewModel.SimilarityMaxResultsMin,
+                SettingsViewModel.SimilarityMaxResultsMax,
+                valueFormatter: value => $"{value} 张")));
 #endif
 
-        contentStack.AddArrangedSubview(
-            CreateSection(
-                "分析诊断",
-                null,
+        sections.Add(CreateSection(
+            "分析诊断",
+            null,
 #if PHOTOVIEWER_DINO
-                CreateSwitchRow(
-                    "即时计算 DINO",
-                    null,
-                    () => Settings.AnalysisImmediateCompute,
-                    value => Settings.AnalysisImmediateCompute = value),
+            CreateSwitchRow(
+                "即时计算 DINO",
+                null,
+                () => Settings.AnalysisImmediateCompute,
+                value => Settings.AnalysisImmediateCompute = value),
 #endif
-                CreateSwitchRow(
-                    "即时计算 CV",
-                    null,
-                    () => Settings.AnalysisImmediateCvCompute,
-                    value => Settings.AnalysisImmediateCvCompute = value)));
+            CreateSwitchRow(
+                "即时计算 CV",
+                null,
+                () => Settings.AnalysisImmediateCvCompute,
+                value => Settings.AnalysisImmediateCvCompute = value)));
     }
 }
 
-/// <summary>
-/// 设置页三张可勾选表共用的度量：标准行高与"卡片内最后一行不再画分隔线"的取巧值。
-/// </summary>
+/// <summary>设置页可勾选列表共用的标准行高常量。</summary>
 internal static class iOSNativeSettingsMetrics
 {
     /// <summary>控制栏命令表与 EXIF 显示表共用的标准行高（SETTINGS-01@ios / SETTINGS-08）。</summary>
     internal const double ListRowHeight = 52;
-
-    /// <summary>把右内边距推到表格宽度之外，使最后一行不留下卡片底缘的描边。</summary>
-    private const double HiddenSeparatorRightInset = 100_000;
-
-    /// <summary>按行序设置分隔线：末行隐藏，其余保持表格的全宽口径。</summary>
-    /// <param name="tableView">所在表格。</param>
-    /// <param name="cell">目标单元格。</param>
-    /// <param name="indexPath">行位置。</param>
-    internal static void ApplyRowSeparator(UITableView tableView, UITableViewCell cell, NSIndexPath indexPath)
-    {
-        bool last = indexPath.Row >= (int)tableView.NumberOfRowsInSection(indexPath.Section) - 1;
-        cell.SeparatorInset = last
-            ? new UIEdgeInsets(0, 0, 0, (nfloat)HiddenSeparatorRightInset)
-            : UIEdgeInsets.Zero;
-    }
 }
 
 /// <summary>
-/// iOS 内联可勾选列表视图：勾选位、可选命令图标、标题、可选副标题与可选系统拖拽手柄；
-/// 可选的详情按钮（编辑态 ⓘ）与按行高度由调用方提供。
+/// iOS 原生分组表内的可勾选单元格：左侧勾选位、可选命令图标、标题、可选副标题、可选行尾附件，
+/// 由所属 <see cref="UITableViewStyle.InsetGrouped"/> 表格直接提供圆角卡片、发丝分隔线与系统拖拽手柄。
 /// </summary>
-/// <typeparam name="TItem">列表项类型。</typeparam>
-internal sealed class iOSNativeEmbeddedCheckableReorderListView<TItem> : UIView
-{
-    private readonly Func<IReadOnlyList<TItem>> _itemsProvider;
-    private readonly UITableView _tableView;
-    private readonly NSLayoutConstraint _heightConstraint;
-    private readonly iOSNativeEmbeddedCheckableReorderListSource<TItem> _source;
-
-    /// <summary>内部原生表格（验收读取真实单元格）。</summary>
-    internal UITableView TableView => _tableView;
-
-    /// <summary>
-    /// 初始化内联列表视图。
-    /// </summary>
-    public iOSNativeEmbeddedCheckableReorderListView(
-        Func<IReadOnlyList<TItem>> itemsProvider,
-        Func<TItem, string> titleSelector,
-        Func<TItem, string?> subtitleSelector,
-        Func<TItem, bool> isEnabledGetter,
-        Action<TItem, bool> isEnabledSetter,
-        Action<int, int> moveAction,
-        double rowHeight = 60,
-        UITableViewCellStyle cellStyle = UITableViewCellStyle.Subtitle,
-        Func<TItem, double>? rowHeightSelector = null,
-        Func<TItem, NSAttributedString?>? attributedSubtitleSelector = null,
-        Func<TItem, string?>? accessibilityValueSelector = null,
-        Func<TItem, bool>? showsDetailButton = null,
-        Action<TItem>? detailAction = null,
-        Func<TItem, UIView?>? trailingAccessorySelector = null,
-        Func<TItem, UIImage?>? leadingIconSelector = null,
-        bool showsReorderControls = true,
-        Func<TItem, bool>? isCheckmarkActiveSelector = null)
-    {
-        _itemsProvider = itemsProvider;
-
-        TranslatesAutoresizingMaskIntoConstraints = false;
-
-        _tableView = new UITableView(CoreGraphics.CGRect.Empty, UITableViewStyle.Plain)
-        {
-            TranslatesAutoresizingMaskIntoConstraints = false,
-            ScrollEnabled = false,
-            BackgroundColor = UIColor.Clear,
-            RowHeight = (nfloat)rowHeight,
-            SeparatorInset = UIEdgeInsets.Zero,
-            TableFooterView = new UIView(CoreGraphics.CGRect.Empty)
-        };
-        _tableView.SetEditing(true, false);
-        _tableView.AllowsSelectionDuringEditing = true;
-        _tableView.CellLayoutMarginsFollowReadableWidth = false;
-        _source = new iOSNativeEmbeddedCheckableReorderListSource<TItem>(
-            itemsProvider,
-            titleSelector,
-            subtitleSelector,
-            isEnabledGetter,
-            isEnabledSetter,
-            moveAction,
-            cellStyle,
-            Refresh,
-            rowHeight,
-            rowHeightSelector,
-            attributedSubtitleSelector,
-            accessibilityValueSelector,
-            showsDetailButton,
-            detailAction,
-            trailingAccessorySelector,
-            leadingIconSelector,
-            showsReorderControls,
-            isCheckmarkActiveSelector);
-        _tableView.Source = _source;
-
-        AddSubview(_tableView);
-        _heightConstraint = _tableView.HeightAnchor.ConstraintEqualTo(1);
-
-        NSLayoutConstraint.ActivateConstraints(
-        [
-            _tableView.TopAnchor.ConstraintEqualTo(TopAnchor),
-            _tableView.LeadingAnchor.ConstraintEqualTo(LeadingAnchor),
-            _tableView.TrailingAnchor.ConstraintEqualTo(TrailingAnchor),
-            _tableView.BottomAnchor.ConstraintEqualTo(BottomAnchor),
-            _heightConstraint,
-        ]);
-
-        Refresh();
-    }
-
-    /// <summary>
-    /// 刷新列表内容与高度。
-    /// </summary>
-    public void Refresh()
-    {
-        _tableView.ReloadData();
-        UpdateHeight();
-    }
-
-    /// <summary>
-    /// 就地刷新可见行的内容、附件与行高（不重载数据、不复位滚动位置与单元格身份）。
-    /// </summary>
-    public void RefreshInPlace()
-    {
-        foreach (var cell in _tableView.VisibleCells)
-        {
-            if (_tableView.IndexPathForCell(cell) is { } indexPath && cell is iOSNativeEmbeddedCheckableReorderCell reorderCell)
-                _source.ConfigureCell(_tableView, reorderCell, indexPath);
-        }
-        UIView.PerformWithoutAnimation(() =>
-        {
-            _tableView.BeginUpdates();
-            _tableView.EndUpdates();
-        });
-        UpdateHeight();
-    }
-
-    private void UpdateHeight()
-    {
-        var items = _itemsProvider();
-        double height = 0;
-        for (int index = 0; index < items.Count; index++) height += _source.HeightFor(items[index]);
-        _heightConstraint.Constant = (nfloat)Math.Max(1, height);
-    }
-}
-
-/// <summary>
-/// iOS 内联可勾选可排序列表数据源。
-/// </summary>
-/// <typeparam name="TItem">列表项类型。</typeparam>
-internal sealed class iOSNativeEmbeddedCheckableReorderListSource<TItem> : UITableViewSource
-{
-    private readonly Func<IReadOnlyList<TItem>> _itemsProvider;
-    private readonly Func<TItem, string> _titleSelector;
-    private readonly Func<TItem, string?> _subtitleSelector;
-    private readonly Func<TItem, bool> _isEnabledGetter;
-    private readonly Action<TItem, bool> _isEnabledSetter;
-    private readonly Action<int, int> _moveAction;
-    private readonly UITableViewCellStyle _cellStyle;
-    private readonly Action _refreshAction;
-    private readonly double _rowHeight;
-    private readonly Func<TItem, double>? _rowHeightSelector;
-    private readonly Func<TItem, NSAttributedString?>? _attributedSubtitleSelector;
-    private readonly Func<TItem, string?>? _accessibilityValueSelector;
-    private readonly Func<TItem, bool>? _showsDetailButton;
-    private readonly Action<TItem>? _detailAction;
-    private readonly Func<TItem, UIView?>? _trailingAccessorySelector;
-    private readonly Func<TItem, UIImage?>? _leadingIconSelector;
-    private readonly bool _showsReorderControls;
-    private readonly Func<TItem, bool>? _isCheckmarkActiveSelector;
-
-    /// <summary>
-    /// 初始化列表数据源。
-    /// </summary>
-    public iOSNativeEmbeddedCheckableReorderListSource(
-        Func<IReadOnlyList<TItem>> itemsProvider,
-        Func<TItem, string> titleSelector,
-        Func<TItem, string?> subtitleSelector,
-        Func<TItem, bool> isEnabledGetter,
-        Action<TItem, bool> isEnabledSetter,
-        Action<int, int> moveAction,
-        UITableViewCellStyle cellStyle,
-        Action refreshAction,
-        double rowHeight,
-        Func<TItem, double>? rowHeightSelector,
-        Func<TItem, NSAttributedString?>? attributedSubtitleSelector,
-        Func<TItem, string?>? accessibilityValueSelector,
-        Func<TItem, bool>? showsDetailButton,
-        Action<TItem>? detailAction,
-        Func<TItem, UIView?>? trailingAccessorySelector,
-        Func<TItem, UIImage?>? leadingIconSelector,
-        bool showsReorderControls,
-        Func<TItem, bool>? isCheckmarkActiveSelector)
-    {
-        _itemsProvider = itemsProvider;
-        _titleSelector = titleSelector;
-        _subtitleSelector = subtitleSelector;
-        _isEnabledGetter = isEnabledGetter;
-        _isEnabledSetter = isEnabledSetter;
-        _moveAction = moveAction;
-        _cellStyle = cellStyle;
-        _refreshAction = refreshAction;
-        _rowHeight = rowHeight;
-        _rowHeightSelector = rowHeightSelector;
-        _attributedSubtitleSelector = attributedSubtitleSelector;
-        _accessibilityValueSelector = accessibilityValueSelector;
-        _showsDetailButton = showsDetailButton;
-        _detailAction = detailAction;
-        _trailingAccessorySelector = trailingAccessorySelector;
-        _leadingIconSelector = leadingIconSelector;
-        _showsReorderControls = showsReorderControls;
-        _isCheckmarkActiveSelector = isCheckmarkActiveSelector;
-    }
-
-    /// <summary>指定项的行高。</summary>
-    internal double HeightFor(TItem item) => _rowHeightSelector?.Invoke(item) ?? _rowHeight;
-
-    /// <summary>
-    /// 返回列表项数量。
-    /// </summary>
-    public override nint RowsInSection(UITableView tableView, nint section)
-    {
-        return _itemsProvider().Count;
-    }
-
-    /// <summary>
-    /// 返回行高。
-    /// </summary>
-    public override nfloat GetHeightForRow(UITableView tableView, NSIndexPath indexPath)
-    {
-        return (nfloat)HeightFor(_itemsProvider()[indexPath.Row]);
-    }
-
-    /// <summary>
-    /// 构建列表单元格。
-    /// </summary>
-    public override UITableViewCell GetCell(UITableView tableView, NSIndexPath indexPath)
-    {
-        var showsSubtitle = _cellStyle == UITableViewCellStyle.Subtitle;
-        var reuseIdentifier = showsSubtitle
-            ? "EmbeddedCheckableReorderSubtitleCell"
-            : "EmbeddedCheckableReorderDefaultCell";
-        var cell = tableView.DequeueReusableCell(reuseIdentifier) as iOSNativeEmbeddedCheckableReorderCell
-            ?? new iOSNativeEmbeddedCheckableReorderCell(reuseIdentifier, showsSubtitle);
-        ConfigureCell(tableView, cell, indexPath);
-        return cell;
-    }
-
-    /// <summary>按当前数据刷新一个单元格（新建与就地刷新共用）。</summary>
-    /// <param name="tableView">所在表格（行序与宽度用于末行分隔线）。</param>
-    /// <param name="cell">目标单元格。</param>
-    /// <param name="indexPath">行位置。</param>
-    internal void ConfigureCell(UITableView tableView, iOSNativeEmbeddedCheckableReorderCell cell, NSIndexPath indexPath)
-    {
-        var showsSubtitle = _cellStyle == UITableViewCellStyle.Subtitle;
-        var item = _itemsProvider()[indexPath.Row];
-        cell.Configure(
-            title: _titleSelector(item),
-            subtitle: showsSubtitle ? _subtitleSelector(item) : null,
-            isEnabled: _isEnabledGetter(item),
-            attributedSubtitle: showsSubtitle ? _attributedSubtitleSelector?.Invoke(item) : null,
-            accessibilityValue: _accessibilityValueSelector?.Invoke(item),
-            icon: _leadingIconSelector?.Invoke(item),
-            checkmarkActive: _isCheckmarkActiveSelector?.Invoke(item) ?? true);
-        cell.ShowsReorderControl = _showsReorderControls;
-        cell.BackgroundColor = UIColor.Clear;
-        cell.EditingAccessory = _showsDetailButton?.Invoke(item) == true
-            ? UITableViewCellAccessory.DetailButton
-            : UITableViewCellAccessory.None;
-        cell.SetTrailingAccessory(_trailingAccessorySelector?.Invoke(item));
-        // SETTINGS-15：整表是一张卡片，最后一行不再画到卡片底缘。
-        iOSNativeSettingsMetrics.ApplyRowSeparator(tableView, cell, indexPath);
-    }
-
-    /// <summary>
-    /// 详情按钮（ⓘ）点击。
-    /// </summary>
-    public override void AccessoryButtonTapped(UITableView tableView, NSIndexPath indexPath)
-    {
-        _detailAction?.Invoke(_itemsProvider()[indexPath.Row]);
-    }
-
-    /// <summary>
-    /// 允许所有行进入编辑态。
-    /// </summary>
-    public override bool CanEditRow(UITableView tableView, NSIndexPath indexPath)
-    {
-        return true;
-    }
-
-    /// <summary>
-    /// 允许所有行拖拽排序。
-    /// </summary>
-    public override bool CanMoveRow(UITableView tableView, NSIndexPath indexPath)
-    {
-        return _showsReorderControls;
-    }
-
-    /// <summary>
-    /// 关闭删除样式，仅保留拖拽排序。
-    /// </summary>
-    public override UITableViewCellEditingStyle EditingStyleForRow(UITableView tableView, NSIndexPath indexPath)
-    {
-        return UITableViewCellEditingStyle.None;
-    }
-
-    /// <summary>
-    /// 关闭编辑态下的左侧缩进，保持内容对齐。
-    /// </summary>
-    public override bool ShouldIndentWhileEditing(UITableView tableView, NSIndexPath indexPath)
-    {
-        return false;
-    }
-
-    /// <summary>
-    /// 处理拖拽排序后的数据回写。
-    /// </summary>
-    public override void MoveRow(UITableView tableView, NSIndexPath sourceIndexPath, NSIndexPath destinationIndexPath)
-    {
-        _moveAction(sourceIndexPath.Row, destinationIndexPath.Row);
-        _refreshAction();
-    }
-
-    /// <summary>
-    /// 轻点切换当前行的勾选状态。
-    /// </summary>
-    public override void RowSelected(UITableView tableView, NSIndexPath indexPath)
-    {
-        tableView.DeselectRow(indexPath, true);
-        var item = _itemsProvider()[indexPath.Row];
-        _isEnabledSetter(item, !_isEnabledGetter(item));
-        _refreshAction();
-    }
-}
-
-/// <summary>
-/// iOS 内联勾选列表单元格。
-/// 左侧固定显示勾选位，右侧可按列表配置显示系统拖拽手柄；副标题为空时标题垂直居中。
-/// </summary>
-internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
+internal sealed class iOSNativeCheckableSettingsCell : UITableViewCell
 {
     /// <summary>勾选 → 命令图标的视觉间距（SETTINGS-01）。</summary>
     private const double CheckToIconGap = 8;
@@ -2119,15 +1872,10 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
     /// <summary>勾选是否在当前形态实际生效；false 表示已勾选但未在手机控制栏显示（只淡化勾号）。</summary>
     internal bool CheckmarkActive { get; private set; } = true;
 
-    /// <summary>
-    /// 初始化列表单元格。
-    /// </summary>
-    /// <param name="reuseIdentifier">复用标识。</param>
-    /// <param name="showsSubtitle">是否展示副标题。</param>
-    public iOSNativeEmbeddedCheckableReorderCell(string reuseIdentifier, bool showsSubtitle)
+    public iOSNativeCheckableSettingsCell(string reuseIdentifier, bool showsSubtitle, double minHeight = 52)
         : base(UITableViewCellStyle.Default, reuseIdentifier)
     {
-        BackgroundColor = UIColor.Clear;
+        // 保留系统 InsetGrouped 默认单元格背景，使其与 sheet 材质和圆角卡片完全一致。
         ContentView.BackgroundColor = UIColor.Clear;
         SelectionStyle = UITableViewCellSelectionStyle.Default;
 
@@ -2136,16 +1884,17 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
             TranslatesAutoresizingMaskIntoConstraints = false,
             TintColor = UIColor.SystemBlue,
             ContentMode = UIViewContentMode.ScaleAspectFit,
-            Image = UIImage.GetSystemImage("checkmark")
+            Image = UIImage.GetSystemImage("checkmark"),
         };
 
         _titleLabel = new UILabel
         {
             TranslatesAutoresizingMaskIntoConstraints = false,
-            Font = UIFont.SystemFontOfSize(16),
+            Font = UIFont.PreferredBody!,
+            AdjustsFontForContentSizeCategory = true,
             TextColor = UIColor.Label,
             Lines = 1,
-            LineBreakMode = UILineBreakMode.TailTruncation
+            LineBreakMode = UILineBreakMode.TailTruncation,
         };
 
         _iconView = new UIImageView
@@ -2168,9 +1917,10 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
             subtitleLabel = new UILabel
             {
                 TranslatesAutoresizingMaskIntoConstraints = false,
-                Font = UIFont.SystemFontOfSize(12),
+                Font = UIFont.PreferredFootnote!,
+                AdjustsFontForContentSizeCategory = true,
                 TextColor = UIColor.SecondaryLabel,
-                Lines = 1
+                Lines = 1,
             };
             ContentView.AddSubview(subtitleLabel);
         }
@@ -2183,6 +1933,10 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
         // 图标槽位与字形分开：槽位取共享手机命令图标槽位令牌（24 点，Android 同值），
         // 字形按自身 18 点原尺寸居中，槽位不再参与缩放。
         var iconSlot = (nfloat)DesignTokens.SettingsMobileCommandIconSlotSize;
+
+        var minHeightConstraint = ContentView.HeightAnchor.ConstraintGreaterThanOrEqualTo((nfloat)minHeight);
+        minHeightConstraint.Priority = 999;
+        minHeightConstraint.Active = true;
 
         _checkmarkView.WidthAnchor.ConstraintEqualTo(checkmarkWidth).Active = true;
         _checkmarkView.HeightAnchor.ConstraintEqualTo(22).Active = true;
@@ -2199,7 +1953,12 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
         _titleTrailingDefault = _titleLabel.TrailingAnchor.ConstraintLessThanOrEqualTo(ContentView.TrailingAnchor, -16);
         _titleTrailingDefault.Active = true;
 
-        _centeredConstraints = [_titleLabel.CenterYAnchor.ConstraintEqualTo(ContentView.CenterYAnchor)];
+        _centeredConstraints =
+        [
+            _titleLabel.CenterYAnchor.ConstraintEqualTo(ContentView.CenterYAnchor),
+            _titleLabel.TopAnchor.ConstraintGreaterThanOrEqualTo(ContentView.TopAnchor, 8),
+            _titleLabel.BottomAnchor.ConstraintLessThanOrEqualTo(ContentView.BottomAnchor, -8),
+        ];
         if (_subtitleLabel != null)
         {
             _subtitleLabel.LeadingAnchor.ConstraintEqualTo(_titleLabel.LeadingAnchor).Active = true;
@@ -2214,10 +1973,7 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
         NSLayoutConstraint.ActivateConstraints(_subtitleLabel == null ? _centeredConstraints : _stackedConstraints);
     }
 
-    /// <summary>
-    /// 设置或移除行尾附加控件（命令表行的主/次快捷键按钮组），标题在附加控件前尾部截断。
-    /// </summary>
-    /// <param name="accessory">附加控件；null 表示纯触控列表，不显示任何行尾控件。</param>
+    /// <summary>设置或移除行尾附加控件（命令表行的主/次快捷键按钮组），标题在附加控件前尾部截断。</summary>
     internal void SetTrailingAccessory(UIView? accessory)
     {
         if (ReferenceEquals(_trailingAccessory, accessory)) return;
@@ -2251,18 +2007,13 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
         SetNeedsLayout();
     }
 
-    /// <summary>
-    /// 刷新单元格展示状态。
-    /// </summary>
-    /// <param name="title">主标题。</param>
-    /// <param name="subtitle">副标题。</param>
-    /// <param name="isEnabled">是否启用。</param>
-    /// <param name="attributedSubtitle">带样式副标题（优先于纯文本）。</param>
-    /// <param name="accessibilityValue">读屏值；null 不额外设置（行标题与副标题仍由单元格文本提供）。</param>
-    /// <param name="icon">命令行图标（命令表）；null 表示该行没有图标。</param>
-    /// <param name="checkmarkActive">勾选是否在当前形态生效；false 时只淡化勾号，行操作照常可用。</param>
-    public void Configure(string title, string? subtitle, bool isEnabled,
-        NSAttributedString? attributedSubtitle = null, string? accessibilityValue = null, UIImage? icon = null,
+    /// <summary>刷新单元格展示状态。</summary>
+    public void Configure(
+        string title,
+        string? subtitle,
+        bool isEnabled,
+        string? accessibilityValue = null,
+        UIImage? icon = null,
         bool checkmarkActive = true)
     {
         _titleLabel.Text = title;
@@ -2273,20 +2024,10 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
         _iconView.AccessibilityElementsHidden = true;
         _titleLeadingIcon.Active = hasIcon;
         _titleLeadingPlain.Active = !hasIcon;
-        bool hasSubtitle = false;
         if (_subtitleLabel != null)
         {
-            if (attributedSubtitle != null && attributedSubtitle.Length > 0)
-            {
-                _subtitleLabel.AttributedText = attributedSubtitle;
-                hasSubtitle = true;
-            }
-            else
-            {
-                _subtitleLabel.AttributedText = null;
-                _subtitleLabel.Text = subtitle;
-                hasSubtitle = !string.IsNullOrWhiteSpace(subtitle);
-            }
+            _subtitleLabel.Text = subtitle;
+            bool hasSubtitle = !string.IsNullOrWhiteSpace(subtitle);
             _subtitleLabel.Hidden = !hasSubtitle;
             _subtitleLabel.IsAccessibilityElement = hasSubtitle;
             _subtitleLabel.AccessibilityElementsHidden = !hasSubtitle;
@@ -2309,6 +2050,9 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
         _checkmarkView.TintColor = isEnabled && !checkmarkActive
             ? UIColor.FromWhiteAlpha((nfloat)1, (nfloat)DesignTokens.SettingsPhoneInactiveCheckOpacity)
             : UIColor.SystemBlue;
+        AccessibilityTraits = isEnabled
+            ? AccessibilityTraits | UIAccessibilityTrait.Selected
+            : AccessibilityTraits & ~UIAccessibilityTrait.Selected;
         AccessibilityValue = accessibilityValue;
     }
 }

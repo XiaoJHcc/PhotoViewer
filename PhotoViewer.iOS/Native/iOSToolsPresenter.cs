@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using CoreGraphics;
 using Foundation;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.iOS.Core;
@@ -9,23 +8,24 @@ using UIKit;
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// iPad 原生工具页宿主：以 sheet（iPad 上为系统大页 sheet）承载一个
-/// <see cref="UINavigationController"/>，根页为工具列表（EXIF 详情 / 诊断工具；照片数据统计为 Windows
-/// 专属，不建入口），子页为 EXIF 详情与当前发行版的诊断页（AI 版 DINO 诊断、标准版 CV 诊断）。
-/// 导航状态以共享 <see cref="ToolsViewModel"/> 为准：
-/// 进入子页写共享状态，返回列表页恢复 <c>ShowList</c>；关闭后对象保留，可再次展示。
+/// iOS / iPadOS 原生工具页宿主：以设置同款 <see cref="UIModalPresentationStyle.PageSheet"/> 承载
+/// <see cref="UINavigationController"/>，根页为原生 <see cref="UITableViewStyle.InsetGrouped"/> 工具列表
+/// （EXIF 详情 / 当前发行版诊断工具；照片数据统计为 Windows 专属，不建入口），子页为 EXIF 详情与诊断页。
+/// 导航状态以共享 <see cref="ToolsViewModel"/> 为准，关闭后页面对象保留可重开。
 /// </summary>
 internal sealed class iOSNativeToolsPresenter
 {
     private ToolsViewModel? _tools;
-    private UINavigationController? _navigation;
+    private iOSNativeToolsNavigationController? _navigation;
     private iOSNativeToolsListViewController? _list;
     private iOSExifDetailView? _exif;
     private iOSDinoDiagnosticView? _diagnostic;
-    private ToolsDismissDelegate? _dismissDelegate;
 
     /// <summary>当前进程里的工具页宿主（验收读取真实导航栈与页面）。</summary>
     internal static iOSNativeToolsPresenter? Current { get; private set; }
+
+    /// <summary>内容区滚动守卫（区分“未到顶滚动页面”与“到顶后再下拉关闭”）。</summary>
+    internal iOSSheetScrollGuard ScrollGuard => _navigation?.ScrollGuard ?? throw new InvalidOperationException("工具页导航控制器尚未创建");
 
     /// <summary>建立宿主并登记为当前实例（不创建任何页面对象）。</summary>
     internal iOSNativeToolsPresenter() => Current = this;
@@ -53,10 +53,9 @@ internal sealed class iOSNativeToolsPresenter
         _tools = tools;
         if (_navigation == null) Build(tools);
         else Subscribe(tools);
+
         if (IsPresented)
         {
-            // TOOLBAR-06：已展示时 EXIF 入口仍然明确导航到 EXIF 详情（或按 TOOLS-02 回退列表），
-            // 不被"已展示只前置"拦截；主图菜单入口（openExif=false）仍只同步当前页。
             if (openExif)
             {
                 ShowExifEntry(tools);
@@ -65,41 +64,30 @@ internal sealed class iOSNativeToolsPresenter
             SyncCurrentPage();
             return;
         }
-        var host = iOSViewControllerLocator.GetTopMostViewController();
-        if (host == null)
-        {
-            throw new InvalidOperationException("工具页没有可展示的宿主控制器");
-        }
-        _dismissDelegate ??= new ToolsDismissDelegate(this);
-        // TOOLS-01：每次展示都按设置页同一份 sheet 配置重新挂一次（detents/grabber/圆角/滚动扩展策略）：
-        // 重开复用同一导航控制器时，展示期重建的 sheet 控制器会丢掉上次的配置，只在 Build 时配一次不够。
+
+        var host = iOSViewControllerLocator.GetTopMostViewController()
+            ?? throw new InvalidOperationException("工具页没有可展示的宿主控制器");
+
+        // 重开复用同一导航控制器时重新配置系统 sheet 控制器（detents / grabber / 自动同心圆角 / 不拉大策略）。
         ApplySheetStyle();
-        // 展示控制器只在展示时存在：接着挂自适应关闭代理，覆盖下滑关闭与关闭按钮两条路径。
-        if (_navigation!.PresentationController is { } presentation)
-            presentation.Delegate = _dismissDelegate;
         if (openExif)
+        {
             ShowExifEntry(tools);
+        }
         else
         {
-            _navigation.SetViewControllers([_list!], false);
+            _navigation!.SetViewControllers([_list!], false);
             tools.ShowList();
         }
-        // TOOLS-01：主窗口据此判断"已展示只前置、未展示才回首页"。
+
         tools.IsPresented = true;
-        host.PresentViewController(_navigation, true, () =>
-        {
-            if (_navigation.PresentationController is { } controller)
-            {
-                controller.Delegate = _dismissDelegate;
-            }
-        });
+        host.PresentViewController(_navigation!, true, null);
     }
 
     /// <summary>
     /// 控制栏 EXIF 入口的导航：可用时压入 EXIF 详情（列表页保留为返回目标），
     /// 不可用时回退列表；已展示其他诊断页时同样切过来（TOOLBAR-06）。
     /// </summary>
-    /// <param name="tools">共享工具壳 ViewModel。</param>
     private void ShowExifEntry(ToolsViewModel tools)
     {
         if (_navigation == null) return;
@@ -110,7 +98,7 @@ internal sealed class iOSNativeToolsPresenter
                 SyncCurrentPage();
                 return;
             }
-            _exif ??= new iOSExifDetailView();
+            _exif ??= new iOSExifDetailView(Dismiss);
             _exif.Show(detail);
             _navigation.SetViewControllers([_list!, _exif], false);
             tools.OpenExifDetail();
@@ -129,64 +117,57 @@ internal sealed class iOSNativeToolsPresenter
         _navigation.ModalPresentationStyle = UIModalPresentationStyle.PageSheet;
         _navigation.OverrideUserInterfaceStyle = UIUserInterfaceStyle.Dark;
         iOSNativeSettingsPresenter.ConfigureSheetPresentation(_navigation.SheetPresentationController);
+        _navigation.BindDismissDelegate();
     }
 
     /// <summary>关闭工具页（sheet 下拉关闭同样走系统路径）；对象保留可重开。</summary>
     internal void Dismiss()
     {
         if (!IsPresented) return;
-        // 关闭按钮/程序化关闭立即复位共享状态；下滑关闭由 DidDismiss 走同一收口（重复调用幂等）。
         HandleDismissed();
         _navigation!.DismissViewController(true, null);
     }
 
-    /// <summary>创建导航控制器与列表首页，并订阅共享导航状态。</summary>
-    /// <param name="tools">共享工具壳 ViewModel。</param>
     private void Build(ToolsViewModel tools)
     {
         _list = new iOSNativeToolsListViewController(tools, this);
-        _navigation = new UINavigationController(_list);
+        _navigation = new iOSNativeToolsNavigationController(_list, HandleDismissed);
         ApplySheetStyle();
         Subscribe(tools);
     }
 
-    /// <summary>订阅共享工具导航状态（同一实例只订阅一次）。</summary>
-    /// <param name="tools">共享工具壳 ViewModel。</param>
     private void Subscribe(ToolsViewModel tools)
     {
         tools.PropertyChanged -= OnToolsChanged;
         tools.PropertyChanged += OnToolsChanged;
     }
 
-    /// <summary>列表页按钮：进入 EXIF 详情（共享状态先行，再压入页面）。</summary>
+    /// <summary>列表页点击：进入 EXIF 详情（共享状态先行，再压入页面）。</summary>
     internal void OpenExif()
     {
         if (_tools == null || _navigation == null || _tools.ExifDetail == null) return;
         _tools.OpenExifDetail();
-        _exif ??= new iOSExifDetailView();
+        _exif ??= new iOSExifDetailView(Dismiss);
         _exif.Show(_tools.ExifDetail);
         _navigation.PushViewController(_exif, true);
     }
 
-    /// <summary>列表页按钮：进入当前发行版的诊断工具（共享状态先行，再压入页面）。</summary>
+    /// <summary>列表页点击：进入当前发行版的诊断工具（共享状态先行，再压入页面）。</summary>
     internal void OpenDiagnostic()
     {
         if (_tools == null || _navigation == null) return;
         _tools.OpenDiagnostic();
 #if PHOTOVIEWER_DINO
-        _diagnostic ??= new iOSDinoDiagnosticView(_tools.DinoPresenter);
+        _diagnostic ??= new iOSDinoDiagnosticView(_tools.DinoPresenter, Dismiss);
 #else
-        _diagnostic ??= new iOSDinoDiagnosticView(_tools.CvPresenter);
+        _diagnostic ??= new iOSDinoDiagnosticView(_tools.CvPresenter, Dismiss);
 #endif
         _diagnostic.Sync();
         _navigation.PushViewController(_diagnostic, true);
     }
 
     /// <summary>返回列表首页（系统返回按钮/滑动返回后由列表页调用）。</summary>
-    internal void BackToList()
-    {
-        _tools?.ShowList();
-    }
+    internal void BackToList() => _tools?.ShowList();
 
     /// <summary>当前照片变化或共享导航状态改变后同步可见子页（不抢焦点、不改变栈结构）。</summary>
     internal void SyncCurrentPage()
@@ -200,9 +181,6 @@ internal sealed class iOSNativeToolsPresenter
         if (ReferenceEquals(_tools.CurrentTool, _tools.DiagnosticDebug)) _diagnostic?.Sync();
     }
 
-    /// <summary>共享导航状态变化：EXIF VM 被替换或回到列表态时同步页面内容。</summary>
-    /// <param name="sender">事件源（工具壳 VM）。</param>
-    /// <param name="args">属性变化参数。</param>
     private void OnToolsChanged(object? sender, PropertyChangedEventArgs args)
     {
         if (args.PropertyName == nameof(ToolsViewModel.ExifDetail) && _exif != null && _tools?.ExifDetail != null)
@@ -210,65 +188,142 @@ internal sealed class iOSNativeToolsPresenter
         if (args.PropertyName == nameof(ToolsViewModel.DiagnosticDebug)) _diagnostic?.Sync();
     }
 
-    /// <summary>
-    /// sheet 已关闭（下滑、关闭按钮或程序化 Dismiss 的统一收口）：清除共享展示态并取消在途诊断任务，
-    /// 页面对象保留以便重开（TOOLS-01/TOOLS-06）。
-    /// </summary>
+    /// <summary>sheet 已关闭（下滑、关闭按钮或程序化 Dismiss 的统一收口）：清除共享展示态并取消在途诊断。</summary>
     private void HandleDismissed()
     {
         if (_tools == null) return;
         _tools.IsPresented = false;
         _tools.Deactivate();
     }
-
-    /// <summary>自适应展示代理：把系统关闭路径转交给宿主统一处理。</summary>
-    private sealed class ToolsDismissDelegate(iOSNativeToolsPresenter owner) : UIAdaptivePresentationControllerDelegate
-    {
-        /// <summary>系统完成关闭后复位共享状态并取消后台计算。</summary>
-        /// <param name="presentationController">本次展示控制器。</param>
-        public override void DidDismiss(UIPresentationController presentationController) => owner.HandleDismissed();
-    }
 }
 
-/// <summary>工具列表首页：EXIF 详情 / 发行版诊断工具两个入口（照片数据统计为 Windows 专属，不建入口）。</summary>
-internal sealed class iOSNativeToolsListViewController : UITableViewController
+/// <summary>
+/// 工具页导航控制器：与设置页 <see cref="iOSNativeSettingsNavigationController"/> 同构，
+/// 统一持有 <see cref="iOSSheetScrollGuard"/> 与自适应关闭代理。
+/// </summary>
+internal sealed class iOSNativeToolsNavigationController : UINavigationController
 {
-    private readonly ToolsViewModel _tools;
-    private readonly iOSNativeToolsPresenter _owner;
-    internal static IReadOnlyList<string> Titles => ["EXIF 详情", iOSAppCapabilities.DiagnosticName];
-    internal IReadOnlyList<string> Entries => Titles;
-    internal iOSNativeToolsListViewController(ToolsViewModel tools, iOSNativeToolsPresenter owner) : base(UITableViewStyle.InsetGrouped)
+    private readonly iOSSheetScrollGuard _scrollGuard = new();
+    private readonly ToolsDismissDelegate _dismissDelegate;
+
+    internal iOSSheetScrollGuard ScrollGuard => _scrollGuard;
+
+    public iOSNativeToolsNavigationController(UIViewController rootViewController, Action onDismissed)
+        : base(rootViewController)
     {
-        _tools = tools;
-        _owner = owner;
-        Title = "工具";
-        TableView.BackgroundColor = UIColor.SystemGroupedBackground;
-        TableView.CellLayoutMarginsFollowReadableWidth = false;
-        NavigationItem.RightBarButtonItem = new UIBarButtonItem(UIBarButtonSystemItem.Close, (_, _) => owner.Dismiss());
+        ModalPresentationStyle = UIModalPresentationStyle.PageSheet;
+        OverrideUserInterfaceStyle = UIUserInterfaceStyle.Dark;
+        Delegate = _scrollGuard;
+        _dismissDelegate = new ToolsDismissDelegate(this, onDismissed);
     }
+
+    internal void BindDismissDelegate()
+    {
+        if (PresentationController != null)
+        {
+            PresentationController.Delegate = _dismissDelegate;
+        }
+    }
+
     public override void ViewWillAppear(bool animated)
     {
         base.ViewWillAppear(animated);
-        // 只有列表页真的成为可见页时才回到列表态：控制栏直达 EXIF 时列表仍在导航栈底部，
-        // 不能把共享导航状态改回列表（否则详情页与 TopViewController 不同步）。
+        _scrollGuard.Attach(TopViewController);
+        BindDismissDelegate();
+    }
+
+    private sealed class ToolsDismissDelegate(iOSNativeToolsNavigationController navigation, Action onDismissed)
+        : UIAdaptivePresentationControllerDelegate
+    {
+        public override bool ShouldDismiss(UIPresentationController presentationController)
+            => navigation.ScrollGuard.ShouldAllowDismiss(navigation.TopViewController);
+
+        public override void DidDismiss(UIPresentationController presentationController) => onDismissed();
+    }
+}
+
+/// <summary>
+/// 工具列表首页：原生 <see cref="UITableViewStyle.InsetGrouped"/> 分组列表，
+/// 承载 EXIF 详情与当前发行版诊断工具两个入口（照片数据统计为 Windows 专属，不建入口）。
+/// </summary>
+internal sealed class iOSNativeToolsListViewController : UITableViewController
+{
+    private const string CellReuseId = "NativeToolsListCell";
+
+    private readonly ToolsViewModel _tools;
+    private readonly iOSNativeToolsPresenter _owner;
+
+    internal static IReadOnlyList<string> Titles => ["EXIF 详情", iOSAppCapabilities.DiagnosticName];
+    internal IReadOnlyList<string> Entries => Titles;
+
+    internal iOSNativeToolsListViewController(ToolsViewModel tools, iOSNativeToolsPresenter owner)
+        : base(UITableViewStyle.InsetGrouped)
+    {
+        _tools = tools;
+        _owner = owner;
+    }
+
+    public override void ViewDidLoad()
+    {
+        base.ViewDidLoad();
+        Title = "工具";
+        NavigationItem.RightBarButtonItem = new UIBarButtonItem(UIBarButtonSystemItem.Close, (_, _) => _owner.Dismiss());
+        TableView.BackgroundColor = UIColor.SystemGroupedBackground;
+        TableView.CellLayoutMarginsFollowReadableWidth = false;
+    }
+
+    public override void ViewWillAppear(bool animated)
+    {
+        base.ViewWillAppear(animated);
+        // 只有列表页真的成为可见页时才回到列表态：控制栏直达 EXIF 时列表仍在导航栈底部，不能把共享导航状态改回列表。
         if (ReferenceEquals(NavigationController?.TopViewController, this)) _owner.BackToList();
         TableView.ReloadData();
     }
+
+    public override nint NumberOfSections(UITableView tableView) => 1;
+
     public override nint RowsInSection(UITableView tableView, nint section) => 2;
+
     public override UITableViewCell GetCell(UITableView tableView, NSIndexPath indexPath)
     {
-        var cell = new UITableViewCell(UITableViewCellStyle.Default, null);
-        var config = UIListContentConfiguration.CellConfiguration;
-        config.Text = Entries[indexPath.Row];
-        config.TextProperties.Color = indexPath.Row == 0 && !_tools.IsExifDetailEnabled ? UIColor.TertiaryLabel : UIColor.Label;
+        var cell = tableView.DequeueReusableCell(CellReuseId)
+            ?? new UITableViewCell(UITableViewCellStyle.Subtitle, CellReuseId);
+
+        bool isExif = indexPath.Row == 0;
+        bool enabled = !isExif || _tools.IsExifDetailEnabled;
+
+        var config = UIListContentConfiguration.SubtitleCellConfiguration;
+        config.Text = Entries[(int)indexPath.Row];
+        config.TextProperties.Color = enabled ? UIColor.Label : UIColor.TertiaryLabel;
+        config.SecondaryText = isExif
+            ? (enabled ? "完整元数据与伴侣格式" : "当前照片无可用 EXIF")
+            : (iOSAppCapabilities.HasDino ? "DINO patch 与 CV 网格诊断" : "锐度与抖动网格诊断");
+        config.SecondaryTextProperties.Color = enabled ? UIColor.SecondaryLabel : UIColor.TertiaryLabel;
+        config.Image = UIImage.GetSystemImage(isExif ? "info.circle" : "square.grid.3x3");
+        config.ImageProperties.TintColor = enabled ? UIColor.SystemBlue : UIColor.TertiaryLabel;
         cell.ContentConfiguration = config;
-        cell.Accessory = UITableViewCellAccessory.DisclosureIndicator;
+
+        cell.Accessory = enabled ? UITableViewCellAccessory.DisclosureIndicator : UITableViewCellAccessory.None;
+        cell.SelectionStyle = enabled ? UITableViewCellSelectionStyle.Default : UITableViewCellSelectionStyle.None;
+        cell.AccessibilityTraits = enabled
+            ? cell.AccessibilityTraits & ~UIAccessibilityTrait.NotEnabled
+            : cell.AccessibilityTraits | UIAccessibilityTrait.NotEnabled;
         return cell;
     }
+
+    public override NSIndexPath? WillSelectRow(UITableView tableView, NSIndexPath indexPath)
+        => indexPath.Row == 0 && !_tools.IsExifDetailEnabled ? null : indexPath;
+
     public override void RowSelected(UITableView tableView, NSIndexPath indexPath)
     {
         tableView.DeselectRow(indexPath, true);
-        if (indexPath.Row == 0) { if (_tools.IsExifDetailEnabled) _owner.OpenExif(); }
-        else _owner.OpenDiagnostic();
+        if (indexPath.Row == 0)
+        {
+            if (_tools.IsExifDetailEnabled) _owner.OpenExif();
+        }
+        else
+        {
+            _owner.OpenDiagnostic();
+        }
     }
 }

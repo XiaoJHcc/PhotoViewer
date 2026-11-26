@@ -102,10 +102,6 @@ internal sealed class iOSHotkeyBindingButtons : UIView
             AccessibilityLabel = secondary ? "次快捷键" : "主快捷键",
         };
         button.TouchUpInside += (_, _) => beginRecording(_item, secondary);
-
-        var clear = UIAction.Create("清空", null, null, _ => Clear(secondary));
-        clear.Attributes = UIMenuElementAttributes.Destructive;
-        button.Menu = UIMenu.Create([(UIMenuElement)clear]);
         return button;
     }
 
@@ -124,11 +120,29 @@ internal sealed class iOSHotkeyBindingButtons : UIView
         configuration.ButtonSize = UIButtonConfigurationSize.Small;
         configuration.ContentInsets = new NSDirectionalEdgeInsets(2, 6, 2, 6);
         configuration.TitleLineBreakMode = UILineBreakMode.TailTruncation;
-        var attributes = new UIStringAttributes { Font = UIFont.SystemFontOfSize((nfloat)12.5) };
+        var scaledFont = UIFontMetrics.DefaultMetrics.GetScaledFont(UIFont.SystemFontOfSize((nfloat)12.5)!);
+        var attributes = new UIStringAttributes { Font = scaledFont };
         if (conflict) attributes.ForegroundColor = UIColor.SystemOrange;
         configuration.AttributedTitle = new NSAttributedString(title, attributes);
         if (conflict) configuration.BaseForegroundColor = UIColor.SystemOrange;
         button.Configuration = configuration;
+        if (button.TitleLabel != null)
+        {
+            button.TitleLabel.AdjustsFontForContentSizeCategory = true;
+        }
+
+        // 仅在已有绑定时挂「清空」破坏性菜单；空槽不弹无意义的清空项。
+        if (gesture != null)
+        {
+            var clear = UIAction.Create("清空", UIImage.GetSystemImage("trash"), null, _ => Clear(secondary));
+            clear.Attributes = UIMenuElementAttributes.Destructive;
+            button.Menu = UIMenu.Create([(UIMenuElement)clear]);
+        }
+        else
+        {
+            button.Menu = null;
+        }
+
         _tinted[secondary ? 1 : 0] = recording;
         button.AccessibilityValue = conflict ? title + "，冲突" : title;
     }
